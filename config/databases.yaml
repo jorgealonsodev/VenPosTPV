@@ -1,0 +1,17 @@
+# config/databases.yaml
+# Database parameters loaded by the Kernel at bootstrap.
+# These parameters are consumed by services.yaml to configure
+# the ConnectionManager for Doctrine DBAL.
+
+parameters:
+    tpv.db.host: '%env(TPV_DB_HOST)%'
+    tpv.db.port: '%env(TPV_DB_PORT)%'
+    tpv.db.name: '%env(TPV_DB_NAME)%'
+    tpv.db.user: '%env(TPV_DB_USER)%'
+    tpv.db.password: '%env(TPV_DB_PASSWORD)%'
+    tpv.db.charset: utf8mb4
+    sso.shared_secret: '%env(SSO_SHARED_SECRET)%'
+
+    # PrestaShop API
+    ps.api.url: '%env(PS_SHOP_URL)%'
+    ps.api.key: '%env(PS_API_KEY)%'

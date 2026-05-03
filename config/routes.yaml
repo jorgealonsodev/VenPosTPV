@@ -1,0 +1,20 @@
+# config/routes.yaml
+health:
+    path: /api/health
+    controller: VenPosTPV\Controller\Api\HealthController::index
+    methods: [GET]
+
+api:
+    resource: ../src/Controller/Api/
+    type: attribute
+    prefix: /api
+
+app:
+    resource: ../src/Controller/App/
+    type: attribute
+    prefix: /app
+
+sso:
+    path: /sso
+    controller: VenPosTPV\Controller\App\SsoController::index
+    methods: [GET]

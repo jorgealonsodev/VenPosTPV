@@ -1,0 +1,13 @@
+/**
+ * TPV Connect - Admin Styles
+ */
+
+#module_tpvconnect .panel h3 {
+    font-weight: 600;
+}
+
+#module_tpvconnect .form-control-static .label {
+    font-size: 12px;
+    padding: 4px 8px;
+    margin-right: 8px;
+}

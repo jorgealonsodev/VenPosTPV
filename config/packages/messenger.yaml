@@ -1,0 +1,20 @@
+framework:
+    messenger:
+        transports:
+            sync_catalog:
+                dsn: '%env(MESSENGER_TRANSPORT_DSN)%'
+                options:
+                    table_name: messenger_messages
+                    queue_name: sync_catalog
+                    auto_setup: true
+            failed:
+                dsn: '%env(MESSENGER_TRANSPORT_DSN)%'
+                options:
+                    table_name: messenger_messages
+                    queue_name: failed
+                    auto_setup: true
+
+        routing:
+            VenPosTPV\Message\SyncCatalogMessage: sync_catalog
+
+        failure_transport: failed

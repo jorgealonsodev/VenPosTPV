@@ -1,0 +1,30 @@
+/vendor/
+/var/
+/.env
+/.env.local
+/.env.*.local
+/.phpunit.result.cache
+/.php-cs-fixer.cache
+/phpunit.xml
+/composer.lock
+
+# IDE
+/.idea/
+/.vscode/
+/*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Reports
+/var/reports/*.pdf
+
+# Build artifacts
+/composer.phar
+/composer-setup.php
+/tpvconnect.zip
+/.phpunit.cache/

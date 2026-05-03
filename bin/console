@@ -1,0 +1,63 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+use Symfony\Bundle\FrameworkBundle\Console\Application;
+use Symfony\Component\Console\Input\ArgvInput;
+use Symfony\Component\Dotenv\Dotenv;
+use VenPosTPV\Kernel;
+
+if (!in_array(PHP_SAPI, ['cli', 'phpdbg', 'embed'], true)) {
+    echo 'Warning: The console should be invoked via the CLI version of PHP, not the ' . PHP_SAPI . ' SAPI' . PHP_EOL;
+}
+
+set_time_limit(0);
+
+require_once __DIR__ . '/../vendor/autoload.php';
+
+if (!class_exists(Dotenv::class)) {
+    throw new LogicException('You need to add "symfony/dotenv" as a Composer dependency.');
+}
+
+(new Dotenv())->bootEnv(__DIR__ . '/../.env');
+
+$input = new ArgvInput();
+
+$env = $input->getParameterOption(['--env', '-e'], $_SERVER['APP_ENV'] ?? 'dev', true);
+$debug = (bool) ($_SERVER['APP_DEBUG'] ?? true);
+
+$kernel = new Kernel($env, $debug);
+
+// Manually register Doctrine Migrations commands
+$connectionManager = new \VenPosTPV\Service\Db\ConnectionManager([
+    'driver' => 'pdo_mysql',
+    'host' => $_SERVER['TPV_DB_HOST'] ?? '127.0.0.1',
+    'port' => $_SERVER['TPV_DB_PORT'] ?? '3306',
+    'dbname' => $_SERVER['TPV_DB_NAME'] ?? 'tpv',
+    'user' => $_SERVER['TPV_DB_USER'] ?? 'tpv_user',
+    'password' => $_SERVER['TPV_DB_PASSWORD'] ?? '',
+    'charset' => 'utf8mb4',
+]);
+
+$application = new Application($kernel);
+
+// Register Doctrine Migration commands
+$configuration = new \Doctrine\Migrations\Configuration\Configuration();
+$configuration->addMigrationsDirectory('VenPosTPV\\Migrations', __DIR__ . '/../migrations');
+$configuration->setAllOrNothing(true);
+$configuration->setCheckDatabasePlatform(false);
+
+$dependencyFactory = \Doctrine\Migrations\DependencyFactory::fromConnection(
+    new \Doctrine\Migrations\Configuration\Migration\ExistingConfiguration($configuration),
+    new \Doctrine\Migrations\Configuration\Connection\ExistingConnection($connectionManager->getTpvConnection()),
+    null
+);
+
+$application->add(new \Doctrine\Migrations\Tools\Console\Command\MigrateCommand($dependencyFactory));
+$application->add(new \Doctrine\Migrations\Tools\Console\Command\StatusCommand($dependencyFactory));
+$application->add(new \Doctrine\Migrations\Tools\Console\Command\VersionCommand($dependencyFactory));
+$application->add(new \Doctrine\Migrations\Tools\Console\Command\UpToDateCommand($dependencyFactory));
+$application->add(new \Doctrine\Migrations\Tools\Console\Command\ListCommand($dependencyFactory));
+
+$application->run($input);

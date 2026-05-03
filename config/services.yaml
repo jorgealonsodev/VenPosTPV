@@ -1,0 +1,48 @@
+# config/services.yaml
+services:
+    _defaults:
+        autowire: true
+        autoconfigure: true
+
+    VenPosTPV\:
+        resource: '../src/'
+        exclude:
+            - '../src/Kernel.php'
+
+    VenPosTPV\Service\Db\ConnectionManagerInterface:
+        class: VenPosTPV\Service\Db\ConnectionManager
+        arguments:
+            $config:
+                driver: 'pdo_mysql'
+                host: '%tpv.db.host%'
+                port: '%tpv.db.port%'
+                dbname: '%tpv.db.name%'
+                user: '%tpv.db.user%'
+                password: '%tpv.db.password%'
+                charset: '%tpv.db.charset%'
+
+    doctrine.dbal.tpv_connection:
+        class: Doctrine\DBAL\Connection
+        factory: ['@VenPosTPV\Service\Db\ConnectionManagerInterface', 'getTpvConnection']
+
+    VenPosTPV\Service\Sso\SsoTokenVerifier:
+        arguments:
+            $sharedSecret: '%sso.shared_secret%'
+            $connection: '@doctrine.dbal.tpv_connection'
+
+    # PrestaShop API Client
+    VenPosTPV\Service\PrestaShop\PrestaShopApiClient:
+        arguments:
+            $baseUrl: '%ps.api.url%'
+            $apiKey: '%ps.api.key%'
+
+    # Catalog Sync Service
+    VenPosTPV\Service\Catalog\CatalogSyncService:
+        arguments:
+            $apiClient: '@VenPosTPV\Service\PrestaShop\PrestaShopApiClient'
+            $connection: '@doctrine.dbal.tpv_connection'
+
+    # Messenger Handler
+    VenPosTPV\MessageHandler\SyncCatalogMessageHandler:
+        arguments:
+            $catalogSyncService: '@VenPosTPV\Service\Catalog\CatalogSyncService'
