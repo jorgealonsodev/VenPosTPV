@@ -8,17 +8,21 @@ use Closure;
 use Doctrine\DBAL\Connection;
 use VenPosTPV\Service\Catalog\Exception\CatalogSyncException;
 use VenPosTPV\Service\PrestaShop\PrestaShopApiClient;
+use VenPosTPV\Service\Sync\SyncLogRepository;
 
 class CatalogSyncService
 {
     public function __construct(
         private readonly PrestaShopApiClient $apiClient,
-        private readonly Connection $connection
+        private readonly Connection $connection,
+        private readonly SyncLogRepository $syncLogRepo,
+        private readonly string $psShopUrl = '',
+        private readonly string $psApiKey = ''
     ) {
     }
 
     /**
-     * @return array{products: int, combinations: int, stock: int, categories: int}
+     * @return array{products: int, combinations: int, combination_attributes: int, stock: int, categories: int}
      */
     public function syncAll(): array
     {
@@ -26,6 +30,7 @@ class CatalogSyncService
 
         try {
             $this->truncateTable('catalog_stock');
+            $this->truncateTable('catalog_combination_attribute');
             $this->truncateTable('catalog_combination');
             $this->truncateTable('catalog_product');
             $this->truncateTable('catalog_category');
@@ -45,11 +50,18 @@ class CatalogSyncService
             );
 
             $products = $this->apiClient->getProducts();
+            $psShopUrl = $this->psShopUrl;
+            $psApiKey = $this->psApiKey;
             $productCount = $this->batchInsert(
                 'catalog_product',
                 $products,
-                static function (array $prod): array {
+                static function (array $prod) use ($psShopUrl, $psApiKey): array {
                     $name = PrestaShopApiClient::extractTranslations($prod['name'] ?? '', '1');
+                    $imageId = (int) ($prod['id_default_image'] ?? 0);
+                    $imageUrl = null;
+                    if ($imageId > 0 && $psShopUrl !== '') {
+                        $imageUrl = rtrim($psShopUrl, '/') . '/api/images/products/' . $prod['id'] . '/' . $imageId . '?ws_key=' . $psApiKey;
+                    }
 
                     return [
                         'id' => (int) $prod['id'],
@@ -59,6 +71,7 @@ class CatalogSyncService
                         'price' => (float) ($prod['price'] ?? 0),
                         'id_category_default' => isset($prod['id_category_default']) ? (int) $prod['id_category_default'] : null,
                         'active' => (int) ($prod['active'] ?? 1),
+                        'image_url' => $imageUrl,
                     ];
                 }
             );
@@ -78,6 +91,59 @@ class CatalogSyncService
                 }
             );
 
+            // Build option group map: id → name
+            $options = $this->apiClient->getProductOptions();
+            $optionMap = [];
+            foreach ($options as $opt) {
+                $name = PrestaShopApiClient::extractTranslations($opt['name'] ?? $opt['public_name'] ?? '');
+                $optionMap[(int) $opt['id']] = \is_string($name) ? $name : 'Attribute';
+            }
+
+            // Build option value map: id → [group_name, attribute_name]
+            $optionValues = $this->apiClient->getProductOptionValues();
+            $valueMap = [];
+            foreach ($optionValues as $val) {
+                $groupId = (int) ($val['id_attribute_group'] ?? 0);
+                $attrName = PrestaShopApiClient::extractTranslations($val['name'] ?? '');
+                $valueMap[(int) $val['id']] = [
+                    'group_name' => $optionMap[$groupId] ?? 'Attribute',
+                    'attribute_name' => \is_string($attrName) ? $attrName : '',
+                ];
+            }
+
+            // Insert combination attributes
+            $combinationAttributeCount = 0;
+            foreach ($combinations as $comb) {
+                $combinationId = (int) $comb['id'];
+                $povAssoc = $comb['associations']['product_option_values'] ?? [];
+
+                if (!\is_array($povAssoc) || $povAssoc === []) {
+                    continue;
+                }
+
+                // PS may return a single item (not wrapped in array of arrays)
+                if (isset($povAssoc['id'])) {
+                    $povAssoc = [$povAssoc];
+                }
+
+                $attrRows = [];
+                foreach ($povAssoc as $pov) {
+                    $valueId = (int) ($pov['id'] ?? 0);
+                    if ($valueId === 0 || !isset($valueMap[$valueId])) {
+                        continue;
+                    }
+                    $attrRows[] = [
+                        'combination_id' => $combinationId,
+                        'group_name' => $valueMap[$valueId]['group_name'],
+                        'attribute_name' => $valueMap[$valueId]['attribute_name'],
+                    ];
+                }
+
+                if ($attrRows !== []) {
+                    $combinationAttributeCount += $this->executeBatchInsert('catalog_combination_attribute', $attrRows);
+                }
+            }
+
             $stockAvailables = $this->apiClient->getStockAvailables();
             $stockCount = $this->batchInsert(
                 'catalog_stock',
@@ -87,15 +153,21 @@ class CatalogSyncService
                         'id_product' => (int) ($stock['id_product'] ?? 0),
                         'id_product_attribute' => (int) ($stock['id_product_attribute'] ?? 0),
                         'quantity' => (int) ($stock['quantity'] ?? 0),
+                        'ps_stock_id' => (int) ($stock['id'] ?? 0) ?: null,
                     ];
                 }
             );
 
             $this->connection->commit();
 
+            $this->syncLogRepo->upsert('catalog', 'inbound', new \DateTimeImmutable(), $productCount);
+            $this->syncLogRepo->upsert('stock', 'inbound', new \DateTimeImmutable(), $stockCount);
+            $this->syncLogRepo->upsert('prices', 'inbound', new \DateTimeImmutable(), $productCount);
+
             return [
                 'products' => $productCount,
                 'combinations' => $combinationCount,
+                'combination_attributes' => $combinationAttributeCount,
                 'stock' => $stockCount,
                 'categories' => $categoryCount,
             ];
@@ -131,11 +203,14 @@ class CatalogSyncService
                         'id_product' => (int) ($stock['id_product'] ?? 0),
                         'id_product_attribute' => (int) ($stock['id_product_attribute'] ?? 0),
                         'quantity' => (int) ($stock['quantity'] ?? 0),
+                        'ps_stock_id' => (int) ($stock['id'] ?? 0) ?: null,
                     ];
                 }
             );
 
             $this->connection->commit();
+
+            $this->syncLogRepo->upsert('stock', 'inbound', new \DateTimeImmutable(), $stockCount);
 
             return ['stock' => $stockCount];
         } catch (CatalogSyncException $e) {

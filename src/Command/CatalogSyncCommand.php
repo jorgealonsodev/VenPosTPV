@@ -18,7 +18,6 @@ use VenPosTPV\Service\PrestaShop\Exception\PsApiException;
 #[AsCommand(name: 'tpv:catalog:sync', description: 'Synchronize catalog from PrestaShop API')]
 final class CatalogSyncCommand extends Command
 {
-
     public function __construct(private readonly CatalogSyncService $catalogSyncService)
     {
         parent::__construct();

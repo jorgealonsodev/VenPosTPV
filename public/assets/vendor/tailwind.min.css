@@ -1,0 +1,16 @@
+# Tailwind CSS Vendor Note
+
+Tailwind CSS is loaded from CDN in `templates/pos.html.twig`:
+
+```html
+<script src="https://cdn.tailwindcss.com"></script>
+```
+
+The configuration object customizes the theme with IBM Plex Sans/Mono fonts.
+
+To vendor locally in the future:
+1. Install Tailwind CLI: `npm install -g tailwindcss`
+2. Generate `public/assets/vendor/tailwind.min.css` with oklch dark theme tokens
+3. Replace the CDN script with a `<link rel="stylesheet">` tag
+
+Current CDN version: latest from cdn.tailwindcss.com

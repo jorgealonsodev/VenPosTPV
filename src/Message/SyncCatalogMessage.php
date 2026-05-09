@@ -9,4 +9,7 @@ namespace VenPosTPV\Message;
  */
 final class SyncCatalogMessage
 {
+    public function __construct(public readonly bool $stockOnly = false)
+    {
+    }
 }

@@ -17,52 +17,41 @@ require_once _PS_MODULE_DIR_ . 'tpvconnect/classes/SsoToken.php';
  *
  * POST /module/tpvconnect/orders
  */
-class TpvConnectOrdersModuleFrontController extends ModuleFrontController
+class TpvconnectOrdersModuleFrontController extends ModuleFrontController
 {
     private const RATE_LIMIT_MAX = 60;
     private const RATE_LIMIT_WINDOW = 60;
 
-    public function init(): void
-    {
-        parent::init();
-        $this->ajax = true;
-    }
-
-    public function postProcess(): void
+    public function initContent(): void
     {
         // Only accept POST
         if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
             $this->jsonResponse(['error' => 'Method not allowed'], 405);
-            return;
         }
 
         // Rate limiting
         $clientIp = $this->getClientIp();
         if (!Tpvconnect::checkRateLimit($clientIp)) {
             $this->jsonResponse(['error' => 'Rate limit exceeded'], 429);
-            return;
         }
 
         // HMAC authentication
-        $rawBody = file_get_contents('php://input');
+        $rawBody = (string) file_get_contents('php://input');
         $secret = (string) Configuration::get('TPVCONNECT_SSO_SECRET');
 
         if (!$this->verifyHmac($rawBody, $secret)) {
             $this->jsonResponse(['error' => 'Unauthorized'], 401);
-            return;
         }
 
         // Parse and validate JSON body
         $data = json_decode($rawBody, true);
         if (!is_array($data)) {
             $this->jsonResponse(['error' => 'Validation failed', 'details' => ['body' => 'Invalid JSON']], 422);
-            return;
         }
 
         $errors = $this->validateInput($data);
         if (!empty($errors)) {
             $this->jsonResponse(['error' => 'Validation failed', 'details' => $errors], 422);
-            return;
         }
 
         // Create order
@@ -77,14 +66,26 @@ class TpvConnectOrdersModuleFrontController extends ModuleFrontController
     /**
      * Validate incoming order data.
      */
-    private function validateInput(array $data): array
+    private function validateInput(array &$data): array
     {
         $errors = [];
 
-        if (empty($data['id_customer']) || !is_int($data['id_customer'])) {
-            $errors['id_customer'] = 'Required integer';
+        // Resolve anonymous customer
+        $idCustomer = isset($data['id_customer']) ? (int) $data['id_customer'] : 0;
+        if ($idCustomer === 0) {
+            $anonId = (int) Configuration::get('TPVCONNECT_ANONYMOUS_CUSTOMER_ID');
+            if ($anonId <= 0) {
+                $errors['id_customer'] = 'Anonymous customer not configured';
+            } else {
+                $customer = new Customer($anonId);
+                if (!Validate::isLoadedObject($customer)) {
+                    $errors['id_customer'] = 'Anonymous customer not found';
+                }
+                // Mutate data so createOrder sees the resolved ID
+                $data['id_customer'] = $anonId;
+            }
         } else {
-            $customer = new Customer((int) $data['id_customer']);
+            $customer = new Customer($idCustomer);
             if (!Validate::isLoadedObject($customer)) {
                 $errors['id_customer'] = 'Customer not found';
             }
@@ -141,19 +142,35 @@ class TpvConnectOrdersModuleFrontController extends ModuleFrontController
         $paymentMethod = (string) $data['payment_method'];
         $transactionId = isset($data['transaction_id']) ? (string) $data['transaction_id'] : null;
 
+        $customer = new Customer($idCustomer);
+
         // Create cart
         $cart = new Cart();
         $cart->id_customer = $idCustomer;
         $cart->id_currency = $idCurrency;
         $cart->id_shop = $idShop;
         $cart->id_lang = (int) $this->context->language->id;
+        $cart->secure_key = $customer->secure_key;
 
         // Set delivery address (use customer's default or first address)
-        $addresses = Address::getAddresses($idCustomer);
+        $addresses = $customer->getAddresses((int) $this->context->language->id);
         if (!empty($addresses)) {
             $firstAddress = reset($addresses);
             $cart->id_address_delivery = (int) $firstAddress['id_address'];
             $cart->id_address_invoice = (int) $firstAddress['id_address'];
+        } else {
+            // Anonymous customer has no address — create a temporary one
+            $address = new Address();
+            $address->id_customer = $idCustomer;
+            $address->firstname = 'TPV';
+            $address->lastname = 'Cliente';
+            $address->address1 = 'TPV Local';
+            $address->city = 'TPV';
+            $address->id_country = (int) Configuration::get('PS_COUNTRY_DEFAULT');
+            $address->alias = 'tpv_temp_' . time();
+            $address->add();
+            $cart->id_address_delivery = (int) $address->id;
+            $cart->id_address_invoice = (int) $address->id;
         }
 
         $cart->save();
@@ -212,7 +229,10 @@ class TpvConnectOrdersModuleFrontController extends ModuleFrontController
      */
     private function verifyHmac(string $rawBody, string $secret): bool
     {
-        $authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
+        $authHeader = $_SERVER['HTTP_AUTHORIZATION']
+            ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION']
+            ?? getallheaders()['Authorization']
+            ?? '';
 
         if (strpos($authHeader, 'HMAC-SHA256 ') !== 0) {
             return false;

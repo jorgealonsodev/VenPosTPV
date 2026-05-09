@@ -15,3 +15,5 @@ parameters:
     # PrestaShop API
     ps.api.url: '%env(PS_SHOP_URL)%'
     ps.api.key: '%env(PS_API_KEY)%'
+    ps.default.currency: '%env(int:PS_DEFAULT_CURRENCY)%'
+    ps.default.shop: '%env(int:PS_DEFAULT_SHOP)%'

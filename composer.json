@@ -8,6 +8,7 @@
         "doctrine/dbal": "^3.8",
         "doctrine/migrations": "^3.6",
         "dompdf/dompdf": "^2.0",
+        "endroid/qr-code": "^4.0",
         "firebase/php-jwt": "^6.10",
         "mike42/escpos-php": "^4.0",
         "ramsey/uuid": "^4.7",

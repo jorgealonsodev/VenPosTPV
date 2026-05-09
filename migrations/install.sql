@@ -20,6 +20,15 @@ CREATE TABLE IF NOT EXISTS terminal (
     printer_config JSON,
     scanner_config JSON,
     hotkeys JSON,
+    dataphone_mode ENUM('integrated','independent') NOT NULL DEFAULT 'integrated',
+    printer_type ENUM('none','pdf','escpos') NOT NULL DEFAULT 'pdf',
+    store_address VARCHAR(255) NOT NULL DEFAULT '',
+    ticket_header TEXT NULL,
+    ticket_footer TEXT NULL,
+    ticket_logo MEDIUMTEXT NULL,
+    ticket_width_px INT NULL,
+    stock_sync_interval_seconds INT UNSIGNED NOT NULL DEFAULT 60,
+    stock_push_interval_seconds INT UNSIGNED NOT NULL DEFAULT 0,
     active TINYINT(1) NOT NULL DEFAULT 1,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -31,9 +40,14 @@ CREATE TABLE IF NOT EXISTS user (
     ps_employee_id INT UNSIGNED NULL,
     role_id INT UNSIGNED NOT NULL,
     name VARCHAR(128) NOT NULL,
+    code VARCHAR(32) NULL,
     pin_hash VARCHAR(255) NOT NULL,
     active TINYINT(1) NOT NULL DEFAULT 1,
     last_login_at DATETIME NULL,
+    login_failures TINYINT UNSIGNED NOT NULL DEFAULT 0,
+    locked_at DATETIME NULL,
+    UNIQUE KEY uq_user_code (code),
+    INDEX idx_user_code (code),
     FOREIGN KEY (role_id) REFERENCES role(id)
 ) ENGINE=InnoDB;
 
@@ -174,6 +188,7 @@ CREATE TABLE IF NOT EXISTS catalog_stock (
     id_product_attribute INT UNSIGNED NOT NULL DEFAULT 0,
     quantity INT NOT NULL DEFAULT 0,
     synced_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ps_stock_id INT UNSIGNED NULL DEFAULT NULL,
     PRIMARY KEY (id_product, id_product_attribute)
 ) ENGINE=InnoDB;
 

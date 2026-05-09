@@ -1,0 +1,80 @@
+# openspec/config.yaml
+schema: spec-driven
+
+context: |
+  Tech stack: PHP 8.1+ (Symfony 6.4 FrameworkBundle, Twig, Doctrine DBAL, Messenger)
+  Frontend: Vue 3 (standalone, no bundler), Tailwind CSS (compiled), vanilla JS components
+  Database: MySQL dual-schema (prestashop + venpostpv)
+  Architecture: Clean separation (Controller/Api/, Controller/App/, Service/*), DI via services.yaml
+  Testing: PHPUnit 10.5 with Unit/Integration/Functional suites
+  Style: PSR-12 + declare(strict_types=1), PHP-CS-Fixer enforced, PHPStan level 5
+  Conventions: Symfony MicroKernelTrait, attribute routing (PHP 8 attributes), Twig templates
+
+strict_tdd: true
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+    - Identify affected modules (src/Service/*, src/Controller/*, public/assets/js/*)
+  specs:
+    - Use Given/When/Then format for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+    - Reference PRD requirement IDs (RF-XX) when applicable
+  design:
+    - Include sequence diagrams for complex flows
+    - Document architecture decisions with rationale
+    - Reference existing Service classes and their interfaces
+  tasks:
+    - Group tasks by phase (infrastructure, backend, module, frontend, tests)
+    - Use hierarchical numbering (1.1, 1.2, etc.)
+    - Keep tasks small enough to complete in one session
+  apply:
+    - Follow existing code patterns and conventions
+    - Load relevant coding skills for the project stack
+    - Run tests with: /opt/lampp/bin/php vendor/bin/phpunit
+    - Run linter: /opt/lampp/bin/php vendor/bin/php-cs-fixer fix
+    - Run static analysis: /opt/lampp/bin/php vendor/bin/phpstan analyse
+  verify:
+    - Run tests if test infrastructure exists
+    - Run: /opt/lampp/bin/php vendor/bin/phpunit
+    - Compare implementation against every spec scenario
+    - Check for PHPStan level 5 compliance
+  archive:
+    - Warn before merging destructive deltas (large removals)
+    - Sync delta specs to openspec/specs/{domain}/
+
+testing:
+  strict_tdd: true
+  detected: 2026-05-05
+  runner:
+    command: /opt/lampp/bin/php vendor/bin/phpunit
+    framework: PHPUnit 10.5
+  layers:
+    unit:
+      available: true
+      command: /opt/lampp/bin/php vendor/bin/phpunit tests/Unit
+      count: 29 test files
+    integration:
+      available: true
+      command: /opt/lampp/bin/php vendor/bin/phpunit tests/Integration
+      count: 4 test files
+    functional:
+      available: false
+      command: /opt/lampp/bin/php vendor/bin/phpunit tests/Functional
+  coverage:
+    available: true
+    command: /opt/lampp/bin/php vendor/bin/phpunit --coverage-html var/reports/coverage-html
+  quality:
+    linter:
+      available: true
+      tool: PHP-CS-Fixer
+      command: /opt/lampp/bin/php vendor/bin/php-cs-fixer fix
+    static_analysis:
+      available: true
+      tool: PHPStan
+      level: 5
+      command: /opt/lampp/bin/php vendor/bin/phpstan analyse
+    formatter:
+      available: true
+      tool: PHP-CS-Fixer
+      command: /opt/lampp/bin/php vendor/bin/php-cs-fixer fix

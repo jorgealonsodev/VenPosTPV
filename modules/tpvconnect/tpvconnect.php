@@ -13,7 +13,7 @@ if (!defined('_PS_VERSION_')) {
 require_once __DIR__ . '/install/install.php';
 require_once __DIR__ . '/classes/SsoToken.php';
 
-class Tpvconnect extends Module
+class Tpvconnect extends PaymentModule
 {
     private const HOOKS = [
         'displayBackOfficeHeader',
@@ -275,20 +275,23 @@ class Tpvconnect extends Module
             return $this->displayError($this->l('No se pudo crear la clave de servicio web.'));
         }
 
-        // Set read-only permissions
-        $resources = [
-            'products',
-            'combinations',
-            'stock_availables',
-            'customers',
-            'categories',
-            'images',
-            'orders',
+        // Permissions per resource
+        $permissions = [
+            'products'         => ['GET', 'HEAD'],
+            'combinations'     => ['GET', 'HEAD'],
+            'stock_availables'  => ['GET', 'PUT', 'HEAD'],
+            'customers'         => ['GET', 'HEAD'],
+            'categories'        => ['GET', 'HEAD'],
+            'currencies'        => ['GET', 'HEAD'],
+            'order_states'      => ['GET', 'HEAD'],
+            'images'            => ['GET', 'HEAD'],
+            'orders'            => ['GET', 'POST', 'PUT', 'HEAD'],
+            'product_options'   => ['GET', 'HEAD'],
+            'product_option_values' => ['GET', 'HEAD'],
         ];
 
-        // Set read-only permissions (GET + HEAD)
-        foreach ($resources as $resource) {
-            foreach (['GET', 'HEAD'] as $method) {
+        foreach ($permissions as $resource => $methods) {
+            foreach ($methods as $method) {
                 Db::getInstance()->insert('webservice_permission', [
                     'resource' => pSQL($resource),
                     'method' => pSQL($method),

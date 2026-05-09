@@ -7,6 +7,12 @@ framework:
                     table_name: messenger_messages
                     queue_name: sync_catalog
                     auto_setup: true
+            print_ticket:
+                dsn: '%env(MESSENGER_TRANSPORT_DSN)%'
+                options:
+                    table_name: messenger_messages
+                    queue_name: print_ticket
+                    auto_setup: true
             failed:
                 dsn: '%env(MESSENGER_TRANSPORT_DSN)%'
                 options:
@@ -16,5 +22,6 @@ framework:
 
         routing:
             VenPosTPV\Message\SyncCatalogMessage: sync_catalog
+            VenPosTPV\Message\PrintTicketMessage: print_ticket
 
         failure_transport: failed

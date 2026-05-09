@@ -7,5 +7,6 @@ framework:
         handler_id: null
         cookie_secure: auto
         cookie_samesite: lax
+        use_cookies: true
     php_errors:
         log: true

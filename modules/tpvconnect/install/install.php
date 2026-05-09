@@ -10,8 +10,16 @@ if (!defined('_PS_VERSION_')) {
     exit;
 }
 
+if (class_exists('TpvConnectInstaller')) {
+    return;
+}
+
 class TpvConnectInstaller
 {
+    private const TECHNICAL_CUSTOMER_EMAIL = 'venpostpv@local.invalid';
+    private const TECHNICAL_CUSTOMER_FIRSTNAME = 'VenPosTPV';
+    private const TECHNICAL_CUSTOMER_LASTNAME = 'Cliente';
+
     private Module $module;
 
     public function __construct(Module $module)
@@ -23,6 +31,7 @@ class TpvConnectInstaller
     {
         return $this->installSql()
             && $this->createOrderStates()
+            && $this->createAnonymousCustomer()
             && $this->setConfigurationDefaults();
     }
 
@@ -119,6 +128,81 @@ class TpvConnectInstaller
     }
 
     /**
+     * Create anonymous "Consumidor final" customer for POS checkouts.
+     */
+    public function createAnonymousCustomer(): bool
+    {
+        $existingId = (int) Configuration::get('TPVCONNECT_ANONYMOUS_CUSTOMER_ID');
+
+        if ($existingId > 0) {
+            $existingCustomer = new Customer($existingId);
+            if (Validate::isLoadedObject($existingCustomer)) {
+                $this->ensureCustomerAddress((int) $existingCustomer->id);
+
+                return true;
+            }
+            // Customer was deleted; clear stale config
+            Configuration::deleteByName('TPVCONNECT_ANONYMOUS_CUSTOMER_ID');
+        }
+
+        $existingByEmail = Customer::customerExists(self::TECHNICAL_CUSTOMER_EMAIL, true, false);
+        if ($existingByEmail) {
+            $customerId = (int) Customer::getByEmail(self::TECHNICAL_CUSTOMER_EMAIL)->id;
+            if ($customerId > 0) {
+                Configuration::updateValue('TPVCONNECT_ANONYMOUS_CUSTOMER_ID', $customerId);
+                $this->ensureCustomerAddress($customerId);
+
+                return true;
+            }
+        }
+
+        $customer = new Customer();
+        $customer->firstname = self::TECHNICAL_CUSTOMER_FIRSTNAME;
+        $customer->lastname = self::TECHNICAL_CUSTOMER_LASTNAME;
+        $customer->email = self::TECHNICAL_CUSTOMER_EMAIL;
+        $customer->passwd = Tools::encrypt(Tools::passwdGen(16));
+        $customer->secure_key = md5(uniqid((string) mt_rand(), true));
+        $customer->active = 1;
+        $customer->deleted = 0;
+        $customer->is_guest = 0;
+        $customer->id_default_group = (int) Configuration::get('PS_CUSTOMER_GROUP');
+
+        if (!$customer->add()) {
+            return false;
+        }
+
+        Configuration::updateValue('TPVCONNECT_ANONYMOUS_CUSTOMER_ID', (int) $customer->id);
+
+        $this->ensureCustomerAddress((int) $customer->id);
+
+        return true;
+    }
+
+    private function ensureCustomerAddress(int $customerId): void
+    {
+        $customer = new Customer($customerId);
+        if (!Validate::isLoadedObject($customer)) {
+            return;
+        }
+
+        $addresses = $customer->getAddresses((int) Configuration::get('PS_LANG_DEFAULT'));
+        if (!empty($addresses)) {
+            return;
+        }
+
+        $address = new Address();
+        $address->id_customer = $customerId;
+        $address->alias = 'TPV';
+        $address->firstname = self::TECHNICAL_CUSTOMER_FIRSTNAME;
+        $address->lastname = self::TECHNICAL_CUSTOMER_LASTNAME;
+        $address->address1 = 'VenPosTPV';
+        $address->city = 'TPV';
+        $address->id_country = (int) Configuration::get('PS_COUNTRY_DEFAULT');
+        $address->phone = '000000000';
+        $address->add();
+    }
+
+    /**
      * Set default Configuration values on install.
      */
     public function setConfigurationDefaults(): bool
@@ -169,6 +253,7 @@ class TpvConnectInstaller
             'TPV_OS_REFUND',
             'TPV_OS_PENDING_SYNC',
             'TPVCONNECT_WS_KEY_ID',
+            'TPVCONNECT_ANONYMOUS_CUSTOMER_ID',
         ];
 
         foreach ($keys as $key) {

@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Ticket {{ ticket.reference }}</title>
+    <style>
+        @page { margin: 0; }
+        body {
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 12px;
+{% if ticket.ticketWidthPx %}
+            width: {{ ticket.ticketWidthPx }}px;
+{% else %}
+            width: 80mm;
+{% endif %}
+            margin: 0 auto;
+            padding: 8px;
+            color: #000;
+        }
+        .center { text-align: center; }
+        .bold { font-weight: bold; }
+        .large { font-size: 16px; }
+        .line {
+            border-top: 1px dashed #000;
+            margin: 6px 0;
+        }
+        .right { text-align: right; }
+        .item { margin-bottom: 4px; }
+        .item-name { font-weight: bold; }
+        .qr { text-align: center; margin: 10px 0; }
+        .qr img { width: 120pt; height: 120pt; }
+        .footer { text-align: center; margin-top: 10px; font-size: 11px; }
+    </style>
+</head>
+<body>
+    {% if logoPath %}
+    <div style="text-align:center; margin-bottom:8px;">
+        <img src="{{ logoPath }}" style="max-width:100%; height:auto;" alt="Logo">
+    </div>
+    {% endif %}
+    <div class="center bold large">{{ ticket.storeName }}</div>
+    {% if ticket.storeAddress %}
+        <div class="center">{{ ticket.storeAddress }}</div>
+    {% endif %}
+    {% if ticket.ticketHeader %}
+        <div class="center">{{ ticket.ticketHeader|nl2br }}</div>
+    {% endif %}
+    <div class="center">{{ ticket.date|date('d/m/Y H:i') }}</div>
+    <div class="center">Ref: {{ ticket.reference }}</div>
+    <div class="center">Cajero: {{ ticket.cashierName }}</div>
+
+    <div class="line"></div>
+
+    {% for line in ticket.lines %}
+        <div class="item">
+            <div class="item-name">{{ line.name }}</div>
+            {% if not giftMode %}
+                <div>{{ line.quantity }} x {{ line.unitPrice|number_format(2, ',', '.') }} € = {{ line.lineTotal|number_format(2, ',', '.') }} €</div>
+            {% else %}
+                <div>Cant: {{ line.quantity }}</div>
+            {% endif %}
+        </div>
+    {% endfor %}
+
+    <div class="line"></div>
+
+    {% if not giftMode %}
+        <div class="right">Subtotal: {{ ticket.subtotal|number_format(2, ',', '.') }} €</div>
+        <div class="right">IVA: {{ ticket.tax|number_format(2, ',', '.') }} €</div>
+        <div class="right bold large">TOTAL: {{ ticket.total|number_format(2, ',', '.') }} €</div>
+
+        <div class="line"></div>
+
+        <div>Metodo: {{ ticket.paymentMethod|capitalize }}</div>
+        <div>Entrega: {{ ticket.amountTendered|number_format(2, ',', '.') }} €</div>
+        {% if ticket.changeDue > 0 %}
+            <div>Cambio: {{ ticket.changeDue|number_format(2, ',', '.') }} €</div>
+        {% endif %}
+    {% endif %}
+
+    <div class="qr">
+        {% if qrPath %}
+            <img src="{{ qrPath }}" alt="QR" style="width:120pt;height:120pt;">
+        {% endif %}
+    </div>
+
+    <div class="footer">{{ (ticket.ticketFooter ?: 'Gracias por su compra')|nl2br }}</div>
+</body>
+</html>

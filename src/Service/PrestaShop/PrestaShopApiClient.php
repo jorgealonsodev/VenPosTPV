@@ -45,6 +45,22 @@ class PrestaShopApiClient
     /**
      * @return array<int, array<string, mixed>>
      */
+    public function getProductOptionValues(): array
+    {
+        return $this->paginate('/product_option_values?display=[id,id_attribute_group,name]&output_format=JSON');
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    public function getProductOptions(): array
+    {
+        return $this->paginate('/product_options?display=[id,name]&output_format=JSON');
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
     public function getStockAvailables(): array
     {
         return $this->paginate('/stock_availables?display=full&output_format=JSON');
@@ -95,14 +111,85 @@ class PrestaShopApiClient
         return $results;
     }
 
-    private function request(string $method, string $url): ResponseInterface
+    /**
+     * Update the quantity of a stock_available record in PrestaShop.
+     * Uses PUT /api/stock_availables/{id} with XML payload (PS WebService requires XML for PUT).
+     *
+     * @throws PsApiException on network or HTTP error
+     */
+    public function updateStockAvailable(int $psStockId, int $newQuantity): void
+    {
+        $url = sprintf('%s/api/stock_availables/%d?output_format=JSON', $this->baseUrl, $psStockId);
+
+        // First GET to retrieve full object (PS PUT requires the full XML resource)
+        $response = $this->request('GET', sprintf('%s/api/stock_availables/%d?output_format=JSON', $this->baseUrl, $psStockId));
+        $data = $this->decodeResponse($response);
+        $stockAvailable = $data['stock_available'] ?? null;
+
+        if (!\is_array($stockAvailable)) {
+            throw PsApiException::httpError(0, sprintf('stock_available %d not found in PS', $psStockId), $response);
+        }
+
+        // Build minimal XML for PUT
+        $xml = sprintf(
+            '<?xml version="1.0" encoding="UTF-8"?><prestashop xmlns:xlink="http://www.w3.org/1999/xlink"><stock_available><id>%d</id><id_product>%d</id_product><id_product_attribute>%d</id_product_attribute><id_shop>%d</id_shop><id_shop_group>%d</id_shop_group><quantity>%d</quantity><depends_on_stock>%d</depends_on_stock><out_of_stock>%d</out_of_stock></stock_available></prestashop>',
+            (int) ($stockAvailable['id'] ?? $psStockId),
+            (int) ($stockAvailable['id_product'] ?? 0),
+            (int) ($stockAvailable['id_product_attribute'] ?? 0),
+            (int) ($stockAvailable['id_shop'] ?? 1),
+            (int) ($stockAvailable['id_shop_group'] ?? 0),
+            $newQuantity,
+            (int) ($stockAvailable['depends_on_stock'] ?? 0),
+            (int) ($stockAvailable['out_of_stock'] ?? 2),
+        );
+
+        try {
+            $putResponse = $this->httpClient->request('PUT', $url, [
+                'headers' => [
+                    'Authorization' => 'Basic ' . $this->buildAuthHeader(),
+                    'Content-Type' => 'application/xml',
+                ],
+                'body' => $xml,
+                'timeout' => 10,
+            ]);
+
+            $statusCode = $putResponse->getStatusCode();
+            if ($statusCode >= 400) {
+                throw PsApiException::httpError($statusCode, $putResponse->getContent(false), $putResponse);
+            }
+        } catch (PsApiException $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            throw PsApiException::networkError($e->getMessage(), $e);
+        }
+    }
+
+    /**
+     * @return array{online: bool, latency_ms: int|null}
+     */
+    public function ping(): array
+    {
+        $url = sprintf('%s/api?limit=0&output_format=JSON', $this->baseUrl);
+        $start = hrtime(true);
+
+        try {
+            $response = $this->request('GET', $url, 5);
+            $latency = (int) ((hrtime(true) - $start) / 1_000_000);
+
+            return ['online' => true, 'latency_ms' => $latency];
+        } catch (\Throwable) {
+            return ['online' => false, 'latency_ms' => null];
+        }
+    }
+
+    private function request(string $method, string $url, int $timeout = 10): ResponseInterface
     {
         try {
             $response = $this->httpClient->request($method, $url, [
                 'headers' => [
                     'Authorization' => 'Basic ' . $this->buildAuthHeader(),
                 ],
-                'timeout' => 10,
+                'timeout' => $timeout,
             ]);
 
             $statusCode = $response->getStatusCode();
@@ -173,6 +260,14 @@ class PrestaShopApiClient
 
         if (str_contains($endpoint, '/categories')) {
             return 'categories';
+        }
+
+        if (str_contains($endpoint, '/product_option_values')) {
+            return 'product_option_values';
+        }
+
+        if (str_contains($endpoint, '/product_options')) {
+            return 'product_options';
         }
 
         return 'items';

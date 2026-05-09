@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>TPV — VenPosTPV</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ["'IBM Plex Sans'", 'sans-serif'],
+                        mono: ["'IBM Plex Mono'", 'monospace'],
+                    },
+                },
+            },
+        };
+    </script>
+    <link rel="stylesheet" href="{{ base_path }}/assets/css/app.css">
+</head>
+<body>
+    <script>window.TPV_BASE = '{{ base_path }}';</script>
+    <script>
+        window.__SESSION__ = {{ session_data|raw }};
+    </script>
+    <div id="app"></div>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script src="{{ base_path }}/assets/js/theme-toggle.js"></script>
+    <script src="{{ base_path }}/assets/js/api.js"></script>
+    <!-- Stores must load before components that reference them -->
+    <script src="{{ base_path }}/assets/js/stores/useSession.js"></script>
+    <script src="{{ base_path }}/assets/js/stores/useCart.js"></script>
+    <script src="{{ base_path }}/assets/js/stores/useCatalog.js"></script>
+    <script src="{{ base_path }}/assets/js/composables/useBarcode.js"></script>
+    <script src="{{ base_path }}/assets/js/components/Icon.js"></script>
+    <script src="{{ base_path }}/assets/js/components/Numpad.js"></script>
+    <script src="{{ base_path }}/assets/js/components/LoginScreen.js"></script>
+    <script src="{{ base_path }}/assets/js/components/CashOpenScreen.js"></script>
+    <script src="{{ base_path }}/assets/js/components/SyncStatusIndicator.js"></script>
+    <script src="{{ base_path }}/assets/js/components/SyncStatusPanel.js"></script>
+    <script src="{{ base_path }}/assets/js/components/SaleScreen.js"></script>
+    <script src="{{ base_path }}/assets/js/components/CombinationsModal.js"></script>
+    <script src="{{ base_path }}/assets/js/components/CatalogPanel.js"></script>
+    <script src="{{ base_path }}/assets/js/components/TicketPanel.js"></script>
+    <script src="{{ base_path }}/assets/js/components/OrderDetailView.js"></script>
+    <script src="{{ base_path }}/assets/js/components/TicketListPanel.js"></script>
+    <script src="{{ base_path }}/assets/js/components/PaymentModal.js"></script>
+    <script src="{{ base_path }}/assets/js/components/DiscountModal.js"></script>
+    <script src="{{ base_path }}/assets/js/components/CustomerModal.js"></script>
+    <script src="{{ base_path }}/assets/js/components/CashCloseScreen.js"></script>
+    <script src="{{ base_path }}/assets/js/components/RefundScreen.js"></script>
+    <script src="{{ base_path }}/assets/js/components/SettingsModal.js"></script>
+    <script src="{{ base_path }}/assets/js/app.js"></script>
+</body>
+</html>

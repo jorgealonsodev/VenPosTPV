@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Acceso — VenPosTPV</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ base_path }}/assets/css/app.css">
+</head>
+<body>
+    <script>window.TPV_BASE = '{{ base_path }}';</script>
+    <div id="app"></div>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script src="{{ base_path }}/assets/js/theme-toggle.js"></script>
+    <script src="{{ base_path }}/assets/js/api.js"></script>
+    <script src="{{ base_path }}/assets/js/components/LoginScreen.js"></script>
+    <script>
+        const { createApp } = Vue;
+        const app = createApp({
+            components: { LoginScreen },
+            template: `<login-screen />`
+        });
+        app.mount('#app');
+    </script>
+</body>
+</html>

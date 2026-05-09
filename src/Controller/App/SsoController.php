@@ -21,6 +21,7 @@ class SsoController
     public function __construct(
         private readonly SsoTokenVerifier $tokenVerifier,
         private readonly ConnectionManagerInterface $connectionManager,
+        private readonly string $basePath = '',
     ) {
     }
 
@@ -82,12 +83,15 @@ class SsoController
         $_SESSION['ps_employee_id'] = $payload['employee_id'];
         $_SESSION['shop_id'] = $payload['shop_id'];
         $_SESSION['authenticated_at'] = time();
+        $_SESSION['terminal_id'] = null;
+        $_SESSION['cash_session_id'] = null;
+        unset($_SESSION['cash_opened_at'], $_SESSION['opening_cash']);
 
         $conn->executeStatement(
             'UPDATE user SET last_login_at = NOW() WHERE id = ?',
             [(int) $user['id']]
         );
 
-        return new RedirectResponse('/app/');
+        return new RedirectResponse($this->basePath . '/app/pos');
     }
 }

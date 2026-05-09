@@ -248,6 +248,9 @@ Conclusión: para el **80% de comercios PrestaShop con tienda física**, el stac
 ### 5.7 Administración
 
 - **RF-38** Gestión de usuarios y roles (administrador, encargado, cajero).
+  - Cada usuario puede tener un **código de identificación** (campo `code`, único, opcional) además del nombre.
+  - El panel de administración muestra el estado de bloqueo de cada usuario.
+  - El administrador puede **desbloquear** cuentas bloqueadas por intentos fallidos de PIN.
 - **RF-39** Permisos granulares.
 - **RF-40** Configuración por terminal (impresora, lector, atajos).
 - **RF-41** Selector de tienda activa (multi-shop PrestaShop).
@@ -777,11 +780,19 @@ Esta separación garantiza que un fallo de seguridad en el TPV **no compromete**
 
 ### 12.1 Autenticación y autorización
 
-- Login por usuario + PIN; sesión vinculada al terminal físico.
+- **Flujo de acceso de empleado** (dos pasos):
+  1. El empleado introduce su **nombre o código** en el campo de búsqueda.
+  2. El sistema busca en la tabla `user` por coincidencia exacta (case-insensitive) en `name` o `code`.
+  3. Solo si se encuentra un usuario activo se muestra el **teclado numérico de PIN**.
+  4. El empleado introduce su PIN (mínimo 8 caracteres; regla no visible en pantalla).
+  5. En caso de PIN correcto, se inicia sesión y se redirige al panel de venta.
+  6. Tras **3 intentos fallidos consecutivos**, la cuenta queda **bloqueada** (`locked_at` ≠ NULL) y se muestra el mensaje: *"Cuenta bloqueada. Contacta al administrador para desbloquearla."*
+  7. Un administrador puede desbloquear la cuenta desde el panel de gestión de empleados.
 - **Sesiones PHP nativas** o JWT (firebase/php-jwt) según preferencia.
 - Permisos por rol con principio de mínimo privilegio.
 - PIN de supervisor para descuentos altos, anulaciones, devoluciones sin ticket.
 - SSO desde el back-office de PrestaShop al TPV mediante token firmado de un solo uso.
+- El acceso de **administrador maestro** usa usuario + contraseña (variables de entorno `APP_ADMIN_USER` / `APP_ADMIN_PASSWORD`) sin afectar a la tabla `user`.
 
 ### 12.2 Comunicaciones
 

@@ -1,0 +1,234 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+    --bg:        oklch(11% 0.018 240);
+    --surface:   oklch(16% 0.022 240);
+    --surface2:  oklch(20% 0.025 240);
+    --surface3:  oklch(26% 0.028 240);
+    --border:    oklch(30% 0.025 240);
+    --border2:   oklch(38% 0.022 240);
+    --text:      oklch(93% 0.01 240);
+    --text2:     oklch(65% 0.015 240);
+    --text3:     oklch(45% 0.012 240);
+    --green:     oklch(65% 0.18 145);
+    --green-bg:  oklch(22% 0.07 145);
+    --green-dim: oklch(40% 0.12 145);
+    --amber:     oklch(72% 0.17 70);
+    --amber-bg:  oklch(22% 0.07 70);
+    --red:       oklch(60% 0.2 25);
+    --red-bg:    oklch(20% 0.08 25);
+    --blue:      oklch(65% 0.18 255);
+    --blue-bg:   oklch(20% 0.07 255);
+    --accent:    oklch(65% 0.18 145);
+}
+
+[data-theme="light"] {
+    --bg:        oklch(97% 0.006 240);
+    --surface:   oklch(100% 0 0);
+    --surface2:  oklch(94% 0.007 240);
+    --surface3:  oklch(90% 0.009 240);
+    --border:    oklch(84% 0.01 240);
+    --border2:   oklch(75% 0.012 240);
+    --text:      oklch(18% 0.018 240);
+    --text2:     oklch(38% 0.015 240);
+    --text3:     oklch(55% 0.012 240);
+    --green:     oklch(48% 0.18 145);
+    --green-bg:  oklch(93% 0.06 145);
+    --green-dim: oklch(72% 0.12 145);
+    --amber:     oklch(52% 0.17 70);
+    --amber-bg:  oklch(94% 0.06 70);
+    --red:       oklch(48% 0.2 25);
+    --red-bg:    oklch(94% 0.07 25);
+    --blue:      oklch(48% 0.18 255);
+    --blue-bg:   oklch(93% 0.06 255);
+    --accent:    oklch(48% 0.18 145);
+}
+
+html, body, #app {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 14px;
+    transition: background .2s, color .2s;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* Animations */
+@keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    20% { transform: translateX(-6px); }
+    40% { transform: translateX(6px); }
+    60% { transform: translateX(-4px); }
+    80% { transform: translateX(4px); }
+}
+
+@keyframes fadeInUp {
+    from { opacity: 0; transform: translate(-50%, 12px); }
+    to   { opacity: 1; transform: translate(-50%, 0); }
+}
+
+@keyframes pulse-green {
+    0%   { background: var(--green-bg); border-color: var(--green-dim); }
+    100% { background: var(--surface);   border-color: var(--border); }
+}
+
+.animate-shake { animation: shake 0.4s ease; }
+.animate-fade-in-up { animation: fadeInUp 0.2s ease; }
+.animate-pulse-green { animation: pulse-green 0.4s ease forwards; }
+
+/* Touch targets */
+.touch-target {
+    min-height: 56px;
+    min-width: 56px;
+}
+
+/* Utility overrides using CSS vars */
+.bg-surface   { background: var(--surface); }
+.bg-surface2  { background: var(--surface2); }
+.bg-surface3  { background: var(--surface3); }
+.border-custom { border-color: var(--border); }
+.border-custom2 { border-color: var(--border2); }
+.text-custom  { color: var(--text); }
+.text-custom2 { color: var(--text2); }
+.text-custom3 { color: var(--text3); }
+
+/* Numpad button base */
+.numpad-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 56px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--text);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 17px;
+    cursor: pointer;
+    transition: background 0.08s;
+    user-select: none;
+}
+.numpad-btn:hover { background: var(--surface3); }
+.numpad-btn:active { transform: scale(0.97); }
+
+/* Product card */
+.product-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    text-align: left;
+    font-family: inherit;
+    transition: all 0.1s;
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+}
+.product-card:hover { background: var(--surface2); }
+.product-card.no-stock {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+.product-card.no-stock:hover { background: var(--surface); }
+
+/* Modal backdrop */
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+
+/* Toast */
+.toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--surface);
+    border-radius: 12px;
+    padding: 12px 24px;
+    font-size: 13px;
+    font-weight: 500;
+    z-index: 300;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    white-space: nowrap;
+    animation: fadeInUp 0.2s ease;
+}
+
+/* Grid layout helpers */
+.layout-grid {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+.layout-catalog {
+    width: 62%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border-right: 1px solid var(--border);
+}
+.layout-ticket {
+    width: 38%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--surface);
+}
+
+@media (max-width: 1023px) {
+    .layout-catalog { width: 55%; }
+    .layout-ticket  { width: 45%; }
+}
+
+/* ── Combinations Modal ─────────────────────────────────────────── */
+.combinations-modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 1000;
+}
+.combinations-modal {
+    background: var(--surface); border-radius: 12px;
+    padding: 1.5rem; width: 90%; max-width: 480px; max-height: 80vh;
+    overflow-y: auto; -webkit-overflow-scrolling: touch;
+}
+.combinations-modal-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 1rem;
+}
+.combinations-modal-list {
+    display: flex; flex-direction: column; gap: 0;
+}
+.combination-btn {
+    display: flex; justify-content: space-between; align-items: center;
+    width: 100%; padding: 1rem; margin-bottom: 0.5rem;
+    background: var(--surface2); border: none; border-radius: 8px;
+    color: var(--text); font-size: 1rem; cursor: pointer;
+    min-height: 56px; touch-action: manipulation; font-family: inherit;
+    text-align: left; gap: 8px;
+}
+.combination-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.combination-btn:not(:disabled):active { background: var(--green-bg); }
+.combination-btn:not(:disabled):hover { background: var(--surface3); }
+.combo-label { flex: 1; font-size: 14px; }
+.combo-price { font-family: 'IBM Plex Mono', monospace; font-size: 14px; font-weight: 600; flex-shrink: 0; }
+.combo-stock { font-size: 12px; flex-shrink: 0; color: var(--green); }
+.combo-stock.out { color: var(--red, #e74c3c); }

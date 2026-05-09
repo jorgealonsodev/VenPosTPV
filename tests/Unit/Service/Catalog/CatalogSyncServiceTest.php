@@ -9,6 +9,7 @@ use PHPUnit\Framework\TestCase;
 use VenPosTPV\Service\Catalog\CatalogSyncService;
 use VenPosTPV\Service\Catalog\Exception\CatalogSyncException;
 use VenPosTPV\Service\PrestaShop\PrestaShopApiClient;
+use VenPosTPV\Service\Sync\SyncLogRepository;
 
 final class CatalogSyncServiceTest extends TestCase
 {
@@ -16,6 +17,7 @@ final class CatalogSyncServiceTest extends TestCase
     {
         $conn = $this->createMock(Connection::class);
         $conn->method('executeStatement')->willReturn(1);
+        $conn->method('isTransactionActive')->willReturn(true);
 
         return $conn;
     }
@@ -25,10 +27,16 @@ final class CatalogSyncServiceTest extends TestCase
         return $this->createMock(PrestaShopApiClient::class);
     }
 
+    private function createMockSyncLogRepo(): SyncLogRepository
+    {
+        return $this->createMock(SyncLogRepository::class);
+    }
+
     public function testSyncAllPopulatesAllTables(): void
     {
         $conn = $this->createMockConnection();
         $apiClient = $this->createMockApiClient();
+        $syncLogRepo = $this->createMockSyncLogRepo();
 
         $conn->expects($this->once())->method('beginTransaction');
         $conn->expects($this->once())->method('commit');
@@ -47,7 +55,7 @@ final class CatalogSyncServiceTest extends TestCase
             ['id_product' => 1, 'id_product_attribute' => 0, 'quantity' => 15, 'id_shop' => 1],
         ]);
 
-        $service = new CatalogSyncService($apiClient, $conn);
+        $service = new CatalogSyncService($apiClient, $conn, $syncLogRepo);
         $result = $service->syncAll();
 
         $this->assertSame(1, $result['categories']);
@@ -60,6 +68,7 @@ final class CatalogSyncServiceTest extends TestCase
     {
         $conn = $this->createMockConnection();
         $apiClient = $this->createMockApiClient();
+        $syncLogRepo = $this->createMockSyncLogRepo();
 
         $conn->expects($this->once())->method('beginTransaction');
         $conn->expects($this->once())->method('commit');
@@ -69,7 +78,7 @@ final class CatalogSyncServiceTest extends TestCase
             ['id_product' => 1, 'id_product_attribute' => 0, 'quantity' => 99, 'id_shop' => 1],
         ]);
 
-        $service = new CatalogSyncService($apiClient, $conn);
+        $service = new CatalogSyncService($apiClient, $conn, $syncLogRepo);
         $result = $service->syncStock();
 
         $this->assertSame(1, $result['stock']);
@@ -79,13 +88,14 @@ final class CatalogSyncServiceTest extends TestCase
     {
         $conn = $this->createMockConnection();
         $apiClient = $this->createMockApiClient();
+        $syncLogRepo = $this->createMockSyncLogRepo();
 
         $apiClient->method('getCategories')->willReturn([]);
         $apiClient->method('getProducts')->willReturn([]);
         $apiClient->method('getCombinations')->willReturn([]);
         $apiClient->method('getStockAvailables')->willReturn([]);
 
-        $service = new CatalogSyncService($apiClient, $conn);
+        $service = new CatalogSyncService($apiClient, $conn, $syncLogRepo);
         $result = $service->syncAll();
 
         $this->assertSame(0, $result['products']);
@@ -98,6 +108,7 @@ final class CatalogSyncServiceTest extends TestCase
     {
         $conn = $this->createMockConnection();
         $apiClient = $this->createMockApiClient();
+        $syncLogRepo = $this->createMockSyncLogRepo();
 
         $conn->expects($this->once())->method('beginTransaction');
         $conn->expects($this->once())->method('rollBack');
@@ -111,7 +122,7 @@ final class CatalogSyncServiceTest extends TestCase
         ]);
         $apiClient->method('getCombinations')->willThrowException(new \RuntimeException('API error'));
 
-        $service = new CatalogSyncService($apiClient, $conn);
+        $service = new CatalogSyncService($apiClient, $conn, $syncLogRepo);
 
         $this->expectException(CatalogSyncException::class);
         $service->syncAll();
@@ -121,6 +132,7 @@ final class CatalogSyncServiceTest extends TestCase
     {
         $conn = $this->createMockConnection();
         $apiClient = $this->createMockApiClient();
+        $syncLogRepo = $this->createMockSyncLogRepo();
 
         $apiClient->method('getCategories')->willReturn([
             ['id' => 2, 'name' => 'New Cat', 'id_parent' => 0, 'active' => 1],
@@ -131,10 +143,57 @@ final class CatalogSyncServiceTest extends TestCase
         $apiClient->method('getCombinations')->willReturn([]);
         $apiClient->method('getStockAvailables')->willReturn([]);
 
-        $service = new CatalogSyncService($apiClient, $conn);
+        $service = new CatalogSyncService($apiClient, $conn, $syncLogRepo);
         $result = $service->syncAll();
 
         $this->assertSame(1, $result['categories']);
         $this->assertSame(1, $result['products']);
+    }
+
+    public function testSyncAllLogsCatalogSyncTimestamp(): void
+    {
+        $conn = $this->createMockConnection();
+        $apiClient = $this->createMockApiClient();
+        $syncLogRepo = $this->createMockSyncLogRepo();
+
+        $apiClient->method('getCategories')->willReturn([]);
+        $apiClient->method('getProducts')->willReturn([]);
+        $apiClient->method('getCombinations')->willReturn([]);
+        $apiClient->method('getStockAvailables')->willReturn([]);
+
+        $syncLogRepo->expects($this->once())
+            ->method('upsert')
+            ->with(
+                'catalog',
+                'inbound',
+                $this->isInstanceOf(\DateTimeInterface::class),
+                $this->anything()
+            );
+
+        $service = new CatalogSyncService($apiClient, $conn, $syncLogRepo);
+        $service->syncAll();
+    }
+
+    public function testSyncStockLogsStockSyncTimestamp(): void
+    {
+        $conn = $this->createMockConnection();
+        $apiClient = $this->createMockApiClient();
+        $syncLogRepo = $this->createMockSyncLogRepo();
+
+        $apiClient->method('getStockAvailables')->willReturn([
+            ['id_product' => 1, 'id_product_attribute' => 0, 'quantity' => 99, 'id_shop' => 1],
+        ]);
+
+        $syncLogRepo->expects($this->once())
+            ->method('upsert')
+            ->with(
+                'stock',
+                'inbound',
+                $this->isInstanceOf(\DateTimeInterface::class),
+                $this->anything()
+            );
+
+        $service = new CatalogSyncService($apiClient, $conn, $syncLogRepo);
+        $service->syncStock();
     }
 }

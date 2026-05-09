@@ -1,4 +1,7 @@
 # config/services.yaml
+parameters:
+    app.base_path: '%env(TPV_BASE_PATH)%'
+
 services:
     _defaults:
         autowire: true
@@ -25,6 +28,9 @@ services:
         class: Doctrine\DBAL\Connection
         factory: ['@VenPosTPV\Service\Db\ConnectionManagerInterface', 'getTpvConnection']
 
+    Doctrine\DBAL\Connection:
+        alias: doctrine.dbal.tpv_connection
+
     VenPosTPV\Service\Sso\SsoTokenVerifier:
         arguments:
             $sharedSecret: '%sso.shared_secret%'
@@ -36,11 +42,104 @@ services:
             $baseUrl: '%ps.api.url%'
             $apiKey: '%ps.api.key%'
 
+    # Checkout Service
+    VenPosTPV\Service\Checkout\PsOrderClient:
+        arguments:
+            $shopUrl: '%ps.api.url%'
+            $sharedSecret: '%sso.shared_secret%'
+
+    VenPosTPV\Service\Checkout\CheckoutService:
+        arguments:
+            $cart: '@VenPosTPV\Service\Cart\CartService'
+            $client: '@VenPosTPV\Service\Checkout\PsOrderClient'
+            $conn: '@doctrine.dbal.tpv_connection'
+            $cashSessionService: '@VenPosTPV\Service\Cash\CashSessionService'
+            $messageBus: '@Symfony\Component\Messenger\MessageBusInterface'
+            $printerService: '@VenPosTPV\Service\Print\PrinterService'
+            $psApiClient: '@VenPosTPV\Service\PrestaShop\PrestaShopApiClient'
+            $syncLogRepo: '@VenPosTPV\Service\Sync\SyncLogRepository'
+
+    # Ticket Verification Service
+    VenPosTPV\Service\Print\TicketVerificationService:
+        arguments:
+            $secret: '%env(APP_SECRET)%'
+            $appUrl: '%env(APP_URL)%'
+
+    # Ticket Data Resolver
+    VenPosTPV\Service\Print\TicketDataResolver:
+        arguments:
+            $storeName: '%env(TPV_STORE_NAME)%'
+            $storeAddress: '%env(TPV_STORE_ADDRESS)%'
+
+    # Sync Log Repository
+    VenPosTPV\Service\Sync\SyncLogRepository:
+        arguments:
+            $connection: '@doctrine.dbal.tpv_connection'
+
+    # Stock Push Service (TPV → PS outbound retry)
+    VenPosTPV\Service\Sync\StockPushService:
+        arguments:
+            $connection: '@doctrine.dbal.tpv_connection'
+            $psApiClient: '@VenPosTPV\Service\PrestaShop\PrestaShopApiClient'
+            $syncLogRepo: '@VenPosTPV\Service\Sync\SyncLogRepository'
+
+    # Sync Status Service
+    VenPosTPV\Service\Sync\SyncStatusService:
+        arguments:
+            $apiClient: '@VenPosTPV\Service\PrestaShop\PrestaShopApiClient'
+            $syncLogRepo: '@VenPosTPV\Service\Sync\SyncLogRepository'
+            $connection: '@doctrine.dbal.tpv_connection'
+
     # Catalog Sync Service
     VenPosTPV\Service\Catalog\CatalogSyncService:
         arguments:
             $apiClient: '@VenPosTPV\Service\PrestaShop\PrestaShopApiClient'
             $connection: '@doctrine.dbal.tpv_connection'
+            $syncLogRepo: '@VenPosTPV\Service\Sync\SyncLogRepository'
+            $psShopUrl: '%ps.api.url%'
+            $psApiKey: '%ps.api.key%'
+
+    # Twig
+    Twig\Loader\LoaderInterface:
+        class: Twig\Loader\FilesystemLoader
+        arguments:
+            $paths: '%kernel.project_dir%/templates'
+
+    Twig\Environment:
+        arguments:
+            $loader: '@Twig\Loader\LoaderInterface'
+        calls:
+            - method: 'addGlobal'
+              arguments:
+                  - 'base_path'
+                  - '%app.base_path%'
+
+    # Controllers with injected base path
+    VenPosTPV\Controller\App\SsoController:
+        arguments:
+            $basePath: '%app.base_path%'
+    VenPosTPV\Controller\App\LoginController:
+        arguments:
+            $basePath: '%app.base_path%'
+    VenPosTPV\Controller\App\DevLoginController:
+        arguments:
+            $basePath: '%app.base_path%'
+    VenPosTPV\Controller\App\PosController:
+        arguments:
+            $basePath: '%app.base_path%'
+
+    # Refund Service
+    VenPosTPV\Service\Refund\PsRefundClient:
+        arguments:
+            $shopUrl: '%ps.api.url%'
+            $sharedSecret: '%sso.shared_secret%'
+
+    VenPosTPV\Service\Refund\RefundService:
+        arguments:
+            $orderSearchService: '@VenPosTPV\Service\Refund\OrderSearchService'
+            $client: '@VenPosTPV\Service\Refund\PsRefundClient'
+            $conn: '@doctrine.dbal.tpv_connection'
+            $cashSessionService: '@VenPosTPV\Service\Cash\CashSessionService'
 
     # Messenger Handler
     VenPosTPV\MessageHandler\SyncCatalogMessageHandler:

@@ -196,4 +196,47 @@ final class PrestaShopApiClientTest extends TestCase
 
         $this->assertCount(0, $products);
     }
+
+    public function testPingReturnsOnlineTrueAndLatencyOnHttp200(): void
+    {
+        $httpClient = new MockHttpClient([
+            new MockResponse(json_encode(['products' => []]), [
+                'http_code' => 200,
+                'response_headers' => ['Content-Type: application/json'],
+            ]),
+        ]);
+
+        $client = new PrestaShopApiClient('http://localhost/prestashop/api', 'TEST_KEY', $httpClient);
+        $result = $client->ping();
+
+        $this->assertTrue($result['online']);
+        $this->assertIsInt($result['latency_ms']);
+        $this->assertGreaterThanOrEqual(0, $result['latency_ms']);
+    }
+
+    public function testPingReturnsOnlineFalseOnNetworkError(): void
+    {
+        $httpClient = new MockHttpClient([
+            new MockResponse('', ['error' => 'Connection refused']),
+        ]);
+
+        $client = new PrestaShopApiClient('http://localhost/prestashop/api', 'TEST_KEY', $httpClient);
+        $result = $client->ping();
+
+        $this->assertFalse($result['online']);
+        $this->assertNull($result['latency_ms']);
+    }
+
+    public function testPingReturnsOnlineFalseOnHttp401(): void
+    {
+        $httpClient = new MockHttpClient([
+            new MockResponse('', ['http_code' => 401]),
+        ]);
+
+        $client = new PrestaShopApiClient('http://localhost/prestashop/api', 'TEST_KEY', $httpClient);
+        $result = $client->ping();
+
+        $this->assertFalse($result['online']);
+        $this->assertNull($result['latency_ms']);
+    }
 }

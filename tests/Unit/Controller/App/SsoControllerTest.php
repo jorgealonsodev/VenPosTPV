@@ -19,9 +19,10 @@ class SsoControllerTest extends TestCase
 {
     private function createController(
         SsoTokenVerifier $verifier,
-        ConnectionManagerInterface $connectionManager
+        ConnectionManagerInterface $connectionManager,
+        string $basePath = '/tpv'
     ): SsoController {
-        return new SsoController($verifier, $connectionManager);
+        return new SsoController($verifier, $connectionManager, $basePath);
     }
 
     public function testMissingTokenReturns400(): void
@@ -212,6 +213,6 @@ class SsoControllerTest extends TestCase
         $response = $controller->index($request);
 
         $this->assertSame(Response::HTTP_FOUND, $response->getStatusCode());
-        $this->assertSame('/app/', $response->headers->get('Location'));
+        $this->assertSame('/tpv/app/pos', $response->headers->get('Location'));
     }
 }
