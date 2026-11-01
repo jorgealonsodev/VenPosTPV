@@ -29,6 +29,10 @@ final class EscPosTicketBuilderTest extends TestCase
             reference: 'ORD-042',
             storeName: 'Mi Tienda',
             storeAddress: 'Calle Falsa 123, 28001 Madrid',
+            ticketHeader: 'Horario: L-V 09:00-20:00',
+            ticketFooter: 'Gracias por su compra',
+            ticketLogo: '/uploads/tickets/logo.png',
+            ticketWidthPx: 576,
             date: new \DateTimeImmutable('2024-01-15 14:30:00'),
             cashierName: 'Juan',
             lines: [
@@ -60,6 +64,7 @@ final class EscPosTicketBuilderTest extends TestCase
         $bytes = $builder->build($this->createTicketData());
 
         self::assertStringContainsString('Mi Tienda', $bytes);
+        self::assertStringContainsString('Horario: L-V 09:00-20:00', $bytes);
         self::assertStringContainsString('ORD-042', $bytes);
         self::assertStringContainsString('Juan', $bytes);
     }

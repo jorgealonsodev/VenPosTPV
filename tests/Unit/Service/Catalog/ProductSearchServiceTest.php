@@ -77,6 +77,9 @@ class ProductSearchServiceTest extends TestCase
                     'stock' => '5',
                 ],
             ]),
+            $this->createAttributeQueryBuilder(10, [
+                ['group_name' => 'Color', 'attribute_name' => 'Rojo'],
+            ]),
         ]));
 
         $product = $service->findById(1);
@@ -90,6 +93,9 @@ class ProductSearchServiceTest extends TestCase
         $this->assertSame(10, $product['combinations'][0]['id']);
         $this->assertSame(2.0, $product['combinations'][0]['price_impact']);
         $this->assertSame(5, $product['combinations'][0]['stock']);
+        $this->assertSame([
+            ['group_name' => 'Color', 'attribute_name' => 'Rojo'],
+        ], $product['combinations'][0]['attributes']);
     }
 
     public function testGetActiveCategoriesMapsPrimitiveTypes(): void
@@ -133,6 +139,42 @@ class ProductSearchServiceTest extends TestCase
         $result->method('fetchAssociative')->willReturn($row);
 
         return $this->createQueryBuilderWithResult($result);
+    }
+
+    /** @param array<int, array{group_name: string, attribute_name: string}> $rows */
+    private function createAttributeQueryBuilder(int $combinationId, array $rows): QueryBuilder
+    {
+        $result = $this->createMock(Result::class);
+        $result->expects($this->once())->method('fetchAllAssociative')->willReturn($rows);
+
+        $qb = $this->createMock(QueryBuilder::class);
+        $qb->expects($this->once())
+            ->method('select')
+            ->with(['group_name', 'attribute_name'])
+            ->willReturnSelf();
+        $qb->expects($this->once())
+            ->method('from')
+            ->with('catalog_combination_attribute')
+            ->willReturnSelf();
+        $qb->expects($this->once())
+            ->method('where')
+            ->with('combination_id = :combinationId')
+            ->willReturnSelf();
+        $qb->expects($this->once())
+            ->method('setParameter')
+            ->with('combinationId', $combinationId)
+            ->willReturnSelf();
+        $qb->expects($this->once())
+            ->method('orderBy')
+            ->with('group_name', 'ASC')
+            ->willReturnSelf();
+        $qb->expects($this->once())
+            ->method('addOrderBy')
+            ->with('attribute_name', 'ASC')
+            ->willReturnSelf();
+        $qb->expects($this->once())->method('executeQuery')->willReturn($result);
+
+        return $qb;
     }
 
     private function createQueryBuilderWithResult(Result $result): QueryBuilder

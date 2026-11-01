@@ -150,7 +150,7 @@ final class CatalogSyncServiceTest extends TestCase
         $this->assertSame(1, $result['products']);
     }
 
-    public function testSyncAllLogsCatalogSyncTimestamp(): void
+    public function testSyncAllLogsEachInboundSourceWithRowCounts(): void
     {
         $conn = $this->createMockConnection();
         $apiClient = $this->createMockApiClient();
@@ -161,17 +161,26 @@ final class CatalogSyncServiceTest extends TestCase
         $apiClient->method('getCombinations')->willReturn([]);
         $apiClient->method('getStockAvailables')->willReturn([]);
 
-        $syncLogRepo->expects($this->once())
+        $expectedUpserts = [
+            ['catalog', 'inbound', 0],
+            ['stock', 'inbound', 0],
+            ['prices', 'inbound', 0],
+        ];
+        $upsertIndex = 0;
+        $syncLogRepo->expects($this->exactly(3))
             ->method('upsert')
-            ->with(
-                'catalog',
-                'inbound',
-                $this->isInstanceOf(\DateTimeInterface::class),
-                $this->anything()
-            );
+            ->willReturnCallback(function (string $source, string $direction, \DateTimeInterface $timestamp, int $rowCount) use (&$expectedUpserts, &$upsertIndex): void {
+                self::assertSame($expectedUpserts[$upsertIndex][0], $source);
+                self::assertSame($expectedUpserts[$upsertIndex][1], $direction);
+                self::assertInstanceOf(\DateTimeImmutable::class, $timestamp);
+                self::assertSame($expectedUpserts[$upsertIndex][2], $rowCount);
+                ++$upsertIndex;
+            });
 
         $service = new CatalogSyncService($apiClient, $conn, $syncLogRepo);
         $service->syncAll();
+
+        self::assertSame(3, $upsertIndex);
     }
 
     public function testSyncStockLogsStockSyncTimestamp(): void

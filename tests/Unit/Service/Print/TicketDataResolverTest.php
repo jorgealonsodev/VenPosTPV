@@ -40,10 +40,11 @@ final class TicketDataResolverTest extends TestCase
         $conn->method('fetchAssociative')
             ->willReturnMap([
                 [
-                    'SELECT ps_order_id, user_id, payment_breakdown, created_at FROM order_meta WHERE ps_order_id = ?',
+                    'SELECT ps_order_id, terminal_id, user_id, payment_breakdown, created_at FROM order_meta WHERE ps_order_id = ?',
                     [42],
                     [
                         'ps_order_id' => 42,
+                        'terminal_id' => 7,
                         'user_id' => 5,
                         'payment_breakdown' => json_encode([
                             'reference' => 'ORD-042',
@@ -65,6 +66,17 @@ final class TicketDataResolverTest extends TestCase
                     [5],
                     ['name' => 'Juan'],
                 ],
+                [
+                    'SELECT store_address, ticket_header, ticket_footer, ticket_logo, ticket_width_px FROM terminal WHERE id = ?',
+                    [7],
+                    [
+                        'store_address' => 'Avenida Real 42',
+                        'ticket_header' => 'Horario: L-V 09:00-20:00',
+                        'ticket_footer' => 'Vuelva pronto',
+                        'ticket_logo' => '/uploads/tickets/logo.png',
+                        'ticket_width_px' => 576,
+                    ],
+                ],
             ]);
 
         $verificationService = $this->createMock(TicketVerificationService::class);
@@ -78,7 +90,11 @@ final class TicketDataResolverTest extends TestCase
         self::assertSame(42, $result->orderId);
         self::assertSame('ORD-042', $result->reference);
         self::assertSame('Mi Tienda', $result->storeName);
-        self::assertSame('Calle Falsa 123', $result->storeAddress);
+        self::assertSame('Avenida Real 42', $result->storeAddress);
+        self::assertSame('Horario: L-V 09:00-20:00', $result->ticketHeader);
+        self::assertSame('Vuelva pronto', $result->ticketFooter);
+        self::assertSame('/uploads/tickets/logo.png', $result->ticketLogo);
+        self::assertSame(576, $result->ticketWidthPx);
         self::assertSame('Juan', $result->cashierName);
         self::assertSame(99.99, $result->total);
         self::assertSame(90.0, $result->subtotal);
@@ -96,10 +112,11 @@ final class TicketDataResolverTest extends TestCase
         $conn->method('fetchAssociative')
             ->willReturnMap([
                 [
-                    'SELECT ps_order_id, user_id, payment_breakdown, created_at FROM order_meta WHERE ps_order_id = ?',
+                    'SELECT ps_order_id, terminal_id, user_id, payment_breakdown, created_at FROM order_meta WHERE ps_order_id = ?',
                     [42],
                     [
                         'ps_order_id' => 42,
+                        'terminal_id' => 7,
                         'user_id' => 99,
                         'payment_breakdown' => json_encode([
                             'reference' => 'ORD-042',
@@ -115,6 +132,11 @@ final class TicketDataResolverTest extends TestCase
                 [
                     'SELECT name FROM user WHERE id = ?',
                     [99],
+                    false,
+                ],
+                [
+                    'SELECT store_address, ticket_header, ticket_footer, ticket_logo, ticket_width_px FROM terminal WHERE id = ?',
+                    [7],
                     false,
                 ],
             ]);
