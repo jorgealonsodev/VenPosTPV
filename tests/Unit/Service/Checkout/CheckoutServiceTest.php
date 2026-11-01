@@ -579,4 +579,169 @@ final class CheckoutServiceTest extends TestCase
             'total' => 10.0,
         ], 'card', 10.0);
     }
+
+    /** @param array<string, string|null> $catalogPrices */
+    private function catalogConnection(array $catalogPrices, int $stock = 10): Connection
+    {
+        $conn = $this->createMock(Connection::class);
+        $conn->method('fetchOne')->willReturn($stock);
+        $conn->method('fetchAssociative')
+            ->willReturnCallback(function (string $sql, array $params = []) use ($catalogPrices): array|false {
+                $key = (string) ($params[0] ?? '');
+                if (str_contains($sql, 'FROM catalog_product')) {
+                    return array_key_exists($key, $catalogPrices) && $catalogPrices[$key] !== null
+                        ? ['price' => $catalogPrices[$key]]
+                        : false;
+                }
+                if (str_contains($sql, 'FROM catalog_combination')) {
+                    return $catalogPrices[$key] ?? false;
+                }
+
+                return false;
+            });
+        $conn->method('insert')->willReturn(1);
+        $conn->method('executeStatement')->willReturn(1);
+
+        return $conn;
+    }
+
+    public function testRejectsSubmittedPriceAboveDeclaredCatalogPriceDifference(): void
+    {
+        $client = $this->createMock(PsOrderClient::class);
+        $client->expects($this->never())->method('createOrder');
+
+        $service = $this->createService(
+            client: $client,
+            conn: $this->catalogConnection(['1' => '9.00']),
+        );
+
+        $this->expectException(CheckoutException::class);
+        $this->expectExceptionMessage('Price mismatch for product 1');
+
+        $service->createOrder(1, [
+            'lines' => [['product_id' => 1, 'qty' => 1, 'price' => 0.01]],
+            'total' => 0.01,
+        ], 'cash', 0.01);
+    }
+
+    public function testAcceptsSubmittedPriceMatchingCatalogPrice(): void
+    {
+        $client = $this->createMock(PsOrderClient::class);
+        $client->expects($this->once())
+            ->method('createOrder')
+            ->with($this->callback(static function (array $payload): bool {
+                return (float) $payload['products'][0]['price'] === 9.0;
+            }))
+            ->willReturn(['order_id' => 501, 'reference' => 'ORD-501', 'total_paid' => 18.0]);
+
+        $service = $this->createService(
+            client: $client,
+            conn: $this->catalogConnection(['1' => '9.00']),
+        );
+
+        $result = $service->createOrder(1, [
+            'lines' => [['product_id' => 1, 'qty' => 2, 'price' => 9.0]],
+            'total' => 18.0,
+        ], 'card', 18.0);
+
+        $this->assertSame(18.0, $result['total']);
+    }
+
+    public function testCombinationPriceImpactIsAddedToExpectedUnitPrice(): void
+    {
+        $client = $this->createMock(PsOrderClient::class);
+        $client->expects($this->never())->method('createOrder');
+
+        $service = $this->createService(
+            client: $client,
+            conn: $this->catalogConnection([
+                '1' => '9.00',
+                '7' => ['price_impact' => '2.50'],
+            ]),
+        );
+
+        $this->expectException(CheckoutException::class);
+        $this->expectExceptionMessage('Price mismatch for product 1 combination 7');
+
+        $service->createOrder(1, [
+            'lines' => [['product_id' => 1, 'id_product_attribute' => 7, 'qty' => 1, 'price' => 9.0]],
+            'total' => 9.0,
+        ], 'cash', 9.0);
+    }
+
+    public function testRejectsSubmittedTotalThatDoesNotMatchCatalogPrices(): void
+    {
+        $client = $this->createMock(PsOrderClient::class);
+        $client->expects($this->never())->method('createOrder');
+
+        $service = $this->createService(
+            client: $client,
+            conn: $this->catalogConnection(['1' => '9.00']),
+        );
+
+        $this->expectException(CheckoutException::class);
+        $this->expectExceptionMessage('Total mismatch: expected 18.00, received 1.00');
+
+        $service->createOrder(1, [
+            'lines' => [['product_id' => 1, 'qty' => 2, 'price' => 9.0]],
+            'total' => 1.0,
+        ], 'cash', 1.0);
+    }
+
+    public function testGlobalPercentageDiscountIsAppliedToAuthoritativeTotal(): void
+    {
+        $client = $this->createMock(PsOrderClient::class);
+        $client->method('createOrder')->willReturn(['order_id' => 502, 'reference' => 'ORD-502', 'total_paid' => 16.2]);
+
+        $service = $this->createService(
+            client: $client,
+            conn: $this->catalogConnection(['1' => '9.00']),
+        );
+
+        $result = $service->createOrder(1, [
+            'lines' => [['product_id' => 1, 'qty' => 2, 'price' => 9.0]],
+            'discount' => ['type' => 'pct', 'value' => 10],
+            'total' => 16.2,
+        ], 'card', 16.2);
+
+        $this->assertSame(16.2, $result['total']);
+    }
+
+    public function testOutOfRangePercentageDiscountIsRejected(): void
+    {
+        $client = $this->createMock(PsOrderClient::class);
+        $client->expects($this->never())->method('createOrder');
+
+        $service = $this->createService(
+            client: $client,
+            conn: $this->catalogConnection(['1' => '9.00']),
+        );
+
+        $this->expectException(CheckoutException::class);
+        $this->expectExceptionMessage('Invalid discount');
+
+        $service->createOrder(1, [
+            'lines' => [['product_id' => 1, 'qty' => 1, 'price' => 9.0]],
+            'discount' => ['type' => 'pct', 'value' => 150],
+            'total' => 0.0,
+        ], 'cash', 0.0);
+    }
+
+    public function testUnknownCatalogProductKeepsSubmittedPrice(): void
+    {
+        $client = $this->createMock(PsOrderClient::class);
+        $client->method('createOrder')->willReturn(['order_id' => 503, 'reference' => 'ORD-503', 'total_paid' => 12.0]);
+
+        $service = $this->createService(
+            client: $client,
+            conn: $this->catalogConnection([]),
+        );
+
+        $result = $service->createOrder(1, [
+            'lines' => [['product_id' => 999, 'qty' => 1, 'price' => 12.0]],
+            'total' => 12.0,
+        ], 'card', 12.0);
+
+        $this->assertSame(12.0, $result['total']);
+    }
 }

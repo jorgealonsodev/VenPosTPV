@@ -16,6 +16,9 @@ use VenPosTPV\Service\Sync\SyncLogRepository;
 
 class CheckoutService
 {
+    private const PRICE_TOLERANCE = 0.02;
+    private const TOTAL_TOLERANCE = 0.02;
+
     public function __construct(
         private readonly CartService $cart,
         private readonly PsOrderClient $client,
@@ -38,12 +41,17 @@ class CheckoutService
     public function createOrder(int $userId, array $cartData, string $paymentMethod, float $amountTendered): array
     {
         $lines = $cartData['lines'] ?? $cartData['items'] ?? [];
-        $total = (float) ($cartData['total'] ?? 0);
+        $submittedTotal = (float) ($cartData['total'] ?? 0);
         $customer = $cartData['customer'] ?? null;
 
         if (empty($lines)) {
             throw CheckoutException::psValidationFailed('Cart is empty');
         }
+
+        // Prices and totals arrive from the browser: resolve them against the synced catalog.
+        $pricing = $this->resolveAuthoritativePricing($lines, $cartData['discount'] ?? null, $submittedTotal);
+        $lines = $pricing['lines'];
+        $total = $pricing['total'];
 
         // Validate stock for each line
         $this->validateStock($lines);
@@ -139,6 +147,120 @@ class CheckoutService
             'terminal_id' => (int) ($cashContext['terminal_id'] ?? 1),
             'saga_error' => $sagaError,
         ];
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $lines
+     *
+     * @return array{lines: array<int, array<string, mixed>>, subtotal: float, total: float}
+     *
+     * @throws CheckoutException
+     */
+    private function resolveAuthoritativePricing(array $lines, mixed $discount, float $submittedTotal): array
+    {
+        $priced = [];
+        $subtotal = 0.0;
+
+        foreach ($lines as $line) {
+            if (!is_array($line)) {
+                continue;
+            }
+
+            $productId = (int) ($line['product_id'] ?? $line['id'] ?? 0);
+            $combinationId = (int) ($line['id_product_attribute'] ?? 0);
+            $qty = max(1, (int) ($line['qty'] ?? $line['quantity'] ?? 1));
+            $submittedPrice = (float) ($line['price'] ?? 0);
+            $lineDiscount = max(0.0, min(100.0, (float) ($line['discount'] ?? 0)));
+
+            $expectedUnitPrice = $this->resolveCatalogUnitPrice($productId, $combinationId);
+            if ($expectedUnitPrice !== null && abs($expectedUnitPrice - $submittedPrice) > self::PRICE_TOLERANCE) {
+                throw CheckoutException::psValidationFailed(sprintf(
+                    'Price mismatch for product %d%s (expected %.2f, received %.2f)',
+                    $productId,
+                    $combinationId > 0 ? ' combination ' . $combinationId : '',
+                    $expectedUnitPrice,
+                    round($submittedPrice, 2)
+                ));
+            }
+
+            $unitPrice = $expectedUnitPrice ?? $submittedPrice;
+            $line['price'] = $unitPrice;
+            $line['qty'] = $qty;
+            $priced[] = $line;
+
+            $subtotal += $unitPrice * $qty * (1 - $lineDiscount / 100);
+        }
+
+        if ($priced === []) {
+            throw CheckoutException::psValidationFailed('Cart is empty');
+        }
+
+        $subtotal = round($subtotal, 2);
+        $total = round(max(0.0, $subtotal - $this->resolveDiscountAmount($discount, $subtotal)), 2);
+
+        if (abs($total - round($submittedTotal, 2)) > self::TOTAL_TOLERANCE) {
+            throw CheckoutException::psValidationFailed(sprintf(
+                'Total mismatch: expected %.2f, received %.2f',
+                $total,
+                round($submittedTotal, 2)
+            ));
+        }
+
+        return ['lines' => $priced, 'subtotal' => $subtotal, 'total' => $total];
+    }
+
+    /**
+     * Returns the expected unit price from the synced catalog, or null when the
+     * product has not been synced yet (pending sync keeps the submitted price).
+     */
+    private function resolveCatalogUnitPrice(int $productId, int $combinationId): ?float
+    {
+        if ($productId <= 0) {
+            return null;
+        }
+
+        $product = $this->conn->fetchAssociative('SELECT price FROM catalog_product WHERE id = ?', [$productId]);
+        if ($product === false || !isset($product['price'])) {
+            return null;
+        }
+
+        $unitPrice = (float) $product['price'];
+        if ($combinationId > 0) {
+            $combination = $this->conn->fetchAssociative(
+                'SELECT price_impact FROM catalog_combination WHERE id = ? AND id_product = ?',
+                [$combinationId, $productId]
+            );
+            if ($combination !== false && isset($combination['price_impact'])) {
+                $unitPrice += (float) $combination['price_impact'];
+            }
+        }
+
+        return round($unitPrice, 2);
+    }
+
+    /**
+     * @throws CheckoutException
+     */
+    private function resolveDiscountAmount(mixed $discount, float $subtotal): float
+    {
+        if (!is_array($discount) || !isset($discount['value'])) {
+            return 0.0;
+        }
+
+        $value = (float) $discount['value'];
+        if (!is_finite($value) || $value < 0) {
+            throw CheckoutException::psValidationFailed('Invalid discount: value must be zero or positive');
+        }
+
+        if (($discount['type'] ?? 'pct') === 'amt') {
+            return round(min($value, $subtotal), 2);
+        }
+
+        if ($value > 100) {
+            throw CheckoutException::psValidationFailed('Invalid discount: percentage must be between 0 and 100');
+        }
+
+        return round($subtotal * $value / 100, 2);
     }
 
     /**
