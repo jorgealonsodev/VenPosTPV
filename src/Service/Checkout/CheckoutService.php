@@ -32,12 +32,6 @@ class CheckoutService
     /** Used only when the sync could not resolve a tax-excluded price for any line. */
     private const ASSUMED_TAX_RATE = 0.21;
 
-    /** Flat delivery fee the customer pays; the browser may not choose another amount. */
-    private const DELIVERY_FEE = 10.0;
-
-    /** Cart lines that carry this kind are fees, not catalog products. */
-    private const DELIVERY_KIND = 'delivery';
-
     public function __construct(
         private readonly CartService $cart,
         private readonly PsOrderClient $client,
@@ -78,11 +72,6 @@ class CheckoutService
         // Build PS payload
         $products = [];
         foreach ($lines as $line) {
-            if (($line['kind'] ?? '') === self::DELIVERY_KIND) {
-                // The delivery fee is booked locally; PrestaShop only receives products.
-                continue;
-            }
-
             $products[] = [
                 'id_product' => (int) ($line['product_id'] ?? $line['id'] ?? 0),
                 'id_product_attribute' => (int) ($line['id_product_attribute'] ?? 0),
@@ -190,25 +179,6 @@ class CheckoutService
 
         foreach ($lines as $line) {
             if (!is_array($line)) {
-                continue;
-            }
-
-            if (($line['kind'] ?? '') === self::DELIVERY_KIND) {
-                $submittedFee = (float) ($line['price'] ?? 0);
-                if (abs($submittedFee - self::DELIVERY_FEE) > self::PRICE_TOLERANCE) {
-                    throw CheckoutException::psValidationFailed(sprintf(
-                        'Delivery fee mismatch: expected %.2f, received %.2f',
-                        self::DELIVERY_FEE,
-                        round($submittedFee, 2)
-                    ));
-                }
-
-                $line['price'] = self::DELIVERY_FEE;
-                $line['price_net'] = round(self::DELIVERY_FEE / (1 + self::ASSUMED_TAX_RATE), 2);
-                $line['qty'] = 1;
-                $priced[] = $line;
-                $subtotal += self::DELIVERY_FEE;
-
                 continue;
             }
 
@@ -390,10 +360,6 @@ class CheckoutService
     private function validateStock(array $lines): void
     {
         foreach ($lines as $line) {
-            if (($line['kind'] ?? '') === self::DELIVERY_KIND) {
-                continue;
-            }
-
             $productId = (int) ($line['product_id'] ?? $line['id'] ?? 0);
             $combinationId = (int) ($line['id_product_attribute'] ?? 0);
             $qty = (int) ($line['qty'] ?? $line['quantity'] ?? 1);
@@ -463,13 +429,6 @@ class CheckoutService
 
             $tax = $this->resolveVatAmount($lines, $subtotal, $total);
 
-            $deliveryAmount = 0.0;
-            foreach ($lines as $line) {
-                if (($line['kind'] ?? '') === self::DELIVERY_KIND) {
-                    $deliveryAmount += (float) ($line['price'] ?? 0) * (int) ($line['qty'] ?? 1);
-                }
-            }
-
             $this->conn->insert('order_meta', [
                 'ps_order_id' => $psOrderId,
                 'terminal_id' => (int) ($cashContext['terminal_id'] ?? 1),
@@ -482,7 +441,6 @@ class CheckoutService
                     'amount_tendered' => $amountTendered,
                     'change_due' => $changeDue,
                     'subtotal' => $subtotal,
-                    'delivery_amount' => round($deliveryAmount, 2),
                     'tax' => $tax,
                     'lines' => $breakdownLines,
                 ], JSON_THROW_ON_ERROR),

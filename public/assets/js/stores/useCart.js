@@ -15,10 +15,6 @@ const useCart = (function () {
 
     const IVA_RATE = 0.21;
 
-    /** Flat delivery fee the customer pays on top of the goods. */
-    const DELIVERY_FEE = 10;
-    const DELIVERY_LINE_ID = 'line_delivery';
-
     function load() {
         const raw = localStorage.getItem(STORAGE_KEY);
         if (raw) {
@@ -123,50 +119,6 @@ const useCart = (function () {
         recalc();
         save();
         return true;
-    }
-
-    /**
-     * Adds the flat delivery fee as its own line, so it appears on the ticket, takes
-     * part in the total and carries its own VAT. Idempotent: one delivery per sale.
-     */
-    function addDelivery() {
-        if (cart.lines.some(line => line.id === DELIVERY_LINE_ID)) {
-            return false;
-        }
-
-        cart.lines.push({
-            id: DELIVERY_LINE_ID,
-            kind: 'delivery',
-            product_id: 0,
-            id_product_attribute: 0,
-            name: 'Entrega a domicilio',
-            reference: '',
-            price: DELIVERY_FEE,
-            net_price: Math.round((DELIVERY_FEE / (1 + IVA_RATE)) * 100) / 100,
-            qty: 1,
-            discount: 0,
-        });
-
-        recalc();
-        save();
-
-        return true;
-    }
-
-    function removeDelivery() {
-        if (!cart.lines.some(line => line.id === DELIVERY_LINE_ID)) {
-            return false;
-        }
-
-        cart.lines = cart.lines.filter(line => line.id !== DELIVERY_LINE_ID);
-        recalc();
-        save();
-
-        return true;
-    }
-
-    function hasDelivery() {
-        return cart.lines.some(line => line.id === DELIVERY_LINE_ID);
     }
 
     function remove(lineId) {
@@ -383,9 +335,6 @@ const useCart = (function () {
         add,
         remove,
         updateQty,
-        addDelivery,
-        removeDelivery,
-        hasDelivery,
         clear,
         applyDiscount,
         setCustomer,
