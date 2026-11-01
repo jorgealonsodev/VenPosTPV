@@ -127,7 +127,7 @@ class ParkedTicketService
             'cashier_name' => $cashierName,
             'note' => $note,
             'customer' => json_encode($customer, JSON_THROW_ON_ERROR),
-            'lines' => json_encode($normalizedLines, JSON_THROW_ON_ERROR),
+            'lines_json' => json_encode($normalizedLines, JSON_THROW_ON_ERROR),
             'discount' => $discount !== null ? json_encode($discount, JSON_THROW_ON_ERROR) : null,
             'total' => number_format($total, 2, '.', ''),
             'created_at' => $createdAt,
@@ -194,8 +194,9 @@ class ParkedTicketService
         }
 
         $lines = [];
-        if (isset($row['lines']) && is_string($row['lines']) && $row['lines'] !== '') {
-            $decodedLines = json_decode($row['lines'], true);
+        $rawLinesJson = $row['lines_json'] ?? $row['lines'] ?? null;
+        if (is_string($rawLinesJson) && $rawLinesJson !== '') {
+            $decodedLines = json_decode($rawLinesJson, true);
             if (is_array($decodedLines)) {
                 $lines = $decodedLines;
             }

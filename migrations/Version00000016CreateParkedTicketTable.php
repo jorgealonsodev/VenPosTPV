@@ -31,7 +31,7 @@ final class Version00000016CreateParkedTicketTable extends AbstractMigration
                 cashier_name VARCHAR(128) NOT NULL DEFAULT \'Cajero\',
                 note VARCHAR(120) NULL,
                 customer JSON NULL,
-                lines JSON NOT NULL,
+                lines_json JSON NOT NULL,
                 discount JSON NULL,
                 total DECIMAL(10,2) NOT NULL DEFAULT 0.00,
                 created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

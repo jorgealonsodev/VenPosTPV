@@ -78,7 +78,7 @@ class Version00000016CreateParkedTicketTableTest extends TestCase
         $this->assertContains('cashier_name', $columnNames);
         $this->assertContains('note', $columnNames);
         $this->assertContains('customer', $columnNames);
-        $this->assertContains('lines', $columnNames);
+        $this->assertContains('lines_json', $columnNames);
         $this->assertContains('discount', $columnNames);
         $this->assertContains('total', $columnNames);
         $this->assertContains('created_at', $columnNames);

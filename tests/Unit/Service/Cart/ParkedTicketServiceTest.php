@@ -25,7 +25,7 @@ class ParkedTicketServiceTest extends TestCase
                     'cashier_name' => 'María García',
                     'note' => 'Probador 2',
                     'customer' => json_encode(['id' => 5, 'name' => 'Ana López'], JSON_THROW_ON_ERROR),
-                    'lines' => json_encode([
+                    'lines_json' => json_encode([
                         ['id' => 'l1', 'product_id' => 7, 'name' => 'Abrigo Gris', 'price' => 50.0, 'qty' => 2, 'discount' => 0],
                     ], JSON_THROW_ON_ERROR),
                     'discount' => json_encode(['type' => 'pct', 'value' => 10], JSON_THROW_ON_ERROR),
@@ -123,7 +123,7 @@ class ParkedTicketServiceTest extends TestCase
                 'cashier_name' => 'María',
                 'note' => 'Mesa 1',
                 'customer' => json_encode(['name' => 'Consumidor final', 'default' => true], JSON_THROW_ON_ERROR),
-                'lines' => json_encode([['id' => 'l1', 'product_id' => 1, 'name' => 'Camisa', 'price' => 25.0, 'qty' => 1]], JSON_THROW_ON_ERROR),
+                'lines_json' => json_encode([['id' => 'l1', 'product_id' => 1, 'name' => 'Camisa', 'price' => 25.0, 'qty' => 1]], JSON_THROW_ON_ERROR),
                 'discount' => null,
                 'total' => '25.00',
                 'created_at' => '2026-11-01 20:05:00',
