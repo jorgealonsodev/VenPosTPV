@@ -62,7 +62,7 @@ class SsoController
         $conn = $this->connectionManager->getTpvConnection();
 
         $user = $conn->fetchAssociative(
-            'SELECT id, name, role_id FROM user WHERE ps_employee_id = ? AND active = 1',
+            'SELECT u.id, u.name, r.name AS role FROM user u JOIN role r ON r.id = u.role_id WHERE u.ps_employee_id = ? AND u.active = 1',
             [$payload['employee_id']]
         );
 
@@ -80,6 +80,8 @@ class SsoController
         session_regenerate_id(true);
 
         $_SESSION['user_id'] = (int) $user['id'];
+        $_SESSION['cashier_name'] = (string) $user['name'];
+        $_SESSION['role'] = (string) $user['role'];
         $_SESSION['ps_employee_id'] = $payload['employee_id'];
         $_SESSION['shop_id'] = $payload['shop_id'];
         $_SESSION['authenticated_at'] = time();

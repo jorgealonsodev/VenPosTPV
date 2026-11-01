@@ -151,7 +151,7 @@ class SsoControllerTest extends TestCase
         $conn->expects($this->once())
             ->method('fetchAssociative')
             ->with(
-                $this->stringContains('SELECT id, name, role_id FROM user'),
+                $this->stringContains('SELECT u.id, u.name, r.name AS role FROM user u JOIN role r'),
                 $this->equalTo([999])
             )
             ->willReturn(false);
@@ -187,13 +187,13 @@ class SsoControllerTest extends TestCase
         $conn->expects($this->once())
             ->method('fetchAssociative')
             ->with(
-                $this->stringContains('SELECT id, name, role_id FROM user'),
+                $this->stringContains('SELECT u.id, u.name, r.name AS role FROM user u JOIN role r'),
                 $this->equalTo([42])
             )
             ->willReturn([
                 'id' => 7,
                 'name' => 'Test User',
-                'role_id' => 2,
+                'role' => 'cashier',
             ]);
 
         $conn->expects($this->once())
@@ -214,5 +214,12 @@ class SsoControllerTest extends TestCase
 
         $this->assertSame(Response::HTTP_FOUND, $response->getStatusCode());
         $this->assertSame('/tpv/app/pos', $response->headers->get('Location'));
+        $this->assertSame('cashier', $_SESSION['role']);
+        $this->assertSame(7, $_SESSION['user_id']);
+    }
+
+    protected function tearDown(): void
+    {
+        unset($_SESSION['role'], $_SESSION['user_id'], $_SESSION['shop_id']);
     }
 }

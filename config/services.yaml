@@ -1,6 +1,8 @@
 # config/services.yaml
 parameters:
     app.base_path: '%env(TPV_BASE_PATH)%'
+    # New native coupon creation uses the shop's local calendar day.
+    env(PS_SHOP_TIMEZONE): 'Europe/Madrid'
 
 services:
     _defaults:
@@ -41,6 +43,14 @@ services:
         arguments:
             $baseUrl: '%ps.api.url%'
             $apiKey: '%ps.api.key%'
+
+    # Deliberately separate from the read/catalog client: cart-rule creation is a native write.
+    VenPosTPV\Service\PrestaShop\CouponCreationService:
+        arguments:
+            $shopUrl: '%env(PS_SHOP_URL)%'
+            $apiKey: '%env(PS_API_KEY)%'
+            $defaultCurrencyId: '%env(int:PS_DEFAULT_CURRENCY)%'
+            $shopTimezone: '%env(PS_SHOP_TIMEZONE)%'
 
     # Checkout Service
     VenPosTPV\Service\Checkout\PsOrderClient:
