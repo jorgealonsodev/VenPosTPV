@@ -101,6 +101,13 @@ render_ini() {
     awk -v project_root="$ROOT_DIR" '{ gsub(/@PROJECT_ROOT@/, project_root); print }' "$template" > "$destination"
 }
 
+refresh_runtime_ini() {
+    [[ -f "$BASE_INI" && -f "$CGI_INI" ]] || fail 'runtime INI templates are missing'
+    mkdir -p "${PREFIX}/etc/conf.d"
+    render_ini "$BASE_INI" "${PREFIX}/etc/php.ini"
+    render_ini "$CGI_INI" "${PREFIX}/etc/conf.d/20-cgi.ini"
+}
+
 run_logged() {
     local status
     set +e
@@ -122,7 +129,9 @@ main() {
     mkdir -p "${ROOT_DIR}/var/log/php85"
 
     if runtime_is_correct; then
-        printf 'PHP %s runtime already verified: %s\n' "$PHP_VERSION" "$PREFIX"
+        refresh_runtime_ini
+        runtime_is_correct || fail "runtime INI refresh verification failed at ${PREFIX}"
+        printf 'PHP %s runtime verified and INI refreshed: %s\n' "$PHP_VERSION" "$PREFIX"
         return
     fi
     [[ ! -e "$PREFIX" ]] || fail "incomplete or incorrect runtime at ${PREFIX}; do not overwrite it"
@@ -164,9 +173,7 @@ main() {
         run_logged make "-j${jobs}"
         run_logged make install
     )
-    mkdir -p "${PREFIX}/etc/conf.d"
-    render_ini "$BASE_INI" "${PREFIX}/etc/php.ini"
-    render_ini "$CGI_INI" "${PREFIX}/etc/conf.d/20-cgi.ini"
+    refresh_runtime_ini
 
     runtime_is_correct || fail "build finished but PHP ${PHP_VERSION} runtime verification failed; inspect ${LOG_FILE}"
     printf 'PHP %s runtime installed at %s\nBuild log: %s\n' "$PHP_VERSION" "$PREFIX" "$LOG_FILE"

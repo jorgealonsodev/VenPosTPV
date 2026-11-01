@@ -14,6 +14,18 @@ expecting it in a checkout.
    bin/build-php85.sh
    ```
 
+   Re-run the same command after editing `config/runtime/php85.ini`; when the
+   pinned binary and extensions already verify, it refreshes only the rendered
+   runtime INI files and does not rebuild PHP.
+
+   If Composer dependencies must be installed, use this isolated PHP rather
+   than XAMPP's PHP 8.1:
+
+   ```bash
+   env -u LD_LIBRARY_PATH -u PHPRC -u PHP_INI_SCAN_DIR \
+     .runtime/php-8.5.12/bin/php composer.phar install
+   ```
+
 2. Start or restart **Apache** from the XAMPP control panel. No separate PHP
    service, system-PHP switch, or XAMPP configuration edit is required.
 3. Open the TPV login URL (`http://localhost/tpv/app/login`). Apache runs
@@ -22,6 +34,10 @@ expecting it in a checkout.
 
 The wrapper clears `LD_LIBRARY_PATH`, `PHPRC`, and `PHP_INI_SCAN_DIR` before it
 starts the native CGI binary, then explicitly selects the native runtime INI.
+The isolated runtime deliberately preserves these observed XAMPP defaults:
+`date.timezone=Europe/Berlin`, `upload_max_filesize=40M`,
+`post_max_size=40M`, and `memory_limit=512M`. It does not clone the remaining
+XAMPP INI settings.
 It accepts only Apache's internal Action hand-off for the canonical
 `public/index.php` target. A direct request to `php85.cgi`, including query
 strings or path info, is rejected and cannot select another PHP file or INI.
