@@ -22,6 +22,41 @@ final class CashSessionServiceTest extends TestCase
         $_SESSION = ['shop_id' => 1];
     }
 
+    public function testSessionOpenedByAnotherCashierOnTheSameTerminalIsUsable(): void
+    {
+        $conn = $this->createMock(Connection::class);
+        $terminal = $this->createMock(TerminalService::class);
+
+        $_SESSION = ['shop_id' => 1, 'cash_session_id' => 10];
+
+        $conn->method('fetchAssociative')->willReturn([
+            'id' => 10,
+            'terminal_id' => 1,
+            'opened_at' => '2026-05-09 15:14:46',
+            'opening_cash' => 0,
+            'user_id' => 2,
+            'opened_by' => 'Master Admin',
+        ]);
+        $conn->method('fetchAllAssociative')->willReturn([]);
+        $conn->method('fetchOne')->willReturn(0);
+
+        $service = new CashSessionService($conn, $terminal, new RequestStack());
+
+        // Cashier 1 must be able to work on a drawer cashier 2 opened: a drawer
+        // belongs to the terminal, and the movement records who acts.
+        $current = $service->getCurrentSession(1);
+
+        $this->assertNotNull($current, 'another cashier\'s open session must not hide the drawer');
+        $this->assertSame(10, $current['session_id']);
+        $this->assertSame(2, $current['opened_by_user_id']);
+        $this->assertSame('Master Admin', $current['opened_by']);
+
+        $context = $service->requireOpenSession(1);
+        $this->assertSame(10, $context['session_id']);
+        $this->assertSame(1, $context['user_id'], 'the acting cashier is the one using it now');
+        $this->assertSame(2, $context['opened_by_user_id']);
+    }
+
     public function testCurrentSessionAggregatesExpectedCashFormula(): void
     {
         $conn = $this->createMock(Connection::class);

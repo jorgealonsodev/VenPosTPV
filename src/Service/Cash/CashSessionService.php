@@ -54,9 +54,18 @@ class CashSessionService
     }
 
     /** @return array<string,mixed>|null */
+    /**
+     * Resolves the open session of the terminal the cashier is working on.
+     *
+     * A drawer is physical: one open session belongs to the terminal, not to the
+     * user who opened it. Any active cashier on that terminal operates it, and every
+     * movement still records the user who performed it. Looking it up by user left
+     * the terminal unusable for everyone else: the screen asked to open a session
+     * that the service refused to open because one was already active.
+     */
     public function getCurrentSession(int $userId): ?array
     {
-        $session = $this->findCurrentSessionByUser($userId);
+        $session = $this->findCurrentSession();
         if ($session === null) {
             return null;
         }
@@ -67,7 +76,7 @@ class CashSessionService
     /** @return array<string,mixed> */
     public function requireOpenSession(int $userId): array
     {
-        $session = $this->findCurrentSessionByUser($userId);
+        $session = $this->findCurrentSession();
         if ($session === null) {
             throw new NoOpenCashSessionException();
         }
@@ -77,6 +86,8 @@ class CashSessionService
             'terminal_id' => (int) $session['terminal_id'],
             'shop_id' => $this->requireShopId(),
             'user_id' => $userId,
+            'opened_by_user_id' => isset($session['user_id']) ? (int) $session['user_id'] : null,
+            'opened_by' => isset($session['opened_by']) ? (string) $session['opened_by'] : null,
         ];
     }
 
@@ -175,6 +186,8 @@ class CashSessionService
             'terminal_id' => (int) $session['terminal_id'],
             'opened_at' => (string) $session['opened_at'],
             'opening_cash' => (float) $session['opening_cash'],
+            'opened_by_user_id' => isset($session['user_id']) ? (int) $session['user_id'] : null,
+            'opened_by' => isset($session['opened_by']) ? (string) $session['opened_by'] : null,
             'sales_cash' => $totals['sales_cash'],
             'refunds_cash' => $totals['refunds_cash'],
             'cash_in_total' => $totals['cash_in_total'],
@@ -274,9 +287,18 @@ class CashSessionService
     }
 
     /** @return array<string,mixed>|null */
-    private function findCurrentSessionByUser(int $userId): ?array
+    /**
+     * Finds the open session of the terminal this request belongs to, whoever opened
+     * it. The cached session id wins when it is still open; otherwise the terminal of
+     * the current shop decides, and a shop-wide lookup is the last resort for a
+     * request without terminal context.
+     */
+    private function findCurrentSession(): ?array
     {
-        // Check both Symfony session and native $_SESSION
+        $select = 'SELECT s.id, s.terminal_id, s.opened_at, s.opening_cash, s.user_id, u.name AS opened_by
+                   FROM session s
+                   LEFT JOIN user u ON u.id = s.user_id ';
+
         $request = $this->requestStack->getCurrentRequest();
         $sessionId = 0;
         if ($request && $request->hasSession()) {
@@ -285,10 +307,11 @@ class CashSessionService
         if ($sessionId <= 0) {
             $sessionId = isset($_SESSION['cash_session_id']) ? (int) $_SESSION['cash_session_id'] : 0;
         }
+
         if ($sessionId > 0) {
             $session = $this->connection->fetchAssociative(
-                'SELECT id, terminal_id, opened_at, opening_cash FROM session WHERE id = ? AND user_id = ? AND closed_at IS NULL',
-                [$sessionId, $userId]
+                $select . 'WHERE s.id = ? AND s.closed_at IS NULL',
+                [$sessionId]
             );
 
             if ($session !== false) {
@@ -296,29 +319,31 @@ class CashSessionService
             }
         }
 
-        // Fallback 1: DB lookup via terminal → shop (requires terminal.ps_shop_id to be set)
-        $session = $this->connection->fetchAssociative(
-            'SELECT s.id, s.terminal_id, s.opened_at, s.opening_cash
-             FROM session s
-             INNER JOIN terminal t ON t.id = s.terminal_id
-             WHERE s.user_id = ? AND s.closed_at IS NULL AND t.ps_shop_id = ?
-             ORDER BY s.id DESC LIMIT 1',
-            [$userId, $this->requireShopId()]
-        );
-
-        if ($session !== false) {
-            $this->cacheSession((int) $session['terminal_id'], (int) $session['id'], (string) $session['opened_at'], (float) $session['opening_cash']);
-
-            return $session;
+        $terminalId = 0;
+        try {
+            $terminalId = $this->terminalService->resolveForShop($this->requireShopId());
+        } catch (\Throwable) {
+            // No shop or terminal context: fall through to the shop-wide lookup.
         }
 
-        // Fallback 2: DB lookup by user only — survives missing terminal/shop context
+        if ($terminalId > 0) {
+            $session = $this->connection->fetchAssociative(
+                $select . 'WHERE s.terminal_id = ? AND s.closed_at IS NULL ORDER BY s.id DESC LIMIT 1',
+                [$terminalId]
+            );
+
+            if ($session !== false) {
+                $this->cacheSession((int) $session['terminal_id'], (int) $session['id'], (string) $session['opened_at'], (float) $session['opening_cash']);
+
+                return $session;
+            }
+        }
+
         $session = $this->connection->fetchAssociative(
-            'SELECT id, terminal_id, opened_at, opening_cash
-             FROM session
-             WHERE user_id = ? AND closed_at IS NULL
-             ORDER BY id DESC LIMIT 1',
-            [$userId]
+            $select . 'INNER JOIN terminal t ON t.id = s.terminal_id
+                       WHERE s.closed_at IS NULL AND t.ps_shop_id = ?
+                       ORDER BY s.id DESC LIMIT 1',
+            [$this->requireShopId()]
         );
 
         if ($session === false) {
@@ -336,7 +361,6 @@ class CashSessionService
             throw new \RuntimeException('Cash session mutations cannot run inside an existing transaction');
         }
     }
-
     private function cacheSession(int $terminalId, int $sessionId, string $openedAt, float $openingCash): void
     {
         $_SESSION['terminal_id'] = $terminalId;
