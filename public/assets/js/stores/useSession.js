@@ -32,7 +32,6 @@ const useSession = (function () {
                 if (data.cashierName) session.cashierName = data.cashierName;
                 if (data.storeName) session.storeName = data.storeName;
                 if (data.theme) session.theme = data.theme;
-                if (data.screen) session.screen = data.screen;
             } catch (e) {
                 // ignore
             }
@@ -47,6 +46,9 @@ const useSession = (function () {
                 session.terminalId = s.terminal_id || null;
                 session.cashOpenedAt = s.cash_opened_at || null;
                 session.openingCash = Number(s.opening_cash || 0);
+                // A persisted screen is never authority for the cash boundary.
+                // Only hydrateCashSession may transition an authenticated user to sale.
+                session.screen = 'cashOpen';
             }
             if (s.cashier_name) session.cashierName = s.cashier_name;
             if (s.store_name) session.storeName = s.store_name;
@@ -67,7 +69,6 @@ const useSession = (function () {
             cashierName: session.cashierName,
             storeName: session.storeName,
             theme: session.theme,
-            screen: session.screen,
         }));
     }
 
@@ -85,21 +86,27 @@ const useSession = (function () {
         save();
     }
 
+    // Only the most recent server response may set the cash UI state.
+    let cashHydrationGeneration = 0;
+
     async function hydrateCashSession() {
+        const generation = ++cashHydrationGeneration;
+
         try {
             const response = await ApiClient.cashCurrent();
             const data = response && response.data ? response.data : { open: false };
+            if (generation !== cashHydrationGeneration) return null;
+
             if (!data.open) {
                 session.sessionId = null;
                 // Preserve terminalId from window.__SESSION__ — SettingsModal needs it
                 // even when no cash session is open.
                 session.cashOpenedAt = null;
+                session.openingCash = 0;
                 session.cashTotals = null;
-                // Don't downgrade screen if we already confirmed the session is open
-                if (session.screen !== 'sale') {
-                    session.screen = session.user ? 'cashOpen' : 'login';
-                }
-                return;
+                session.screen = session.user ? 'cashOpen' : 'login';
+                save();
+                return false;
             }
 
             session.sessionId = data.session_id;
@@ -117,11 +124,11 @@ const useSession = (function () {
             startSyncPolling();
             startStockSyncTimer();
             startStockPushTimer();
+            save();
+            return true;
         } catch (e) {
-            // Don't downgrade screen if we already reached 'sale'
-            if (session.screen !== 'sale') {
-                session.screen = session.user ? 'cashOpen' : 'login';
-            }
+            // Keep the existing screen on a transport failure: the cash state is unknown.
+            return null;
         }
     }
 
@@ -194,6 +201,9 @@ const useSession = (function () {
     }
 
     async function openCash(amount) {
+        // Invalidate an in-flight hydration before opening a new session.
+        ++cashHydrationGeneration;
+
         try {
             const response = await ApiClient.cashOpen(amount);
             const data = response.data;
@@ -202,32 +212,25 @@ const useSession = (function () {
             session.cashOpenedAt = data.opened_at;
             session.openingCash = Number(data.opening_cash || 0);
         } catch (err) {
-            // 409 means a session is already open for this terminal — recover gracefully.
-            // We call hydrateCashSession() to sync state from server, but we ALWAYS
-            // force screen='sale' afterwards because the server confirmed the session is open.
             if (err && err.message && err.message.startsWith('HTTP 409')) {
-                try {
-                    await hydrateCashSession();
-                } catch (hydrateErr) {
-                    // hydration failed — but we still know the session is open
+                const hasCurrentUsersSession = await hydrateCashSession();
+                if (hasCurrentUsersSession) {
+                    return;
                 }
-                // Force sale screen regardless of hydration outcome
-                session.screen = 'sale';
-                startSyncPolling();
-                save();
-                return;
             }
             throw err;
         }
         await hydrateCashSession();
-        save();
     }
 
     async function closeCash(countedCash) {
+        // A close wins over any response that was already hydrating the old session.
+        ++cashHydrationGeneration;
         await ApiClient.cashClose(countedCash);
         session.screen = 'cashOpen';
         session.sessionId = null;
         session.terminalId = null;
+        session.cashOpenedAt = null;
         session.openingCash = 0;
         session.cashTotals = null;
         save();
@@ -240,6 +243,8 @@ const useSession = (function () {
     }
 
     async function logout() {
+        // Do this before awaiting logout so a stale hydration cannot restore the sale screen.
+        ++cashHydrationGeneration;
         try {
             await ApiClient.authLogout();
         } catch (e) {

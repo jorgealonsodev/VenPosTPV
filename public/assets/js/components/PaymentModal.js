@@ -89,6 +89,10 @@ const PaymentModal = {
                 }
             } catch (err) {
                 const msg = err.message || 'Error al procesar el pago';
+                if (msg.includes('cash_session_closed')) {
+                    // The server is authoritative: leave sale rather than offering a stale checkout retry.
+                    await useSession.hydrateCashSession();
+                }
                 const retry = msg.includes('502') || msg.includes('Unavailable') || msg.includes('network');
                 errorMsg.value = msg;
                 errorRetry.value = retry;
