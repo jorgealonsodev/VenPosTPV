@@ -23,6 +23,40 @@ class CheckoutController
     ) {
     }
 
+    #[Route('/checkout/coupon-preview', methods: ['POST'])]
+    public function couponPreview(Request $request): JsonResponse
+    {
+        $session = $request->getSession();
+        if ($session->get('user_id') === null) {
+            return new JsonResponse(['error' => 'Unauthorized'], Response::HTTP_UNAUTHORIZED);
+        }
+        $body = json_decode((string) $request->getContent(), true);
+        $body = is_array($body) ? $body : [];
+        $cartData = is_array($body['cart_data'] ?? null) ? $body['cart_data'] : [];
+        $couponCode = is_string($body['coupon_code'] ?? null) ? $body['coupon_code'] : '';
+
+        try {
+            $preview = $this->checkoutService->previewCoupon((int) $session->get('user_id'), $cartData, $couponCode);
+            return new JsonResponse(['data' => $preview], Response::HTTP_OK);
+        } catch (NoOpenCashSessionException $e) {
+            return new JsonResponse([
+                'error' => 'No hay caja abierta. Abre la caja antes de validar un cupón.',
+                'code' => 'cash_session_closed',
+                'retry' => false,
+            ], Response::HTTP_CONFLICT);
+        } catch (CheckoutException $e) {
+            if ($e->getCode() === 503) {
+                return new JsonResponse(['error' => $e->getMessage(), 'code' => 'coupon_unavailable', 'retry' => false], Response::HTTP_SERVICE_UNAVAILABLE);
+            }
+            if ($e->getCode() === 422) {
+                return new JsonResponse(['error' => $e->getMessage(), 'retry' => false], Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
+            return new JsonResponse(['error' => 'Coupon validation could not be completed', 'code' => 'coupon_reconcile_required', 'retry' => false], Response::HTTP_CONFLICT);
+        } catch (\Throwable $e) {
+            return new JsonResponse(['error' => 'Coupon validation could not be completed', 'code' => 'coupon_reconcile_required', 'retry' => false], Response::HTTP_CONFLICT);
+        }
+    }
+
     #[Route('/checkout', methods: ['POST'])]
     public function checkout(Request $request): JsonResponse
     {
@@ -83,6 +117,18 @@ class CheckoutController
                 Response::HTTP_CONFLICT
             );
         } catch (CheckoutException $e) {
+            if ($e->getCode() === 409) {
+                return new JsonResponse(
+                    ['error' => $e->getMessage(), 'code' => 'coupon_reconcile_required', 'retry' => false],
+                    Response::HTTP_CONFLICT
+                );
+            }
+            if ($e->getCode() === 503) {
+                return new JsonResponse(
+                    ['error' => $e->getMessage(), 'code' => 'coupon_unavailable', 'retry' => false],
+                    Response::HTTP_SERVICE_UNAVAILABLE
+                );
+            }
             if ($e->getCode() === 422) {
                 return new JsonResponse(
                     ['error' => $e->getMessage(), 'retry' => false],

@@ -28,6 +28,7 @@ final class CheckoutServiceTest extends TestCase
         ?PrinterService $printerService = null,
         ?PrestaShopApiClient $psApiClient = null,
         ?SyncLogRepository $syncLogRepo = null,
+        bool $couponCheckoutEnabled = false,
     ): CheckoutService {
         return new CheckoutService(
             $cart ?? $this->createMock(CartService::class),
@@ -38,7 +39,296 @@ final class CheckoutServiceTest extends TestCase
             $printerService ?? $this->createMock(PrinterService::class),
             $psApiClient ?? $this->createMock(PrestaShopApiClient::class),
             $syncLogRepo ?? $this->createMock(SyncLogRepository::class),
+            $couponCheckoutEnabled,
         );
+    }
+
+    public function testCouponPreviewGateOffDoesNotContactPrestaShopOrCreateLocalEffects(): void
+    {
+        $client = $this->createMock(PsOrderClient::class);
+        $client->expects($this->never())->method('previewCoupon');
+        $cashSession = $this->createMock(CashSessionService::class);
+        $cashSession->expects($this->never())->method('requireOpenSession');
+        $cart = $this->createMock(CartService::class);
+        $cart->expects($this->never())->method('clear');
+
+        $service = $this->createService(cart: $cart, client: $client, cashSessionService: $cashSession);
+
+        $this->expectException(CheckoutException::class);
+        $this->expectExceptionMessage('coupon_unavailable');
+        $service->previewCoupon(1, ['lines' => []], 'SAVE10');
+    }
+
+    public function testCouponPreviewUsesLocalGrossAndNativeAuthoritativePayable(): void
+    {
+        $client = $this->createMock(PsOrderClient::class);
+        $client->expects($this->once())->method('previewCoupon')
+            ->with($this->callback(static fn (array $payload): bool => $payload['operation'] === 'coupon_preview' && $payload['coupon_code'] === 'SAVE10' && $payload['products'][0]['price'] === 23.14))
+            ->willReturn([
+                'operation' => 'coupon_preview', 'cart_id' => 7,
+                'before_discount_total' => 23.14, 'discount_amount' => 10.0, 'total_paid' => 13.14,
+                'coupon' => ['code' => 'SAVE10', 'expires_at' => '2026-12-31 23:59:59'], 'quote' => 'signed.quote',
+            ]);
+        $cashSession = $this->createMock(CashSessionService::class);
+        $cashSession->expects($this->once())->method('requireOpenSession')->with(1)->willReturn(['session_id' => 1, 'terminal_id' => 1]);
+        $conn = $this->catalogConnection(['1' => ['price' => 23.90, 'price_ttc' => 23.14]], 10);
+        $service = $this->createService(client: $client, conn: $conn, cashSessionService: $cashSession, couponCheckoutEnabled: true);
+
+        $preview = $service->previewCoupon(1, [
+            'lines' => [['product_id' => 1, 'qty' => 1, 'price' => 23.14]], 'total' => 23.14,
+            'customer' => ['id' => 2],
+        ], 'SAVE10');
+
+        $this->assertSame(13.14, $preview['total_paid']);
+    }
+
+    public function testCouponPreviewRejectsManualDiscountBeforePrestaShopCall(): void
+    {
+        $client = $this->createMock(PsOrderClient::class);
+        $client->expects($this->never())->method('previewCoupon');
+        $service = $this->createService(client: $client, couponCheckoutEnabled: true);
+
+        $this->expectException(CheckoutException::class);
+        $this->expectExceptionMessage('Remove the manual discount');
+        $service->previewCoupon(1, ['discount' => ['type' => 'pct', 'value' => 10]], 'SAVE10');
+    }
+
+    public function testAnonymousCouponCheckoutBindsCreationToSignedNativeCustomer(): void
+    {
+        $quote = [
+            'cart_id' => 7, 'customer_id' => 42, 'shop_id' => 1, 'currency_id' => 1,
+            'coupon_code' => 'SAVE10', 'before_discount_total' => 23.14,
+            'discount_amount' => 10.0, 'total_paid' => 13.14,
+            'products' => [['id_product' => 1, 'id_product_attribute' => 0, 'quantity' => 1]],
+        ];
+        $client = $this->createMock(PsOrderClient::class);
+        $client->method('verifyCouponQuote')->willReturn($quote);
+        $client->expects($this->once())->method('createCouponOrder')->with($this->callback(static fn (array $payload): bool => $payload['id_customer'] === 42))->willReturn(['order_id' => 76, 'reference' => 'CPN-76', 'total_paid' => 13.14]);
+        $conn = $this->createMock(Connection::class);
+        $conn->method('fetchAssociative')->willReturnCallback(static function (string $sql): array|false {
+            if (str_contains($sql, 'catalog_product')) return ['price' => 23.90, 'price_ttc' => 23.14, 'price_net' => 19.12];
+            return false;
+        });
+        $conn->method('fetchOne')->willReturnCallback(static function (string $sql): int|false {
+            if (str_contains($sql, 'GET_LOCK') || str_contains($sql, 'RELEASE_LOCK')) return 1;
+            if (str_contains($sql, 'order_meta')) return false;
+            return 10;
+        });
+        $conn->method('transactional')->willReturnCallback(static fn (callable $operation): mixed => $operation());
+        $conn->method('insert')->willReturn(1);
+        $conn->method('executeStatement')->willReturn(1);
+        $cashSession = $this->createMock(CashSessionService::class);
+        $cashSession->method('requireOpenSession')->willReturn(['session_id' => 1, 'terminal_id' => 3]);
+        $service = $this->createService(client: $client, conn: $conn, cashSessionService: $cashSession, couponCheckoutEnabled: true);
+
+        $result = $service->createOrder(1, [
+            'lines' => [['product_id' => 1, 'qty' => 1, 'price' => 23.14]], 'total' => 23.14,
+            'coupon' => ['code' => 'SAVE10', 'preview_cart_id' => 7, 'quote' => 'signed.quote'],
+        ], 'card', 13.14);
+
+        $this->assertSame(76, $result['ps_order_id']);
+    }
+
+    public function testCouponCashCheckoutBooksOnlyNetPayableAndDiscountMetadata(): void
+    {
+        $quote = [
+            'cart_id' => 7, 'customer_id' => 2, 'shop_id' => 1, 'currency_id' => 1,
+            'coupon_code' => 'SAVE10', 'before_discount_total' => 23.14,
+            'discount_amount' => 10.0, 'total_paid' => 13.14,
+            'products' => [['id_product' => 1, 'id_product_attribute' => 0, 'quantity' => 1]],
+        ];
+        $client = $this->createMock(PsOrderClient::class);
+        $client->expects($this->once())->method('verifyCouponQuote')->with('signed.quote')->willReturn($quote);
+        $client->expects($this->once())->method('createCouponOrder')->willReturn(['order_id' => 77, 'reference' => 'CPN-77', 'total_paid' => 13.14]);
+        $conn = $this->createMock(Connection::class);
+        $conn->method('fetchAssociative')->willReturnCallback(static function (string $sql): array|false {
+            if (str_contains($sql, 'catalog_product')) return ['price' => 23.90, 'price_ttc' => 23.14, 'price_net' => 19.12];
+            return false;
+        });
+        $conn->method('fetchOne')->willReturnCallback(static function (string $sql): int|false {
+            if (str_contains($sql, 'GET_LOCK')) return 1;
+            if (str_contains($sql, 'order_meta')) return false;
+            if (str_contains($sql, 'RELEASE_LOCK')) return 1;
+            return 10;
+        });
+        $conn->method('executeStatement')->willReturn(1);
+        $conn->expects($this->once())->method('transactional')->willReturnCallback(static fn (callable $operation): mixed => $operation());
+        $inserted = [];
+        $conn->expects($this->exactly(2))->method('insert')->willReturnCallback(function (string $table, array $values) use (&$inserted): int {
+            if ($table === 'order_meta') {
+                $inserted[$table] = $values;
+            }
+            return 1;
+        });
+        $cashSession = $this->createMock(CashSessionService::class);
+        $cashSession->method('requireOpenSession')->willReturn(['session_id' => 1, 'terminal_id' => 3]);
+        $cashSession->expects($this->never())->method('addMovement');
+        $cart = $this->createMock(CartService::class);
+        $cart->expects($this->once())->method('clear');
+        $service = $this->createService(cart: $cart, client: $client, conn: $conn, cashSessionService: $cashSession, couponCheckoutEnabled: true);
+
+        $result = $service->createOrder(1, [
+            'lines' => [['product_id' => 1, 'qty' => 1, 'price' => 23.14]], 'total' => 23.14,
+            'customer' => ['id' => 2],
+            'coupon' => ['code' => 'SAVE10', 'preview_cart_id' => 7, 'quote' => 'signed.quote'],
+        ], 'cash', 20.0);
+
+        $breakdown = json_decode($inserted['order_meta']['payment_breakdown'], true, flags: JSON_THROW_ON_ERROR);
+        $this->assertSame(13.14, $result['total']);
+        $this->assertSame(6.86, $result['change_due']);
+        $this->assertSame(23.14, $breakdown['coupon']['gross_total']);
+        $this->assertEquals(10.0, $breakdown['coupon']['discount_amount']);
+        $this->assertSame(13.14, $breakdown['coupon']['cash_collected']);
+    }
+
+    public function testCouponLocalAccountingUsesOneSharedTransactionInsteadOfSeparateCashSaga(): void
+    {
+        $quote = [
+            'cart_id' => 7, 'customer_id' => 2, 'shop_id' => 1, 'currency_id' => 1,
+            'coupon_code' => 'SAVE10', 'before_discount_total' => 23.14,
+            'discount_amount' => 10.0, 'total_paid' => 13.14,
+            'products' => [['id_product' => 1, 'id_product_attribute' => 0, 'quantity' => 1]],
+        ];
+        $client = $this->createMock(PsOrderClient::class);
+        $client->method('verifyCouponQuote')->willReturn($quote);
+        $client->method('createCouponOrder')->willReturn(['order_id' => 78, 'reference' => 'CPN-78', 'total_paid' => 13.14]);
+        $conn = $this->createMock(Connection::class);
+        $conn->method('fetchAssociative')->willReturnCallback(static function (string $sql): array|false {
+            if (str_contains($sql, 'catalog_product')) return ['price' => 23.90, 'price_ttc' => 23.14, 'price_net' => 19.12];
+            return false;
+        });
+        $conn->method('fetchOne')->willReturnCallback(static function (string $sql): int|false {
+            if (str_contains($sql, 'GET_LOCK') || str_contains($sql, 'RELEASE_LOCK')) return 1;
+            if (str_contains($sql, 'order_meta')) return false;
+            return 10;
+        });
+        $conn->expects($this->once())->method('transactional')->willReturnCallback(static fn (callable $operation): mixed => $operation());
+        $conn->method('insert')->willReturn(1);
+        $conn->method('executeStatement')->willReturn(1);
+        $cashSession = $this->createMock(CashSessionService::class);
+        $cashSession->method('requireOpenSession')->willReturn(['session_id' => 1, 'terminal_id' => 3]);
+        $cashSession->expects($this->never())->method('addMovement');
+        $service = $this->createService(client: $client, conn: $conn, cashSessionService: $cashSession, couponCheckoutEnabled: true);
+
+        $result = $service->createOrder(1, [
+            'lines' => [['product_id' => 1, 'qty' => 1, 'price' => 23.14]], 'total' => 23.14,
+            'customer' => ['id' => 2], 'coupon' => ['code' => 'SAVE10', 'preview_cart_id' => 7, 'quote' => 'signed.quote'],
+        ], 'cash', 13.14);
+
+        $this->assertFalse($result['saga_error']);
+    }
+
+    public function testCouponMovementFailureRollsBackLocalEffectsAndNativeReplayCompletesThem(): void
+    {
+        $quote = [
+            'cart_id' => 7, 'customer_id' => 2, 'shop_id' => 1, 'currency_id' => 1,
+            'coupon_code' => 'SAVE10', 'before_discount_total' => 23.14,
+            'discount_amount' => 10.0, 'total_paid' => 13.14,
+            'products' => [['id_product' => 1, 'id_product_attribute' => 0, 'quantity' => 1]],
+        ];
+        $client = $this->createMock(PsOrderClient::class);
+        $client->expects($this->exactly(2))->method('verifyCouponQuote')->willReturn($quote);
+        $client->expects($this->exactly(2))->method('createCouponOrder')->willReturn(['order_id' => 79, 'reference' => 'CPN-79', 'total_paid' => 13.14]);
+        $metadata = false;
+        $movementWrites = 0;
+        $stockWrites = 0;
+        $failMovement = true;
+        $conn = $this->createMock(Connection::class);
+        $conn->method('fetchAssociative')->willReturnCallback(static function (string $sql): array|false {
+            if (str_contains($sql, 'catalog_product')) return ['price' => 23.90, 'price_ttc' => 23.14, 'price_net' => 19.12];
+            return false;
+        });
+        $conn->method('fetchOne')->willReturnCallback(function (string $sql) use (&$metadata): int|false {
+            if (str_contains($sql, 'GET_LOCK') || str_contains($sql, 'RELEASE_LOCK') || str_contains($sql, 'FROM session')) return 1;
+            if (str_contains($sql, 'order_meta')) return $metadata ? 1 : false;
+            return 10;
+        });
+        $conn->expects($this->exactly(2))->method('transactional')->willReturnCallback(function (callable $operation) use (&$metadata, &$movementWrites, &$stockWrites): mixed {
+            $snapshot = [$metadata, $movementWrites, $stockWrites];
+            try {
+                return $operation();
+            } catch (\Throwable $e) {
+                [$metadata, $movementWrites, $stockWrites] = $snapshot;
+                throw $e;
+            }
+        });
+        $conn->method('insert')->willReturnCallback(function (string $table) use (&$metadata, &$movementWrites, &$failMovement): int {
+            if ($table === 'order_meta') {
+                $metadata = true;
+            }
+            if ($table === 'movement') {
+                if ($failMovement) {
+                    throw new \RuntimeException('movement write failed');
+                }
+                ++$movementWrites;
+            }
+            return 1;
+        });
+        $conn->method('executeStatement')->willReturnCallback(function () use (&$stockWrites): int {
+            ++$stockWrites;
+            return 1;
+        });
+        $cashSession = $this->createMock(CashSessionService::class);
+        $cashSession->method('requireOpenSession')->willReturn(['session_id' => 1, 'terminal_id' => 3]);
+        $cashSession->expects($this->never())->method('addMovement');
+        $cart = $this->createMock(CartService::class);
+        $cart->expects($this->once())->method('clear');
+        $printer = $this->createMock(PrinterService::class);
+        $printer->expects($this->once())->method('openDrawer')->with(3);
+        $service = $this->createService(cart: $cart, client: $client, conn: $conn, cashSessionService: $cashSession, printerService: $printer, couponCheckoutEnabled: true);
+        $cartData = [
+            'lines' => [['product_id' => 1, 'qty' => 1, 'price' => 23.14]], 'total' => 23.14,
+            'customer' => ['id' => 2], 'coupon' => ['code' => 'SAVE10', 'preview_cart_id' => 7, 'quote' => 'signed.quote'],
+        ];
+
+        $failed = $service->createOrder(1, $cartData, 'cash', 13.14);
+        $this->assertTrue($failed['saga_error']);
+        $this->assertFalse($metadata);
+        $this->assertSame(0, $movementWrites);
+        $this->assertSame(0, $stockWrites);
+
+        $failMovement = false;
+        $completed = $service->createOrder(1, $cartData, 'cash', 13.14);
+        $this->assertFalse($completed['saga_error']);
+        $this->assertTrue($metadata);
+        $this->assertSame(1, $movementWrites);
+        $this->assertSame(1, $stockWrites);
+    }
+
+    public function testCouponNativeReplayDoesNotDuplicateLocalMetadataCashOrStock(): void
+    {
+        $quote = [
+            'cart_id' => 7, 'customer_id' => 2, 'shop_id' => 1, 'currency_id' => 1,
+            'coupon_code' => 'SAVE10', 'before_discount_total' => 23.14,
+            'discount_amount' => 10.0, 'total_paid' => 13.14,
+            'products' => [['id_product' => 1, 'id_product_attribute' => 0, 'quantity' => 1]],
+        ];
+        $client = $this->createMock(PsOrderClient::class);
+        $client->method('verifyCouponQuote')->willReturn($quote);
+        $client->method('createCouponOrder')->willReturn(['order_id' => 77, 'reference' => 'CPN-77', 'total_paid' => 13.14]);
+        $conn = $this->createMock(Connection::class);
+        $conn->method('fetchAssociative')->willReturn(['price' => 23.90, 'price_ttc' => 23.14, 'price_net' => 19.12]);
+        $conn->method('fetchOne')->willReturnCallback(static function (string $sql): int {
+            if (str_contains($sql, 'GET_LOCK') || str_contains($sql, 'RELEASE_LOCK')) return 1;
+            if (str_contains($sql, 'order_meta')) return 1;
+            return 10;
+        });
+        $conn->expects($this->once())->method('transactional')->willReturnCallback(static fn (callable $operation): mixed => $operation());
+        $conn->expects($this->never())->method('insert');
+        $conn->expects($this->never())->method('executeStatement');
+        $cashSession = $this->createMock(CashSessionService::class);
+        $cashSession->method('requireOpenSession')->willReturn(['session_id' => 1, 'terminal_id' => 3]);
+        $cashSession->expects($this->never())->method('addMovement');
+        $cart = $this->createMock(CartService::class);
+        $cart->expects($this->once())->method('clear');
+        $service = $this->createService(cart: $cart, client: $client, conn: $conn, cashSessionService: $cashSession, couponCheckoutEnabled: true);
+
+        $result = $service->createOrder(1, [
+            'lines' => [['product_id' => 1, 'qty' => 1, 'price' => 23.14]], 'total' => 23.14,
+            'customer' => ['id' => 2], 'coupon' => ['code' => 'SAVE10', 'preview_cart_id' => 7, 'quote' => 'signed.quote'],
+        ], 'card', 13.14);
+
+        $this->assertFalse($result['saga_error']);
     }
 
     public function testEmptyCartThrowsValidationException(): void

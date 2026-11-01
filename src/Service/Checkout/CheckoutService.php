@@ -41,6 +41,7 @@ class CheckoutService
         private readonly PrinterService $printerService,
         private readonly PrestaShopApiClient $psApiClient,
         private readonly SyncLogRepository $syncLogRepo,
+        private readonly bool $couponCheckoutEnabled = false,
     ) {
     }
 
@@ -53,6 +54,10 @@ class CheckoutService
      */
     public function createOrder(int $userId, array $cartData, string $paymentMethod, float $amountTendered): array
     {
+        if (array_key_exists('coupon', $cartData)) {
+            return $this->createCouponOrder($userId, $cartData, $paymentMethod, $amountTendered);
+        }
+
         $lines = $cartData['lines'] ?? $cartData['items'] ?? [];
         $submittedTotal = (float) ($cartData['total'] ?? 0);
         $customer = $cartData['customer'] ?? null;
@@ -160,6 +165,324 @@ class CheckoutService
             'terminal_id' => (int) ($cashContext['terminal_id'] ?? 1),
             'saga_error' => $sagaError,
         ];
+    }
+
+    /**
+     * Previews a native coupon without creating either a native order or local
+     * accounting records. This remains disabled until the compatible module is
+     * deployed, because an older module treats an unknown operation as an order.
+     *
+     * @param array<string, mixed> $cartData
+     * @return array<string, mixed>
+     */
+    public function previewCoupon(int $userId, array $cartData, string $couponCode): array
+    {
+        $this->assertCouponCheckoutEnabled();
+        $this->cashSessionService->requireOpenSession($userId);
+        $this->assertNoManualDiscountWithCoupon($cartData);
+
+        $code = trim($couponCode);
+        if ($code === '') {
+            throw CheckoutException::psValidationFailed('Coupon code is required');
+        }
+
+        $lines = $cartData['lines'] ?? $cartData['items'] ?? [];
+        if (!is_array($lines) || $lines === []) {
+            throw CheckoutException::psValidationFailed('Cart is empty');
+        }
+        $pricing = $this->resolveAuthoritativePricing($lines, null, (float) ($cartData['total'] ?? 0));
+        $this->validateStock($pricing['lines']);
+        $payload = $this->couponPayload($pricing['lines'], $cartData, 'TPV Connect');
+        $payload['operation'] = 'coupon_preview';
+        $payload['coupon_code'] = $code;
+
+        $preview = $this->client->previewCoupon($payload);
+        if (!$this->sameTotal($pricing['total'], (float) $preview['before_discount_total'])
+            || !$this->sameTotal((float) $preview['before_discount_total'] - (float) $preview['discount_amount'], (float) $preview['total_paid'])) {
+            throw CheckoutException::psValidationFailed('Coupon preview total does not match the local catalog');
+        }
+
+        return $preview;
+    }
+
+    /**
+     * Coupon tender is derived from the server-verified quote. Browser amounts,
+     * discounts, codes, and quote fields are never used as an accounting basis.
+     *
+     * @param array<string, mixed> $cartData
+     * @return array{ps_order_id: int, reference: string, total: float, change_due: float, payment_method: string, terminal_id: int, saga_error: bool}
+     */
+    private function createCouponOrder(int $userId, array $cartData, string $paymentMethod, float $amountTendered): array
+    {
+        $this->assertCouponCheckoutEnabled();
+        $this->assertNoManualDiscountWithCoupon($cartData);
+        $coupon = $cartData['coupon'] ?? null;
+        if (!is_array($coupon) || !is_string($coupon['code'] ?? null) || trim($coupon['code']) === ''
+            || !is_int($coupon['preview_cart_id'] ?? null) || !is_string($coupon['quote'] ?? null)) {
+            throw CheckoutException::psValidationFailed('Coupon binding is invalid; validate the coupon again');
+        }
+
+        $lines = $cartData['lines'] ?? $cartData['items'] ?? [];
+        if (!is_array($lines) || $lines === []) {
+            throw CheckoutException::psValidationFailed('Cart is empty');
+        }
+        $pricing = $this->resolveAuthoritativePricing($lines, null, (float) ($cartData['total'] ?? 0));
+        $lines = $pricing['lines'];
+        $this->validateStock($lines);
+        $cashContext = $this->cashSessionService->requireOpenSession($userId);
+
+        $payload = $this->couponPayload($lines, $cartData, $paymentMethod);
+        $quote = $this->client->verifyCouponQuote($coupon['quote']);
+        $this->assertCouponQuoteMatchesLocal($quote, $coupon, $payload, $pricing['total']);
+        // The signed module quote resolves anonymous customer 0 to the native
+        // configured anonymous customer. Bind creation to that positive identity
+        // only after all local context/product/total checks have passed.
+        if ((int) $payload['id_customer'] === 0) {
+            $payload['id_customer'] = (int) $quote['customer_id'];
+        }
+        $payable = round((float) $quote['total_paid'], 2);
+        [$cashCollected, $cardCollected, $changeDue] = $this->resolveCouponTender($paymentMethod, $amountTendered, $cartData, $payable);
+
+        $payload['operation'] = 'order';
+        $payload['amount_tendered'] = $payable;
+        $payload['coupon'] = [
+            'code' => $quote['coupon_code'],
+            'preview_cart_id' => $quote['cart_id'],
+            'quote' => $coupon['quote'],
+            'expected_total_paid' => $payable,
+        ];
+
+        $psResponse = $this->client->createCouponOrder($payload);
+        if (!$this->sameTotal((float) $psResponse['total_paid'], $payable)) {
+            throw CheckoutException::couponReconciliationRequired('Native coupon order total differs from the verified quote');
+        }
+
+        $psOrderId = (int) $psResponse['order_id'];
+        $reference = (string) $psResponse['reference'];
+        $sagaError = false;
+        $alreadyRecorded = false;
+        try {
+            $alreadyRecorded = $this->withCouponOrderLock($psOrderId, function () use ($psOrderId, $userId, $reference, $payable, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines, $quote, $cashCollected, $cardCollected): bool {
+                // CashSessionService and this service share the configured TPV
+                // DBAL connection. Its public mutation helper correctly rejects
+                // nested transactions, so keep these three local writes on the
+                // same connection and transaction here.
+                return $this->conn->transactional(function () use ($psOrderId, $userId, $reference, $payable, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines, $quote, $cashCollected, $cardCollected): bool {
+                    if ($this->conn->fetchOne('SELECT 1 FROM order_meta WHERE ps_order_id = ?', [$psOrderId]) !== false) {
+                        return true;
+                    }
+                    $this->insertOrderMeta($psOrderId, $userId, $reference, $payable, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines, [
+                        'gross_total' => round((float) $quote['before_discount_total'], 2),
+                        'discount_amount' => round((float) $quote['discount_amount'], 2),
+                        'payable' => $payable,
+                        'cash_collected' => $cashCollected,
+                        'card_collected' => $cardCollected,
+                    ]);
+                    if ($cashCollected > 0) {
+                        $this->insertCouponCashMovement($cashContext, $userId, $cashCollected, $psOrderId);
+                    }
+                    $this->decrementStock($lines);
+
+                    return false;
+                });
+            });
+        } catch (\Throwable $e) {
+            $sagaError = true;
+        }
+
+        if ($sagaError) {
+            // Do not include the bearer coupon code or quote in this best-effort log.
+            $this->logCheckoutOrphan($psOrderId, $reference, $paymentMethod, $payable, ['coupon_checkout' => true]);
+        }
+
+        $terminalId = (int) ($cashContext['terminal_id'] ?? 1);
+        if (!$sagaError && !$alreadyRecorded) {
+            try {
+                $this->messageBus->dispatch(new PrintTicketMessage($psOrderId, $terminalId));
+            } catch (\Throwable $e) {
+                // Print dispatch failure must not block checkout.
+            }
+            if ($cashCollected > 0) {
+                try {
+                    $this->printerService->openDrawer($terminalId);
+                } catch (\Throwable $e) {
+                    // Drawer failure must not block checkout.
+                }
+            }
+        }
+        if (!$sagaError) {
+            $this->cart->clear();
+        }
+
+        return [
+            'ps_order_id' => $psOrderId,
+            'reference' => $reference,
+            'total' => $payable,
+            'change_due' => $changeDue,
+            'payment_method' => $paymentMethod,
+            'terminal_id' => $terminalId,
+            'saga_error' => $sagaError,
+        ];
+    }
+
+    private function assertCouponCheckoutEnabled(): void
+    {
+        if (!$this->couponCheckoutEnabled) {
+            throw CheckoutException::couponUnavailable('coupon_unavailable: deploy the compatible TPV Connect module and explicitly enable coupon checkout');
+        }
+    }
+
+    /** @param array<string, mixed> $cartData */
+    private function assertNoManualDiscountWithCoupon(array $cartData): void
+    {
+        $discount = $cartData['discount'] ?? null;
+        if (is_array($discount) && (float) ($discount['value'] ?? 0) > 0) {
+            throw CheckoutException::psValidationFailed('Remove the manual discount before applying a native coupon');
+        }
+        foreach (($cartData['lines'] ?? $cartData['items'] ?? []) as $line) {
+            if (is_array($line) && (float) ($line['discount'] ?? 0) > 0) {
+                throw CheckoutException::psValidationFailed('Remove the manual discount before applying a native coupon');
+            }
+        }
+    }
+
+    /** @param array<int, array<string,mixed>> $lines @param array<string,mixed> $cartData @return array<string,mixed> */
+    private function couponPayload(array $lines, array $cartData, string $paymentMethod): array
+    {
+        $products = [];
+        foreach ($lines as $line) {
+            $products[] = [
+                'id_product' => (int) ($line['product_id'] ?? $line['id'] ?? 0),
+                'id_product_attribute' => (int) ($line['id_product_attribute'] ?? 0),
+                'quantity' => (int) ($line['qty'] ?? $line['quantity'] ?? 1),
+                'price' => (float) ($line['price'] ?? 0),
+            ];
+        }
+        $customer = $cartData['customer'] ?? null;
+        $idCustomer = is_array($customer) && isset($customer['id']) && is_int($customer['id']) && $customer['id'] > 0 ? $customer['id'] : 0;
+
+        return [
+            'products' => $products,
+            'id_customer' => $idCustomer,
+            'id_currency' => 1,
+            'id_shop' => (int) ($_SESSION['shop_id'] ?? 1),
+            'payment_method' => $paymentMethod,
+            'notes' => '',
+        ];
+    }
+
+    /** @param array<string,mixed> $quote @param array<string,mixed> $coupon @param array<string,mixed> $payload */
+    private function assertCouponQuoteMatchesLocal(array $quote, array $coupon, array $payload, float $grossTotal): void
+    {
+        $requestedCustomerId = (int) $payload['id_customer'];
+        $quotedCustomerId = (int) $quote['customer_id'];
+        $customerMatches = $requestedCustomerId > 0
+            ? $quotedCustomerId === $requestedCustomerId
+            : $requestedCustomerId === 0 && $quotedCustomerId > 0;
+        if ((int) $coupon['preview_cart_id'] !== (int) $quote['cart_id']
+            || !hash_equals((string) $quote['coupon_code'], trim((string) $coupon['code']))
+            || !$customerMatches
+            || (int) $quote['shop_id'] !== (int) $payload['id_shop']
+            || (int) $quote['currency_id'] !== (int) $payload['id_currency']
+            || !$this->sameTotal($grossTotal, (float) $quote['before_discount_total'])
+            || !$this->sameTotal((float) $quote['before_discount_total'] - (float) $quote['discount_amount'], (float) $quote['total_paid'])
+            || $this->couponProductFingerprint($payload['products']) !== $this->couponProductFingerprint($quote['products'])) {
+            throw CheckoutException::psValidationFailed('Coupon quote does not match the current cart; validate it again');
+        }
+    }
+
+    /** @param array<int,mixed> $products */
+    private function couponProductFingerprint(array $products): array
+    {
+        $fingerprint = [];
+        foreach ($products as $product) {
+            if (!is_array($product)) {
+                return [];
+            }
+            $fingerprint[] = [
+                'id_product' => (int) ($product['id_product'] ?? 0),
+                'id_product_attribute' => (int) ($product['id_product_attribute'] ?? 0),
+                'quantity' => (int) ($product['quantity'] ?? 0),
+            ];
+        }
+        usort($fingerprint, static fn (array $left, array $right): int => $left <=> $right);
+
+        return $fingerprint;
+    }
+
+    /** @param array<string,mixed> $cartData @return array{0: float, 1: float, 2: float} */
+    private function resolveCouponTender(string $paymentMethod, float $amountTendered, array $cartData, float $payable): array
+    {
+        if ($paymentMethod === 'cash') {
+            if ($amountTendered + self::TOTAL_TOLERANCE < $payable) {
+                throw CheckoutException::psValidationFailed('Cash tender does not cover the coupon payable amount');
+            }
+            return [$payable, 0.0, round(max(0.0, $amountTendered - $payable), 2)];
+        }
+        if ($paymentMethod === 'card') {
+            return [0.0, $payable, 0.0];
+        }
+        if ($paymentMethod === 'mixed') {
+            $cash = round(max(0.0, (float) ($cartData['cash_amount'] ?? 0)), 2);
+            if ($cash > $payable + self::TOTAL_TOLERANCE) {
+                throw CheckoutException::psValidationFailed('Coupon cash tender exceeds the payable amount');
+            }
+            return [$cash, round($payable - $cash, 2), 0.0];
+        }
+
+        throw CheckoutException::psValidationFailed('Coupon checkout requires cash, card, or mixed tender');
+    }
+
+    private function sameTotal(float $left, float $right): bool
+    {
+        return abs(round($left, 2) - round($right, 2)) <= self::TOTAL_TOLERANCE;
+    }
+
+    /** @template T @param callable():T $operation @return T */
+    private function withCouponOrderLock(int $psOrderId, callable $operation): mixed
+    {
+        $lockName = 'venpostpv_coupon_order_' . $psOrderId;
+        $acquired = false;
+        try {
+            $acquired = (int) $this->conn->fetchOne('SELECT GET_LOCK(?, 5)', [$lockName]) === 1;
+            if (!$acquired) {
+                throw new \RuntimeException('Coupon local accounting lock is unavailable');
+            }
+            return $operation();
+        } finally {
+            if ($acquired) {
+                $this->conn->fetchOne('SELECT RELEASE_LOCK(?)', [$lockName]);
+            }
+        }
+    }
+
+    /**
+     * Insert the coupon's cash portion inside the checkout transaction.
+     *
+     * CashSessionService::addMovement() owns its own transaction and explicitly
+     * rejects nesting. The service uses the same TPV Connection alias, so this
+     * narrow equivalent preserves its session-open invariant while allowing the
+     * metadata, movement, and stock write to commit or roll back together.
+     *
+     * @param array<string,mixed> $cashContext
+     */
+    private function insertCouponCashMovement(array $cashContext, int $userId, float $amount, int $psOrderId): void
+    {
+        $sessionId = (int) ($cashContext['session_id'] ?? 0);
+        if ($sessionId < 1 || $this->conn->fetchOne(
+            'SELECT id FROM session WHERE id = ? AND closed_at IS NULL FOR UPDATE',
+            [$sessionId]
+        ) === false) {
+            throw new \RuntimeException('Cash session closed during coupon checkout');
+        }
+        $this->conn->insert('movement', [
+            'session_id' => $sessionId,
+            'type' => 'sale',
+            'amount' => round($amount, 2),
+            'concept' => 'Coupon checkout sale',
+            'ps_order_id' => $psOrderId,
+            'created_at' => (new \DateTimeImmutable())->format('Y-m-d H:i:s'),
+        ]);
     }
 
     /**
@@ -408,6 +731,7 @@ class CheckoutService
         float $changeDue,
         array $cashContext,
         array $lines,
+        ?array $coupon = null,
     ): void {
         try {
             $breakdownLines = [];
@@ -443,6 +767,8 @@ class CheckoutService
                     'subtotal' => $subtotal,
                     'tax' => $tax,
                     'lines' => $breakdownLines,
+                    // Deliberately excludes bearer coupon code and quote.
+                    'coupon' => $coupon,
                 ], JSON_THROW_ON_ERROR),
                 'printed' => 0,
                 'synced' => 1,

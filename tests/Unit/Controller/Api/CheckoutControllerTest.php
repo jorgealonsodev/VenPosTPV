@@ -39,6 +39,38 @@ final class CheckoutControllerTest extends TestCase
         return (array) json_decode((string) $response->getContent(), true);
     }
 
+    public function testCouponPreviewReturnsAuthenticatedPreview(): void
+    {
+        $cashService = $this->createMock(CashSessionService::class);
+        $checkoutService = $this->createMock(CheckoutService::class);
+        $checkoutService->expects($this->once())->method('previewCoupon')->with(1, $this->isType('array'), 'SAVE10')->willReturn([
+            'operation' => 'coupon_preview', 'cart_id' => 1, 'before_discount_total' => 23.14,
+            'discount_amount' => 10.0, 'total_paid' => 13.14, 'coupon' => ['code' => 'SAVE10'], 'quote' => 'signed.quote',
+        ]);
+        $controller = new CheckoutController($checkoutService, $cashService);
+
+        $response = $controller->couponPreview($this->makeRequest([
+            'coupon_code' => 'SAVE10', 'cart_data' => ['lines' => [['product_id' => 1]], 'total' => 23.14],
+        ], 1));
+
+        $this->assertSame(Response::HTTP_OK, $response->getStatusCode());
+        $this->assertSame(13.14, $this->decode($response)['data']['total_paid']);
+    }
+
+    public function testCouponPreviewReturnsExplicitGateOffResponse(): void
+    {
+        $cashService = $this->createMock(CashSessionService::class);
+        $checkoutService = $this->createMock(CheckoutService::class);
+        $checkoutService->method('previewCoupon')->willThrowException(CheckoutException::couponUnavailable('coupon_unavailable: deploy module first'));
+        $controller = new CheckoutController($checkoutService, $cashService);
+
+        $response = $controller->couponPreview($this->makeRequest(['coupon_code' => 'SAVE10', 'cart_data' => []], 1));
+
+        $this->assertSame(Response::HTTP_SERVICE_UNAVAILABLE, $response->getStatusCode());
+        $this->assertSame('coupon_unavailable', $this->decode($response)['code']);
+        $this->assertFalse($this->decode($response)['retry']);
+    }
+
     public function testCheckoutReturns401WithoutSession(): void
     {
         $controller = new CheckoutController(

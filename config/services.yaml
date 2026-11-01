@@ -1,6 +1,10 @@
 # config/services.yaml
 parameters:
     app.base_path: '%env(TPV_BASE_PATH)%'
+    # Coupon preview is unsafe against an older TPV Connect module, which
+    # interprets an unknown operation as order creation. Keep it off until the
+    # compatible module is deployed and an operator explicitly enables it.
+    env(TPV_COUPON_CHECKOUT_ENABLED): '0'
     # New native coupon creation uses the shop's local calendar day.
     env(PS_SHOP_TIMEZONE): 'Europe/Madrid'
 
@@ -68,6 +72,7 @@ services:
             $printerService: '@VenPosTPV\Service\Print\PrinterService'
             $psApiClient: '@VenPosTPV\Service\PrestaShop\PrestaShopApiClient'
             $syncLogRepo: '@VenPosTPV\Service\Sync\SyncLogRepository'
+            $couponCheckoutEnabled: '%env(bool:TPV_COUPON_CHECKOUT_ENABLED)%'
 
     # Ticket Verification Service
     VenPosTPV\Service\Print\TicketVerificationService:

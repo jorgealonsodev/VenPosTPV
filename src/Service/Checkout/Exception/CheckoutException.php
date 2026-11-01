@@ -26,6 +26,20 @@ final class CheckoutException extends RuntimeException
         );
     }
 
+    public static function couponUnavailable(string $message): self
+    {
+        return new self($message, 503);
+    }
+
+    public static function couponReconciliationRequired(string $message, ?Throwable $previous = null): self
+    {
+        return new self(
+            sprintf('Coupon checkout outcome is uncertain: %s', $message),
+            409,
+            $previous
+        );
+    }
+
     public static function stockUpdateFailed(int $psOrderId, Throwable $previous): self
     {
         return new self(

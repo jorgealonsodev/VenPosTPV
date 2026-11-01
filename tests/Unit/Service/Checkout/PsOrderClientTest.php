@@ -183,6 +183,72 @@ final class PsOrderClientTest extends TestCase
         ]);
     }
 
+    public function testCouponPreviewReturnsOnlyAMatchingSignedQuote(): void
+    {
+        $quote = [
+            'cart_id' => 123, 'customer_id' => 1, 'shop_id' => 1, 'currency_id' => 1,
+            'coupon_id' => 9, 'coupon_code' => 'SAVE10', 'coupon_expires_at' => '2026-12-31 23:59:59',
+            'products' => [['id_product' => 1, 'id_product_attribute' => 0, 'quantity' => 1]],
+            'before_discount_total' => 23.14, 'discount_amount' => 10.00, 'total_paid' => 13.14,
+            'expires_at' => time() + 60,
+        ];
+        $encoded = rtrim(strtr(base64_encode(json_encode($quote, JSON_THROW_ON_ERROR)), '+/', '-_'), '=');
+        $quoteToken = $encoded . '.' . hash_hmac('sha256', $encoded, 'test_secret');
+        $client = $this->createClient([
+            new MockResponse(json_encode([
+                'operation' => 'coupon_preview', 'cart_id' => 123,
+                'before_discount_total' => 23.14, 'discount_amount' => 10.00, 'total_paid' => 13.14,
+                'coupon' => ['code' => 'SAVE10', 'expires_at' => '2026-12-31 23:59:59'], 'quote' => $quoteToken,
+            ]), ['http_code' => 200]),
+        ]);
+
+        $preview = $client->previewCoupon([
+            'operation' => 'coupon_preview',
+            'products' => [['id_product' => 1, 'id_product_attribute' => 0, 'quantity' => 1]],
+            'id_customer' => 1, 'id_currency' => 1, 'id_shop' => 1,
+            'payment_method' => 'TPV Connect', 'coupon_code' => 'SAVE10',
+        ]);
+
+        $this->assertSame(13.14, $preview['total_paid']);
+        $this->assertSame($quoteToken, $preview['quote']);
+    }
+
+    public function testAnonymousPreviewAcceptsOnlyPositiveSignedNativeCustomerResolution(): void
+    {
+        $quote = [
+            'cart_id' => 123, 'customer_id' => 42, 'shop_id' => 1, 'currency_id' => 1,
+            'coupon_id' => 9, 'coupon_code' => 'SAVE10', 'coupon_expires_at' => '2026-12-31 23:59:59',
+            'products' => [['id_product' => 1, 'id_product_attribute' => 0, 'quantity' => 1]],
+            'before_discount_total' => 23.14, 'discount_amount' => 10.00, 'total_paid' => 13.14,
+            'expires_at' => time() + 60,
+        ];
+        $encoded = rtrim(strtr(base64_encode(json_encode($quote, JSON_THROW_ON_ERROR)), '+/', '-_'), '=');
+        $quoteToken = $encoded . '.' . hash_hmac('sha256', $encoded, 'test_secret');
+        $client = $this->createClient([
+            new MockResponse(json_encode([
+                'operation' => 'coupon_preview', 'cart_id' => 123,
+                'before_discount_total' => 23.14, 'discount_amount' => 10.00, 'total_paid' => 13.14,
+                'coupon' => ['code' => 'SAVE10', 'expires_at' => '2026-12-31 23:59:59'], 'quote' => $quoteToken,
+            ]), ['http_code' => 200]),
+        ]);
+
+        $preview = $client->previewCoupon([
+            'operation' => 'coupon_preview',
+            'products' => [['id_product' => 1, 'id_product_attribute' => 0, 'quantity' => 1]],
+            'id_customer' => 0, 'id_currency' => 1, 'id_shop' => 1,
+            'payment_method' => 'TPV Connect', 'coupon_code' => 'SAVE10',
+        ]);
+
+        $this->assertSame(42, $client->verifyCouponQuote($preview['quote'])['customer_id']);
+    }
+
+    public function testForgedCouponQuoteIsRejected(): void
+    {
+        $this->expectException(CheckoutException::class);
+        $this->expectExceptionMessage('Coupon quote is invalid');
+        $this->createClient([])->verifyCouponQuote('forged.signature');
+    }
+
     public function testHmacSignatureMatchesExpectedValue(): void
     {
         $secret = 'my_secret_key';
