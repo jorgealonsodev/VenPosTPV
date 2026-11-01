@@ -12,6 +12,12 @@ class PrestaShopApiClient
 {
     private readonly string $baseUrl;
 
+    /**
+     * Request/response key used to ask the Web Service for a calculated price.
+     * PrestaShop echoes the chosen key back on the product resource.
+     */
+    private const TTC_PRICE_KEY = 'tpv_ttc';
+
     public function __construct(
         string $baseUrl,
         private readonly string $apiKey,
@@ -72,6 +78,65 @@ class PrestaShopApiClient
     public function getCategories(): array
     {
         return $this->paginate('/categories?display=full&output_format=JSON');
+    }
+
+    /**
+     * Returns the authoritative tax-included unit price of a product, or of one
+     * of its combinations, as PrestaShop would charge it in its own cart.
+     *
+     * This is the price the TPV must charge: `getProducts()` exposes the raw
+     * `price` field, which is tax-excluded and has no reduction applied, while
+     * the shop books orders with `Cart::getOrderTotal(true, Cart::BOTH)`.
+     *
+     * The calculated-price parameter only works on a single product resource, so
+     * this costs one request per product.
+     *
+     * The price is calculated in the default visitor context (default currency,
+     * country and group). Quantity-based pricing, cart rules and shipping are
+     * still only applied by PrestaShop when the order is created.
+     *
+     * @return float|null the calculated price, or null when PrestaShop cannot
+     *                    calculate one (the caller falls back to the base price)
+     *
+     * @throws PsApiException on network or HTTP error
+     */
+    public function getTaxIncludedUnitPrice(int $productId, int $combinationId = 0): ?float
+    {
+        $priceParameters = [
+            'use_tax' => 1,
+            'use_reduction' => 1,
+        ];
+
+        if ($combinationId > 0) {
+            $priceParameters['product_attribute'] = $combinationId;
+        }
+
+        $query = http_build_query([
+            'price' => [self::TTC_PRICE_KEY => $priceParameters],
+            'output_format' => 'JSON',
+        ]);
+
+        $url = sprintf('%s/api/products/%d?%s', $this->baseUrl, $productId, $query);
+        $response = $this->request('GET', $url);
+        $data = $this->decodeResponse($response);
+
+        $product = $data['product'] ?? null;
+        if (!\is_array($product)) {
+            return null;
+        }
+
+        $value = $product[self::TTC_PRICE_KEY] ?? null;
+        if (\is_array($value)) {
+            $value = $value['value'] ?? null;
+        }
+
+        if (!\is_scalar($value) || !is_numeric($value)) {
+            return null;
+        }
+
+        $price = (float) $value;
+
+        return is_finite($price) && $price >= 0 ? $price : null;
     }
 
     /**

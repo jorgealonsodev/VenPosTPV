@@ -239,4 +239,82 @@ final class PrestaShopApiClientTest extends TestCase
         $this->assertFalse($result['online']);
         $this->assertNull($result['latency_ms']);
     }
+
+    public function testGetTaxIncludedUnitPriceReturnsPriceCalculatedWithTaxAndReduction(): void
+    {
+        $client = $this->createClient([
+            $this->createJsonResponse([
+                'product' => [
+                    'id' => 1,
+                    'price' => '23.900000',
+                    'tpv_ttc' => '23.140000',
+                ],
+            ]),
+        ]);
+
+        $this->assertSame(23.14, $client->getTaxIncludedUnitPrice(1));
+    }
+
+    public function testGetTaxIncludedUnitPriceRequestsTaxAndReductionAndCombination(): void
+    {
+        $requestedUrls = [];
+        $httpClient = new MockHttpClient(function (string $method, string $url) use (&$requestedUrls) {
+            $requestedUrls[] = $url;
+
+            return $this->createJsonResponse([
+                'product' => ['id' => 1, 'tpv_ttc' => '25.960000'],
+            ]);
+        });
+
+        $client = new PrestaShopApiClient('http://localhost/prestashop/api', 'TEST_KEY', $httpClient);
+        $price = $client->getTaxIncludedUnitPrice(1, 7);
+
+        $this->assertSame(25.96, $price);
+        $this->assertCount(1, $requestedUrls);
+        $url = $requestedUrls[0];
+        $this->assertStringContainsString('/api/products/1?', $url);
+        $this->assertStringContainsString('use_tax%5D=1', $url);
+        $this->assertStringContainsString('use_reduction%5D=1', $url);
+        $this->assertStringContainsString('product_attribute%5D=7', $url);
+    }
+
+    public function testGetTaxIncludedUnitPriceOmitsCombinationParameterForBaseProduct(): void
+    {
+        $requestedUrls = [];
+        $httpClient = new MockHttpClient(function (string $method, string $url) use (&$requestedUrls) {
+            $requestedUrls[] = $url;
+
+            return $this->createJsonResponse([
+                'product' => ['id' => 1, 'tpv_ttc' => '23.140000'],
+            ]);
+        });
+
+        $client = new PrestaShopApiClient('http://localhost/prestashop/api', 'TEST_KEY', $httpClient);
+        $client->getTaxIncludedUnitPrice(1);
+
+        $this->assertStringNotContainsString('product_attribute', $requestedUrls[0]);
+    }
+
+    public function testGetTaxIncludedUnitPriceReturnsNullWhenPriceCannotBeComputed(): void
+    {
+        foreach ([['product' => ['id' => 1]], ['product' => ['id' => 1, 'tpv_ttc' => '']], ['product' => ['id' => 1, 'tpv_ttc' => 'not-a-number']]] as $payload) {
+            $client = $this->createClient([$this->createJsonResponse($payload)]);
+
+            $this->assertNull(
+                $client->getTaxIncludedUnitPrice(1),
+                'A missing or non-numeric calculated price must yield null so the caller can fall back'
+            );
+        }
+    }
+
+    public function testGetTaxIncludedUnitPriceThrowsOnRejectedCredentials(): void
+    {
+        $client = $this->createClient([
+            $this->createJsonResponse(['errors' => [['code' => 26, 'message' => 'not allowed']]], 401),
+        ]);
+
+        $this->expectException(PsApiException::class);
+
+        $client->getTaxIncludedUnitPrice(1);
+    }
 }
