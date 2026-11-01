@@ -195,6 +195,49 @@ if (!class_exists('Cart', false)) {
     }
 }
 
+if (!class_exists('CartRule', false)) {
+    class CartRule
+    {
+        public int $id = 0;
+        public string $code = '';
+        public string $date_from = '2000-01-01 00:00:00';
+        public string $date_to = '0000-00-00 00:00:00';
+        public bool $active = false;
+        public int $quantity = 0;
+        public bool $loaded = false;
+        public function __construct(int $id = 0)
+        {
+            foreach (CouponTestState::$rules as $code => $rule) {
+                if ($rule['id'] === $id) {
+                    $this->id = $id;
+                    $this->code = $code;
+                    $this->date_from = $rule['date_from'] ?? '2000-01-01 00:00:00';
+                    $this->date_to = $rule['date_to'];
+                    $this->active = $rule['active'] ?? true;
+                    $this->quantity = $rule['quantity'] ?? 1;
+                    $this->loaded = true;
+                }
+            }
+        }
+        public static function getIdByCode(string $code, int $idLang = 0): int { return CouponTestState::$rules[$code]['id'] ?? 0; }
+        public function checkValidity(Context $context, bool $alreadyInCart = false, bool $displayError = true): bool|string|null
+        {
+            $rule = CouponTestState::$rules[$this->code] ?? null;
+            $error = null;
+            if ($rule === null) { $error = 'unknown'; }
+            elseif (!$alreadyInCart && (!$this->active || $this->quantity < 1 || strtotime($this->date_from) > time() || strtotime($this->date_to) < time())) { $error = 'inactive, exhausted, or expired'; }
+            elseif (!$alreadyInCart && $context->cart !== null && $context->cart->id > 0 && in_array($this->id, $context->cart->cartRules, true)) { $error = 'already in cart'; }
+            elseif (isset($rule['customer_id']) && (int) $context->customer->id !== $rule['customer_id']) { $error = 'customer restricted'; }
+            elseif (isset($rule['shop_id']) && (int) $context->shop->id !== $rule['shop_id']) { $error = 'shop restricted'; }
+            if ($error !== null) { return $displayError ? $error : false; }
+            return $displayError ? null : true;
+        }
+    }
+}
+if (!class_exists('Validate', false)) {
+    class Validate { public static function isLoadedObject(object $object): bool { return ($object->loaded ?? true) === true; } }
+}
+
 require_once __DIR__ . '/../classes/SsoToken.php';
 require_once __DIR__ . '/../install/install.php';
 require_once __DIR__ . '/../classes/CouponCheckout.php';

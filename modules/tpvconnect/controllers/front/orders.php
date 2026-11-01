@@ -50,15 +50,17 @@ class TpvconnectOrdersModuleFrontController extends ModuleFrontController
             $this->jsonResponse(['error' => 'Validation failed', 'details' => ['body' => 'Invalid JSON']], 422);
         }
 
-        $errors = $this->validateInput($data);
+        $errors = array_merge($this->validateInput($data), CouponCheckout::validateCouponRequest($data));
         if (!empty($errors)) {
             $this->jsonResponse(['error' => 'Validation failed', 'details' => $errors], 422);
         }
-        if (array_key_exists('coupon', $data) || ($data['operation'] ?? 'order') !== 'order') {
-            $this->jsonResponse(['error' => 'Validation failed', 'details' => ['coupon' => 'Coupon checkout is not available']], 422);
-        }
 
         try {
+            if (($data['operation'] ?? 'order') === 'coupon_preview') {
+                $checkout = new CouponCheckout($secret, $this->context);
+                $this->jsonResponse($checkout->preview($data), 200);
+            }
+
             $result = $this->createOrder($data, $secret);
             $this->jsonResponse($result, 201);
         } catch (CouponCheckoutException $e) {
@@ -141,7 +143,11 @@ class TpvconnectOrdersModuleFrontController extends ModuleFrontController
      */
     private function createOrder(array $data, string $secret): array
     {
-        // Retain the existing non-coupon path while sharing cart construction.
+        if (array_key_exists('coupon', $data)) {
+            throw new CouponCheckoutException('Coupon redemption is not available');
+        }
+
+        // Retain the existing non-coupon path, sharing only cart construction.
         $checkout = new CouponCheckout($secret, $this->context);
         $cart = $checkout->buildCart($data);
         return $this->validateOrderFromCart($cart, $data, (float) $cart->getOrderTotal(true, Cart::BOTH));
