@@ -8,11 +8,15 @@ use Doctrine\DBAL\Connection;
 use PHPUnit\Framework\TestCase;
 use VenPosTPV\Service\Catalog\CatalogSyncService;
 use VenPosTPV\Service\Catalog\Exception\CatalogSyncException;
+use VenPosTPV\Service\PrestaShop\Exception\PsApiException;
 use VenPosTPV\Service\PrestaShop\PrestaShopApiClient;
 use VenPosTPV\Service\Sync\SyncLogRepository;
 
 final class CatalogSyncServiceTest extends TestCase
 {
+    /** @var array<int, array{sql: string, params: array<int, mixed>}> */
+    private array $capturedStatements = [];
+
     private function createMockConnection(): Connection
     {
         $conn = $this->createMock(Connection::class);
@@ -104,14 +108,16 @@ final class CatalogSyncServiceTest extends TestCase
         $this->assertSame(0, $result['categories']);
     }
 
-    public function testSyncAllRollsBackOnError(): void
+    public function testSyncAllLeavesTheDatabaseUntouchedWhenARemoteReadFails(): void
     {
-        $conn = $this->createMockConnection();
+        $conn = $this->createCapturingConnection();
         $apiClient = $this->createMockApiClient();
         $syncLogRepo = $this->createMockSyncLogRepo();
 
-        $conn->expects($this->once())->method('beginTransaction');
-        $conn->expects($this->once())->method('rollBack');
+        // Remote reads now happen before the write transaction, so a failed read
+        // cannot leave a half-written catalog behind: nothing is opened at all.
+        $conn->expects($this->never())->method('beginTransaction');
+        $conn->expects($this->never())->method('rollBack');
         $conn->expects($this->never())->method('commit');
 
         $apiClient->method('getCategories')->willReturn([
@@ -125,7 +131,12 @@ final class CatalogSyncServiceTest extends TestCase
         $service = new CatalogSyncService($apiClient, $conn, $syncLogRepo);
 
         $this->expectException(CatalogSyncException::class);
-        $service->syncAll();
+
+        try {
+            $service->syncAll();
+        } finally {
+            $this->assertSame([], $this->capturedStatements, 'no statement may run when a remote read fails');
+        }
     }
 
     public function testSyncAllReplacesStaleData(): void
@@ -204,5 +215,122 @@ final class CatalogSyncServiceTest extends TestCase
 
         $service = new CatalogSyncService($apiClient, $conn, $syncLogRepo);
         $service->syncStock();
+    }
+
+    /**
+     * Records every statement so a test can assert which column values are written.
+     */
+    private function createCapturingConnection(): Connection
+    {
+        $this->capturedStatements = [];
+        $conn = $this->createMock(Connection::class);
+        $conn->method('isTransactionActive')->willReturn(true);
+        $conn->method('executeStatement')
+            ->willReturnCallback(function (string $sql, array $params = []): int {
+                $this->capturedStatements[] = ['sql' => $sql, 'params' => $params];
+
+                return 1;
+            });
+
+        return $conn;
+    }
+
+    /**
+     * @return array<int, mixed>
+     */
+    private function capturedParamsForTable(string $table): array
+    {
+        $params = [];
+        foreach ($this->capturedStatements as $statement) {
+            if (str_contains($statement['sql'], "INSERT INTO `{$table}`")) {
+                $params = array_merge($params, $statement['params']);
+            }
+        }
+
+        return $params;
+    }
+
+    public function testSyncAllStoresTheTaxIncludedPriceForProductsAndCombinations(): void
+    {
+        $conn = $this->createCapturingConnection();
+        $apiClient = $this->createMockApiClient();
+        $syncLogRepo = $this->createMockSyncLogRepo();
+
+        $apiClient->method('getProducts')->willReturn([
+            ['id' => 1, 'name' => 'Product 1', 'reference' => 'REF001', 'ean13' => '', 'price' => 23.90, 'active' => 1],
+        ]);
+        $apiClient->method('getCombinations')->willReturn([
+            ['id' => 10, 'id_product' => 1, 'reference' => 'COMB010', 'ean13' => '', 'price' => 0.0],
+        ]);
+        $apiClient->method('getStockAvailables')->willReturn([]);
+        $apiClient->method('getTaxIncludedUnitPrice')
+            ->willReturnCallback(static fn (int $productId, int $combinationId = 0): float => $combinationId > 0 ? 25.96 : 23.14);
+
+        $service = new CatalogSyncService($apiClient, $conn, $syncLogRepo);
+        $result = $service->syncAll();
+
+        $productParams = $this->capturedParamsForTable('catalog_product');
+        $this->assertContains(23.90, $productParams, 'the base price must keep being stored');
+        $this->assertContains(23.14, $productParams, 'the authoritative tax-included price must be stored');
+
+        $combinationParams = $this->capturedParamsForTable('catalog_combination');
+        $this->assertContains(25.96, $combinationParams, 'the combination keeps its absolute tax-included price');
+
+        $this->assertSame(2, $result['ttc_prices'], 'products and combinations with a resolved price are counted');
+    }
+
+    public function testSyncAllStoresNullTaxIncludedPriceAndStillCompletesWhenTheLookupFails(): void
+    {
+        $conn = $this->createCapturingConnection();
+        $apiClient = $this->createMockApiClient();
+        $syncLogRepo = $this->createMockSyncLogRepo();
+
+        $apiClient->method('getProducts')->willReturn([
+            ['id' => 1, 'name' => 'Product 1', 'reference' => 'REF001', 'ean13' => '', 'price' => 23.90, 'active' => 1],
+        ]);
+        $apiClient->method('getCombinations')->willReturn([]);
+        $apiClient->method('getStockAvailables')->willReturn([]);
+        $apiClient->method('getTaxIncludedUnitPrice')->willThrowException(new PsApiException('PS API down'));
+
+        $service = new CatalogSyncService($apiClient, $conn, $syncLogRepo);
+        $result = $service->syncAll();
+
+        $productParams = $this->capturedParamsForTable('catalog_product');
+        $this->assertContains(23.90, $productParams, 'the base price is still stored so the catalog stays usable');
+        $this->assertContains(null, $productParams, 'the missing tax-included price is stored as NULL');
+        $this->assertSame(1, $result['products'], 'a failed price lookup must not abort the sync');
+        $this->assertSame(0, $result['ttc_prices']);
+    }
+
+    public function testSyncAllResolvesTaxIncludedPricesBeforeOpeningTheWriteTransaction(): void
+    {
+        $events = [];
+        $conn = $this->createMock(Connection::class);
+        $conn->method('isTransactionActive')->willReturn(true);
+        $conn->method('executeStatement')->willReturn(1);
+        $conn->method('beginTransaction')->willReturnCallback(function () use (&$events): void {
+            $events[] = 'begin';
+        });
+        $conn->method('commit')->willReturnCallback(function () use (&$events): void {
+            $events[] = 'commit';
+        });
+
+        $apiClient = $this->createMockApiClient();
+        $syncLogRepo = $this->createMockSyncLogRepo();
+        $apiClient->method('getProducts')->willReturn([
+            ['id' => 1, 'name' => 'Product 1', 'reference' => 'REF001', 'ean13' => '', 'price' => 23.90, 'active' => 1],
+        ]);
+        $apiClient->method('getCombinations')->willReturn([]);
+        $apiClient->method('getStockAvailables')->willReturn([]);
+        $apiClient->method('getTaxIncludedUnitPrice')->willReturnCallback(function () use (&$events): float {
+            $events[] = 'ttc';
+
+            return 23.14;
+        });
+
+        $service = new CatalogSyncService($apiClient, $conn, $syncLogRepo);
+        $service->syncAll();
+
+        $this->assertSame(['ttc', 'begin', 'commit'], $events, 'no HTTP price request may run inside the write transaction');
     }
 }

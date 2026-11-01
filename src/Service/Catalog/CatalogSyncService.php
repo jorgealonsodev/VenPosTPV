@@ -22,10 +22,29 @@ class CatalogSyncService
     }
 
     /**
-     * @return array{products: int, combinations: int, combination_attributes: int, stock: int, categories: int}
+     * @return array{products: int, combinations: int, combination_attributes: int, stock: int, categories: int, ttc_prices: int}
      */
     public function syncAll(): array
     {
+        // Remote reads happen before the write transaction: the request sequence is
+        // long and holding a transaction open across HTTP calls blocks the catalog,
+        // and a failed read then leaves the stored catalog untouched.
+        try {
+            $categories = $this->apiClient->getCategories();
+            $products = $this->apiClient->getProducts();
+            $combinations = $this->apiClient->getCombinations();
+            $options = $this->apiClient->getProductOptions();
+            $optionValues = $this->apiClient->getProductOptionValues();
+            $stockAvailables = $this->apiClient->getStockAvailables();
+            $taxIncludedPrices = $this->fetchTaxIncludedPrices($products, $combinations);
+        } catch (CatalogSyncException $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            throw CatalogSyncException::fromPrevious($e);
+        }
+
+        $taxIncludedPriceCount = \count($taxIncludedPrices['products']) + \count($taxIncludedPrices['combinations']);
+
         $this->connection->beginTransaction();
 
         try {
@@ -35,7 +54,6 @@ class CatalogSyncService
             $this->truncateTable('catalog_product');
             $this->truncateTable('catalog_category');
 
-            $categories = $this->apiClient->getCategories();
             $categoryCount = $this->batchInsert(
                 'catalog_category',
                 $categories,
@@ -49,13 +67,13 @@ class CatalogSyncService
                 }
             );
 
-            $products = $this->apiClient->getProducts();
             $psShopUrl = $this->psShopUrl;
             $psApiKey = $this->psApiKey;
+            $productTaxIncludedPrices = $taxIncludedPrices['products'];
             $productCount = $this->batchInsert(
                 'catalog_product',
                 $products,
-                static function (array $prod) use ($psShopUrl, $psApiKey): array {
+                static function (array $prod) use ($psShopUrl, $psApiKey, $productTaxIncludedPrices): array {
                     $name = PrestaShopApiClient::extractTranslations($prod['name'] ?? '', '1');
                     $imageId = (int) ($prod['id_default_image'] ?? 0);
                     $imageUrl = null;
@@ -69,6 +87,7 @@ class CatalogSyncService
                         'reference' => isset($prod['reference']) && \is_string($prod['reference']) ? $prod['reference'] : null,
                         'ean13' => isset($prod['ean13']) && \is_string($prod['ean13']) ? $prod['ean13'] : null,
                         'price' => (float) ($prod['price'] ?? 0),
+                        'price_ttc' => $productTaxIncludedPrices[(int) $prod['id']] ?? null,
                         'id_category_default' => isset($prod['id_category_default']) ? (int) $prod['id_category_default'] : null,
                         'active' => (int) ($prod['active'] ?? 1),
                         'image_url' => $imageUrl,
@@ -76,23 +95,23 @@ class CatalogSyncService
                 }
             );
 
-            $combinations = $this->apiClient->getCombinations();
+            $combinationTaxIncludedPrices = $taxIncludedPrices['combinations'];
             $combinationCount = $this->batchInsert(
                 'catalog_combination',
                 $combinations,
-                static function (array $comb): array {
+                static function (array $comb) use ($combinationTaxIncludedPrices): array {
                     return [
                         'id' => (int) $comb['id'],
                         'id_product' => (int) ($comb['id_product'] ?? 0),
                         'reference' => isset($comb['reference']) && \is_string($comb['reference']) ? $comb['reference'] : null,
                         'ean13' => isset($comb['ean13']) && \is_string($comb['ean13']) ? $comb['ean13'] : null,
                         'price_impact' => (float) ($comb['price'] ?? 0),
+                        'price_ttc' => $combinationTaxIncludedPrices[(int) $comb['id']] ?? null,
                     ];
                 }
             );
 
             // Build option group map: id → name
-            $options = $this->apiClient->getProductOptions();
             $optionMap = [];
             foreach ($options as $opt) {
                 $name = PrestaShopApiClient::extractTranslations($opt['name'] ?? $opt['public_name'] ?? '');
@@ -100,7 +119,6 @@ class CatalogSyncService
             }
 
             // Build option value map: id → [group_name, attribute_name]
-            $optionValues = $this->apiClient->getProductOptionValues();
             $valueMap = [];
             foreach ($optionValues as $val) {
                 $groupId = (int) ($val['id_attribute_group'] ?? 0);
@@ -144,7 +162,6 @@ class CatalogSyncService
                 }
             }
 
-            $stockAvailables = $this->apiClient->getStockAvailables();
             $stockCount = $this->batchInsert(
                 'catalog_stock',
                 $stockAvailables,
@@ -162,7 +179,9 @@ class CatalogSyncService
 
             $this->syncLogRepo->upsert('catalog', 'inbound', new \DateTimeImmutable(), $productCount);
             $this->syncLogRepo->upsert('stock', 'inbound', new \DateTimeImmutable(), $stockCount);
-            $this->syncLogRepo->upsert('prices', 'inbound', new \DateTimeImmutable(), $productCount);
+            // The row count reports how many products and combinations got an
+            // authoritative tax-included price, so a partial price lookup is visible.
+            $this->syncLogRepo->upsert('prices', 'inbound', new \DateTimeImmutable(), $taxIncludedPriceCount);
 
             return [
                 'products' => $productCount,
@@ -170,6 +189,7 @@ class CatalogSyncService
                 'combination_attributes' => $combinationAttributeCount,
                 'stock' => $stockCount,
                 'categories' => $categoryCount,
+                'ttc_prices' => $taxIncludedPriceCount,
             ];
         } catch (CatalogSyncException $e) {
             if ($this->connection->isTransactionActive()) {
@@ -181,6 +201,60 @@ class CatalogSyncService
                 $this->connection->rollBack();
             }
             throw CatalogSyncException::fromPrevious($e);
+        }
+    }
+
+    /**
+     * Resolves the tax-included price PrestaShop would charge for every product and
+     * combination. It runs before the write transaction and never fails the sync:
+     * a product without a resolved price keeps NULL, so the checkout falls back to
+     * the base price instead of blocking a sale.
+     *
+     * @param array<int, array<string, mixed>> $products
+     * @param array<int, array<string, mixed>> $combinations
+     *
+     * @return array{products: array<int, float>, combinations: array<int, float>}
+     */
+    private function fetchTaxIncludedPrices(array $products, array $combinations): array
+    {
+        $productPrices = [];
+        foreach ($products as $product) {
+            $productId = (int) ($product['id'] ?? 0);
+            if ($productId <= 0) {
+                continue;
+            }
+
+            $price = $this->fetchTaxIncludedPrice($productId);
+            if ($price !== null) {
+                $productPrices[$productId] = $price;
+            }
+        }
+
+        $combinationPrices = [];
+        foreach ($combinations as $combination) {
+            $combinationId = (int) ($combination['id'] ?? 0);
+            $productId = (int) ($combination['id_product'] ?? 0);
+            if ($combinationId <= 0 || $productId <= 0) {
+                continue;
+            }
+
+            $price = $this->fetchTaxIncludedPrice($productId, $combinationId);
+            if ($price !== null) {
+                $combinationPrices[$combinationId] = $price;
+            }
+        }
+
+        return ['products' => $productPrices, 'combinations' => $combinationPrices];
+    }
+
+    private function fetchTaxIncludedPrice(int $productId, int $combinationId = 0): ?float
+    {
+        try {
+            return $this->apiClient->getTaxIncludedUnitPrice($productId, $combinationId);
+        } catch (\Throwable) {
+            // Best effort: the base price keeps the sale possible and the checkout
+            // records which basis it used.
+            return null;
         }
     }
 
