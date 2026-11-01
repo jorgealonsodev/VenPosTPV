@@ -149,9 +149,9 @@ const PaymentModal = {
                     <icon name="check" :size="36" />
                 </div>
                 <div style="font-size:24px; font-weight:700;">Cobro completado</div>
-                <div style="font-family:'IBM Plex Mono'; font-size:32px; color:var(--green);">€{{ Number(total).toFixed(2) }}</div>
+                <div style="font-family:'IBM Plex Mono'; font-size:32px; color:var(--green);">{{ Number(total).toFixed(2) }}€</div>
                 <div v-if="method === 'cash' && change > 0" style="color:var(--text2);">
-                    Cambio: <span style="color:var(--amber); font-weight:600; font-family:'IBM Plex Mono';">€{{ Number(change).toFixed(2) }}</span>
+                    Cambio: <span style="color:var(--amber); font-weight:600; font-family:'IBM Plex Mono';">{{ Number(change).toFixed(2) }}€</span>
                 </div>
                 <div v-if="printerType !== 'none'" style="color:var(--text3); font-size:13px;">
                     {{ printerType === 'escpos' ? 'Ticket enviado a impresora' : 'Abriendo ticket PDF...' }}
@@ -187,7 +187,7 @@ const PaymentModal = {
                 <div style="padding:24px 28px 20px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between;">
                     <div>
                         <div style="font-size:12px; color:var(--text3); text-transform:uppercase; letter-spacing:0.1em;">Cobrar ticket</div>
-                        <div style="font-size:28px; font-weight:700; font-family:'IBM Plex Mono'; margin-top:2px;">€{{ Number(total).toFixed(2) }}</div>
+                        <div style="font-size:28px; font-weight:700; font-family:'IBM Plex Mono'; margin-top:2px;">{{ Number(total).toFixed(2) }}€</div>
                     </div>
                     <button @click="$emit('close')" style="background:var(--surface2); border:none; border-radius:8px; width:36px; height:36px; cursor:pointer; color:var(--text2); display:flex; align-items:center; justify-content:center;">
                         <icon name="close" :size="16" />
@@ -207,7 +207,7 @@ const PaymentModal = {
                         </div>
 
                         <numpad v-if="method === 'cash' || method === 'mixed'"
-                            :presets="[{value:'20',label:'€20'},{value:'50',label:'€50'},{value:'100',label:'€100'}]"
+                            :presets="[{value:'10',label:'10€'},{value:'20',label:'20€'},{value:'50',label:'50€'},{value:'100',label:'100€'}]"
                             @input="appendNum"
                         />
                     </div>
@@ -223,12 +223,12 @@ const PaymentModal = {
                             </div>
                             <div v-if="cashParsed >= total" style="background:var(--amber-bg); border:1px solid var(--amber); border-radius:10px; padding:12px 16px;">
                                 <div style="font-size:11px; color:var(--amber); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:4px;">Cambio a devolver</div>
-                                <div style="font-family:'IBM Plex Mono'; font-size:28px; font-weight:700; color:var(--amber);">€{{ Number(change).toFixed(2) }}</div>
+                                <div style="font-family:'IBM Plex Mono'; font-size:28px; font-weight:700; color:var(--amber);">{{ Number(change).toFixed(2) }}€</div>
                             </div>
                             <div style="display:flex; flex-wrap:wrap; gap:7px; margin-top:auto;">
-                                <button v-for="v in [20,50,100]" :key="v" @click="cashInput = String(v)"
+                                <button v-for="v in [10,20,50,100]" :key="v" @click="cashInput = String(v)"
                                     style="flex:0 0 auto; padding:8px 16px; border-radius:8px; border:1px solid var(--border); background:var(--surface2); color:var(--text2); cursor:pointer; font-family:'IBM Plex Mono'; font-size:14px;">
-                                    €{{ v }}
+                                    {{ v }}€
                                 </button>
                                 <button @click="exacto"
                                     style="flex:0 0 auto; padding:8px 16px; border-radius:8px; border:1px solid var(--green-dim); background:var(--green-bg); color:var(--green); cursor:pointer; font-family:'IBM Plex Mono'; font-size:14px;">
@@ -248,7 +248,7 @@ const PaymentModal = {
                                     <div style="font-size:16px; font-weight:600;">Esperando datáfono…</div>
                                     <div style="color:var(--text3); font-size:13px;">Pase, introduce o aproxime la tarjeta en el terminal</div>
                                 </template>
-                                <div style="font-family:'IBM Plex Mono'; font-size:22px; color:var(--blue); margin-top:8px;">€{{ Number(total).toFixed(2) }}</div>
+                                <div style="font-family:'IBM Plex Mono'; font-size:22px; color:var(--blue); margin-top:8px;">{{ Number(total).toFixed(2) }}€</div>
                             </div>
                         </template>
 
@@ -264,7 +264,7 @@ const PaymentModal = {
                         <template v-if="method === 'mixed'">
                             <div style="flex:1; display:flex; flex-direction:column; gap:12px;">
                                 <div style="font-size:12px; color:var(--text3); text-transform:uppercase; letter-spacing:0.1em;">
-                                    Total: <span style="font-family:'IBM Plex Mono'; color:var(--text);">€{{ Number(total).toFixed(2) }}</span>
+                                    Total: <span style="font-family:'IBM Plex Mono'; color:var(--text);">{{ Number(total).toFixed(2) }}€</span>
                                 </div>
                                 <div>
                                     <div style="font-size:12px; color:var(--text2); margin-bottom:6px;">Tarjeta</div>
@@ -277,7 +277,7 @@ const PaymentModal = {
                                         style="width:100%; background:var(--surface2); border:1px solid var(--border2); border-radius:10px; padding:12px 16px; font-family:'IBM Plex Mono'; font-size:20px; color:var(--text); outline:none;" />
                                 </div>
                                 <div style="font-size:12px; color: (cardParsed+card2Parsed) >= total ? 'var(--green)' : 'var(--red)'; font-family:'IBM Plex Mono';">
-                                    Total cubierto: €{{ (cardParsed+card2Parsed).toFixed(2) }} {{ (cardParsed+card2Parsed) >= total ? '✓' : '(faltan €' + (total - cardParsed - card2Parsed).toFixed(2) + ')' }}
+                                    Total cubierto: {{ (cardParsed+card2Parsed).toFixed(2) }}€ {{ (cardParsed+card2Parsed) >= total ? '✓' : '(faltan ' + (total - cardParsed - card2Parsed).toFixed(2) + '€)' }}
                                 </div>
                             </div>
                         </template>
@@ -285,7 +285,7 @@ const PaymentModal = {
                         <button @click="handleConfirm" :disabled="!canConfirm()"
                             style="margin-top:auto; padding:16px; border-radius:12px; border:none; font-family:inherit; font-size:16px; font-weight:700; transition:all .15s;"
                             :style="{ background: canConfirm() ? 'var(--green)' : 'var(--surface3)', color: canConfirm() ? '#000' : 'var(--text3)', cursor: canConfirm() ? 'pointer' : 'default' }">
-                            {{ method === 'card' ? (dataphoneMode === 'independent' ? 'Registrar cobro con tarjeta' : 'Confirmar cobro con tarjeta') : 'Cobrar €' + Number(total).toFixed(2) }}
+                            {{ method === 'card' ? (dataphoneMode === 'independent' ? 'Registrar cobro con tarjeta' : 'Confirmar cobro con tarjeta') : 'Cobrar ' + Number(total).toFixed(2) + '€' }}
                         </button>
                     </div>
                 </div>
