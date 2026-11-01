@@ -9,6 +9,7 @@ function loadEnvironment({
     parkedTicketCreate = (payload) => Promise.resolve({ data: { id: 101, ...payload } }),
     parkedTicketDelete = () => Promise.resolve({ data: { deleted: true } }),
     parkedTicketsClear = () => Promise.resolve({ data: { deleted_count: 1 } }),
+    catalogProducts = {},
 } = {}) {
     const cartSource = fs.readFileSync(
         path.resolve(__dirname, '../../public/assets/js/stores/useCart.js'),
@@ -48,6 +49,12 @@ function loadEnvironment({
             parkedTicketCreate,
             parkedTicketDelete,
             parkedTicketsClear,
+            get: (requestPath) => {
+                const match = String(requestPath).match(/\/api\/catalog\/product\/(\d+)$/);
+                const productId = match ? Number(match[1]) : 0;
+
+                return Promise.resolve({ data: catalogProducts[productId] || null });
+            },
         },
         Date,
         Math,
@@ -215,12 +222,59 @@ async function testClearAllEmptiesBothServerAndLocalStorageForZCloseDiscard() {
     assert.equal(JSON.parse(storage.get('venpostpv_parked')).length, 0);
 }
 
+async function testRestoreReplacesTheParkedPriceSnapshotWithTheCatalogPrice() {
+    const { useCart, useParkedTickets } = loadEnvironment({
+        initialParkedStorage: JSON.stringify([
+            {
+                id: 31,
+                client_ref: 'parked_stale_basis',
+                note: 'Probador 3',
+                lines: [{ id: 'l_stale', product_id: 100, name: 'Vestido Azul', price: 80, qty: 1, discount: 0 }],
+                discount: null,
+                total: 80,
+                created_at: '2026-11-01 19:30:00',
+            },
+        ]),
+        catalogProducts: { 100: { id: 100, price: 96.8, combinations: [] } },
+    });
+
+    await useParkedTickets.restoreWithSwap(useParkedTickets.state.tickets[0], useCart, 'María García');
+
+    assert.equal(useCart.cart.lines.length, 1);
+    assert.equal(useCart.cart.lines[0].price, 96.8, 'the frozen parked price must be replaced by the catalog price');
+    assert.equal(useCart.cart.total, 96.8);
+}
+
+async function testRestoreKeepsTheParkedPriceWhenTheCatalogCannotBeRead() {
+    const { useCart, useParkedTickets } = loadEnvironment({
+        initialParkedStorage: JSON.stringify([
+            {
+                id: 32,
+                client_ref: 'parked_offline',
+                note: 'Probador 4',
+                lines: [{ id: 'l_offline', product_id: 555, name: 'Pañuelo', price: 12, qty: 1, discount: 0 }],
+                discount: null,
+                total: 12,
+                created_at: '2026-11-01 19:35:00',
+            },
+        ]),
+        catalogProducts: {},
+    });
+
+    await useParkedTickets.restoreWithSwap(useParkedTickets.state.tickets[0], useCart, 'María García');
+
+    assert.equal(useCart.cart.lines[0].price, 12, 'an unreadable product must keep the parked price for the checkout to judge');
+    assert.equal(useCart.cart.total, 12);
+}
+
 async function main() {
     await testParkPersistsToLocalStorageAndServerWithOptionalNote();
     await testParkFallsBackToLocalStorageWhenServerFailsAndSyncsOnRefresh();
     await testRestoreSwapsActiveCartByAutoParkingCurrentCartAndPreservingDiscount();
     await testClearAllEmptiesBothServerAndLocalStorageForZCloseDiscard();
-    console.log('parkedTickets functional harness: 4 passed');
+    await testRestoreReplacesTheParkedPriceSnapshotWithTheCatalogPrice();
+    await testRestoreKeepsTheParkedPriceWhenTheCatalogCannotBeRead();
+    console.log('parkedTickets functional harness: 6 passed');
 }
 
 main().catch((error) => {

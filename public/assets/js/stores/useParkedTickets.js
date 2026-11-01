@@ -251,6 +251,17 @@ const useParkedTickets = (function () {
             ticketToRestore.discount || null
         );
 
+        // The ticket keeps the price snapshot taken when it was parked. Re-price it
+        // from the catalog before the cashier charges, otherwise a ticket parked
+        // before a price basis change would be rejected by the checkout.
+        if (typeof cartStore.reprice === 'function') {
+            try {
+                await cartStore.reprice();
+            } catch (err) {
+                // Keep the parked prices; the checkout still validates them.
+            }
+        }
+
         return {
             restored: ticketToRestore,
             swapped,

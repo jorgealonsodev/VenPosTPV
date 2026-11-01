@@ -46,6 +46,14 @@ const SaleScreen = {
 
         Vue.onMounted(() => {
             refreshParked();
+            // The cart is restored from localStorage with the prices captured when
+            // each line was added; re-price them so a stale snapshot never reaches
+            // the checkout, which validates against the current catalog.
+            if (typeof useCart.reprice === 'function') {
+                useCart.reprice().catch(() => {
+                    // A failed re-price keeps the stored prices; the checkout still validates.
+                });
+            }
         });
 
         function notify(msg, color) {

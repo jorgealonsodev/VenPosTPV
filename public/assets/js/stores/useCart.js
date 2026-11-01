@@ -165,6 +165,103 @@ const useCart = (function () {
         save();
     }
 
+    /**
+     * Re-prices every line from the catalog, because a line keeps the price
+     * snapshot taken when it was added and a parked ticket keeps the snapshot
+     * taken when it was parked. Once the catalog carries the authoritative
+     * tax-included price, a frozen snapshot is a stale basis and the checkout
+     * rejects the sale.
+     *
+     * `resolveProduct(productId)` must return the catalog product (with its
+     * combinations) or null when the product is unknown; a null product and a
+     * failing resolver both leave the line untouched so the checkout, not the
+     * cart, decides about an unknown or unreachable product.
+     *
+     * @returns {Promise<boolean>} whether any line price changed
+     */
+    async function reprice(resolveProduct) {
+        const resolver = resolveProduct || defaultProductResolver;
+        const cache = new Map();
+        let changed = false;
+
+        for (const line of cart.lines) {
+            const productId = Number(line.product_id);
+            if (!Number.isInteger(productId) || productId <= 0) {
+                continue;
+            }
+
+            let product = cache.get(productId);
+            if (product === undefined) {
+                try {
+                    product = await resolver(productId);
+                } catch (e) {
+                    product = null;
+                }
+                cache.set(productId, product);
+            }
+
+            if (!product) {
+                continue;
+            }
+
+            const price = catalogUnitPrice(product, Number(line.id_product_attribute) || 0);
+            if (price === null) {
+                continue;
+            }
+
+            if (Math.abs(price - (Number(line.price) || 0)) > 0.001) {
+                line.price = price;
+                changed = true;
+            }
+        }
+
+        if (changed) {
+            recalc();
+            save();
+        }
+
+        return changed;
+    }
+
+    /**
+     * Mirrors CatalogPanel.onCombinationSelect: the line price is the catalog
+     * product price plus the impact of the selected combination.
+     */
+    function catalogUnitPrice(product, combinationId) {
+        const basePrice = Number(product.price);
+        if (!Number.isFinite(basePrice)) {
+            return null;
+        }
+
+        if (combinationId <= 0) {
+            return basePrice;
+        }
+
+        const combinations = Array.isArray(product.combinations) ? product.combinations : [];
+        const combination = combinations.find((c) => Number(c.id) === combinationId);
+        if (!combination) {
+            return basePrice;
+        }
+
+        const impact = Number(combination.price_impact) || 0;
+
+        return Math.round((basePrice + impact) * 100) / 100;
+    }
+
+    /**
+     * Default resolver: reads the product from the POS API. It stays lazy so this
+     * module keeps working without the API client (tests, offline screens).
+     */
+    async function defaultProductResolver(productId) {
+        if (typeof ApiClient === 'undefined' || !ApiClient || typeof ApiClient.get !== 'function') {
+            return null;
+        }
+
+        const response = await ApiClient.get('/api/catalog/product/' + productId);
+
+        return response && response.data ? response.data : null;
+    }
+
     function restore(lines, customer, discount = null) {
         cart.lines = Array.isArray(lines)
             ? lines.map(l => ({ ...l }))
@@ -190,5 +287,6 @@ const useCart = (function () {
         applyDiscount,
         setCustomer,
         restore,
+        reprice,
     };
 })();
