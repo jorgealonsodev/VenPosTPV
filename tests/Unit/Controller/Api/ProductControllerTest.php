@@ -5,36 +5,16 @@ declare(strict_types=1);
 namespace VenPosTPV\Tests\Unit\Controller\Api;
 
 use PHPUnit\Framework\TestCase;
-use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use VenPosTPV\Controller\Api\ProductController;
 use VenPosTPV\Service\Catalog\ProductSearchService;
+use VenPosTPV\Tests\Support\SessionRequest;
 
 class ProductControllerTest extends TestCase
 {
-    protected function setUp(): void
-    {
-        if (session_status() === PHP_SESSION_ACTIVE) {
-            session_destroy();
-        }
-        session_start();
-        $_SESSION = [];
-    }
-
-    protected function tearDown(): void
-    {
-        $_SESSION = [];
-        if (session_status() === PHP_SESSION_ACTIVE) {
-            session_destroy();
-        }
-    }
-
     public function testSearchReturns401WithoutSession(): void
     {
-        $searchService = $this->createMock(ProductSearchService::class);
-        $controller = new ProductController($searchService);
-        $request = new Request(['q' => 'test']);
-        $response = $controller->search($request);
+        $response = (new ProductController($this->createMock(ProductSearchService::class)))->search(SessionRequest::create(['q' => 'test']));
 
         $this->assertSame(Response::HTTP_UNAUTHORIZED, $response->getStatusCode());
         $data = json_decode((string) $response->getContent(), true, 512, JSON_THROW_ON_ERROR);
@@ -43,19 +23,12 @@ class ProductControllerTest extends TestCase
 
     public function testSearchReturnsResultsWithSession(): void
     {
-        $_SESSION['user_id'] = 1;
-
         $searchService = $this->createMock(ProductSearchService::class);
-        $searchService->expects($this->once())
-            ->method('search')
-            ->with('hummingbird', null, 50)
-            ->willReturn([
-                ['id' => 1, 'name' => 'Hummingbird T-Shirt', 'price' => 29.99],
-            ]);
+        $searchService->expects($this->once())->method('search')->with('hummingbird', null, 50)->willReturn([
+            ['id' => 1, 'name' => 'Hummingbird T-Shirt', 'price' => 29.99],
+        ]);
 
-        $controller = new ProductController($searchService);
-        $request = new Request(['q' => 'hummingbird']);
-        $response = $controller->search($request);
+        $response = (new ProductController($searchService))->search(SessionRequest::create(['q' => 'hummingbird'], ['user_id' => 1]));
 
         $this->assertSame(Response::HTTP_OK, $response->getStatusCode());
         $data = json_decode((string) $response->getContent(), true, 512, JSON_THROW_ON_ERROR);
@@ -65,26 +38,18 @@ class ProductControllerTest extends TestCase
 
     public function testCategoriesReturns401WithoutSession(): void
     {
-        $searchService = $this->createMock(ProductSearchService::class);
-        $controller = new ProductController($searchService);
-        $response = $controller->categories();
-
+        $response = (new ProductController($this->createMock(ProductSearchService::class)))->categories(SessionRequest::create());
         $this->assertSame(Response::HTTP_UNAUTHORIZED, $response->getStatusCode());
     }
 
     public function testCategoriesReturnsActiveCategories(): void
     {
-        $_SESSION['user_id'] = 1;
-
         $searchService = $this->createMock(ProductSearchService::class);
-        $searchService->expects($this->once())
-            ->method('getActiveCategories')
-            ->willReturn([
-                ['id' => 1, 'name' => 'Ropa', 'id_parent' => 0, 'active' => true],
-            ]);
+        $searchService->expects($this->once())->method('getActiveCategories')->willReturn([
+            ['id' => 1, 'name' => 'Ropa', 'id_parent' => 0, 'active' => true],
+        ]);
 
-        $controller = new ProductController($searchService);
-        $response = $controller->categories();
+        $response = (new ProductController($searchService))->categories(SessionRequest::create([], ['user_id' => 1]));
 
         $this->assertSame(Response::HTTP_OK, $response->getStatusCode());
         $data = json_decode((string) $response->getContent(), true, 512, JSON_THROW_ON_ERROR);
@@ -93,31 +58,18 @@ class ProductControllerTest extends TestCase
 
     public function testProductReturns401WithoutSession(): void
     {
-        $searchService = $this->createMock(ProductSearchService::class);
-        $controller = new ProductController($searchService);
-        $response = $controller->product(1);
-
+        $response = (new ProductController($this->createMock(ProductSearchService::class)))->product(SessionRequest::create(), 1);
         $this->assertSame(Response::HTTP_UNAUTHORIZED, $response->getStatusCode());
     }
 
     public function testProductReturnsProductDetail(): void
     {
-        $_SESSION['user_id'] = 1;
-
         $searchService = $this->createMock(ProductSearchService::class);
-        $searchService->expects($this->once())
-            ->method('findById')
-            ->with(1)
-            ->willReturn([
-                'id' => 1,
-                'name' => 'Test Product',
-                'price' => 19.99,
-                'stock' => 10,
-                'combinations' => [],
-            ]);
+        $searchService->expects($this->once())->method('findById')->with(1)->willReturn([
+            'id' => 1, 'name' => 'Test Product', 'price' => 19.99, 'stock' => 10, 'combinations' => [],
+        ]);
 
-        $controller = new ProductController($searchService);
-        $response = $controller->product(1);
+        $response = (new ProductController($searchService))->product(SessionRequest::create([], ['user_id' => 1]), 1);
 
         $this->assertSame(Response::HTTP_OK, $response->getStatusCode());
         $data = json_decode((string) $response->getContent(), true, 512, JSON_THROW_ON_ERROR);
@@ -126,16 +78,10 @@ class ProductControllerTest extends TestCase
 
     public function testProductReturns404ForMissingProduct(): void
     {
-        $_SESSION['user_id'] = 1;
-
         $searchService = $this->createMock(ProductSearchService::class);
-        $searchService->expects($this->once())
-            ->method('findById')
-            ->with(999)
-            ->willReturn(null);
+        $searchService->expects($this->once())->method('findById')->with(999)->willReturn(null);
 
-        $controller = new ProductController($searchService);
-        $response = $controller->product(999);
+        $response = (new ProductController($searchService))->product(SessionRequest::create([], ['user_id' => 1]), 999);
 
         $this->assertSame(Response::HTTP_NOT_FOUND, $response->getStatusCode());
     }

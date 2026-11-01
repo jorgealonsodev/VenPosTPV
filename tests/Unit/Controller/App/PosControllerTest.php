@@ -4,61 +4,42 @@ declare(strict_types=1);
 
 namespace VenPosTPV\Tests\Unit\Controller\App;
 
+use Doctrine\DBAL\Connection;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\HttpFoundation\Response;
 use Twig\Environment;
 use Twig\Loader\ArrayLoader;
 use VenPosTPV\Controller\App\PosController;
+use VenPosTPV\Tests\Support\SessionRequest;
 
 class PosControllerTest extends TestCase
 {
-    protected function setUp(): void
+    private function twig(): Environment
     {
-        if (session_status() === PHP_SESSION_ACTIVE) {
-            session_destroy();
-        }
-        session_start();
-        $_SESSION = [];
-    }
-
-    protected function tearDown(): void
-    {
-        $_SESSION = [];
-        if (session_status() === PHP_SESSION_ACTIVE) {
-            session_destroy();
-        }
+        return new Environment(new ArrayLoader(['pos.html.twig' => '<html><body>{{ session_data }}</body></html>']));
     }
 
     public function testIndexRedirectsWhenNotAuthenticated(): void
     {
-        $loader = new ArrayLoader([
-            'pos.html.twig' => '<html><body>{{ session_data }}</body></html>',
-        ]);
-        $twig = new Environment($loader);
-        $controller = new PosController($twig);
-        $response = $controller->index();
+        $controller = new PosController($this->twig(), $this->createMock(Connection::class));
+        $response = $controller->index(SessionRequest::create());
 
         $this->assertSame(Response::HTTP_FOUND, $response->getStatusCode());
-        $this->assertSame('/', $response->headers->get('Location'));
+        $this->assertSame('/app/login', $response->headers->get('Location'));
     }
 
     public function testIndexRendersTwigShellWhenAuthenticated(): void
     {
-        $_SESSION['user_id'] = 1;
-        $_SESSION['cashier_name'] = 'María García';
-        $_SESSION['store_name'] = 'VenPosTPV';
-        $_SESSION['shop_id'] = 1;
-
-        $loader = new ArrayLoader([
-            'pos.html.twig' => '<html><body>{{ session_data }}</body></html>',
-        ]);
-        $twig = new Environment($loader);
-        $controller = new PosController($twig);
-        $response = $controller->index();
+        $connection = $this->createMock(Connection::class);
+        $connection->expects($this->once())->method('fetchAssociative')->willReturn(false);
+        $controller = new PosController($this->twig(), $connection);
+        $response = $controller->index(SessionRequest::create([], [
+            'user_id' => 1, 'cashier_name' => 'María García', 'store_name' => 'VenPosTPV', 'shop_id' => 1,
+        ]));
 
         $this->assertSame(Response::HTTP_OK, $response->getStatusCode());
         $content = (string) $response->getContent();
-        $this->assertStringContainsString('Mar\u00eda Garc\u00eda', $content);
+        $this->assertStringContainsString('Mar\\u00eda Garc\\u00eda', $content);
         $this->assertStringContainsString('VenPosTPV', $content);
     }
 }
