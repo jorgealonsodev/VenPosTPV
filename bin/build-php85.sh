@@ -115,6 +115,7 @@ main() {
     validate_pin
     preflight
     if [[ "${1:-}" == '--preflight' ]]; then
+        [[ $# -eq 1 ]] || fail 'usage: bin/build-php85.sh [--preflight]'
         return
     fi
     [[ $# -eq 0 ]] || fail 'usage: bin/build-php85.sh [--preflight]'

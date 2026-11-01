@@ -38,6 +38,12 @@ require_text "$CGI_INI" 'cgi.force_redirect = 1'
 grep -Fq -- "configure_args+=('--enable-intl')" "$BUILD_SCRIPT" \
     || fail 'intl must be enabled when the separate ICU probe succeeds'
 
+# Public option parsing rejects extra arguments without installing or modifying files.
+if "$BUILD_SCRIPT" --preflight extra >/dev/null 2>&1; then
+    fail 'preflight accepted an unsupported extra argument'
+fi
+"$BUILD_SCRIPT" --preflight >/dev/null
+
 echo 'Static PHP 8.5 runtime contract passed.'
 
 if [[ ! -x "${RUNTIME}/bin/php" ]]; then
