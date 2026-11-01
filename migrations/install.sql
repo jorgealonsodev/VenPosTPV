@@ -200,3 +200,21 @@ CREATE TABLE IF NOT EXISTS catalog_category (
     active TINYINT(1) NOT NULL DEFAULT 1,
     synced_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
+
+-- 16. parked_ticket
+CREATE TABLE IF NOT EXISTS parked_ticket (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    client_ref VARCHAR(64) NOT NULL,
+    terminal_id INT UNSIGNED NOT NULL DEFAULT 1,
+    user_id INT UNSIGNED NULL,
+    cashier_name VARCHAR(128) NOT NULL DEFAULT 'Cajero',
+    note VARCHAR(120) NULL,
+    customer JSON NULL,
+    lines JSON NOT NULL,
+    discount JSON NULL,
+    total DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_parked_ticket_client_ref (client_ref),
+    INDEX idx_parked_ticket_created (created_at),
+    INDEX idx_parked_ticket_terminal (terminal_id)
+) ENGINE=InnoDB;
