@@ -102,6 +102,14 @@ const SaleScreen = {
             }
         }
 
+        function handleToggleDelivery() {
+            if (useCart.hasDelivery()) {
+                useCart.removeDelivery();
+            } else {
+                useCart.addDelivery();
+            }
+        }
+
         function handlePark() {
             if (!cart.lines.length) return;
             parkNote.value = '';
@@ -351,6 +359,7 @@ const SaleScreen = {
                         @show-payment="showPayment = true"
                         @show-discount="showDiscount = true"
                         @show-customer="showCustomer = true"
+                        @toggle-delivery="handleToggleDelivery"
                         @park="handlePark"
                         @void="handleVoid"
                     />

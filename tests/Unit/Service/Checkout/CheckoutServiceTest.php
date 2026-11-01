@@ -587,6 +587,68 @@ final class CheckoutServiceTest extends TestCase
      * @param array<string, string|array<string, string|null>|null> $catalogPrices
      */
 
+    public function testDeliveryLineIsChargedButKeptOutOfThePrestaShopPayload(): void
+    {
+        $inserted = [];
+        $conn = $this->createMock(Connection::class);
+        $conn->method('fetchOne')->willReturn(10);
+        $conn->method('fetchAssociative')->willReturn(['price' => 23.90, 'price_ttc' => 23.14, 'price_net' => 19.12]);
+        $conn->method('executeStatement')->willReturn(1);
+        $conn->method('insert')->willReturnCallback(function (string $table, array $data) use (&$inserted): int {
+            $inserted[$table] = $data;
+
+            return 1;
+        });
+
+        $payloads = [];
+        $client = $this->createMock(PsOrderClient::class);
+        $client->method('createOrder')->willReturnCallback(function (array $payload) use (&$payloads): array {
+            $payloads[] = $payload;
+
+            return ['order_id' => 8, 'reference' => 'ORD-008', 'total_paid' => 23.14];
+        });
+
+        $service = $this->createService(client: $client, conn: $conn);
+
+        $result = $service->createOrder(1, [
+            'lines' => [
+                ['product_id' => 1, 'qty' => 1, 'price' => 23.14],
+                ['kind' => 'delivery', 'product_id' => 0, 'qty' => 1, 'price' => 10.0, 'name' => 'Entrega a domicilio'],
+            ],
+            'total' => 33.14,
+        ], 'cash', 50.0);
+
+        $this->assertSame(33.14, $result['total'], 'the customer pays the goods plus the delivery fee');
+        $this->assertCount(1, $payloads[0]['products'], 'PrestaShop only receives catalog products');
+        $this->assertSame(1, $payloads[0]['products'][0]['id_product']);
+
+        $breakdown = json_decode($inserted['order_meta']['payment_breakdown'], true);
+        $this->assertEqualsWithDelta(10.0, (float) $breakdown['delivery_amount'], 0.001);
+        $this->assertEqualsWithDelta(5.76, (float) $breakdown['tax'], 0.001, '4.02 of goods VAT plus 1.74 of delivery VAT');
+    }
+
+    public function testDeliveryFeeCannotBeManipulatedByTheBrowser(): void
+    {
+        $conn = $this->catalogConnection([
+            '1' => ['price' => 23.90, 'price_ttc' => 23.14, 'price_net' => 19.12],
+        ]);
+        $client = $this->createMock(PsOrderClient::class);
+        $client->expects($this->never())->method('createOrder');
+
+        $service = $this->createService(client: $client, conn: $conn);
+
+        $this->expectException(CheckoutException::class);
+        $this->expectExceptionMessage('Delivery fee mismatch');
+
+        $service->createOrder(1, [
+            'lines' => [
+                ['product_id' => 1, 'qty' => 1, 'price' => 23.14],
+                ['kind' => 'delivery', 'product_id' => 0, 'qty' => 1, 'price' => 500.0],
+            ],
+            'total' => 523.14,
+        ], 'cash', 600.0);
+    }
+
     public function testOrderMetaRecordsTheExactVatOfEachLine(): void
     {
         $conn = $this->catalogConnection([

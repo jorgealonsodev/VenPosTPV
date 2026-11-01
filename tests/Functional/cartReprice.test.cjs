@@ -132,6 +132,30 @@ async function testRepriceAlsoRefreshesTheNetPrice() {
     assert.equal(useCart.cart.iva, 1.09);
 }
 
+async function testDeliveryAddsItsOwnLineWithItsOwnVat() {
+    const useCart = loadCart();
+    useCart.add({ id: 1, name: 'Camiseta', price: 23.14, net_price: 19.12, stock: 5 });
+
+    assert.equal(useCart.addDelivery(), true);
+    assert.equal(useCart.hasDelivery(), true);
+
+    const line = useCart.cart.lines.find(l => l.kind === 'delivery');
+    assert.equal(line.price, 10);
+    assert.equal(line.net_price, 8.26);
+    assert.equal(useCart.cart.total, 33.14);
+    // 4.02 of goods VAT plus 1.74 of delivery VAT.
+    assert.equal(useCart.cart.iva, 5.76);
+
+    // Only one delivery per sale.
+    assert.equal(useCart.addDelivery(), false);
+    assert.equal(useCart.cart.lines.filter(l => l.kind === 'delivery').length, 1);
+
+    assert.equal(useCart.removeDelivery(), true);
+    assert.equal(useCart.hasDelivery(), false);
+    assert.equal(useCart.cart.total, 23.14);
+    assert.equal(useCart.cart.iva, 4.02);
+}
+
 async function main() {
     await testStaleSnapshotPriceIsReplacedByTheCatalogPrice();
     await testCombinationLineUsesTheCatalogCombinationImpact();
@@ -141,7 +165,8 @@ async function main() {
     await testVatComesFromTheShopPricesNotFromTheFixedRate();
     await testVatFallsBackToTheStandardRateWithoutANetPrice();
     await testRepriceAlsoRefreshesTheNetPrice();
-    console.log('cartReprice functional harness: 8 passed');
+    await testDeliveryAddsItsOwnLineWithItsOwnVat();
+    console.log('cartReprice functional harness: 9 passed');
 }
 
 main().catch((error) => {

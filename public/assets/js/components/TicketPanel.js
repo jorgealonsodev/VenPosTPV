@@ -81,6 +81,10 @@ const TicketPanel = {
             <!-- Action bar -->
             <div style="padding:8px 12px 12px; border-top: cart.lines.length > 0 ? 'none' : '1px solid var(--border)'; display:flex; flex-direction:column; gap:8px;">
                 <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px;">
+                    <button @click="$emit('toggleDelivery')"
+                        :style="{ padding: '9px 6px', borderRadius: '8px', border: '1px solid ' + (cart.lines.some(l => l.kind === 'delivery') ? 'var(--green)' : 'var(--border)'), background: 'transparent', color: cart.lines.some(l => l.kind === 'delivery') ? 'var(--green)' : 'var(--text2)', cursor: 'pointer', fontFamily: 'inherit', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }">
+                        <icon name="box" :size="13" /> Entrega 10 €
+                    </button>
                     <button @click="$emit('showDiscount')"
                         style="padding:9px 6px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px; display:flex; align-items:center; justify-content:center; gap:5px; transition:all .1s;"
                         onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='transparent'">
