@@ -7,8 +7,15 @@ const PaymentModal = {
     setup(props, { emit }) {
         const method = Vue.ref('cash');
         const cashInput = Vue.ref('');
-        const card1 = Vue.ref('');
         const card2 = Vue.ref('');
+        // In a mixed payment the cashier types the cash part and the card covers the
+        // rest of the total, so the card amount is derived instead of typed.
+        const card1 = Vue.computed(() => {
+            const cash = parseFloat(String(card2.value).replace(',', '.')) || 0;
+            const remaining = Math.round((props.total - cash) * 100) / 100;
+
+            return remaining > 0 ? remaining.toFixed(2).replace('.', ',') : '';
+        });
         const step = Vue.ref('select'); // select | done | error
         const errorMsg = Vue.ref('');
         const errorRetry = Vue.ref(false);
@@ -112,30 +119,38 @@ const PaymentModal = {
             handleConfirm();
         }
 
+        // In a mixed payment the keypad types the cash part; the card amount is typed
+        // directly into its field. Before this the keypad wrote to a field mixed
+        // payments do not use, so every keypad button looked broken.
         function appendNum(k) {
+            const target = method.value === 'mixed' ? card2 : cashInput;
+
             if (k === 'backspace') {
-                if (method.value === 'mixed') {
-                    // simple toggle not implemented for MVP
-                } else {
-                    cashInput.value = cashInput.value.slice(0, -1);
-                }
+                target.value = String(target.value).slice(0, -1);
                 return;
             }
             if (k === 'decimal') {
-                if (method.value === 'mixed') return;
-                if (!cashInput.value.includes(',')) cashInput.value += ',';
+                if (!String(target.value).includes(',')) {
+                    target.value = (String(target.value) || '0') + ',';
+                }
                 return;
             }
             if (k.startsWith('preset:')) {
-                const val = k.split(':')[1];
-                cashInput.value = val;
+                target.value = k.split(':')[1];
                 return;
             }
-            if (method.value === 'mixed') return;
-            cashInput.value += k;
+            target.value = String(target.value) + k;
         }
 
         function exacto() {
+            if (method.value === 'mixed') {
+                // The cash part covers whatever the card does not.
+                const remaining = Math.max(0, Math.round((props.total - cardParsed.value) * 100) / 100);
+                card2.value = remaining > 0 ? remaining.toFixed(2).replace('.', ',') : '';
+
+                return;
+            }
+
             cashInput.value = props.total.toFixed(2).replace('.', ',');
         }
 
@@ -212,7 +227,7 @@ const PaymentModal = {
                                 :preset-columns="2"
                                 @input="appendNum"
                             />
-                            <button @click="exacto"
+                            <button v-if="method === 'cash'" @click="exacto"
                                 style="padding:10px 16px; border-radius:8px; border:1px solid var(--green-dim); background:var(--green-bg); color:var(--green); cursor:pointer; font-family:inherit; font-size:13px; font-weight:600;">
                                 Exacto
                             </button>
@@ -268,16 +283,18 @@ const PaymentModal = {
                                     Total: <span style="font-family:'IBM Plex Mono'; color:var(--text);">{{ Number(total).toFixed(2) }}€</span>
                                 </div>
                                 <div>
-                                    <div style="font-size:12px; color:var(--text2); margin-bottom:6px;">Tarjeta</div>
-                                    <input v-model="card1" placeholder="0,00"
+                                    <div style="font-size:12px; color:var(--text2); margin-bottom:6px;">Efectivo</div>
+                                    <input v-model="card2" placeholder="0,00" inputmode="decimal"
                                         style="width:100%; background:var(--surface2); border:1px solid var(--border2); border-radius:10px; padding:12px 16px; font-family:'IBM Plex Mono'; font-size:20px; color:var(--text); outline:none;" />
                                 </div>
                                 <div>
-                                    <div style="font-size:12px; color:var(--text2); margin-bottom:6px;">Efectivo</div>
-                                    <input v-model="card2" placeholder="0,00"
-                                        style="width:100%; background:var(--surface2); border:1px solid var(--border2); border-radius:10px; padding:12px 16px; font-family:'IBM Plex Mono'; font-size:20px; color:var(--text); outline:none;" />
+                                    <div style="font-size:12px; color:var(--text2); margin-bottom:6px;">Tarjeta</div>
+                                    <div style="width:100%; background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:12px 16px; font-family:'IBM Plex Mono'; font-size:20px; color:var(--text2);">
+                                        {{ card1 || '0,00' }} €
+                                    </div>
                                 </div>
-                                <div style="font-size:12px; color: (cardParsed+card2Parsed) >= total ? 'var(--green)' : 'var(--red)'; font-family:'IBM Plex Mono';">
+                                <div style="font-size:12px; font-family:'IBM Plex Mono';"
+                                    :style="{ color: (cardParsed + card2Parsed) >= total ? 'var(--green)' : 'var(--red)' }">
                                     Total cubierto: {{ (cardParsed+card2Parsed).toFixed(2) }}€ {{ (cardParsed+card2Parsed) >= total ? '✓' : '(faltan ' + (total - cardParsed - card2Parsed).toFixed(2) + '€)' }}
                                 </div>
                             </div>

@@ -10,6 +10,7 @@ use Doctrine\DBAL\Platforms\MySQLPlatform;
 use Doctrine\DBAL\Schema\Column;
 use Doctrine\DBAL\Schema\Schema;
 use PHPUnit\Framework\TestCase;
+use VenPosTPV\Tests\Support\TestDatabase;
 use Psr\Log\NullLogger;
 use VenPosTPV\Migrations\Version00000017AddPriceTtcToCatalogTables;
 
@@ -24,69 +25,9 @@ require_once \dirname(__DIR__, 3) . '/migrations/Version00000017AddPriceTtcToCat
  */
 class Version00000017AddPriceTtcToCatalogTablesTest extends TestCase
 {
-    /**
-     * Resolves the database settings for this test only.
-     *
-     * PHPUnit shares `$_ENV` across the whole suite in one process, so writing to it
-     * here would enable every other database-dependent test mid-run, and several of
-     * those are currently broken (they insert a `catalog_stock.id_shop` column that
-     * does not exist). The settings are therefore returned instead of assigned.
-     *
-     * @return array<string, string>
-     */
-    private function databaseSettings(): array
-    {
-        $settings = [
-            'TPV_DB_HOST' => $_ENV['TPV_DB_HOST'] ?? '127.0.0.1',
-            'TPV_DB_PORT' => $_ENV['TPV_DB_PORT'] ?? '3306',
-            'TPV_DB_NAME' => $_ENV['TPV_DB_NAME'] ?? 'tpv',
-            'TPV_DB_USER' => $_ENV['TPV_DB_USER'] ?? 'tpv_user',
-            'TPV_DB_PASSWORD' => $_ENV['TPV_DB_PASSWORD'] ?? '',
-        ];
-
-        if (isset($_ENV['TPV_DB_NAME'])) {
-            return $settings;
-        }
-
-        $envFile = \dirname(__DIR__, 3) . '/.env';
-        if (!is_file($envFile)) {
-            return $settings;
-        }
-
-        foreach (file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
-            if (!preg_match('/^\s*([A-Z0-9_]+)\s*=\s*(.*)$/', $line, $matches)) {
-                continue;
-            }
-            if (str_starts_with($matches[1], 'TPV_DB_')) {
-                $settings[$matches[1]] = trim($matches[2], "'\"");
-            }
-        }
-
-        return $settings;
-    }
-
     private function getConnection(): ?Connection
     {
-        $settings = $this->databaseSettings();
-
-        $config = [
-            'driver' => 'pdo_mysql',
-            'host' => $settings['TPV_DB_HOST'],
-            'port' => (int) $settings['TPV_DB_PORT'],
-            'dbname' => $settings['TPV_DB_NAME'],
-            'user' => $settings['TPV_DB_USER'],
-            'password' => $settings['TPV_DB_PASSWORD'],
-            'charset' => 'utf8mb4',
-        ];
-
-        try {
-            $conn = DriverManager::getConnection($config);
-            $conn->executeQuery('SELECT 1');
-
-            return $conn;
-        } catch (\Throwable) {
-            return null;
-        }
+        return TestDatabase::connection();
     }
 
     private function column(Connection $conn, string $table, string $column): ?Column
