@@ -1,0 +1,248 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+
+function ref(value) { return { value }; }
+function computed(fn) { return { get value() { return fn(); } }; }
+
+function loadPayment({ preview, checkout, couponCheckout = checkout }) {
+    const source = fs.readFileSync(path.resolve(__dirname, '../../public/assets/js/components/PaymentModal.js'), 'utf8');
+    const cart = {
+        lines: [{ id: 1, product_id: 1, qty: 1, price: 23.14 }], subtotal: 23.14,
+        discount: null, discount_amount: 0, total: 23.14, iva: 4.01, customer: { id: 9 },
+    };
+    const watchers = [];
+    const context = {
+        Vue: { ref, computed, watch(source, callback) { watchers.push({ source, callback }); } },
+        useCart: { cart },
+        useSession: { session: {}, hydrateCashSession: async () => {} },
+        ApiClient: { couponPreview: preview, couponCheckout, checkout, ticketPdf() {}, ticketReprint: async () => {} },
+        setTimeout(fn) { fn(); return 1; }, clearTimeout() {},
+        Number, String, Math, parseFloat, JSON, console, Promise, Error,
+    };
+    context.globalThis = context;
+    vm.runInNewContext(`${source}\nglobalThis.__payment = PaymentModal;`, context, { filename: 'PaymentModal.js' });
+    const emitted = [];
+    const state = context.__payment.setup({ total: 23.14 }, { emit: (name, value) => emitted.push([name, value]) });
+    return { state, cart, emitted, triggerWatches: () => watchers.forEach(({ source, callback }) => callback(source())) };
+}
+
+async function testBlankOrUnverifiedCouponCannotConfirm() {
+    const { state } = loadPayment({ preview: async () => ({}), checkout: async () => ({}) });
+    state.method.value = 'voucher';
+    assert.equal(state.canConfirm(), false);
+    await state.applyVoucher();
+    assert.match(state.voucherError.value, /Introduce/);
+    assert.equal(state.canConfirm(), false);
+}
+
+async function testAppliedCouponUsesAuthoritativePayableAndNetCash() {
+    const preview = { operation: 'coupon_preview', cart_id: 17, before_discount_total: 23.14, discount_amount: 10, total_paid: 13.14, coupon: { code: 'SAVE10' }, quote: 'signed.quote' };
+    let received;
+    const { state, emitted } = loadPayment({ preview: async () => ({ data: preview }), checkout: async (payload) => { received = payload; return { data: { ps_order_id: 88 } }; } });
+    state.method.value = 'voucher';
+    state.voucherCode.value = 'SAVE10';
+    await state.applyVoucher();
+    assert.equal(state.voucherPayable.value, 13.14);
+    assert.equal(state.canConfirm(), true);
+    await state.handleConfirm();
+    assert.equal(received.payment_method, 'cash');
+    assert.equal(received.amount_tendered, 13.14);
+    assert.equal(received.cart_data.cash_amount, 13.14);
+    assert.equal(received.cart_data.coupon.quote, 'signed.quote');
+    assert.equal(emitted[0][0], 'complete');
+}
+
+async function testCouponPreviewInvalidatesOnCartChangeAndCardUsesPayable() {
+    const preview = { operation: 'coupon_preview', cart_id: 17, before_discount_total: 23.14, discount_amount: 10, total_paid: 13.14, coupon: { code: 'SAVE10' }, quote: 'signed.quote' };
+    let received;
+    const { state, cart, triggerWatches } = loadPayment({ preview: async () => ({ data: preview }), checkout: async (payload) => { received = payload; return { data: { ps_order_id: 89 } }; } });
+    state.method.value = 'voucher';
+    state.voucherCode.value = 'SAVE10';
+    await state.applyVoucher();
+    cart.lines[0].qty = 2;
+    triggerWatches();
+    assert.equal(state.canConfirm(), false);
+    await state.applyVoucher();
+    state.voucherTender.value = 'card';
+    await state.handleConfirm();
+    assert.equal(received.payment_method, 'card');
+    assert.equal(received.amount_tendered, 13.14);
+    assert.equal(received.cart_data.card_amount, 13.14);
+}
+
+function deferred() {
+    let resolve;
+    let reject;
+    const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+    return { promise, resolve, reject };
+}
+
+const couponPreview = { operation: 'coupon_preview', cart_id: 17, before_discount_total: 23.14, discount_amount: 10, total_paid: 13.14, coupon: { code: 'SAVE10' }, quote: 'signed.quote' };
+
+async function assertUncertainCouponOutcomeBlocksEveryCheckout(couponCheckout) {
+    let previewCalls = 0;
+    let couponCalls = 0;
+    let ordinaryCalls = 0;
+    const { state, cart, emitted } = loadPayment({
+        preview: async () => { previewCalls += 1; return { data: couponPreview }; },
+        couponCheckout: async (payload) => { couponCalls += 1; return couponCheckout(payload); },
+        checkout: async () => { ordinaryCalls += 1; return { data: { ps_order_id: 99 } }; },
+    });
+    const cartBefore = JSON.stringify(cart);
+    state.method.value = 'voucher';
+    state.voucherCode.value = 'SAVE10';
+    await state.applyVoucher();
+    await state.handleConfirm();
+    assert.equal(couponCalls, 1);
+    assert.equal(ordinaryCalls, 0);
+    assert.equal(state.step.value, 'error');
+    assert.equal(state.voucherReconciliationRequired.value, true);
+    assert.equal(emitted.length, 0);
+    assert.equal(JSON.stringify(cart), cartBefore);
+
+    await state.retryCheckout();
+    assert.equal(couponCalls, 1);
+    assert.equal(ordinaryCalls, 0);
+    state.returnToSelection();
+    state.method.value = 'cash';
+    state.cashInput.value = '30,00';
+    assert.equal(state.canConfirm(), false);
+    await state.handleConfirm();
+    state.method.value = 'card';
+    assert.equal(state.canConfirm(), false);
+    await state.handleConfirm();
+    state.method.value = 'mixed';
+    state.card2.value = '10,00';
+    assert.equal(state.canConfirm(), false);
+    await state.handleConfirm();
+    state.method.value = 'voucher';
+    state.voucherCode.value = 'NEXT';
+    await state.applyVoucher();
+    assert.equal(previewCalls, 1);
+    assert.equal(couponCalls, 1);
+    assert.equal(ordinaryCalls, 0);
+    assert.equal(state.canConfirm(), false);
+    assert.equal(emitted.length, 0);
+    assert.equal(JSON.stringify(cart), cartBefore);
+}
+
+async function testFetchFailureRequiresGlobalReconciliationGuard() {
+    await assertUncertainCouponOutcomeBlocksEveryCheckout(async () => {
+        throw new TypeError('Failed to fetch');
+    });
+}
+
+async function test409RequiresGlobalReconciliationGuard() {
+    await assertUncertainCouponOutcomeBlocksEveryCheckout(async () => {
+        throw new Error('HTTP 409: coupon_reconcile_required');
+    });
+}
+
+async function testCouponSagaFailureRequiresGlobalReconciliationGuard() {
+    await assertUncertainCouponOutcomeBlocksEveryCheckout(async () => ({
+        data: { ps_order_id: 92, total: 13.14, saga_error: true },
+    }));
+}
+
+async function testStaleOrOutOfOrderPreviewCannotRestoreConfirmation() {
+    const first = deferred();
+    const second = deferred();
+    const third = deferred();
+    let previewCalls = 0;
+    const { state, cart, triggerWatches } = loadPayment({
+        preview: () => [first, second, third][previewCalls++].promise,
+        checkout: async () => ({ data: { ps_order_id: 90 } }),
+    });
+    state.method.value = 'voucher';
+    state.voucherCode.value = 'OLD';
+    const oldPreview = state.applyVoucher();
+    state.voucherCode.value = 'CHANGED';
+    cart.lines[0].price = 30;
+    cart.discount = { value: 2 };
+    cart.discount_amount = 2;
+    cart.total = 28;
+    cart.customer = { id: 10 };
+    const changedCart = JSON.stringify(cart);
+    triggerWatches();
+    first.resolve({ data: { operation: 'coupon_preview', cart_id: 17, before_discount_total: 23.14, discount_amount: 10, total_paid: 13.14, coupon: { code: 'OLD' }, quote: 'old.quote' } });
+    await oldPreview;
+    assert.equal(state.voucherPreview.value, null);
+    assert.equal(state.canConfirm(), false);
+    assert.equal(JSON.stringify(cart), changedCart);
+
+    state.voucherCode.value = 'FIRST';
+    const firstCurrentPreview = state.applyVoucher();
+    state.voucherCode.value = 'SECOND';
+    triggerWatches();
+    const secondCurrentPreview = state.applyVoucher();
+    third.resolve({ data: { operation: 'coupon_preview', cart_id: 19, before_discount_total: 28, discount_amount: 10, total_paid: 18, coupon: { code: 'SECOND' }, quote: 'second.quote' } });
+    await secondCurrentPreview;
+    second.resolve({ data: { operation: 'coupon_preview', cart_id: 18, before_discount_total: 28, discount_amount: 10, total_paid: 18, coupon: { code: 'FIRST' }, quote: 'first.quote' } });
+    await firstCurrentPreview;
+    assert.equal(previewCalls, 3);
+    assert.equal(state.voucherPreview.value.coupon.code, 'SECOND');
+    assert.equal(state.canConfirm(), true);
+    assert.equal(JSON.stringify(cart), changedCart);
+}
+
+async function testOrdinaryCashCardAndMixedRemainUnchanged() {
+    const payments = [];
+    const checkout = async (payload) => { payments.push(payload); return { data: { ps_order_id: payments.length, total: 23.14, change_due: 0 } }; };
+
+    const cash = loadPayment({ preview: async () => ({}), checkout });
+    cash.state.cashInput.value = '30,00';
+    await cash.state.handleConfirm();
+    assert.equal(payments[0].payment_method, 'cash');
+    assert.equal(payments[0].amount_tendered, 30);
+    assert.equal(payments[0].cart_data.cash_amount, 23.14);
+
+    const card = loadPayment({ preview: async () => ({}), checkout });
+    card.state.method.value = 'card';
+    await card.state.handleConfirm();
+    assert.equal(payments[1].payment_method, 'card');
+    assert.equal(payments[1].amount_tendered, 23.14);
+    assert.equal(payments[1].cart_data.card_amount, 23.14);
+
+    const mixed = loadPayment({ preview: async () => ({}), checkout });
+    mixed.state.method.value = 'mixed';
+    mixed.state.card2.value = '10,00';
+    await mixed.state.handleConfirm();
+    assert.equal(payments[2].payment_method, 'mixed');
+    assert.equal(payments[2].amount_tendered, 23.14);
+    assert.equal(payments[2].cart_data.cash_amount, 10);
+    assert.equal(payments[2].cart_data.card_amount, 13.14);
+}
+
+async function testVoucherDoneShowsServerNetAndCashChange() {
+    const preview = { operation: 'coupon_preview', cart_id: 17, before_discount_total: 23.14, discount_amount: 23.14, total_paid: 0, coupon: { code: 'SAVE23' }, quote: 'signed.quote' };
+    const { state } = loadPayment({
+        preview: async () => ({ data: preview }),
+        checkout: async () => ({ data: { ps_order_id: 91, total: 0, change_due: 7 } }),
+    });
+    state.method.value = 'voucher';
+    state.voucherCode.value = 'SAVE23';
+    await state.applyVoucher();
+    state.voucherCashInput.value = '7,00';
+    await state.handleConfirm();
+    assert.equal(state.completedTotal.value, 0);
+    assert.equal(state.completedChange.value, 7);
+    assert.equal(state.doneTotal.value, 0);
+    assert.equal(state.doneChange.value, 7);
+}
+
+async function main() {
+    await testBlankOrUnverifiedCouponCannotConfirm();
+    await testAppliedCouponUsesAuthoritativePayableAndNetCash();
+    await testCouponPreviewInvalidatesOnCartChangeAndCardUsesPayable();
+    await test409RequiresGlobalReconciliationGuard();
+    await testFetchFailureRequiresGlobalReconciliationGuard();
+    await testCouponSagaFailureRequiresGlobalReconciliationGuard();
+    await testStaleOrOutOfOrderPreviewCannotRestoreConfirmation();
+    await testOrdinaryCashCardAndMixedRemainUnchanged();
+    await testVoucherDoneShowsServerNetAndCashChange();
+    console.log('paymentCoupons functional harness: 9 passed');
+}
+
+main().catch((error) => { console.error(error); process.exitCode = 1; });

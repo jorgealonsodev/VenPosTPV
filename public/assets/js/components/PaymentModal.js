@@ -20,6 +20,17 @@ const PaymentModal = {
         const errorMsg = Vue.ref('');
         const errorRetry = Vue.ref(false);
         const lastOrderId = Vue.ref(null);
+        const voucherCode = Vue.ref('');
+        const voucherPreview = Vue.ref(null);
+        const voucherBusy = Vue.ref(false);
+        const voucherError = Vue.ref('');
+        const voucherTender = Vue.ref('cash');
+        const voucherCashInput = Vue.ref('');
+        const voucherPreviewRevision = Vue.ref(0);
+        const voucherReconciliationRequired = Vue.ref(false);
+        const completedTotal = Vue.ref(null);
+        const completedChange = Vue.ref(null);
+        const isSubmitting = Vue.ref(false);
 
         const methods = [
             { id: 'cash', label: 'Efectivo', icon: '💵' },
@@ -40,42 +51,148 @@ const PaymentModal = {
         const card2Parsed = Vue.computed(() => parseFloat(card2.value.replace(',', '.')) || 0);
         const dataphoneMode = Vue.computed(() => useSession.session.dataphoneMode || 'integrated');
         const printerType = Vue.computed(() => useSession.session.printerType || 'pdf');
+        const voucherPayable = Vue.computed(() => voucherPreview.value ? Number(voucherPreview.value.total_paid) : 0);
+        const voucherDiscount = Vue.computed(() => voucherPreview.value ? Number(voucherPreview.value.discount_amount) : 0);
+        const voucherGross = Vue.computed(() => voucherPreview.value ? Number(voucherPreview.value.before_discount_total) : Number(props.total));
+        const voucherCashParsed = Vue.computed(() => parseFloat(String(voucherCashInput.value).replace(',', '.')) || 0);
+        const voucherChange = Vue.computed(() => Math.max(0, voucherCashParsed.value - voucherPayable.value));
+        const doneTotal = Vue.computed(() => completedTotal.value === null ? Number(props.total) : completedTotal.value);
+        const doneChange = Vue.computed(() => completedChange.value === null ? change.value : completedChange.value);
+        let activeVoucherSnapshot = null;
+
+        function voucherSnapshot(code = voucherCode.value.trim()) {
+            return JSON.stringify({
+                code,
+                lines: useCart.cart.lines.map((line) => ({
+                    product_id: line.product_id || line.id,
+                    id_product_attribute: line.id_product_attribute || 0,
+                    quantity: line.qty || line.quantity || 1,
+                    price: line.price,
+                    discount: line.discount || 0,
+                })),
+                subtotal: useCart.cart.subtotal,
+                discount: useCart.cart.discount,
+                discount_amount: useCart.cart.discount_amount,
+                total: useCart.cart.total,
+                iva: useCart.cart.iva,
+                customer: useCart.cart.customer,
+            });
+        }
+
+        function invalidateVoucher() {
+            voucherPreviewRevision.value += 1;
+            activeVoucherSnapshot = null;
+            voucherPreview.value = null;
+            voucherError.value = '';
+            voucherCashInput.value = '';
+        }
+
+        function currentCartData() {
+            return {
+                lines: useCart.cart.lines,
+                subtotal: useCart.cart.subtotal,
+                discount: useCart.cart.discount,
+                discount_amount: useCart.cart.discount_amount,
+                total: useCart.cart.total,
+                iva: useCart.cart.iva,
+                customer: useCart.cart.customer,
+            };
+        }
+
+        async function applyVoucher() {
+            if (voucherReconciliationRequired.value) {
+                voucherError.value = 'El resultado del cobro anterior debe reconciliarse antes de validar otro cupón.';
+                return;
+            }
+            const code = voucherCode.value.trim();
+            invalidateVoucher();
+            if (!code) {
+                voucherError.value = 'Introduce un código de cupón.';
+                return;
+            }
+            const previewRevision = voucherPreviewRevision.value;
+            const previewSnapshot = voucherSnapshot(code);
+            activeVoucherSnapshot = previewSnapshot;
+            voucherBusy.value = true;
+            try {
+                const response = await ApiClient.couponPreview({ coupon_code: code, cart_data: currentCartData() });
+                if (!response || !response.data || response.data.operation !== 'coupon_preview') {
+                    throw new Error('La validación del cupón no devolvió una cotización válida.');
+                }
+                if (voucherReconciliationRequired.value || voucherPreviewRevision.value !== previewRevision) {
+                    return;
+                }
+                if (voucherSnapshot(code) !== previewSnapshot) {
+                    invalidateVoucher();
+                    return;
+                }
+                voucherPreview.value = response.data;
+                voucherCashInput.value = Number(response.data.total_paid).toFixed(2).replace('.', ',');
+            } catch (err) {
+                if (voucherPreviewRevision.value === previewRevision) {
+                    voucherError.value = err.message || 'No se pudo validar el cupón.';
+                }
+            } finally {
+                if (voucherPreviewRevision.value === previewRevision) {
+                    voucherBusy.value = false;
+                }
+            }
+        }
+
+        Vue.watch(voucherSnapshot, (nextSnapshot) => {
+            if (nextSnapshot !== activeVoucherSnapshot) invalidateVoucher();
+        });
 
         function canConfirm() {
+            if (isSubmitting.value || voucherReconciliationRequired.value) return false;
             if (method.value === 'cash') return cashParsed.value >= props.total;
             if (method.value === 'card') return true;
             if (method.value === 'mixed') return (cardParsed.value + card2Parsed.value) >= props.total - 0.01;
-            if (method.value === 'voucher') return true;
+            if (method.value === 'voucher') {
+                return !voucherReconciliationRequired.value
+                    && voucherPreview.value !== null
+                    && (voucherTender.value === 'card' || voucherCashParsed.value >= voucherPayable.value);
+            }
             return false;
         }
 
         async function handleConfirm() {
-            const amountTendered = method.value === 'cash'
-                ? cashParsed.value
-                : (method.value === 'mixed'
-                    ? cardParsed.value + card2Parsed.value
-                    : props.total);
-
-            const payload = {
-                payment_method: method.value,
-                amount_tendered: amountTendered,
-                cart_data: {
-                    lines: useCart.cart.lines,
-                    subtotal: useCart.cart.subtotal,
-                    discount: useCart.cart.discount,
-                    discount_amount: useCart.cart.discount_amount,
-                    total: useCart.cart.total,
-                    iva: useCart.cart.iva,
-                    customer: useCart.cart.customer,
-                    cash_amount: method.value === 'cash' ? props.total : (method.value === 'mixed' ? card2Parsed.value : 0),
-                    card_amount: method.value === 'mixed' ? cardParsed.value : (method.value === 'card' ? props.total : 0),
-                },
-            };
+            if (voucherReconciliationRequired.value || !canConfirm()) return;
+            isSubmitting.value = true;
+            const isVoucher = method.value === 'voucher';
+            const amountTendered = isVoucher
+                ? (voucherTender.value === 'cash' ? voucherCashParsed.value : voucherPayable.value)
+                : (method.value === 'cash' ? cashParsed.value : (method.value === 'mixed' ? cardParsed.value + card2Parsed.value : props.total));
+            const paymentMethod = isVoucher ? voucherTender.value : method.value;
+            const cartData = currentCartData();
+            cartData.cash_amount = isVoucher
+                ? (voucherTender.value === 'cash' ? voucherPayable.value : 0)
+                : (method.value === 'cash' ? props.total : (method.value === 'mixed' ? card2Parsed.value : 0));
+            cartData.card_amount = isVoucher
+                ? (voucherTender.value === 'card' ? voucherPayable.value : 0)
+                : (method.value === 'mixed' ? cardParsed.value : (method.value === 'card' ? props.total : 0));
+            if (isVoucher) {
+                cartData.coupon = {
+                    code: voucherPreview.value.coupon.code,
+                    preview_cart_id: voucherPreview.value.cart_id,
+                    quote: voucherPreview.value.quote,
+                };
+            }
+            const payload = { payment_method: paymentMethod, amount_tendered: amountTendered, cart_data: cartData };
 
             try {
-                const response = await ApiClient.checkout(payload);
+                const response = isVoucher ? await ApiClient.couponCheckout(payload) : await ApiClient.checkout(payload);
                 if (response && response.data) {
+                    if (isVoucher && response.data.saga_error === true) {
+                        throw new Error('coupon_reconcile_required: el pedido nativo existe, pero el registro local debe reconciliarse antes de cobrar de nuevo.');
+                    }
                     lastOrderId.value = response.data.ps_order_id || null;
+                    completedTotal.value = Object.prototype.hasOwnProperty.call(response.data, 'total')
+                        ? Number(response.data.total)
+                        : null;
+                    completedChange.value = Object.prototype.hasOwnProperty.call(response.data, 'change_due')
+                        ? Number(response.data.change_due)
+                        : null;
                     const pt = printerType.value;
                     if (pt === 'pdf' && lastOrderId.value) {
                         ApiClient.ticketPdf(lastOrderId.value);
@@ -88,7 +205,7 @@ const PaymentModal = {
                     setTimeout(() => {
                         emit('complete', {
                             ...response.data,
-                            payment_method: method.value,
+                            payment_method: paymentMethod,
                         });
                     }, 2000);
                 } else {
@@ -100,10 +217,22 @@ const PaymentModal = {
                     // The server is authoritative: leave sale rather than offering a stale checkout retry.
                     await useSession.hydrateCashSession();
                 }
-                const retry = msg.includes('502') || msg.includes('Unavailable') || msg.includes('network');
-                errorMsg.value = msg;
+                // A coupon checkout request may have reached PrestaShop even when the
+                // browser cannot classify its failure. Lock every such outcome rather
+                // than inferring safety from an English transport error message.
+                const couponResultUnknown = isVoucher;
+                if (couponResultUnknown) {
+                    voucherReconciliationRequired.value = true;
+                    invalidateVoucher();
+                }
+                const retry = !isVoucher && (msg.includes('502') || msg.includes('Unavailable') || msg.includes('network'));
+                errorMsg.value = couponResultUnknown
+                    ? msg + ' No reintentes automáticamente; reconcilia el resultado antes de volver a cobrar.'
+                    : msg;
                 errorRetry.value = retry;
                 step.value = 'error';
+            } finally {
+                isSubmitting.value = false;
             }
         }
 
@@ -114,9 +243,18 @@ const PaymentModal = {
         }
 
         function retryCheckout() {
+            if (voucherReconciliationRequired.value) return;
             step.value = 'select';
             errorMsg.value = '';
             handleConfirm();
+        }
+
+        function returnToSelection() {
+            step.value = 'select';
+            if (voucherReconciliationRequired.value) {
+                invalidateVoucher();
+                voucherError.value = 'El resultado del cobro anterior debe reconciliarse antes de cobrar de nuevo.';
+            }
         }
 
         // In a mixed payment the keypad types the cash part; the card amount is typed
@@ -154,7 +292,7 @@ const PaymentModal = {
             cashInput.value = props.total.toFixed(2).replace('.', ',');
         }
 
-        return { method, cashInput, card1, card2, step, errorMsg, errorRetry, lastOrderId, methods, cashParsed, change, cardParsed, card2Parsed, dataphoneMode, printerType, canConfirm, handleConfirm, retryCheckout, appendNum, exacto, downloadTicket };
+        return { method, cashInput, card1, card2, step, errorMsg, errorRetry, lastOrderId, methods, cashParsed, change, cardParsed, card2Parsed, dataphoneMode, printerType, voucherCode, voucherPreview, voucherBusy, voucherError, voucherTender, voucherCashInput, voucherPayable, voucherDiscount, voucherGross, voucherCashParsed, voucherChange, voucherReconciliationRequired, completedTotal, completedChange, doneTotal, doneChange, isSubmitting, canConfirm, handleConfirm, retryCheckout, returnToSelection, appendNum, exacto, downloadTicket, applyVoucher, invalidateVoucher };
     },
     template: `
         <div class="modal-backdrop" @click.self="$emit('close')">
@@ -164,9 +302,9 @@ const PaymentModal = {
                     <icon name="check" :size="36" />
                 </div>
                 <div style="font-size:24px; font-weight:700;">Cobro completado</div>
-                <div style="font-family:'IBM Plex Mono'; font-size:32px; color:var(--green);">{{ Number(total).toFixed(2) }}€</div>
-                <div v-if="method === 'cash' && change > 0" style="color:var(--text2);">
-                    Cambio: <span style="color:var(--amber); font-weight:600; font-family:'IBM Plex Mono';">{{ Number(change).toFixed(2) }}€</span>
+                <div style="font-family:'IBM Plex Mono'; font-size:32px; color:var(--green);">{{ Number(doneTotal).toFixed(2) }}€</div>
+                <div v-if="(method === 'cash' || (method === 'voucher' && voucherTender === 'cash')) && doneChange > 0" style="color:var(--text2);">
+                    Cambio: <span style="color:var(--amber); font-weight:600; font-family:'IBM Plex Mono';">{{ Number(doneChange).toFixed(2) }}€</span>
                 </div>
                 <div v-if="printerType !== 'none'" style="color:var(--text3); font-size:13px;">
                     {{ printerType === 'escpos' ? 'Ticket enviado a impresora' : 'Abriendo ticket PDF...' }}
@@ -189,7 +327,7 @@ const PaymentModal = {
                         style="padding:12px 24px; border-radius:10px; border:1px solid var(--green-dim); background:var(--green-bg); color:var(--green); cursor:pointer; font-weight:600;">
                         Reintentar
                     </button>
-                    <button @click="step = 'select'"
+                    <button @click="returnToSelection"
                         style="padding:12px 24px; border-radius:10px; border:1px solid var(--border); background:var(--surface2); color:var(--text2); cursor:pointer;">
                         Volver
                     </button>
@@ -270,10 +408,34 @@ const PaymentModal = {
 
                         <template v-if="method === 'voucher'">
                             <div style="flex:1; display:flex; flex-direction:column; gap:12px;">
-                                <div style="font-size:13px; color:var(--text2);">Introduce el código del vale regalo</div>
-                                <input placeholder="TRJ-XXXX-XXXX"
-                                    style="background:var(--surface2); border:1px solid var(--border2); border-radius:10px; padding:13px 16px; color:var(--text); font-family:'IBM Plex Mono'; font-size:17px; outline:none; letter-spacing:0.05em;" />
-                                <div style="font-size:12px; color:var(--text3);">El sistema validará el saldo disponible automáticamente.</div>
+                                <div style="font-size:13px; color:var(--text2);">Cupón de descuento PrestaShop</div>
+                                <div style="display:flex; gap:8px;">
+                                    <input v-model="voucherCode" @keyup.enter="applyVoucher" placeholder="CÓDIGO DEL CUPÓN"
+                                        :disabled="voucherBusy"
+                                        style="flex:1; background:var(--surface2); border:1px solid var(--border2); border-radius:10px; padding:13px 16px; color:var(--text); font-family:'IBM Plex Mono'; font-size:17px; outline:none; letter-spacing:0.05em;" />
+                                    <button @click="applyVoucher" :disabled="voucherBusy"
+                                        style="padding:0 14px; border-radius:10px; border:1px solid var(--green-dim); background:var(--green-bg); color:var(--green); font-weight:600; cursor:pointer;">
+                                        {{ voucherBusy ? 'Validando…' : 'Validar y aplicar' }}
+                                    </button>
+                                </div>
+                                <div v-if="voucherError" style="color:var(--red); font-size:12px;">{{ voucherError }}</div>
+                                <div v-if="voucherPreview" style="background:var(--green-bg); border:1px solid var(--green-dim); border-radius:10px; padding:12px; display:flex; flex-direction:column; gap:7px;">
+                                    <div style="font-size:12px; color:var(--text2);">Cupón aplicado como descuento; no es saldo ni medio de pago.</div>
+                                    <div style="display:flex; justify-content:space-between;"><span>Bruto</span><strong>{{ voucherGross.toFixed(2) }}€</strong></div>
+                                    <div style="display:flex; justify-content:space-between; color:var(--green);"><span>Descuento cupón</span><strong>-{{ voucherDiscount.toFixed(2) }}€</strong></div>
+                                    <div style="display:flex; justify-content:space-between; font-family:'IBM Plex Mono'; font-size:18px;"><span>Resta por cobrar</span><strong>{{ voucherPayable.toFixed(2) }}€</strong></div>
+                                    <div style="display:flex; gap:8px; margin-top:4px;">
+                                        <button @click="voucherTender = 'cash'" :style="{ flex:1, padding:'8px', borderRadius:'8px', border:'1px solid var(--border)', background:voucherTender === 'cash' ? 'var(--green-bg)' : 'var(--surface2)', color:'var(--text)', cursor:'pointer' }">Efectivo</button>
+                                        <button @click="voucherTender = 'card'" :style="{ flex:1, padding:'8px', borderRadius:'8px', border:'1px solid var(--border)', background:voucherTender === 'card' ? 'var(--green-bg)' : 'var(--surface2)', color:'var(--text)', cursor:'pointer' }">Tarjeta</button>
+                                    </div>
+                                    <template v-if="voucherTender === 'cash'">
+                                        <input v-model="voucherCashInput" inputmode="decimal" placeholder="0,00"
+                                            style="background:var(--surface2); border:1px solid var(--border2); border-radius:8px; padding:10px; color:var(--text); font-family:'IBM Plex Mono';" />
+                                        <div v-if="voucherCashParsed < voucherPayable" style="color:var(--red); font-size:12px;">Faltan {{ (voucherPayable - voucherCashParsed).toFixed(2) }}€</div>
+                                        <div v-else-if="voucherChange > 0" style="color:var(--amber); font-size:12px;">Cambio: {{ voucherChange.toFixed(2) }}€</div>
+                                    </template>
+                                </div>
+                                <div v-else style="font-size:12px; color:var(--text3);">Valida el código para obtener el descuento y el importe pendiente. Se invalida si cambia el carrito o cliente.</div>
                             </div>
                         </template>
 
@@ -303,7 +465,7 @@ const PaymentModal = {
                         <button @click="handleConfirm" :disabled="!canConfirm()"
                             style="margin-top:auto; padding:16px; border-radius:12px; border:none; font-family:inherit; font-size:16px; font-weight:700; transition:all .15s;"
                             :style="{ background: canConfirm() ? 'var(--green)' : 'var(--surface3)', color: canConfirm() ? '#000' : 'var(--text3)', cursor: canConfirm() ? 'pointer' : 'default' }">
-                            {{ method === 'card' ? (dataphoneMode === 'independent' ? 'Registrar cobro con tarjeta' : 'Confirmar cobro con tarjeta') : 'Cobrar ' + Number(total).toFixed(2) + '€' }}
+                            {{ isSubmitting ? 'Procesando…' : (method === 'voucher' ? 'Cobrar ' + voucherPayable.toFixed(2) + '€ tras cupón' : (method === 'card' ? (dataphoneMode === 'independent' ? 'Registrar cobro con tarjeta' : 'Confirmar cobro con tarjeta') : 'Cobrar ' + Number(total).toFixed(2) + '€')) }}
                         </button>
                     </div>
                 </div>
