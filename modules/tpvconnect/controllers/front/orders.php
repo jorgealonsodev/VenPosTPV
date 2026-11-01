@@ -11,6 +11,7 @@ if (!defined('_PS_VERSION_')) {
 }
 
 require_once _PS_MODULE_DIR_ . 'tpvconnect/classes/SsoToken.php';
+require_once _PS_MODULE_DIR_ . 'tpvconnect/classes/CouponCheckout.php';
 
 /**
  * Front controller for order creation endpoint.
@@ -53,11 +54,15 @@ class TpvconnectOrdersModuleFrontController extends ModuleFrontController
         if (!empty($errors)) {
             $this->jsonResponse(['error' => 'Validation failed', 'details' => $errors], 422);
         }
+        if (array_key_exists('coupon', $data) || ($data['operation'] ?? 'order') !== 'order') {
+            $this->jsonResponse(['error' => 'Validation failed', 'details' => ['coupon' => 'Coupon checkout is not available']], 422);
+        }
 
-        // Create order
         try {
-            $result = $this->createOrder($data);
+            $result = $this->createOrder($data, $secret);
             $this->jsonResponse($result, 201);
+        } catch (CouponCheckoutException $e) {
+            $this->jsonResponse(['error' => 'Coupon checkout failed', 'details' => $e->getMessage()], $e->getHttpStatus());
         } catch (Exception $e) {
             $this->jsonResponse(['error' => 'Order creation failed', 'details' => $e->getMessage()], 500);
         }
@@ -134,93 +139,45 @@ class TpvconnectOrdersModuleFrontController extends ModuleFrontController
     /**
      * Create a PrestaShop order from the incoming data.
      */
-    private function createOrder(array $data): array
+    private function createOrder(array $data, string $secret): array
     {
-        $idCustomer = (int) $data['id_customer'];
+        // Retain the existing non-coupon path while sharing cart construction.
+        $checkout = new CouponCheckout($secret, $this->context);
+        $cart = $checkout->buildCart($data);
+        return $this->validateOrderFromCart($cart, $data, (float) $cart->getOrderTotal(true, Cart::BOTH));
+    }
+
+    private function validateOrderFromCart(Cart $cart, array $data, float $totalPaid): array
+    {
         $idCurrency = (int) $data['id_currency'];
-        $idShop = (int) $data['id_shop'];
-        $paymentMethod = (string) $data['payment_method'];
-        $transactionId = isset($data['transaction_id']) ? (string) $data['transaction_id'] : null;
-
-        $customer = new Customer($idCustomer);
-
-        // Create cart
-        $cart = new Cart();
-        $cart->id_customer = $idCustomer;
-        $cart->id_currency = $idCurrency;
-        $cart->id_shop = $idShop;
-        $cart->id_lang = (int) $this->context->language->id;
-        $cart->secure_key = $customer->secure_key;
-
-        // Set delivery address (use customer's default or first address)
-        $addresses = $customer->getAddresses((int) $this->context->language->id);
-        if (!empty($addresses)) {
-            $firstAddress = reset($addresses);
-            $cart->id_address_delivery = (int) $firstAddress['id_address'];
-            $cart->id_address_invoice = (int) $firstAddress['id_address'];
-        } else {
-            // Anonymous customer has no address — create a temporary one
-            $address = new Address();
-            $address->id_customer = $idCustomer;
-            $address->firstname = 'TPV';
-            $address->lastname = 'Cliente';
-            $address->address1 = 'TPV Local';
-            $address->city = 'TPV';
-            $address->id_country = (int) Configuration::get('PS_COUNTRY_DEFAULT');
-            $address->alias = 'tpv_temp_' . time();
-            $address->add();
-            $cart->id_address_delivery = (int) $address->id;
-            $cart->id_address_invoice = (int) $address->id;
-        }
-
-        $cart->save();
-
-        // Add products
-        foreach ($data['products'] as $product) {
-            $idProduct = (int) $product['id_product'];
-            $idProductAttribute = isset($product['id_product_attribute']) ? (int) $product['id_product_attribute'] : 0;
-            $quantity = (int) $product['quantity'];
-
-            $cart->updateQty($quantity, $idProduct, $idProductAttribute);
-        }
-
-        // Calculate totals
-        $totalPaid = $cart->getOrderTotal(true, Cart::BOTH);
-
-        // Get order state
         $idOrderState = (int) Configuration::get('TPV_OS_PAID');
         if ($idOrderState <= 0) {
             throw new RuntimeException('TPV order state not configured');
         }
 
-        // Prepare extra vars
         $extraVars = [];
-        if ($transactionId !== null) {
-            $extraVars['transaction_id'] = $transactionId;
+        if (isset($data['transaction_id'])) {
+            $extraVars['transaction_id'] = (string) $data['transaction_id'];
         }
-
-        // Validate order using this module as the payment module
         $this->module->validateOrder(
             (int) $cart->id,
             $idOrderState,
             $totalPaid,
-            $paymentMethod,
+            (string) $data['payment_method'],
             null,
             $extraVars,
             $idCurrency,
             false,
             $cart->secure_key
         );
-
         $order = new Order((int) $this->module->currentOrder);
-
         if (!Validate::isLoadedObject($order)) {
             throw new RuntimeException('Order was not created');
         }
-
         return [
             'order_id' => (int) $order->id,
             'reference' => $order->reference,
+            'total_paid' => round($totalPaid, 2),
         ];
     }
 
