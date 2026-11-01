@@ -5,10 +5,9 @@ declare(strict_types=1);
 namespace VenPosTPV\Tests\Integration\Service\Catalog;
 
 use Doctrine\DBAL\Connection;
-use Doctrine\DBAL\DriverManager;
-use Doctrine\DBAL\Platforms\MySQLPlatform;
 use PHPUnit\Framework\TestCase;
 use VenPosTPV\Service\Catalog\ProductSearchService;
+use VenPosTPV\Tests\Support\TestDatabase;
 
 /**
  * @group integration
@@ -26,23 +25,7 @@ final class ProductSearchServiceMySqlIntegrationTest extends TestCase
 
     protected function setUp(): void
     {
-        $config = [
-            'driver' => 'pdo_mysql',
-            'host' => $_ENV['TPV_DB_HOST'] ?? '127.0.0.1',
-            'port' => (int) ($_ENV['TPV_DB_PORT'] ?? 3306),
-            'dbname' => $_ENV['TPV_DB_NAME'] ?? 'tpv',
-            'user' => $_ENV['TPV_DB_USER'] ?? 'tpv_user',
-            'password' => $_ENV['TPV_DB_PASSWORD'] ?? '',
-            'charset' => 'utf8mb4',
-        ];
-
-        try {
-            $conn = DriverManager::getConnection($config);
-            $conn->executeQuery('SELECT 1');
-            $this->connection = $conn;
-        } catch (\Throwable) {
-            $this->connection = null;
-        }
+        $this->connection = TestDatabase::connection();
 
         if ($this->isMySqlAvailable()) {
             $this->cleanupFixtures();
@@ -116,7 +99,7 @@ final class ProductSearchServiceMySqlIntegrationTest extends TestCase
 
     private function isMySqlAvailable(): bool
     {
-        return $this->connection !== null && $this->connection->getDatabasePlatform() instanceof MySQLPlatform;
+        return $this->connection !== null;
     }
 
     private function createServiceOrSkip(): ProductSearchService
@@ -149,6 +132,8 @@ final class ProductSearchServiceMySqlIntegrationTest extends TestCase
             'reference' => 'EDGE-NAME-001',
             'ean13' => '1111111111111',
             'price' => 10.5,
+            'price_ttc' => 12.71,
+            'price_net' => 10.5,
             'id_category_default' => self::CAT_ACTIVE_ID,
             'active' => 1,
         ]);
@@ -158,6 +143,8 @@ final class ProductSearchServiceMySqlIntegrationTest extends TestCase
             'reference' => 'EDGE-REF-001',
             'ean13' => '2222222222222',
             'price' => 15,
+            'price_ttc' => 18.15,
+            'price_net' => 15,
             'id_category_default' => self::CAT_ACTIVE_ID,
             'active' => 1,
         ]);
@@ -167,6 +154,8 @@ final class ProductSearchServiceMySqlIntegrationTest extends TestCase
             'reference' => 'EDGE-EAN-001',
             'ean13' => '7701234567890',
             'price' => 20,
+            'price_ttc' => 24.2,
+            'price_net' => 20,
             'id_category_default' => self::CAT_ACTIVE_ID,
             'active' => 1,
         ]);
@@ -175,19 +164,16 @@ final class ProductSearchServiceMySqlIntegrationTest extends TestCase
             'id_product' => self::PRODUCT_NAME_ID,
             'id_product_attribute' => 0,
             'quantity' => 12,
-            'id_shop' => 1,
         ]);
         $this->connection->insert('catalog_stock', [
             'id_product' => self::PRODUCT_REFERENCE_ID,
             'id_product_attribute' => 0,
             'quantity' => 2,
-            'id_shop' => 1,
         ]);
         $this->connection->insert('catalog_stock', [
             'id_product' => self::PRODUCT_EAN_ID,
             'id_product_attribute' => 0,
             'quantity' => 7,
-            'id_shop' => 1,
         ]);
 
         $this->connection->insert('catalog_combination', [
@@ -196,12 +182,18 @@ final class ProductSearchServiceMySqlIntegrationTest extends TestCase
             'reference' => 'EDGE-COMB-001',
             'ean13' => '9999999999999',
             'price_impact' => 1.5,
+            'price_ttc' => 14.52,
+            'price_net' => 12,
+        ]);
+        $this->connection->insert('catalog_combination_attribute', [
+            'combination_id' => self::COMBINATION_ID,
+            'group_name' => 'Color',
+            'attribute_name' => 'Black',
         ]);
         $this->connection->insert('catalog_stock', [
             'id_product' => self::PRODUCT_NAME_ID,
             'id_product_attribute' => self::COMBINATION_ID,
             'quantity' => 4,
-            'id_shop' => 1,
         ]);
     }
 
@@ -211,6 +203,7 @@ final class ProductSearchServiceMySqlIntegrationTest extends TestCase
             'DELETE FROM catalog_stock WHERE (id_product = ? AND id_product_attribute = ?) OR (id_product IN (?, ?, ?) AND id_product_attribute = 0)',
             [self::PRODUCT_NAME_ID, self::COMBINATION_ID, self::PRODUCT_NAME_ID, self::PRODUCT_REFERENCE_ID, self::PRODUCT_EAN_ID]
         );
+        $this->connection->executeStatement('DELETE FROM catalog_combination_attribute WHERE combination_id = ?', [self::COMBINATION_ID]);
         $this->connection->executeStatement('DELETE FROM catalog_combination WHERE id = ?', [self::COMBINATION_ID]);
         $this->connection->executeStatement('DELETE FROM catalog_product WHERE id IN (?, ?, ?)', [self::PRODUCT_NAME_ID, self::PRODUCT_REFERENCE_ID, self::PRODUCT_EAN_ID]);
         $this->connection->executeStatement('DELETE FROM catalog_category WHERE id IN (?, ?)', [self::CAT_ACTIVE_ID, self::CAT_INACTIVE_ID]);

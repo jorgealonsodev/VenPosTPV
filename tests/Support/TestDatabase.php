@@ -6,6 +6,9 @@ namespace VenPosTPV\Tests\Support;
 
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
+use Doctrine\DBAL\Schema\Schema;
+use Doctrine\Migrations\AbstractMigration;
+use Psr\Log\NullLogger;
 
 /**
  * Connection settings for tests that need a real MySQL database.
@@ -29,35 +32,27 @@ final class TestDatabase
      */
     public static function settings(): array
     {
-        $values = [
-            'TPV_DB_HOST' => $_ENV['TPV_DB_HOST'] ?? null,
-            'TPV_DB_PORT' => $_ENV['TPV_DB_PORT'] ?? null,
-            'TPV_DB_NAME' => $_ENV['TPV_DB_NAME'] ?? null,
-            'TPV_DB_USER' => $_ENV['TPV_DB_USER'] ?? null,
-            'TPV_DB_PASSWORD' => $_ENV['TPV_DB_PASSWORD'] ?? null,
-            'TPV_DB_TEST_NAME' => $_ENV['TPV_DB_TEST_NAME'] ?? null,
-        ];
+        $values = array_replace(self::fromEnvFile(), self::fromEnvironment());
 
-        if ($values['TPV_DB_NAME'] === null) {
-            $values = array_merge($values, self::fromEnvFile());
-        }
-
-        $baseName = $values['TPV_DB_NAME'] ?: 'venpostpv';
-        $testName = $values['TPV_DB_TEST_NAME'] ?: $baseName . self::DEFAULT_SUFFIX;
+        $baseName = ($values['TPV_DB_NAME'] ?? null) ?: 'venpostpv';
+        $testName = ($values['TPV_DB_TEST_NAME'] ?? null) ?: $baseName . self::DEFAULT_SUFFIX;
+        self::assertSafeTestDatabaseName($baseName, $testName);
 
         return [
-            'host' => $values['TPV_DB_HOST'] ?: '127.0.0.1',
-            'port' => (int) ($values['TPV_DB_PORT'] ?: 3306),
+            'host' => ($values['TPV_DB_HOST'] ?? null) ?: '127.0.0.1',
+            'port' => (int) (($values['TPV_DB_PORT'] ?? null) ?: 3306),
             'name' => $testName,
-            'user' => $values['TPV_DB_USER'] ?: 'tpv_user',
+            'user' => ($values['TPV_DB_USER'] ?? null) ?: 'tpv_user',
             'password' => $values['TPV_DB_PASSWORD'] ?? '',
         ];
     }
 
     /**
-     * Connects to the test database, creating it from `migrations/install.sql` when
-     * it does not exist yet. Returns null when MySQL is unreachable, so the calling
-     * test can skip instead of failing.
+     * Connects to the dedicated test database, creating it from
+     * `migrations/install.sql` when it does not exist yet. A missing MySQL server
+     * returns null so integration tests can report their unavailable dependency.
+     * Once MySQL is reachable, every database or schema setup error is surfaced:
+     * silently skipping after partial DDL could make fixtures unsafe or misleading.
      */
     public static function connection(): ?Connection
     {
@@ -70,22 +65,31 @@ final class TestDatabase
                 'user' => $settings['user'],
                 'password' => $settings['password'],
             ]);
+            $server->executeQuery('SELECT 1');
+        } catch (\Throwable) {
+            return null;
+        }
+
+        $connection = null;
+        $prepared = false;
+        try {
             $server->executeStatement(sprintf(
                 'CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
                 $settings['name']
             ));
-            $server->close();
-
             $connection = self::makeConnection($settings);
             $connection->executeQuery('SELECT 1');
-
-            if (!$connection->createSchemaManager()->tablesExist(['catalog_product'])) {
-                self::applyInstallSchema($connection);
-            }
+            self::ensureCurrentSchema($connection);
+            $prepared = true;
 
             return $connection;
-        } catch (\Throwable) {
-            return null;
+        } catch (\Throwable $e) {
+            throw new \RuntimeException('Unable to prepare the isolated test database.', 0, $e);
+        } finally {
+            $server->close();
+            if (!$prepared && $connection !== null && $connection->isConnected()) {
+                $connection->close();
+            }
         }
     }
 
@@ -110,14 +114,41 @@ final class TestDatabase
         return DriverManager::getConnection($parameters);
     }
 
+    private static function ensureCurrentSchema(Connection $connection): void
+    {
+        $schemaManager = $connection->createSchemaManager();
+        if (!$schemaManager->tablesExist([
+            'catalog_category',
+            'catalog_product',
+            'catalog_combination',
+            'catalog_stock',
+        ])) {
+            self::applyInstallSchema($connection);
+        }
+
+        self::runMigration($connection, 'Version00000003CreateCatalogTables');
+
+        if (!$connection->createSchemaManager()->introspectTable('catalog_product')->hasColumn('image_url')) {
+            self::runMigration($connection, 'Version00000006AddImageUrlToCatalogProduct');
+        }
+
+        self::runMigration($connection, 'Version00000007AddCombinationAttributeTable');
+        self::runMigration($connection, 'Version00000010CreateSyncLogTable');
+        self::runMigration($connection, 'Version00000017AddPriceTtcToCatalogTables');
+        self::runMigration($connection, 'Version00000018AddPriceNetToCatalogTables');
+    }
+
     private static function applyInstallSchema(Connection $connection): void
     {
         $schemaFile = \dirname(__DIR__, 2) . '/migrations/install.sql';
         if (!is_file($schemaFile)) {
-            return;
+            throw new \RuntimeException('Test database install schema is missing.');
         }
 
-        $sql = (string) file_get_contents($schemaFile);
+        $sql = file_get_contents($schemaFile);
+        if ($sql === false) {
+            throw new \RuntimeException('Test database install schema cannot be read.');
+        }
 
         // install.sql is a list of independent statements separated by semicolons at
         // the end of a line; PDO cannot run them in one call.
@@ -132,16 +163,73 @@ final class TestDatabase
             }
 
             $statement = trim(implode("\n", $lines));
-            if ($statement === '') {
-                continue;
-            }
-
-            try {
+            if ($statement !== '') {
                 $connection->executeStatement($statement);
-            } catch (\Throwable) {
-                // Tables created by a later migration may already exist; keep going.
             }
         }
+    }
+
+    private static function runMigration(Connection $connection, string $version): void
+    {
+        $migrationFile = \dirname(__DIR__, 2) . '/migrations/' . $version . '.php';
+        if (!is_file($migrationFile)) {
+            throw new \RuntimeException(sprintf('Required test database migration %s is missing.', $version));
+        }
+
+        // Doctrine Migrations discovers these files with require_once; they are not
+        // in this project's Composer PSR-4 map.
+        require_once $migrationFile;
+
+        $class = 'VenPosTPV\\Migrations\\' . $version;
+        if (!is_a($class, AbstractMigration::class, true)) {
+            throw new \RuntimeException(sprintf('Required test database migration %s is invalid.', $version));
+        }
+
+        /** @var AbstractMigration $migration */
+        $migration = new $class($connection, new NullLogger());
+        $migration->up(new Schema());
+        foreach ($migration->getSql() as $query) {
+            $connection->executeStatement((string) $query);
+        }
+    }
+
+    private static function assertSafeTestDatabaseName(string $baseName, string $testName): void
+    {
+        if (!preg_match('/\A[A-Za-z_][A-Za-z0-9_]*\z/D', $testName)) {
+            throw new \InvalidArgumentException('Test database name must be a safe SQL identifier.');
+        }
+
+        // MySQL may resolve database names case-insensitively. Reject aliases on
+        // every platform before connecting, even when this server is case-sensitive.
+        if (strcasecmp($testName, $baseName) === 0) {
+            throw new \InvalidArgumentException('Test database name must differ from the base database.');
+        }
+
+        if (!str_ends_with($testName, self::DEFAULT_SUFFIX)) {
+            throw new \InvalidArgumentException(sprintf('Test database name must end in "%s".', self::DEFAULT_SUFFIX));
+        }
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private static function fromEnvironment(): array
+    {
+        $values = [];
+        foreach ([
+            'TPV_DB_HOST',
+            'TPV_DB_PORT',
+            'TPV_DB_NAME',
+            'TPV_DB_USER',
+            'TPV_DB_PASSWORD',
+            'TPV_DB_TEST_NAME',
+        ] as $key) {
+            if (isset($_ENV[$key])) {
+                $values[$key] = (string) $_ENV[$key];
+            }
+        }
+
+        return $values;
     }
 
     /**
@@ -159,10 +247,9 @@ final class TestDatabase
             if (!preg_match('/^\s*([A-Z0-9_]+)\s*=\s*(.*)$/', $line, $matches)) {
                 continue;
             }
-            if (!str_starts_with($matches[1], 'TPV_DB_')) {
-                continue;
+            if (str_starts_with($matches[1], 'TPV_DB_')) {
+                $values[$matches[1]] = trim($matches[2], "'\"");
             }
-            $values[$matches[1]] = trim($matches[2], "'\"");
         }
 
         return $values;
