@@ -206,10 +206,16 @@ const PaymentModal = {
                             </button>
                         </div>
 
-                        <numpad v-if="method === 'cash' || method === 'mixed'"
-                            :presets="[{value:'10',label:'10€'},{value:'20',label:'20€'},{value:'50',label:'50€'},{value:'100',label:'100€'}]"
-                            @input="appendNum"
-                        />
+                        <template v-if="method === 'cash' || method === 'mixed'">
+                            <numpad
+                                :presets="[{value:'10',label:'10€'},{value:'20',label:'20€'},{value:'50',label:'50€'},{value:'100',label:'100€'}]"
+                                @input="appendNum"
+                            />
+                            <button @click="exacto"
+                                style="padding:10px 16px; border-radius:8px; border:1px solid var(--green-dim); background:var(--green-bg); color:var(--green); cursor:pointer; font-family:inherit; font-size:13px; font-weight:600;">
+                                Exacto
+                            </button>
+                        </template>
                     </div>
 
                     <!-- Right: details -->
@@ -228,16 +234,6 @@ const PaymentModal = {
                             <div v-else-if="cashParsed > 0" style="background:var(--red-bg); border:1px solid var(--red); border-radius:10px; padding:12px 16px;">
                                 <div style="font-size:11px; color:var(--red); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:4px;">Falta por cubrir</div>
                                 <div style="font-family:'IBM Plex Mono'; font-size:28px; font-weight:700; color:var(--red);">{{ (total - cashParsed).toFixed(2) }}€</div>
-                            </div>
-                            <div style="display:flex; flex-wrap:wrap; gap:7px; margin-top:auto;">
-                                <button v-for="v in [10,20,50,100]" :key="v" @click="cashInput = String(v)"
-                                    style="flex:0 0 auto; padding:8px 16px; border-radius:8px; border:1px solid var(--border); background:var(--surface2); color:var(--text2); cursor:pointer; font-family:'IBM Plex Mono'; font-size:14px;">
-                                    {{ v }}€
-                                </button>
-                                <button @click="exacto"
-                                    style="flex:0 0 auto; padding:8px 16px; border-radius:8px; border:1px solid var(--green-dim); background:var(--green-bg); color:var(--green); cursor:pointer; font-family:'IBM Plex Mono'; font-size:14px;">
-                                    Exacto
-                                </button>
                             </div>
                         </template>
 
