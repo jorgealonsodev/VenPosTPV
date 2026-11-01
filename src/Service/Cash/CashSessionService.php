@@ -83,35 +83,44 @@ class CashSessionService
     /** @return array<string,mixed> */
     public function addMovement(int $userId, string $type, float $amount, string $concept = '', ?int $psOrderId = null): array
     {
-        $context = $this->requireOpenSession($userId);
+        $this->rejectExistingTransaction();
+        $this->requireShopId();
 
-        $this->connection->insert('movement', [
-            'session_id' => $context['session_id'],
-            'type' => $type,
-            'amount' => round($amount, 2),
-            'concept' => $concept !== '' ? $concept : null,
-            'ps_order_id' => $psOrderId,
-            'created_at' => (new \DateTimeImmutable())->format('Y-m-d H:i:s'),
-        ]);
+        $state = $this->connection->transactional(function () use ($userId, $type, $amount, $concept, $psOrderId): array {
+            $session = $this->lockCurrentSessionByUser($userId);
+            if ($session === null) {
+                throw new NoOpenCashSessionException();
+            }
 
-        return $this->buildCurrentState([
-            'id' => $context['session_id'],
-            'terminal_id' => $context['terminal_id'],
-            'opened_at' => $_SESSION['cash_opened_at'] ?? (new \DateTimeImmutable())->format('Y-m-d H:i:s'),
-            'opening_cash' => (float) ($_SESSION['opening_cash'] ?? 0),
-        ]);
+            $this->connection->insert('movement', [
+                'session_id' => (int) $session['id'],
+                'type' => $type,
+                'amount' => round($amount, 2),
+                'concept' => $concept !== '' ? $concept : null,
+                'ps_order_id' => $psOrderId,
+                'created_at' => (new \DateTimeImmutable())->format('Y-m-d H:i:s'),
+            ]);
+
+            return $this->buildCurrentState($session, true);
+        });
+
+        $this->cacheSession((int) $state['terminal_id'], (int) $state['session_id'], (string) $state['opened_at'], (float) $state['opening_cash']);
+
+        return $state;
     }
 
     /** @return array<string,mixed> */
     public function closeSession(int $userId, float $countedCash): array
     {
-        return $this->connection->transactional(function () use ($userId, $countedCash): array {
-            $session = $this->findCurrentSessionByUser($userId);
+        $this->rejectExistingTransaction();
+
+        $result = $this->connection->transactional(function () use ($userId, $countedCash): array {
+            $session = $this->lockCurrentSessionByUser($userId);
             if ($session === null) {
                 throw new \RuntimeException('No open cash session');
             }
 
-            $state = $this->buildCurrentState($session);
+            $state = $this->buildCurrentState($session, true);
             $expected = (float) $state['expected_cash'];
             $difference = round($countedCash - $expected, 2);
             $closedAt = (new \DateTimeImmutable())->format('Y-m-d H:i:s');
@@ -130,8 +139,6 @@ class CashSessionService
                 'generated_at' => $closedAt,
             ]);
 
-            $this->clearCacheSession();
-
             return [
                 'session_id' => (int) $session['id'],
                 'closed_at' => $closedAt,
@@ -140,6 +147,10 @@ class CashSessionService
                 'difference' => $difference,
             ];
         });
+
+        $this->clearCacheSession();
+
+        return $result;
     }
 
     /** @return array<string,mixed> */
@@ -154,10 +165,10 @@ class CashSessionService
     }
 
     /** @param array<string,mixed> $session */
-    private function buildCurrentState(array $session): array
+    private function buildCurrentState(array $session, bool $lockMovements = false): array
     {
         $sid = (int) $session['id'];
-        $totals = $this->aggregateTotals($sid);
+        $totals = $this->aggregateTotals($sid, $lockMovements);
 
         return [
             'session_id' => $sid,
@@ -175,12 +186,13 @@ class CashSessionService
     }
 
     /** @return array<string,mixed> */
-    private function aggregateTotals(int $sessionId): array
+    private function aggregateTotals(int $sessionId, bool $lockMovements = false): array
     {
-        $rows = $this->connection->fetchAllAssociative(
-            'SELECT type, COALESCE(SUM(amount),0) as amount, COUNT(*) as cnt FROM movement WHERE session_id = ? GROUP BY type',
-            [$sessionId]
-        );
+        $sql = 'SELECT type, COALESCE(SUM(amount),0) as amount, COUNT(*) as cnt FROM movement WHERE session_id = ? GROUP BY type';
+        if ($lockMovements) {
+            $sql .= ' FOR UPDATE';
+        }
+        $rows = $this->connection->fetchAllAssociative($sql, [$sessionId]);
 
         $sales = 0.0;
         $refunds = 0.0;
@@ -215,6 +227,50 @@ class CashSessionService
             'expected_cash' => $expected,
             'counts' => $counts,
         ];
+    }
+
+    /** @return array<string,mixed>|null */
+    private function lockCurrentSessionByUser(int $userId): ?array
+    {
+        $request = $this->requestStack->getCurrentRequest();
+        $sessionId = 0;
+        if ($request && $request->hasSession()) {
+            $sessionId = (int) ($request->getSession()->get('cash_session_id') ?? 0);
+        }
+        if ($sessionId <= 0) {
+            $sessionId = isset($_SESSION['cash_session_id']) ? (int) $_SESSION['cash_session_id'] : 0;
+        }
+        if ($sessionId > 0) {
+            $session = $this->connection->fetchAssociative(
+                'SELECT id, terminal_id, opened_at, opening_cash FROM session WHERE id = ? AND user_id = ? AND closed_at IS NULL FOR UPDATE',
+                [$sessionId, $userId]
+            );
+            if ($session !== false) {
+                return $session;
+            }
+        }
+
+        $session = $this->connection->fetchAssociative(
+            'SELECT s.id, s.terminal_id, s.opened_at, s.opening_cash
+             FROM session s
+             INNER JOIN terminal t ON t.id = s.terminal_id
+             WHERE s.user_id = ? AND s.closed_at IS NULL AND t.ps_shop_id = ?
+             ORDER BY s.id DESC LIMIT 1 FOR UPDATE',
+            [$userId, $this->requireShopId()]
+        );
+        if ($session !== false) {
+            return $session;
+        }
+
+        $session = $this->connection->fetchAssociative(
+            'SELECT id, terminal_id, opened_at, opening_cash
+             FROM session
+             WHERE user_id = ? AND closed_at IS NULL
+             ORDER BY id DESC LIMIT 1 FOR UPDATE',
+            [$userId]
+        );
+
+        return $session === false ? null : $session;
     }
 
     /** @return array<string,mixed>|null */
@@ -272,6 +328,13 @@ class CashSessionService
         $this->cacheSession((int) $session['terminal_id'], (int) $session['id'], (string) $session['opened_at'], (float) $session['opening_cash']);
 
         return $session;
+    }
+
+    private function rejectExistingTransaction(): void
+    {
+        if ($this->connection->isTransactionActive()) {
+            throw new \RuntimeException('Cash session mutations cannot run inside an existing transaction');
+        }
     }
 
     private function cacheSession(int $terminalId, int $sessionId, string $openedAt, float $openingCash): void

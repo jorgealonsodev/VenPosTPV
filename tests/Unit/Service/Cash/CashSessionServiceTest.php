@@ -83,6 +83,145 @@ final class CashSessionServiceTest extends TestCase
         $service->openSession(5, 100.0);
     }
 
+    public function testAddMovementLocksItsOpenSessionInsideTheTransaction(): void
+    {
+        $conn = $this->createMock(Connection::class);
+        $terminal = $this->createMock(TerminalService::class);
+        $_SESSION['cash_session_id'] = 11;
+
+        $session = [
+            'id' => 11,
+            'terminal_id' => 2,
+            'opened_at' => '2026-05-05 10:00:00',
+            'opening_cash' => 100,
+        ];
+        $conn->expects($this->once())
+            ->method('transactional')
+            ->willReturnCallback(static fn (callable $callback) => $callback());
+        $conn->expects($this->once())
+            ->method('fetchAssociative')
+            ->willReturnCallback(function (string $sql) use ($session): array {
+                $this->assertStringContainsString('FROM session', $sql);
+                $this->assertStringContainsString('FOR UPDATE', $sql);
+
+                return $session;
+            });
+        $conn->expects($this->once())
+            ->method('insert')
+            ->with('movement', $this->arrayHasKey('session_id'));
+        $conn->method('fetchAllAssociative')->willReturn([]);
+        $conn->method('fetchOne')->willReturn(100);
+
+        $service = new CashSessionService($conn, $terminal, new RequestStack());
+        $state = $service->addMovement(1, 'cash_in', 25.0, 'Float added');
+
+        $this->assertSame(100.0, $state['expected_cash']);
+    }
+
+    public function testCloseSessionLocksBeforeAggregatingAndWritingTheReport(): void
+    {
+        $conn = $this->createMock(Connection::class);
+        $terminal = $this->createMock(TerminalService::class);
+        $_SESSION['cash_session_id'] = 12;
+
+        $session = [
+            'id' => 12,
+            'terminal_id' => 2,
+            'opened_at' => '2026-05-05 10:00:00',
+            'opening_cash' => 100,
+        ];
+        $conn->expects($this->once())
+            ->method('transactional')
+            ->willReturnCallback(static fn (callable $callback) => $callback());
+        $conn->expects($this->once())
+            ->method('fetchAssociative')
+            ->willReturnCallback(function (string $sql) use ($session): array {
+                $this->assertStringContainsString('FOR UPDATE', $sql);
+
+                return $session;
+            });
+        $conn->method('fetchAllAssociative')->willReturn([]);
+        $conn->method('fetchOne')->willReturn(100);
+        $conn->expects($this->once())->method('update')->with('session', $this->arrayHasKey('closed_at'), ['id' => 12]);
+        $conn->expects($this->once())->method('insert')->with('z_report', $this->arrayHasKey('totals'));
+
+        $service = new CashSessionService($conn, $terminal, new RequestStack());
+        $closed = $service->closeSession(1, 100.0);
+
+        $this->assertSame(100.0, $closed['expected_cash']);
+    }
+
+    public function testCloseSessionKeepsCachedOpenSessionWhenTransactionCommitFails(): void
+    {
+        $conn = $this->createMock(Connection::class);
+        $terminal = $this->createMock(TerminalService::class);
+        $_SESSION['cash_session_id'] = 13;
+
+        $session = [
+            'id' => 13,
+            'terminal_id' => 2,
+            'opened_at' => '2026-05-05 10:00:00',
+            'opening_cash' => 100,
+        ];
+        $conn->expects($this->once())
+            ->method('transactional')
+            ->willReturnCallback(static function (callable $callback): never {
+                $callback();
+                throw new \RuntimeException('Commit failed');
+            });
+        $conn->method('fetchAssociative')->willReturn($session);
+        $conn->method('fetchAllAssociative')->willReturn([]);
+        $conn->method('fetchOne')->willReturn(100);
+        $conn->method('update');
+        $conn->method('insert');
+
+        $service = new CashSessionService($conn, $terminal, new RequestStack());
+
+        try {
+            $service->closeSession(1, 100.0);
+            self::fail('Expected the simulated commit failure.');
+        } catch (\RuntimeException $e) {
+            $this->assertSame('Commit failed', $e->getMessage());
+        }
+
+        $this->assertSame(13, $_SESSION['cash_session_id']);
+    }
+
+    public function testAddMovementRejectsAnExistingTransactionBeforeDatabaseWork(): void
+    {
+        $conn = $this->createMock(Connection::class);
+        $terminal = $this->createMock(TerminalService::class);
+        $conn->expects($this->once())->method('isTransactionActive')->willReturn(true);
+        $conn->expects($this->never())->method('transactional');
+        $conn->expects($this->never())->method('fetchAssociative');
+        $conn->expects($this->never())->method('insert');
+
+        $service = new CashSessionService($conn, $terminal, new RequestStack());
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Cash session mutations cannot run inside an existing transaction');
+
+        $service->addMovement(1, 'cash_in', 25.0, 'Float added');
+    }
+
+    public function testCloseSessionRejectsAnExistingTransactionBeforeDatabaseWork(): void
+    {
+        $conn = $this->createMock(Connection::class);
+        $terminal = $this->createMock(TerminalService::class);
+        $conn->expects($this->once())->method('isTransactionActive')->willReturn(true);
+        $conn->expects($this->never())->method('transactional');
+        $conn->expects($this->never())->method('fetchAssociative');
+        $conn->expects($this->never())->method('update');
+        $conn->expects($this->never())->method('insert');
+
+        $service = new CashSessionService($conn, $terminal, new RequestStack());
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Cash session mutations cannot run inside an existing transaction');
+
+        $service->closeSession(1, 100.0);
+    }
+
     public function testRequireOpenSessionUsesDedicatedExceptionWhenUserHasNoOpenSession(): void
     {
         $conn = $this->createMock(Connection::class);
