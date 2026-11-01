@@ -19,6 +19,7 @@ const SaleScreen = {
         const showPayment = Vue.ref(false);
         const showDiscount = Vue.ref(false);
         const showCustomer = Vue.ref(false);
+        const showCouponCreation = Vue.ref(false);
         const showCashClose = Vue.ref(false);
         const showRefund = Vue.ref(false);
         const showSettings = Vue.ref(false);
@@ -236,7 +237,7 @@ const SaleScreen = {
 
         return {
             session, cart, catalog,
-            showPayment, showDiscount, showCustomer, showCashClose, showRefund, showSettings,
+            showPayment, showDiscount, showCustomer, showCouponCreation, showCashClose, showRefund, showSettings,
             showLogoutConfirm, showSyncPanel, showTickets, showParkModal, parkNote, showVoidConfirm,
             parkedCount,
             notification, listView, lastAdded, ticketCount, timeStr, lastCompletedOrder,
@@ -286,6 +287,11 @@ const SaleScreen = {
                     />
                     <button @click="toggleTheme" style="background:transparent; border:1px solid var(--border); border-radius:8px; padding:4px 8px; color:var(--text3); font-size:11px; cursor:pointer; font-family:inherit; display:flex; align-items:center; gap:4px;">
                         <icon :name="session.theme === 'dark' ? 'sun' : 'moon'" :size="13" />
+                    </button>
+                    <button v-if="session.role === 'admin' || session.role === 'cashier'" @click="showCouponCreation = true"
+                        title="Crear cupón"
+                        style="display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;">
+                        <icon name="coupon" :size="13" /> Crear cupón
                     </button>
                     <button v-if="session.role === 'admin'" @click="showSettings = true"
                         title="Gestión de empleados"
@@ -414,6 +420,9 @@ const SaleScreen = {
 
             <!-- Customer Modal -->
             <customer-modal v-if="showCustomer" @select="handleCustomer" @close="showCustomer = false" />
+
+            <!-- Coupon Creation Modal -->
+            <coupon-creation-modal v-if="showCouponCreation" @close="showCouponCreation = false" />
 
             <!-- Toast -->
             <div v-if="notification" class="toast" :style="{ border: '1px solid ' + notification.color, color: notification.color }">

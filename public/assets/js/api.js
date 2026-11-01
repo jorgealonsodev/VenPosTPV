@@ -22,6 +22,9 @@ const ApiClient = (function () {
         };
 
         if (!isOnline && options.method && options.method !== 'GET') {
+            if (options.queueOnNetworkFailure === false) {
+                return Promise.reject(new Error('Network unavailable; request was not sent or queued. Reconnect and try again.'));
+            }
             offlineQueue.push({ url, opts });
             return Promise.resolve({ offline: true, queued: true });
         }
@@ -31,7 +34,7 @@ const ApiClient = (function () {
             response = await fetch(url, opts);
         } catch (networkErr) {
             // True network failure (offline, DNS, etc.) — queue for retry
-            if (options.method && options.method !== 'GET') {
+            if (options.method && options.method !== 'GET' && options.queueOnNetworkFailure !== false) {
                 offlineQueue.push({ url, opts });
             }
             throw networkErr;
@@ -72,6 +75,7 @@ const ApiClient = (function () {
         del: (path) => request(path, { method: 'DELETE' }),
         isOnline: () => isOnline,
         checkout: (payload) => request('/api/checkout', { method: 'POST', body: JSON.stringify(payload) }),
+        createCoupon: (payload) => request('/api/coupons', { method: 'POST', body: JSON.stringify(payload), queueOnNetworkFailure: false }),
         cashOpen: (openingCash) => request('/api/cash/open', { method: 'POST', body: JSON.stringify({ opening_cash: openingCash }) }),
         cashCurrent: () => request('/api/cash/current', { method: 'GET' }),
         cashMovement: (payload) => request('/api/cash/movement', { method: 'POST', body: JSON.stringify(payload) }),
