@@ -1,17 +1,21 @@
 # PHP 8.5 for XAMPP
 Objective: use the latest patched PHP for VenPosTPV, launched by XAMPP Apache. Branch: `feat/php85-xampp`.
-Delivery: ask-on-risk; forecast ~350 authored lines plus generated lockfile. Checks: runtime CLI/CGI, Composer, focused PHP/Node tests, Playwright; full suite failures reported separately.
+Delivery: feature-branch-chain (user selected); revised forecast ~550 authored lines plus generated lockfile. Checks: runtime CLI/CGI, Composer, focused PHP/Node tests, Playwright; full suite failures reported separately.
 
 ## Specs
 S1. "pon la version mas reciente con los ultimos patchs"
 S2. "haz lo que consideres, mas optimo pero que pueda lanzarlo desde xampp control panel"
 
 ## Tasks
-T1 | S1-S2 | delegated + inline correction | done | Built PHP8.5.12 CLI/CGI; runtime extension/CGI-hardening smoke and idempotent install passed; commit: pending (verification/review boundary).
-T2 | S1 | delegated | in_progress | Composer platform check on PHP8.5 reproduces locked CSS parser constraint; resolve minimal compatible dependency chain and check PDF/QR; commit: pending.
-T3 | S2 | delegated + inline checks | pending | Connect Apache-managed CGI to this TPV only, document start/rollback, and verify runtime, browser, security boundaries and unchanged PrestaShop handler; commit: pending.
+T1 | S1-S2 | delegated + inline correction | done | Built PHP8.5.12 CLI/CGI; independent verifier passed; commits: 340ef98, 3a520dc; native review approved and acknowledged (review-b447dab20ab4a8fe).
+T2 | S1 | delegated | done | Composer platform/validate exit0, PDF tests5/15 pass; Dompdf3.1.6/parser9.5; independent verifier passed platform/PDF checks; commit: pending.
+T3 | S2 | delegated + inline checks | in_progress | Connect Apache-managed CGI to this TPV only, document start/rollback, and verify runtime, browser, security boundaries and unchanged PrestaShop handler; commit: pending.
 
 ## Log
+L14. Delivery choice: user selected "Cadena sobre rama de trabajo — recomendado". chain_strategy=feature-branch-chain; no push/PR authorized. Slice1 runtime340ef98+correction3a520dc reviewed/acknowledged. Slice2 dependency chain+PDF tests; slice3 Apache CGI integration. Generated lockfile excluded from authored-line forecast.
+L15. T2 independent verification passed installed-platform check and PDF5tests/15assertions (13deprecations). The verifier noticed new tests/Functional/php85-cgi-boundary.sh during concurrent T3 work; parent confirms this is an explicitly authorized T3 edit surface, not an unknown writer or incident. No extra rerun needed. Original lockfile was untracked, so exact old package change evidence is Composer job-2 output, not a tracked git diff.
+L12. T1 independent verification passed runtime/hash/extensions; mkdir logging directory added for clean-install usability. Runtime commit340ef98 (282authored lines). Native review required rejection of --preflight extra; reproduced exit0, corrected and pinned7lines in3a520dc. Targeted validator approved; acknowledgement burned authority for review-b447dab20ab4a8fe. Warning-only findings R4-001/R4-002 remain non-blocking follow-ups, no further correction route.
+L13. T2 Composer update job-2 exit0. Changed only Dompdf2.0.8->3.1.6, parser8.9.0->9.5.0, html5 2.10->2.12 and renamed font/svg libraries to dompdf1.0.2. PHP8.5 platform check and validate exit0. Focused PDFtests5/15assertions pass including real logo/QR and cleanup;13 QR-path deprecations. Audit reports26advisories in5unchanged Symfony/Twig packages and1ignored Firebase advisory; no broad unrelated security update authorized. New lockfile must be committed. Full suite remains known-failing, not claimed green.
 L10. Build job-1 compiled successfully but exited1 writing php.ini before etc existed. Corrected mkdir order and materialized configuration without repeating compile. CGI smoke initially expected CLI text but php-cgi -i renders HTML; corrected assertion. tests/Functional/php85-runtime-contract.sh passes including actual extensions and force_redirect. bin/build-php85.sh idempotently verifies existing runtime. Composer check-platform-reqs --lock correctly fails on sabberworm PHP8.5 restriction.
 L11. User: "con playwright vet probando cosas y encuentra fallos" then "aunque primero resuelve los problemas de compatibilidad". General UI audit postponed until compatibility is resolved. One initial read-only Playwright visit saw existing sale screen; no checkout/cash writes performed. UI audit task kept in visible projection as postponed.
 L1. User: "una cosa actualiza el php que usamos a la ultima version patchada"
