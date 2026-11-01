@@ -120,8 +120,42 @@ const useCart = (function () {
         save();
     }
 
+    function subtotalOf() {
+        let sub = 0;
+        cart.lines.forEach(line => {
+            const price = parseFloat(line.price) || 0;
+            const qty = parseInt(line.qty, 10) || 1;
+            const disc = parseFloat(line.discount) || 0;
+            sub += price * qty * (1 - disc / 100);
+        });
+
+        return Math.round(sub * 100) / 100;
+    }
+
     function applyDiscount(type, value) {
-        cart.discount = { type, value };
+        const normalizedType = type === 'amt' ? 'amt' : 'pct';
+        let normalized = parseFloat(value);
+
+        if (!Number.isFinite(normalized) || normalized <= 0) {
+            cart.discount = null;
+            recalc();
+            save();
+            return;
+        }
+
+        if (normalizedType === 'pct') {
+            normalized = Math.min(normalized, 100);
+        } else {
+            normalized = Math.min(normalized, subtotalOf());
+            if (normalized <= 0) {
+                cart.discount = null;
+                recalc();
+                save();
+                return;
+            }
+        }
+
+        cart.discount = { type: normalizedType, value: normalized };
         recalc();
         save();
     }

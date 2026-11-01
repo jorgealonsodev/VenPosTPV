@@ -27,6 +27,7 @@ const SaleScreen = {
         const showTickets = Vue.ref(false);
         const showParkModal = Vue.ref(false);
         const parkNote = Vue.ref('');
+        const showVoidConfirm = Vue.ref(false);
         const notification = Vue.ref(null);
         const listView = Vue.ref(false);
         const lastAdded = Vue.ref(null);
@@ -113,8 +114,18 @@ const SaleScreen = {
 
         function handleVoid() {
             if (!cart.lines.length) return;
+            showVoidConfirm.value = true;
+        }
+
+        function confirmVoid() {
+            showVoidConfirm.value = false;
+            if (!cart.lines.length) return;
             clear();
             notify('Ticket anulado', 'var(--red)');
+        }
+
+        function cancelVoid() {
+            showVoidConfirm.value = false;
         }
 
         function handleDiscount(type, value) {
@@ -218,14 +229,14 @@ const SaleScreen = {
         return {
             session, cart, catalog,
             showPayment, showDiscount, showCustomer, showCashClose, showRefund, showSettings,
-            showLogoutConfirm, showSyncPanel, showTickets, showParkModal, parkNote,
+            showLogoutConfirm, showSyncPanel, showTickets, showParkModal, parkNote, showVoidConfirm,
             parkedCount,
             notification, listView, lastAdded, ticketCount, timeStr, lastCompletedOrder,
             hasOpenSession,
             toggleTheme,
             setSearch, setCategory,
             addProduct, remove, updateQty,
-            handlePaymentComplete, handlePark, confirmParkTicket, handleVoid, handleReprint,
+            handlePaymentComplete, handlePark, confirmParkTicket, handleVoid, confirmVoid, cancelVoid, handleReprint,
             handleDiscount, handleCustomer,
             handleCashClose, handleCashCloseDone, handleCashCloseBack, handleDiscardParkedOnClose,
             handleRefund, handleRefundBack, handleRefundNotify,
@@ -361,6 +372,27 @@ const SaleScreen = {
                         <button @click="confirmParkTicket"
                             style="padding:8px 18px; border-radius:8px; border:none; background:var(--amber); color:#000; cursor:pointer; font-family:inherit; font-size:13px; font-weight:700;">
                             Aparcar ahora
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Void Ticket Confirmation -->
+            <div v-if="showVoidConfirm" style="position:fixed; inset:0; background:rgba(0,0,0,0.55); display:flex; align-items:center; justify-content:center; z-index:1000;">
+                <div style="background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:26px 30px; max-width:400px; width:92%; text-align:center;">
+                    <div style="font-size:18px; font-weight:700; color:var(--text); margin-bottom:10px;">¿Anular el ticket?</div>
+                    <div style="color:var(--text2); font-size:14px; margin-bottom:22px;">
+                        Se eliminarán las {{ cart.lines.length }} línea{{ cart.lines.length !== 1 ? 's' : '' }} del ticket actual.
+                        Si solo quieres dejarlo para después, usa <strong>Aparcar</strong>.
+                    </div>
+                    <div style="display:flex; gap:12px; justify-content:center;">
+                        <button @click="cancelVoid"
+                            style="padding:9px 22px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:14px;">
+                            Cancelar
+                        </button>
+                        <button @click="confirmVoid"
+                            style="padding:9px 22px; border-radius:8px; border:none; background:var(--red); color:#fff; cursor:pointer; font-family:inherit; font-size:14px; font-weight:600;">
+                            Anular ticket
                         </button>
                     </div>
                 </div>
