@@ -225,6 +225,10 @@ const PaymentModal = {
                                 <div style="font-size:11px; color:var(--amber); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:4px;">Cambio a devolver</div>
                                 <div style="font-family:'IBM Plex Mono'; font-size:28px; font-weight:700; color:var(--amber);">{{ Number(change).toFixed(2) }}€</div>
                             </div>
+                            <div v-else-if="cashParsed > 0" style="background:var(--red-bg); border:1px solid var(--red); border-radius:10px; padding:12px 16px;">
+                                <div style="font-size:11px; color:var(--red); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:4px;">Falta por cubrir</div>
+                                <div style="font-family:'IBM Plex Mono'; font-size:28px; font-weight:700; color:var(--red);">{{ (total - cashParsed).toFixed(2) }}€</div>
+                            </div>
                             <div style="display:flex; flex-wrap:wrap; gap:7px; margin-top:auto;">
                                 <button v-for="v in [10,20,50,100]" :key="v" @click="cashInput = String(v)"
                                     style="flex:0 0 auto; padding:8px 16px; border-radius:8px; border:1px solid var(--border); background:var(--surface2); color:var(--text2); cursor:pointer; font-family:'IBM Plex Mono'; font-size:14px;">
