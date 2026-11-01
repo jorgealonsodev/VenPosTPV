@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace VenPosTPV\Tests\Integration\Controller\Api;
 
 use PHPUnit\Framework\TestCase;
-use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use VenPosTPV\Controller\Api\TicketController;
 use VenPosTPV\Service\Print\PrinterService;
@@ -14,29 +13,13 @@ use VenPosTPV\Service\Print\TicketDataResolver;
 use VenPosTPV\Service\Print\TicketLine;
 use VenPosTPV\Service\Print\TicketPdfGenerator;
 use VenPosTPV\Service\Print\TicketVerificationService;
+use VenPosTPV\Tests\Support\SessionRequest;
 
 /**
  * @group integration
  */
 class TicketControllerTest extends TestCase
 {
-    protected function setUp(): void
-    {
-        if (session_status() === PHP_SESSION_ACTIVE) {
-            session_destroy();
-        }
-        session_start();
-        $_SESSION = [];
-    }
-
-    protected function tearDown(): void
-    {
-        $_SESSION = [];
-        if (session_status() === PHP_SESSION_ACTIVE) {
-            session_destroy();
-        }
-    }
-
     private function createTicketData(): TicketData
     {
         return new TicketData(
@@ -44,6 +27,10 @@ class TicketControllerTest extends TestCase
             reference: 'ORD-042',
             storeName: 'Mi Tienda',
             storeAddress: 'Calle Falsa 123',
+            ticketHeader: 'Gracias por su compra',
+            ticketFooter: 'Vuelva pronto',
+            ticketLogo: null,
+            ticketWidthPx: 576,
             date: new \DateTimeImmutable('2024-01-15 14:30:00'),
             cashierName: 'Juan',
             lines: [new TicketLine('Café', 1, 1.5, 1.5)],
@@ -74,17 +61,14 @@ class TicketControllerTest extends TestCase
     public function testPdfDownloadReturns200ForExistingOrder(): void
     {
         $ticketData = $this->createTicketData();
-
         $resolver = $this->createMock(TicketDataResolver::class);
         $resolver->method('resolve')->with(42)->willReturn($ticketData);
-
         $pdfGenerator = $this->createMock(TicketPdfGenerator::class);
         $pdfGenerator->method('generate')->willReturn('%PDF-1.4 test');
 
-        $controller = $this->createController(ticketDataResolver: $resolver, pdfGenerator: $pdfGenerator);
-
-        $_SESSION['user_id'] = 1;
-        $response = $controller->pdf(42);
+        $response = $this->createController(ticketDataResolver: $resolver, pdfGenerator: $pdfGenerator)->pdf(
+            SessionRequest::create([], ['user_id' => 1]), 42
+        );
 
         self::assertSame(Response::HTTP_OK, $response->getStatusCode());
         self::assertSame('application/pdf', $response->headers->get('Content-Type'));
@@ -95,10 +79,7 @@ class TicketControllerTest extends TestCase
         $resolver = $this->createMock(TicketDataResolver::class);
         $resolver->method('resolve')->willReturn(null);
 
-        $controller = $this->createController(ticketDataResolver: $resolver);
-
-        $_SESSION['user_id'] = 1;
-        $response = $controller->pdf(999);
+        $response = $this->createController(ticketDataResolver: $resolver)->pdf(SessionRequest::create([], ['user_id' => 1]), 999);
 
         self::assertSame(Response::HTTP_NOT_FOUND, $response->getStatusCode());
     }
@@ -108,13 +89,9 @@ class TicketControllerTest extends TestCase
         $printerService = $this->createMock(PrinterService::class);
         $printerService->method('reprintTicket')->willReturn(['printed' => true]);
 
-        $controller = $this->createController(printerService: $printerService);
-
-        $_SESSION['user_id'] = 1;
-        $_SESSION['terminal_id'] = 3;
-
-        $request = new Request([], [], [], [], [], [], json_encode(['ps_order_id' => 42]));
-        $response = $controller->reprint($request);
+        $response = $this->createController(printerService: $printerService)->reprint(
+            SessionRequest::json(['ps_order_id' => 42], ['user_id' => 1, 'terminal_id' => 3])
+        );
 
         self::assertSame(Response::HTTP_OK, $response->getStatusCode());
         $data = json_decode((string) $response->getContent(), true);
@@ -126,13 +103,9 @@ class TicketControllerTest extends TestCase
         $printerService = $this->createMock(PrinterService::class);
         $printerService->method('reprintTicket')->willThrowException(new \RuntimeException('Order not found'));
 
-        $controller = $this->createController(printerService: $printerService);
-
-        $_SESSION['user_id'] = 1;
-        $_SESSION['terminal_id'] = 3;
-
-        $request = new Request([], [], [], [], [], [], json_encode(['ps_order_id' => 999]));
-        $response = $controller->reprint($request);
+        $response = $this->createController(printerService: $printerService)->reprint(
+            SessionRequest::json(['ps_order_id' => 999], ['user_id' => 1, 'terminal_id' => 3])
+        );
 
         self::assertSame(Response::HTTP_NOT_FOUND, $response->getStatusCode());
     }
@@ -141,16 +114,10 @@ class TicketControllerTest extends TestCase
     {
         $verificationService = $this->createMock(TicketVerificationService::class);
         $verificationService->method('verifyToken')->willReturn([
-            'order_id' => 42,
-            'reference' => 'ORD-042',
-            'total' => 99.99,
-            'iat' => time(),
+            'order_id' => 42, 'reference' => 'ORD-042', 'total' => 99.99, 'iat' => time(),
         ]);
 
-        $controller = $this->createController(verificationService: $verificationService);
-
-        $request = new Request(['token' => 'valid-jwt-token']);
-        $response = $controller->verify($request);
+        $response = $this->createController(verificationService: $verificationService)->verify(SessionRequest::create(['token' => 'valid-jwt-token']));
 
         self::assertSame(Response::HTTP_OK, $response->getStatusCode());
         $data = json_decode((string) $response->getContent(), true);
@@ -163,39 +130,24 @@ class TicketControllerTest extends TestCase
         $verificationService = $this->createMock(TicketVerificationService::class);
         $verificationService->method('verifyToken')->willThrowException(new \RuntimeException('Invalid token'));
 
-        $controller = $this->createController(verificationService: $verificationService);
-
-        $request = new Request(['token' => 'bad-token']);
-        $response = $controller->verify($request);
-
+        $response = $this->createController(verificationService: $verificationService)->verify(SessionRequest::create(['token' => 'bad-token']));
         self::assertSame(Response::HTTP_UNAUTHORIZED, $response->getStatusCode());
     }
 
     public function testVerifyReturns400ForMissingToken(): void
     {
-        $controller = $this->createController();
-
-        $request = new Request();
-        $response = $controller->verify($request);
-
+        $response = $this->createController()->verify(SessionRequest::create());
         self::assertSame(Response::HTTP_BAD_REQUEST, $response->getStatusCode());
     }
 
     public function testReprintWithGiftModePassesGiftModeToPrinterService(): void
     {
         $printerService = $this->createMock(PrinterService::class);
-        $printerService->expects($this->once())
-            ->method('reprintTicket')
-            ->with(42, 3, true)
-            ->willReturn(['printed' => true]);
+        $printerService->expects($this->once())->method('reprintTicket')->with(42, 3, true)->willReturn(['printed' => true]);
 
-        $controller = $this->createController(printerService: $printerService);
-
-        $_SESSION['user_id'] = 1;
-        $_SESSION['terminal_id'] = 3;
-
-        $request = new Request([], [], [], [], [], [], json_encode(['ps_order_id' => 42, 'gift_mode' => true]));
-        $response = $controller->reprint($request);
+        $response = $this->createController(printerService: $printerService)->reprint(
+            SessionRequest::json(['ps_order_id' => 42, 'gift_mode' => true], ['user_id' => 1, 'terminal_id' => 3])
+        );
 
         self::assertSame(Response::HTTP_OK, $response->getStatusCode());
     }
@@ -203,18 +155,11 @@ class TicketControllerTest extends TestCase
     public function testReprintWithoutGiftModeDefaultsToFalse(): void
     {
         $printerService = $this->createMock(PrinterService::class);
-        $printerService->expects($this->once())
-            ->method('reprintTicket')
-            ->with(42, 3, false)
-            ->willReturn(['printed' => true]);
+        $printerService->expects($this->once())->method('reprintTicket')->with(42, 3, false)->willReturn(['printed' => true]);
 
-        $controller = $this->createController(printerService: $printerService);
-
-        $_SESSION['user_id'] = 1;
-        $_SESSION['terminal_id'] = 3;
-
-        $request = new Request([], [], [], [], [], [], json_encode(['ps_order_id' => 42]));
-        $response = $controller->reprint($request);
+        $response = $this->createController(printerService: $printerService)->reprint(
+            SessionRequest::json(['ps_order_id' => 42], ['user_id' => 1, 'terminal_id' => 3])
+        );
 
         self::assertSame(Response::HTTP_OK, $response->getStatusCode());
     }
@@ -222,21 +167,14 @@ class TicketControllerTest extends TestCase
     public function testPdfWithGiftModePassesGiftModeToPdfGenerator(): void
     {
         $ticketData = $this->createTicketData();
-
         $resolver = $this->createMock(TicketDataResolver::class);
         $resolver->method('resolve')->with(42)->willReturn($ticketData);
-
         $pdfGenerator = $this->createMock(TicketPdfGenerator::class);
-        $pdfGenerator->expects($this->once())
-            ->method('generate')
-            ->with($ticketData, true)
-            ->willReturn('%PDF-1.4 test');
+        $pdfGenerator->expects($this->once())->method('generate')->with($ticketData, true)->willReturn('%PDF-1.4 test');
 
-        $controller = $this->createController(ticketDataResolver: $resolver, pdfGenerator: $pdfGenerator);
-
-        $_SESSION['user_id'] = 1;
-        $request = new Request(['gift_mode' => '1']);
-        $response = $controller->pdf($request, 42);
+        $response = $this->createController(ticketDataResolver: $resolver, pdfGenerator: $pdfGenerator)->pdf(
+            SessionRequest::create(['gift_mode' => '1'], ['user_id' => 1]), 42
+        );
 
         self::assertSame(Response::HTTP_OK, $response->getStatusCode());
     }
@@ -244,21 +182,14 @@ class TicketControllerTest extends TestCase
     public function testPdfWithoutGiftModeDefaultsToFalse(): void
     {
         $ticketData = $this->createTicketData();
-
         $resolver = $this->createMock(TicketDataResolver::class);
         $resolver->method('resolve')->with(42)->willReturn($ticketData);
-
         $pdfGenerator = $this->createMock(TicketPdfGenerator::class);
-        $pdfGenerator->expects($this->once())
-            ->method('generate')
-            ->with($ticketData, false)
-            ->willReturn('%PDF-1.4 test');
+        $pdfGenerator->expects($this->once())->method('generate')->with($ticketData, false)->willReturn('%PDF-1.4 test');
 
-        $controller = $this->createController(ticketDataResolver: $resolver, pdfGenerator: $pdfGenerator);
-
-        $_SESSION['user_id'] = 1;
-        $request = new Request();
-        $response = $controller->pdf($request, 42);
+        $response = $this->createController(ticketDataResolver: $resolver, pdfGenerator: $pdfGenerator)->pdf(
+            SessionRequest::create([], ['user_id' => 1]), 42
+        );
 
         self::assertSame(Response::HTTP_OK, $response->getStatusCode());
     }

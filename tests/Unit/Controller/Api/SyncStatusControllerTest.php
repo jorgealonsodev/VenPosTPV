@@ -7,34 +7,35 @@ namespace VenPosTPV\Tests\Unit\Controller\Api;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\HttpFoundation\Response;
 use VenPosTPV\Controller\Api\SyncStatusController;
+use VenPosTPV\Service\Catalog\CatalogSyncService;
+use VenPosTPV\Service\Sync\StockPushService;
 use VenPosTPV\Service\Sync\SyncStatusDTO;
 use VenPosTPV\Service\Sync\SyncStatusService;
 
 class SyncStatusControllerTest extends TestCase
 {
+    private function createController(SyncStatusService $syncStatusService): SyncStatusController
+    {
+        return new SyncStatusController(
+            $syncStatusService,
+            $this->createMock(CatalogSyncService::class),
+            $this->createMock(StockPushService::class),
+        );
+    }
+
     public function testReturnsSyncStatusJson(): void
     {
         $syncStatusService = $this->createMock(SyncStatusService::class);
-        $syncStatusService->expects($this->once())
-            ->method('getStatus')
-            ->willReturn(new SyncStatusDTO(
-                state: 'ok',
-                psOnline: true,
-                latencyMs: 120,
-                lastSyncs: ['catalog' => '2026-05-05T12:00:00+00:00', 'stock' => null, 'prices' => null],
-                freshness: ['catalog' => true, 'stock' => false, 'prices' => false],
-                pendingOps: 2,
-                queuedMessages: 1,
-            ));
+        $syncStatusService->expects($this->once())->method('getStatus')->willReturn(new SyncStatusDTO(
+            state: 'ok', psOnline: true, latencyMs: 120,
+            lastSyncs: ['catalog' => '2026-05-05T12:00:00+00:00', 'stock' => null, 'prices' => null],
+            freshness: ['catalog' => true, 'stock' => false, 'prices' => false], pendingOps: 2, queuedMessages: 1,
+        ));
 
-        $messageBus = $this->createMock(\Symfony\Component\Messenger\MessageBusInterface::class);
-
-        $controller = new SyncStatusController($syncStatusService, $messageBus);
-        $response = $controller->index();
+        $response = $this->createController($syncStatusService)->index();
 
         $this->assertSame(Response::HTTP_OK, $response->getStatusCode());
         $this->assertStringContainsString('application/json', (string) $response->headers->get('Content-Type'));
-
         $data = json_decode((string) $response->getContent(), true, 512, JSON_THROW_ON_ERROR);
         $this->assertSame('ok', $data['state']);
         $this->assertTrue($data['ps_online']);
@@ -48,22 +49,12 @@ class SyncStatusControllerTest extends TestCase
     public function testReturnsOfflineStateCorrectly(): void
     {
         $syncStatusService = $this->createMock(SyncStatusService::class);
-        $syncStatusService->expects($this->once())
-            ->method('getStatus')
-            ->willReturn(new SyncStatusDTO(
-                state: 'offline',
-                psOnline: false,
-                latencyMs: null,
-                lastSyncs: [],
-                freshness: ['catalog' => false, 'stock' => false, 'prices' => false],
-                pendingOps: 0,
-                queuedMessages: 0,
-            ));
+        $syncStatusService->expects($this->once())->method('getStatus')->willReturn(new SyncStatusDTO(
+            state: 'offline', psOnline: false, latencyMs: null, lastSyncs: [],
+            freshness: ['catalog' => false, 'stock' => false, 'prices' => false], pendingOps: 0, queuedMessages: 0,
+        ));
 
-        $messageBus = $this->createMock(\Symfony\Component\Messenger\MessageBusInterface::class);
-
-        $controller = new SyncStatusController($syncStatusService, $messageBus);
-        $response = $controller->index();
+        $response = $this->createController($syncStatusService)->index();
 
         $data = json_decode((string) $response->getContent(), true, 512, JSON_THROW_ON_ERROR);
         $this->assertSame('offline', $data['state']);

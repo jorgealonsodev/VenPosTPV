@@ -8,7 +8,9 @@ use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Platforms\MySQLPlatform;
 use PHPUnit\Framework\TestCase;
 use VenPosTPV\Controller\Api\SyncStatusController;
+use VenPosTPV\Service\Catalog\CatalogSyncService;
 use VenPosTPV\Service\PrestaShop\PrestaShopApiClient;
+use VenPosTPV\Service\Sync\StockPushService;
 use VenPosTPV\Service\Sync\SyncLogRepository;
 use VenPosTPV\Service\Sync\SyncStatusService;
 
@@ -77,7 +79,11 @@ class SyncStatusIntegrationTest extends TestCase
         $syncLogRepo = new SyncLogRepository($this->connection);
         $syncStatusService = new SyncStatusService($apiClient, $syncLogRepo, $this->connection);
 
-        return new SyncStatusController($syncStatusService);
+        return new SyncStatusController(
+            $syncStatusService,
+            $this->createMock(CatalogSyncService::class),
+            $this->createMock(StockPushService::class),
+        );
     }
 
     public function testResponseShapeMatchesDtoSchema(): void
