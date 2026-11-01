@@ -131,10 +131,16 @@ const useCart = (function () {
         save();
     }
 
-    function restore(lines, customer) {
-        cart.lines = Array.isArray(lines) ? lines : [];
-        cart.discount = null;
-        cart.customer = customer || { name: 'Consumidor final', default: true };
+    function restore(lines, customer, discount = null) {
+        cart.lines = Array.isArray(lines)
+            ? lines.map(l => ({ ...l }))
+            : [];
+        cart.discount = discount && typeof discount === 'object'
+            ? { type: discount.type || 'pct', value: Number(discount.value || 0) }
+            : null;
+        cart.customer = customer && typeof customer === 'object'
+            ? { ...customer }
+            : { name: 'Consumidor final', default: true };
         recalc();
         save();
     }

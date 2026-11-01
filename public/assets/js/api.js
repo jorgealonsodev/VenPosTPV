@@ -97,5 +97,9 @@ const ApiClient = (function () {
         terminalGet: (id) => request('/api/terminal/' + encodeURIComponent(id), { method: 'GET' }),
         terminalUpdate: (id, body) => request('/api/terminal/' + encodeURIComponent(id), { method: 'PUT', body: JSON.stringify(body) }),
         openDrawer: () => request('/api/drawer/open', { method: 'POST' }),
+        parkedTicketsList: () => request('/api/parked-tickets', { method: 'GET' }),
+        parkedTicketCreate: (payload) => request('/api/parked-tickets', { method: 'POST', body: JSON.stringify(payload) }),
+        parkedTicketDelete: (identifier) => request('/api/parked-tickets/' + encodeURIComponent(identifier), { method: 'DELETE' }),
+        parkedTicketsClear: () => request('/api/parked-tickets/clear', { method: 'POST', body: JSON.stringify({}) }),
     };
 })();

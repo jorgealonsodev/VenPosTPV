@@ -1,10 +1,10 @@
 /**
- * CashCloseScreen — denomination counting and session summary.
+ * CashCloseScreen — denomination counting and session summary, with parked tickets warning.
  */
 const CashCloseScreen = {
-    props: ['session'],
-    emits: ['back', 'close'],
-    setup(props) {
+    props: ['session', 'parkedCount'],
+    emits: ['back', 'close', 'discardParked'],
+    setup(props, { emit }) {
         const counted = Vue.reactive({});
         const denoms = [
             { v: 500, label: '500€' }, { v: 200, label: '200€' }, { v: 100, label: '100€' },
@@ -28,7 +28,11 @@ const CashCloseScreen = {
 
         const diff = Vue.computed(() => total.value - expected.value);
 
-        return { counted, denoms, total, expected, diff };
+        function handleDiscardParked() {
+            emit('discardParked');
+        }
+
+        return { counted, denoms, total, expected, diff, handleDiscardParked };
     },
     template: `
         <div style="width:100%; height:100%; background:var(--bg); overflow:auto; padding:32px; display:flex; flex-direction:column; gap:24px;">
@@ -40,6 +44,23 @@ const CashCloseScreen = {
                     <div style="font-size:12px; color:var(--text3); text-transform:uppercase; letter-spacing:0.1em;">Cierre de caja</div>
                     <div style="font-size:20px; font-weight:700;">Arqueo y cierre de jornada</div>
                 </div>
+            </div>
+
+            <!-- Parked Tickets Warning Banner -->
+            <div v-if="parkedCount && parkedCount > 0"
+                style="max-width:900px; background:var(--amber-bg); border:1px solid var(--amber); border-radius:14px; padding:14px 18px; display:flex; align-items:center; justify-content:space-between; gap:14px;">
+                <div style="display:flex; flex-direction:column; gap:2px;">
+                    <div style="font-size:13px; font-weight:700; color:var(--amber);">
+                        Aviso: Quedan {{ parkedCount }} ticket{{ parkedCount !== 1 ? 's' : '' }} aparcado{{ parkedCount !== 1 ? 's' : '' }} sin cobrar
+                    </div>
+                    <div style="font-size:12px; color:var(--text2);">
+                        No bloquean stock ni impiden el Cierre Z. Puedes conservarlos para el siguiente turno o descartarlos ahora.
+                    </div>
+                </div>
+                <button @click="handleDiscardParked"
+                    style="flex-shrink:0; padding:8px 14px; border-radius:8px; border:1px solid var(--amber); background:var(--surface); color:var(--amber); cursor:pointer; font-family:inherit; font-size:12px; font-weight:600;">
+                    Descartar aparcados ({{ parkedCount }})
+                </button>
             </div>
 
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; max-width:900px;">

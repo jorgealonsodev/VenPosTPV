@@ -23,7 +23,12 @@ final class CashAssetsTemplateTest extends TestCase
 
         foreach ([
             '/tpv/assets/js/stores/useSession.js',
+            '/tpv/assets/js/stores/useCart.js',
+            '/tpv/assets/js/stores/useParkedTickets.js',
             '/tpv/assets/js/components/PaymentModal.js',
+            '/tpv/assets/js/components/SaleScreen.js',
+            '/tpv/assets/js/components/TicketListPanel.js',
+            '/tpv/assets/js/components/CashCloseScreen.js',
         ] as $asset) {
             $url = $this->findAssetUrl($scripts, $asset);
             $query = parse_url($url, PHP_URL_QUERY);

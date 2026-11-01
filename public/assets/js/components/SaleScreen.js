@@ -8,6 +8,13 @@ const SaleScreen = {
         const { session, toggleTheme, logout } = useSession;
         const { cart, add, remove, updateQty, clear, applyDiscount, setCustomer } = useCart;
         const { catalog, setSearch, setCategory } = useCatalog;
+        const {
+            state: parkedState,
+            refresh: refreshParked,
+            parkCart,
+            restoreWithSwap,
+            clearAll: clearAllParked,
+        } = useParkedTickets;
 
         const showPayment = Vue.ref(false);
         const showDiscount = Vue.ref(false);
@@ -18,11 +25,15 @@ const SaleScreen = {
         const showLogoutConfirm = Vue.ref(false);
         const showSyncPanel = Vue.ref(false);
         const showTickets = Vue.ref(false);
+        const showParkModal = Vue.ref(false);
+        const parkNote = Vue.ref('');
         const notification = Vue.ref(null);
         const listView = Vue.ref(false);
         const lastAdded = Vue.ref(null);
         const ticketCount = Vue.ref(127);
         const lastCompletedOrder = Vue.ref(null);
+
+        const parkedCount = Vue.computed(() => (parkedState.tickets ? parkedState.tickets.length : 0));
 
         const timeStr = Vue.ref('');
         function updateTime() {
@@ -31,6 +42,10 @@ const SaleScreen = {
         }
         updateTime();
         setInterval(updateTime, 30000);
+
+        Vue.onMounted(() => {
+            refreshParked();
+        });
 
         function notify(msg, color) {
             notification.value = { msg, color };
@@ -80,12 +95,20 @@ const SaleScreen = {
 
         function handlePark() {
             if (!cart.lines.length) return;
-            // Save to localStorage as parked ticket
-            const parked = JSON.parse(localStorage.getItem('venpostpv_parked') || '[]');
-            parked.push({ id: Date.now(), lines: cart.lines, customer: cart.customer, total: cart.total });
-            localStorage.setItem('venpostpv_parked', JSON.stringify(parked));
+            parkNote.value = '';
+            showParkModal.value = true;
+        }
+
+        async function confirmParkTicket() {
+            if (!cart.lines.length) {
+                showParkModal.value = false;
+                return;
+            }
+            const noteText = parkNote.value.trim();
+            showParkModal.value = false;
+            await parkCart(cart, noteText, props.cashierName || 'Cajero');
             clear();
-            notify('Ticket aparcado', 'var(--amber)');
+            notify(noteText ? ('Ticket aparcado: ' + noteText) : 'Ticket aparcado', 'var(--amber)');
         }
 
         function handleVoid() {
@@ -106,7 +129,8 @@ const SaleScreen = {
             notify('Cliente: ' + c.name, 'var(--blue)');
         }
 
-        function handleCashClose() {
+        async function handleCashClose() {
+            await refreshParked();
             showCashClose.value = true;
         }
 
@@ -119,19 +143,30 @@ const SaleScreen = {
             emit('cashClose', countedCash);
         }
 
+        async function handleDiscardParkedOnClose() {
+            await clearAllParked();
+            notify('Tickets aparcados descartados', 'var(--amber)');
+        }
+
         function handleRefund() {
             showRefund.value = true;
         }
 
         function toggleTickets() {
             showTickets.value = !showTickets.value;
+            if (showTickets.value) {
+                refreshParked();
+            }
         }
 
-        function handleRestoreTicket(ticket) {
-            clear();
-            useCart.restore(ticket.lines, ticket.customer);
+        async function handleRestoreTicket(ticket) {
+            const result = await restoreWithSwap(ticket, useCart, props.cashierName || 'Cajero');
             showTickets.value = false;
-            notify('Ticket restaurado', 'var(--green)');
+            if (result.swapped) {
+                notify('Ticket restaurado (el anterior quedó aparcado)', 'var(--green)');
+            } else {
+                notify('Ticket restaurado', 'var(--green)');
+            }
         }
 
         function handleRefundBack() {
@@ -183,15 +218,16 @@ const SaleScreen = {
         return {
             session, cart, catalog,
             showPayment, showDiscount, showCustomer, showCashClose, showRefund, showSettings,
-            showLogoutConfirm, showSyncPanel, showTickets,
+            showLogoutConfirm, showSyncPanel, showTickets, showParkModal, parkNote,
+            parkedCount,
             notification, listView, lastAdded, ticketCount, timeStr, lastCompletedOrder,
             hasOpenSession,
             toggleTheme,
             setSearch, setCategory,
             addProduct, remove, updateQty,
-            handlePaymentComplete, handlePark, handleVoid, handleReprint,
+            handlePaymentComplete, handlePark, confirmParkTicket, handleVoid, handleReprint,
             handleDiscount, handleCustomer,
-            handleCashClose, handleCashCloseDone, handleCashCloseBack,
+            handleCashClose, handleCashCloseDone, handleCashCloseBack, handleDiscardParkedOnClose,
             handleRefund, handleRefundBack, handleRefundNotify,
             handleLogout, handleLogoutConfirmed,
             handleSyncNow,
@@ -200,7 +236,13 @@ const SaleScreen = {
     },
     template: `
         <div v-if="showCashClose">
-            <cash-close-screen :session="{ openingCash: session.openingCash || 0, sales: (session.cashTotals && session.cashTotals.sales) || 0, refunds: (session.cashTotals && session.cashTotals.refunds) || 0, expected: (session.cashTotals && session.cashTotals.expected) || null }" @back="handleCashCloseBack" @close="handleCashCloseDone" />
+            <cash-close-screen
+                :session="{ openingCash: session.openingCash || 0, sales: (session.cashTotals && session.cashTotals.sales) || 0, refunds: (session.cashTotals && session.cashTotals.refunds) || 0, expected: (session.cashTotals && session.cashTotals.expected) || null }"
+                :parked-count="parkedCount"
+                @back="handleCashCloseBack"
+                @close="handleCashCloseDone"
+                @discard-parked="handleDiscardParkedOnClose"
+            />
         </div>
         <div v-else-if="showRefund">
             <refund-screen :cashier-name="cashierName" @back="handleRefundBack" @notify="handleRefundNotify" />
@@ -236,6 +278,10 @@ const SaleScreen = {
                         style="display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;"
                         :style="showTickets ? 'background:var(--surface2); border-color:var(--green); color:var(--green);' : ''">
                         <icon name="receipt" :size="13" /> Tickets
+                        <span v-if="parkedCount > 0"
+                            style="background:var(--amber); color:#000; font-weight:700; font-size:10px; padding:1px 6px; border-radius:999px; font-family:'IBM Plex Mono';">
+                            {{ parkedCount }}
+                        </span>
                     </button>
                     <button v-if="lastCompletedOrder" @click="handleReprint"
                         style="display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;">
@@ -274,6 +320,7 @@ const SaleScreen = {
                 <!-- Ticket -->
                 <div style="width:38%; display:flex; flex-direction:column; overflow:hidden; background:var(--surface);">
                     <ticket-list-panel v-if="showTickets"
+                        :active-cart-count="cart.lines.length"
                         @back="showTickets = false"
                         @notify="notify"
                         @restore="handleRestoreTicket"
@@ -288,6 +335,34 @@ const SaleScreen = {
                         @park="handlePark"
                         @void="handleVoid"
                     />
+                </div>
+            </div>
+
+            <!-- Park Ticket Optional Note Modal -->
+            <div v-if="showParkModal" style="position:fixed; inset:0; background:rgba(0,0,0,0.55); display:flex; align-items:center; justify-content:center; z-index:1000;">
+                <div style="background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:24px 28px; max-width:400px; width:92%;">
+                    <div style="font-size:17px; font-weight:700; color:var(--text); margin-bottom:6px;">Aparcar ticket</div>
+                    <div style="color:var(--text3); font-size:13px; margin-bottom:14px;">
+                        Añade una nota opcional para identificarlo rápido (ej. "Probador 2", "Señora abrigo gris").
+                    </div>
+                    <input
+                        type="text"
+                        maxlength="120"
+                        v-model="parkNote"
+                        @keyup.enter="confirmParkTicket"
+                        placeholder="Nota opcional (pulsa Enter para aparcar)"
+                        style="width:100%; padding:10px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-family:inherit; font-size:13px; outline:none; margin-bottom:18px;"
+                    />
+                    <div style="display:flex; gap:10px; justify-content:flex-end;">
+                        <button @click="showParkModal = false"
+                            style="padding:8px 16px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:13px;">
+                            Cancelar
+                        </button>
+                        <button @click="confirmParkTicket"
+                            style="padding:8px 18px; border-radius:8px; border:none; background:var(--amber); color:#000; cursor:pointer; font-family:inherit; font-size:13px; font-weight:700;">
+                            Aparcar ahora
+                        </button>
+                    </div>
                 </div>
             </div>
 

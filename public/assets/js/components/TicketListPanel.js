@@ -3,19 +3,21 @@
  * Emits: back, notify, restore
  */
 const TicketListPanel = {
+    props: ['activeCartCount'],
     emits: ['back', 'notify', 'restore'],
     setup(props, { emit }) {
         const activeTab = Vue.ref('aparcados');
         const selectedOrder = Vue.ref(null);
-        const parkedTickets = Vue.ref([]);
+        const { state: parkedState, refresh: refreshParked, removeTicket } = useParkedTickets;
         const paidOrders = Vue.ref([]);
         const refundedOrders = Vue.ref([]);
         const loading = Vue.ref(false);
-        const confirmRestore = Vue.ref(null);
+        const confirmDelete = Vue.ref(null);
 
-        function loadParked() {
-            const data = JSON.parse(localStorage.getItem('venpostpv_parked') || '[]');
-            parkedTickets.value = data;
+        const parkedTickets = Vue.computed(() => parkedState.tickets || []);
+
+        async function loadParked() {
+            await refreshParked();
         }
 
         async function loadPaid() {
@@ -52,22 +54,49 @@ const TicketListPanel = {
             selectedOrder.value = null;
         }
 
-        function askRestore(ticket) {
-            confirmRestore.value = ticket;
+        function handleRestoreClick(ticket) {
+            emit('restore', ticket);
         }
 
-        function doRestore() {
-            if (!confirmRestore.value) return;
-            emit('restore', confirmRestore.value);
-            const data = JSON.parse(localStorage.getItem('venpostpv_parked') || '[]');
-            const updated = data.filter(t => t.id !== confirmRestore.value.id);
-            localStorage.setItem('venpostpv_parked', JSON.stringify(updated));
-            confirmRestore.value = null;
-            loadParked();
+        function askDelete(ticket) {
+            confirmDelete.value = ticket;
         }
 
-        function cancelRestore() {
-            confirmRestore.value = null;
+        async function doDelete() {
+            if (!confirmDelete.value) return;
+            await removeTicket(confirmDelete.value);
+            confirmDelete.value = null;
+            emit('notify', 'Ticket aparcado eliminado', 'var(--text2)');
+        }
+
+        function cancelDelete() {
+            confirmDelete.value = null;
+        }
+
+        function formatTicketTime(ticket) {
+            if (ticket.created_at) {
+                const parsed = new Date(String(ticket.created_at).replace(' ', 'T'));
+                if (!Number.isNaN(parsed.getTime())) {
+                    return parsed.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+                }
+            }
+            if (typeof ticket.id === 'number' && ticket.id > 1000000000000) {
+                return new Date(ticket.id).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+            }
+            return '';
+        }
+
+        function formatTicketDate(ticket) {
+            if (ticket.created_at) {
+                const parsed = new Date(String(ticket.created_at).replace(' ', 'T'));
+                if (!Number.isNaN(parsed.getTime())) {
+                    return parsed.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' });
+                }
+            }
+            if (typeof ticket.id === 'number' && ticket.id > 1000000000000) {
+                return new Date(ticket.id).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' });
+            }
+            return '';
         }
 
         Vue.watch(activeTab, (tab) => {
@@ -85,8 +114,9 @@ const TicketListPanel = {
 
         return {
             activeTab, selectedOrder, parkedTickets, paidOrders, refundedOrders,
-            loading, confirmRestore,
-            selectOrder, backToList, askRestore, doRestore, cancelRestore
+            loading, confirmDelete,
+            selectOrder, backToList, handleRestoreClick, askDelete, doDelete, cancelDelete,
+            formatTicketTime, formatTicketDate,
         };
     },
     template: `
@@ -98,6 +128,9 @@ const TicketListPanel = {
                     <icon name="arrow_back" :size="14" /> Volver
                 </button>
                 <div style="font-weight:700; font-size:15px; letter-spacing:-0.01em; color:var(--text);">Tickets</div>
+                <span v-if="parkedTickets.length > 0" style="margin-left:auto; font-size:11px; font-weight:600; background:var(--amber-bg); color:var(--amber); padding:2px 8px; border-radius:999px;">
+                    {{ parkedTickets.length }} en espera
+                </span>
             </div>
 
             <!-- Tabs -->
@@ -107,6 +140,7 @@ const TicketListPanel = {
                     style="flex:1; padding:10px 6px; border:none; background:transparent; font-family:inherit; font-size:13px; font-weight:600; cursor:pointer; text-transform:capitalize; border-bottom:3px solid transparent;"
                     :style="activeTab === tab ? 'color:var(--text); border-bottom-color:var(--green);' : 'color:var(--text3);'">
                     {{ tab }}
+                    <span v-if="tab === 'aparcados' && parkedTickets.length > 0" style="margin-left:4px; font-size:11px; color:var(--amber);">({{ parkedTickets.length }})</span>
                 </button>
             </div>
 
@@ -121,17 +155,27 @@ const TicketListPanel = {
                         <icon name="pause" :size="32" />
                         <span style="font-size:13px;">No hay tickets aparcados</span>
                     </div>
-                    <div v-for="ticket in parkedTickets" :key="ticket.id"
+                    <div v-for="ticket in parkedTickets" :key="ticket.client_ref || ticket.id"
                         style="background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px; display:flex; flex-direction:column; gap:6px;">
-                        <!-- Header: hora + total -->
-                        <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <span style="font-weight:600; color:var(--text); font-size:14px;">
-                                {{ new Date(ticket.id).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }) }}
-                                <span style="font-weight:400; color:var(--text3); font-size:12px; margin-left:4px;">
-                                    {{ new Date(ticket.id).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' }) }}
+                        <!-- Header: hora + nota + total -->
+                        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+                            <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; min-width:0;">
+                                <span style="font-weight:600; color:var(--text); font-size:13px;">
+                                    {{ formatTicketTime(ticket) }}
+                                    <span style="font-weight:400; color:var(--text3); font-size:11px; margin-left:2px;">
+                                        {{ formatTicketDate(ticket) }}
+                                    </span>
                                 </span>
-                            </span>
-                            <span style="color:var(--text); font-size:14px; font-weight:700; font-family:'IBM Plex Mono';">€{{ Number(ticket.total || 0).toFixed(2) }}</span>
+                                <span v-if="ticket.note" style="font-size:11px; font-weight:600; background:var(--amber-bg); color:var(--amber); padding:2px 7px; border-radius:5px;">
+                                    {{ ticket.note }}
+                                </span>
+                            </div>
+                            <span style="color:var(--text); font-size:14px; font-weight:700; font-family:'IBM Plex Mono'; flex-shrink:0;">€{{ Number(ticket.total || 0).toFixed(2) }}</span>
+                        </div>
+                        <!-- Meta: cliente + cajero -->
+                        <div style="display:flex; justify-content:space-between; align-items:center; font-size:11px; color:var(--text3);">
+                            <span>Cliente: <strong style="color:var(--text2); font-weight:500;">{{ ticket.customer && ticket.customer.name ? ticket.customer.name : 'Consumidor final' }}</strong></span>
+                            <span v-if="ticket.cashier_name">Cajero: {{ ticket.cashier_name }}</span>
                         </div>
                         <!-- Líneas del ticket -->
                         <div style="border-top:1px solid var(--border); margin-top:4px; padding-top:6px; display:flex; flex-direction:column; gap:3px;">
@@ -141,14 +185,23 @@ const TicketListPanel = {
                                     <span style="color:var(--text3); margin-right:4px;">×{{ line.qty || line.quantity || 1 }}</span>{{ line.name }}
                                 </span>
                                 <span style="font-size:12px; color:var(--text3); font-family:'IBM Plex Mono'; flex-shrink:0;">
-                                    €{{ Number((line.price || 0) * (line.qty || line.quantity || 1)).toFixed(2) }}
+                                    €{{ Number((line.price || 0) * (line.qty || line.quantity || 1) * (1 - (line.discount || 0) / 100)).toFixed(2) }}
                                 </span>
+                            </div>
+                            <div v-if="ticket.discount && ticket.discount.value > 0" style="font-size:11px; color:var(--amber); display:flex; justify-content:space-between;">
+                                <span>Descuento aplicado</span>
+                                <span>{{ ticket.discount.type === 'pct' ? ('-' + ticket.discount.value + '%') : ('-€' + Number(ticket.discount.value).toFixed(2)) }}</span>
                             </div>
                         </div>
                         <div style="display:flex; gap:8px; margin-top:4px;">
-                            <button @click="askRestore(ticket)"
+                            <button @click="handleRestoreClick(ticket)"
                                 style="flex:1; padding:7px 10px; border-radius:8px; border:1px solid var(--green); background:transparent; color:var(--green); cursor:pointer; font-family:inherit; font-size:12px; font-weight:600;">
-                                Restaurar
+                                {{ activeCartCount && activeCartCount > 0 ? 'Intercambiar con actual' : 'Restaurar' }}
+                            </button>
+                            <button @click="askDelete(ticket)"
+                                title="Eliminar ticket aparcado"
+                                style="padding:7px 10px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--red); cursor:pointer; font-family:inherit; font-size:12px; display:flex; align-items:center; justify-content:center;">
+                                <icon name="trash" :size="13" />
                             </button>
                         </div>
                     </div>
@@ -197,21 +250,21 @@ const TicketListPanel = {
                 </template>
             </div>
 
-            <!-- Restore Confirmation -->
-            <div v-if="confirmRestore" style="position:fixed; inset:0; background:rgba(0,0,0,0.55); display:flex; align-items:center; justify-content:center; z-index:1000;">
+            <!-- Delete Confirmation -->
+            <div v-if="confirmDelete" style="position:fixed; inset:0; background:rgba(0,0,0,0.55); display:flex; align-items:center; justify-content:center; z-index:1000;">
                 <div style="background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:28px 32px; max-width:380px; width:90%; text-align:center;">
-                    <div style="font-size:18px; font-weight:700; color:var(--text); margin-bottom:10px;">Restaurar ticket</div>
+                    <div style="font-size:18px; font-weight:700; color:var(--text); margin-bottom:10px;">Eliminar ticket aparcado</div>
                     <div style="color:var(--text2); font-size:14px; margin-bottom:24px;">
-                        ¿Reemplazar el ticket actual por el ticket aparcado?
+                        ¿Seguro que deseas descartar este ticket en espera?
                     </div>
                     <div style="display:flex; gap:12px; justify-content:center;">
-                        <button @click="cancelRestore"
+                        <button @click="cancelDelete"
                             style="padding:8px 22px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:14px;">
                             Cancelar
                         </button>
-                        <button @click="doRestore"
-                            style="padding:8px 22px; border-radius:8px; border:none; background:var(--green); color:#000; cursor:pointer; font-family:inherit; font-size:14px; font-weight:600;">
-                            Restaurar
+                        <button @click="doDelete"
+                            style="padding:8px 22px; border-radius:8px; border:none; background:var(--red); color:#fff; cursor:pointer; font-family:inherit; font-size:14px; font-weight:600;">
+                            Eliminar
                         </button>
                     </div>
                 </div>
