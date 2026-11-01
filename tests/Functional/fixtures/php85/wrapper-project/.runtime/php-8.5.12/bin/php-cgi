@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'Content-Type: text/plain\r\n\r\n'
+printf 'REQUEST_URI=%s\n' "${REQUEST_URI:-}"
+printf 'QUERY_STRING=%s\n' "${QUERY_STRING:-}"
+printf 'SCRIPT_FILENAME=%s\n' "${SCRIPT_FILENAME:-}"
+printf 'SCRIPT_NAME=%s\n' "${SCRIPT_NAME:-}"
+printf 'PHP_SELF=%s\n' "${PHP_SELF:-}"

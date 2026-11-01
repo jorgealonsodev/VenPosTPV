@@ -1,3 +1,18 @@
+# Keep Apache's existing PHP 8.1 handler for every other project and file.
+# Only this application's front controller is redirected to the local PHP 8.5
+# CGI wrapper. The wrapper rejects direct requests and pins its PHP target.
+<IfModule mod_actions.c>
+Action application/x-httpd-php85 /tpv/php85.cgi virtual
+</IfModule>
+
+<Files "index.php">
+    SetHandler application/x-httpd-php85
+</Files>
+
+<Files "php85.cgi">
+    SetHandler cgi-script
+</Files>
+
 <IfModule mod_rewrite.c>
     RewriteEngine On
     RewriteCond %{REQUEST_FILENAME} !-f
