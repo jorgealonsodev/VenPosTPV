@@ -6,8 +6,8 @@ Delivery: feature-branch-chain inherited; runtime `.runtime/php-8.5.12/bin/php`.
 S1. "haz lo que consideres mas optimo" / "continua" (parent-identified gap: `POST /api/checkout` trusts `cart_data.total` and per-line `price`).
 
 ## Tasks
-T1 | S1 | inline | done | `CheckoutService` now resolves unit prices from the synced catalog (+ combination impact), validates the global discount, recomputes subtotal/total and rejects mismatches with 422 before any cash or PrestaShop side effect; 7 new unit tests, checkout suite 22 tests/57 assertions GREEN; commit: 8b0c1d9.
-T2 | S1 | inline | in_progress | Full PHP 8.5 suite 298 tests/729 assertions OK plus Node 7+4+4; document fallback and close this record; commit: pending.
+T1 | S1 | inline | done | `CheckoutService` now resolves unit prices from the synced catalog (+ combination impact), validates the global discount, recomputes subtotal/total and rejects mismatches with 422 before any cash or PrestaShop side effect; 7 new unit tests, checkout suite 22 tests/57 assertions GREEN; commit: 50420dc.
+T2 | S1 | inline | done | Full PHP 8.5 suite 298 tests/729 assertions OK plus Node 7+4+4; UI contract checked against `CatalogPanel`; fallback documented; closure in this record.
 
 ## Log
 L1. User: "haz lo que consideres mas optimo" then "continua", after the parked-tickets audit surfaced that checkout accepts client price/total.
