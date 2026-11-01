@@ -25,44 +25,57 @@ require_once \dirname(__DIR__, 3) . '/migrations/Version00000017AddPriceTtcToCat
 class Version00000017AddPriceTtcToCatalogTablesTest extends TestCase
 {
     /**
-     * PHPUnit does not load .env for this suite, so the connection settings are
-     * read from the project .env without changing the global bootstrap (enabling
-     * it globally would also run the destructive migration tests against the dev
-     * database).
+     * Resolves the database settings for this test only.
+     *
+     * PHPUnit shares `$_ENV` across the whole suite in one process, so writing to it
+     * here would enable every other database-dependent test mid-run, and several of
+     * those are currently broken (they insert a `catalog_stock.id_shop` column that
+     * does not exist). The settings are therefore returned instead of assigned.
+     *
+     * @return array<string, string>
      */
-    private function loadDatabaseEnv(): void
+    private function databaseSettings(): array
     {
+        $settings = [
+            'TPV_DB_HOST' => $_ENV['TPV_DB_HOST'] ?? '127.0.0.1',
+            'TPV_DB_PORT' => $_ENV['TPV_DB_PORT'] ?? '3306',
+            'TPV_DB_NAME' => $_ENV['TPV_DB_NAME'] ?? 'tpv',
+            'TPV_DB_USER' => $_ENV['TPV_DB_USER'] ?? 'tpv_user',
+            'TPV_DB_PASSWORD' => $_ENV['TPV_DB_PASSWORD'] ?? '',
+        ];
+
         if (isset($_ENV['TPV_DB_NAME'])) {
-            return;
+            return $settings;
         }
 
         $envFile = \dirname(__DIR__, 3) . '/.env';
         if (!is_file($envFile)) {
-            return;
+            return $settings;
         }
 
         foreach (file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
             if (!preg_match('/^\s*([A-Z0-9_]+)\s*=\s*(.*)$/', $line, $matches)) {
                 continue;
             }
-            if (!str_starts_with($matches[1], 'TPV_DB_')) {
-                continue;
+            if (str_starts_with($matches[1], 'TPV_DB_')) {
+                $settings[$matches[1]] = trim($matches[2], "'\"");
             }
-            $_ENV[$matches[1]] = trim($matches[2], "'\"");
         }
+
+        return $settings;
     }
 
     private function getConnection(): ?Connection
     {
-        $this->loadDatabaseEnv();
+        $settings = $this->databaseSettings();
 
         $config = [
             'driver' => 'pdo_mysql',
-            'host' => $_ENV['TPV_DB_HOST'] ?? '127.0.0.1',
-            'port' => (int) ($_ENV['TPV_DB_PORT'] ?? 3306),
-            'dbname' => $_ENV['TPV_DB_NAME'] ?? 'tpv',
-            'user' => $_ENV['TPV_DB_USER'] ?? 'tpv_user',
-            'password' => $_ENV['TPV_DB_PASSWORD'] ?? '',
+            'host' => $settings['TPV_DB_HOST'],
+            'port' => (int) $settings['TPV_DB_PORT'],
+            'dbname' => $settings['TPV_DB_NAME'],
+            'user' => $settings['TPV_DB_USER'],
+            'password' => $settings['TPV_DB_PASSWORD'],
             'charset' => 'utf8mb4',
         ];
 
