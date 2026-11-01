@@ -14,6 +14,16 @@ use VenPosTPV\Service\PrestaShop\PrestaShopApiClient;
 use VenPosTPV\Service\Print\PrinterService;
 use VenPosTPV\Service\Sync\SyncLogRepository;
 
+/**
+ * Books a sale against PrestaShop and the local ledger.
+ *
+ * Prices are resolved from the synced catalog on a tax-included basis, because
+ * that is what PrestaShop actually charges: `catalog_product.price_ttc` for a
+ * plain product and `catalog_combination.price_ttc` (an absolute price, not an
+ * impact) when a combination is selected. The tax-excluded base price is only a
+ * fallback for rows whose TTC price is still NULL, and a product missing from
+ * `catalog_product` fails closed instead of trusting the browser.
+ */
 class CheckoutService
 {
     private const PRICE_TOLERANCE = 0.02;
@@ -150,6 +160,9 @@ class CheckoutService
     }
 
     /**
+     * Resolves the authoritative unit price and total for the submitted lines,
+     * using the tax-included catalog price as the source of truth.
+     *
      * @param array<int, array<string, mixed>> $lines
      *
      * @return array{lines: array<int, array<string, mixed>>, subtotal: float, total: float}
@@ -183,6 +196,8 @@ class CheckoutService
                 ));
             }
 
+            // null only when the catalog row exists without a usable price; the
+            // submitted price is then kept so an incomplete sync cannot block the sale.
             $unitPrice = $expectedUnitPrice ?? $submittedPrice;
             $line['price'] = $unitPrice;
             $line['qty'] = $qty;
@@ -210,32 +225,68 @@ class CheckoutService
     }
 
     /**
-     * Returns the expected unit price from the synced catalog, or null when the
-     * product has not been synced yet (pending sync keeps the submitted price).
+     * Returns the authoritative unit price from the synced catalog.
+     *
+     * The tax-included price wins because it is what PrestaShop charges and books:
+     * `catalog_product.price_ttc` for a plain product, and
+     * `catalog_combination.price_ttc` (absolute, it already includes the product
+     * price and the impact) when a combination is selected. The previous behaviour
+     * (base `price` + `price_impact`) is kept only while the TTC value is NULL, so
+     * an un-synced price still allows the sale.
+     *
+     * Returns null only when the product row exists without a usable price.
+     *
+     * @throws CheckoutException when the product has no row in `catalog_product`,
+     *                           so the submitted price cannot be validated
      */
     private function resolveCatalogUnitPrice(int $productId, int $combinationId): ?float
     {
         if ($productId <= 0) {
+            // Not a catalog lookup; validateStock() rejects this line with a 422.
             return null;
         }
 
-        $product = $this->conn->fetchAssociative('SELECT price FROM catalog_product WHERE id = ?', [$productId]);
-        if ($product === false || !isset($product['price'])) {
-            return null;
+        $product = $this->conn->fetchAssociative('SELECT price, price_ttc FROM catalog_product WHERE id = ?', [$productId]);
+        if ($product === false) {
+            // Fail closed: an unknown product must never fall back to the browser price.
+            throw CheckoutException::psValidationFailed(sprintf(
+                'Product %d is not in the synced catalog; the price cannot be validated',
+                $productId
+            ));
         }
 
-        $unitPrice = (float) $product['price'];
-        if ($combinationId > 0) {
-            $combination = $this->conn->fetchAssociative(
-                'SELECT price_impact FROM catalog_combination WHERE id = ? AND id_product = ?',
-                [$combinationId, $productId]
-            );
-            if ($combination !== false && isset($combination['price_impact'])) {
-                $unitPrice += (float) $combination['price_impact'];
+        $basePrice = isset($product['price']) ? (float) $product['price'] : null;
+        $productTtcPrice = isset($product['price_ttc']) && is_numeric($product['price_ttc'])
+            ? (float) $product['price_ttc']
+            : null;
+
+        if ($combinationId <= 0) {
+            if ($productTtcPrice !== null) {
+                return round($productTtcPrice, 2);
             }
+
+            return $basePrice !== null ? round($basePrice, 2) : null;
         }
 
-        return round($unitPrice, 2);
+        $combination = $this->conn->fetchAssociative(
+            'SELECT price_impact, price_ttc FROM catalog_combination WHERE id = ? AND id_product = ?',
+            [$combinationId, $productId]
+        );
+
+        if ($combination !== false && isset($combination['price_ttc']) && is_numeric($combination['price_ttc'])) {
+            // Absolute TTC price of the combination, not an impact.
+            return round((float) $combination['price_ttc'], 2);
+        }
+
+        if ($basePrice === null) {
+            return null;
+        }
+
+        $impact = $combination !== false && isset($combination['price_impact'])
+            ? (float) $combination['price_impact']
+            : 0.0;
+
+        return round($basePrice + $impact, 2);
     }
 
     /**

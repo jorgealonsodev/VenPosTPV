@@ -580,7 +580,12 @@ final class CheckoutServiceTest extends TestCase
         ], 'card', 10.0);
     }
 
-    /** @param array<string, string|null> $catalogPrices */
+    /**
+     * A catalog row is either a plain base price string or a full row map
+     * (e.g. ['price' => '23.90', 'price_ttc' => '23.14']).
+     *
+     * @param array<string, string|array<string, string|null>|null> $catalogPrices
+     */
     private function catalogConnection(array $catalogPrices, int $stock = 10): Connection
     {
         $conn = $this->createMock(Connection::class);
@@ -588,13 +593,15 @@ final class CheckoutServiceTest extends TestCase
         $conn->method('fetchAssociative')
             ->willReturnCallback(function (string $sql, array $params = []) use ($catalogPrices): array|false {
                 $key = (string) ($params[0] ?? '');
+                $row = $catalogPrices[$key] ?? null;
+                if ($row === null) {
+                    return false;
+                }
                 if (str_contains($sql, 'FROM catalog_product')) {
-                    return array_key_exists($key, $catalogPrices) && $catalogPrices[$key] !== null
-                        ? ['price' => $catalogPrices[$key]]
-                        : false;
+                    return is_array($row) ? $row : ['price' => $row];
                 }
                 if (str_contains($sql, 'FROM catalog_combination')) {
-                    return $catalogPrices[$key] ?? false;
+                    return is_array($row) ? $row : false;
                 }
 
                 return false;
@@ -727,21 +734,158 @@ final class CheckoutServiceTest extends TestCase
         ], 'cash', 0.0);
     }
 
-    public function testUnknownCatalogProductKeepsSubmittedPrice(): void
+    public function testAcceptsSubmittedTtcPriceAndBooksTheTtcTotal(): void
     {
         $client = $this->createMock(PsOrderClient::class);
-        $client->method('createOrder')->willReturn(['order_id' => 503, 'reference' => 'ORD-503', 'total_paid' => 12.0]);
+        $client->expects($this->once())
+            ->method('createOrder')
+            ->with($this->callback(static function (array $payload): bool {
+                return (float) $payload['products'][0]['price'] === 23.14;
+            }))
+            ->willReturn(['order_id' => 504, 'reference' => 'ORD-504', 'total_paid' => 46.28]);
 
         $service = $this->createService(
             client: $client,
-            conn: $this->catalogConnection([]),
+            conn: $this->catalogConnection(['1' => ['price' => '23.90', 'price_ttc' => '23.14']]),
         );
 
         $result = $service->createOrder(1, [
+            'lines' => [['product_id' => 1, 'qty' => 2, 'price' => 23.14]],
+            'total' => 46.28,
+        ], 'card', 46.28);
+
+        $this->assertSame(46.28, $result['total']);
+    }
+
+    public function testRejectsTaxExcludedBasePriceWhenTtcPriceIsKnown(): void
+    {
+        $client = $this->createMock(PsOrderClient::class);
+        $client->expects($this->never())->method('createOrder');
+
+        $service = $this->createService(
+            client: $client,
+            conn: $this->catalogConnection(['1' => ['price' => '23.90', 'price_ttc' => '23.14']]),
+        );
+
+        $this->expectException(CheckoutException::class);
+        $this->expectExceptionMessage('Price mismatch for product 1 (expected 23.14, received 23.90)');
+
+        $service->createOrder(1, [
+            'lines' => [['product_id' => 1, 'qty' => 1, 'price' => 23.90]],
+            'total' => 23.90,
+        ], 'cash', 23.90);
+    }
+
+    public function testNullTtcPriceKeepsTheBasePriceFallback(): void
+    {
+        $client = $this->createMock(PsOrderClient::class);
+        $client->expects($this->once())
+            ->method('createOrder')
+            ->with($this->callback(static function (array $payload): bool {
+                return (float) $payload['products'][0]['price'] === 9.0;
+            }))
+            ->willReturn(['order_id' => 505, 'reference' => 'ORD-505', 'total_paid' => 9.0]);
+
+        $service = $this->createService(
+            client: $client,
+            conn: $this->catalogConnection(['1' => ['price' => '9.00', 'price_ttc' => null]]),
+        );
+
+        $result = $service->createOrder(1, [
+            'lines' => [['product_id' => 1, 'qty' => 1, 'price' => 9.0]],
+            'total' => 9.0,
+        ], 'card', 9.0);
+
+        $this->assertSame(9.0, $result['total']);
+    }
+
+    public function testCombinationTtcPriceIsTheAbsoluteUnitPrice(): void
+    {
+        $client = $this->createMock(PsOrderClient::class);
+        $client->expects($this->once())
+            ->method('createOrder')
+            ->with($this->callback(static function (array $payload): bool {
+                return (float) $payload['products'][0]['price'] === 25.50;
+            }))
+            ->willReturn(['order_id' => 506, 'reference' => 'ORD-506', 'total_paid' => 25.50]);
+
+        $service = $this->createService(
+            client: $client,
+            conn: $this->catalogConnection([
+                '1' => ['price' => '23.90', 'price_ttc' => '23.14'],
+                '7' => ['price_impact' => '0.76', 'price_ttc' => '25.50'],
+            ]),
+        );
+
+        $result = $service->createOrder(1, [
+            'lines' => [['product_id' => 1, 'id_product_attribute' => 7, 'qty' => 1, 'price' => 25.50]],
+            'total' => 25.50,
+        ], 'card', 25.50);
+
+        $this->assertSame(25.50, $result['total']);
+    }
+
+    public function testCombinationWithoutTtcPriceFallsBackToBasePricePlusImpact(): void
+    {
+        $client = $this->createMock(PsOrderClient::class);
+        $client->expects($this->once())
+            ->method('createOrder')
+            ->with($this->callback(static function (array $payload): bool {
+                return (float) $payload['products'][0]['price'] === 11.5;
+            }))
+            ->willReturn(['order_id' => 507, 'reference' => 'ORD-507', 'total_paid' => 11.5]);
+
+        $service = $this->createService(
+            client: $client,
+            conn: $this->catalogConnection([
+                '1' => ['price' => '9.00', 'price_ttc' => null],
+                '7' => ['price_impact' => '2.50', 'price_ttc' => null],
+            ]),
+        );
+
+        $result = $service->createOrder(1, [
+            'lines' => [['product_id' => 1, 'id_product_attribute' => 7, 'qty' => 1, 'price' => 11.5]],
+            'total' => 11.5,
+        ], 'card', 11.5);
+
+        $this->assertSame(11.5, $result['total']);
+    }
+
+    public function testNonNumericTtcPriceFallsBackToTheBasePrice(): void
+    {
+        $client = $this->createMock(PsOrderClient::class);
+        $client->expects($this->never())->method('createOrder');
+
+        $service = $this->createService(
+            client: $client,
+            conn: $this->catalogConnection(['1' => ['price' => '9.00', 'price_ttc' => '']]),
+        );
+
+        $this->expectException(CheckoutException::class);
+        $this->expectExceptionMessage('Price mismatch for product 1 (expected 9.00, received 0.01)');
+
+        $service->createOrder(1, [
+            'lines' => [['product_id' => 1, 'qty' => 1, 'price' => 0.01]],
+            'total' => 0.01,
+        ], 'cash', 0.01);
+    }
+
+    public function testProductAbsentFromCatalogIsRejectedInsteadOfTrustingTheSubmittedPrice(): void
+    {
+        $client = $this->createMock(PsOrderClient::class);
+        $client->expects($this->never())->method('createOrder');
+
+        $service = $this->createService(
+            client: $client,
+            conn: $this->catalogConnection([], stock: 10),
+        );
+
+        $this->expectException(CheckoutException::class);
+        $this->expectExceptionMessage('Product 999 is not in the synced catalog');
+
+        $service->createOrder(1, [
             'lines' => [['product_id' => 999, 'qty' => 1, 'price' => 12.0]],
             'total' => 12.0,
         ], 'card', 12.0);
-
-        $this->assertSame(12.0, $result['total']);
     }
 }

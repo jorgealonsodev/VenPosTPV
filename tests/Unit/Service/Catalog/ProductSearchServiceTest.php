@@ -35,6 +35,58 @@ class ProductSearchServiceTest extends TestCase
         $this->assertNull($results[0]['category_id']);
         $this->assertSame(19.95, $results[0]['price']);
         $this->assertSame(42, $results[0]['stock']);
+        $this->assertSame('base', $results[0]['price_basis']);
+    }
+
+    public function testSearchProjectsTtcPriceAndBasisMarker(): void
+    {
+        $rows = [[
+            'id' => '1',
+            'name' => 'Producto IVA',
+            'reference' => 'IVA-001',
+            'ean13' => '1234567890123',
+            'price' => '23.90',
+            'price_ttc' => '23.14',
+            'category_id' => '2',
+            'stock' => '7',
+            'has_combinations' => '0',
+        ]];
+
+        $service = new ProductSearchService($this->createConnectionWithQueryBuilders([
+            $this->createQueryBuilderForRows($rows),
+        ]));
+
+        $results = $service->search(null, null, 50);
+
+        $this->assertSame(23.14, $results[0]['price']);
+        $this->assertSame(23.14, $results[0]['price_ttc']);
+        $this->assertSame('ttc', $results[0]['price_basis']);
+        $this->assertSame(7, $results[0]['stock']);
+    }
+
+    public function testSearchKeepsBasePriceWhenTtcPriceIsNull(): void
+    {
+        $rows = [[
+            'id' => '2',
+            'name' => 'Producto sin IVA sincronizado',
+            'reference' => 'NOP-002',
+            'ean13' => '',
+            'price' => '23.90',
+            'price_ttc' => null,
+            'category_id' => '2',
+            'stock' => '3',
+            'has_combinations' => '0',
+        ]];
+
+        $service = new ProductSearchService($this->createConnectionWithQueryBuilders([
+            $this->createQueryBuilderForRows($rows),
+        ]));
+
+        $results = $service->search(null, null, 50);
+
+        $this->assertSame(23.90, $results[0]['price']);
+        $this->assertNull($results[0]['price_ttc']);
+        $this->assertSame('base', $results[0]['price_basis']);
     }
 
     public function testSearchReturnsEmptyArrayWhenNoRows(): void
@@ -89,13 +141,139 @@ class ProductSearchServiceTest extends TestCase
         $this->assertSame(2, $product['category_id']);
         $this->assertSame(19.95, $product['price']);
         $this->assertSame(42, $product['stock']);
+        $this->assertSame('base', $product['price_basis']);
         $this->assertCount(1, $product['combinations']);
         $this->assertSame(10, $product['combinations'][0]['id']);
         $this->assertSame(2.0, $product['combinations'][0]['price_impact']);
+        $this->assertSame('base', $product['combinations'][0]['price_basis']);
         $this->assertSame(5, $product['combinations'][0]['stock']);
         $this->assertSame([
             ['group_name' => 'Color', 'attribute_name' => 'Rojo'],
         ], $product['combinations'][0]['attributes']);
+    }
+
+    public function testFindByIdProjectsTtcPriceAndCombinationImpactFromTtc(): void
+    {
+        $service = new ProductSearchService($this->createConnectionWithQueryBuilders([
+            $this->createQueryBuilderForRow([
+                'id' => '1',
+                'name' => 'Producto IVA',
+                'reference' => 'IVA-001',
+                'ean13' => '',
+                'price' => '23.90',
+                'price_ttc' => '23.14',
+                'category_id' => '2',
+                'stock' => '42',
+            ]),
+            $this->createQueryBuilderForRows([
+                [
+                    'id' => '10',
+                    'reference' => 'IVA-001-GDE',
+                    'ean13' => '',
+                    'price_impact' => '0.76',
+                    'price_ttc' => '25.50',
+                    'stock' => '5',
+                ],
+            ]),
+            $this->createAttributeQueryBuilder(10, []),
+        ]));
+
+        $product = $service->findById(1);
+
+        $this->assertNotNull($product);
+        $this->assertSame(23.14, $product['price']);
+        $this->assertSame('ttc', $product['price_basis']);
+        $this->assertSame(2.36, $product['combinations'][0]['price_impact']);
+        $this->assertSame('ttc', $product['combinations'][0]['price_basis']);
+        // The UI contract: product price + combination impact is the TTC unit price.
+        $this->assertSame(25.50, $product['price'] + $product['combinations'][0]['price_impact']);
+    }
+
+    public function testMixedBasisKeepsTheProjectedSumEqualToTheAmountTheCheckoutResolves(): void
+    {
+        $service = new ProductSearchService($this->createConnectionWithQueryBuilders([
+            $this->createQueryBuilderForRow([
+                'id' => '1',
+                'name' => 'Producto parcialmente sincronizado',
+                'reference' => 'PAR-001',
+                'ean13' => '',
+                'price' => '23.90',
+                'price_ttc' => '23.14',
+                'category_id' => '2',
+                'stock' => '42',
+            ]),
+            $this->createQueryBuilderForRows([
+                [
+                    'id' => '10',
+                    'reference' => 'PAR-001-GDE',
+                    'ean13' => '',
+                    'price_impact' => '0.76',
+                    'price_ttc' => null,
+                    'stock' => '5',
+                ],
+            ]),
+            $this->createAttributeQueryBuilder(10, []),
+        ]));
+
+        $product = $service->findById(1);
+
+        $this->assertNotNull($product);
+        $this->assertSame(23.14, $product['price']);
+        $this->assertSame('ttc', $product['price_basis']);
+        $this->assertSame(23.90, $product['base_price']);
+
+        $combination = $product['combinations'][0];
+        $this->assertNull($combination['price_ttc']);
+        $this->assertSame('base', $combination['price_basis']);
+        $this->assertSame(0.76, $combination['base_price_impact']);
+
+        // The checkout cannot read a TTC price for this combination, so it falls
+        // back to the base product price plus the base impact. The projected impact
+        // must compensate the difference, otherwise the sum CatalogPanel sends (and
+        // every other consumer computes) would be rejected as a price mismatch and
+        // the combination would be unsellable until the next sync.
+        $checkoutAmount = round($product['base_price'] + $combination['base_price_impact'], 2);
+        $this->assertSame(24.66, $checkoutAmount);
+        $this->assertSame(
+            $checkoutAmount,
+            round($product['price'] + $combination['price_impact'], 2),
+            'the projected sum must equal the amount the checkout resolves'
+        );
+    }
+
+    public function testFindByIdKeepsBaseImpactWhenCombinationTtcPriceIsMissing(): void
+    {
+        $service = new ProductSearchService($this->createConnectionWithQueryBuilders([
+            $this->createQueryBuilderForRow([
+                'id' => '1',
+                'name' => 'Producto sin IVA sincronizado',
+                'reference' => 'NOP-001',
+                'ean13' => '',
+                'price' => '23.90',
+                'price_ttc' => null,
+                'category_id' => '2',
+                'stock' => '42',
+            ]),
+            $this->createQueryBuilderForRows([
+                [
+                    'id' => '10',
+                    'reference' => 'NOP-001-GDE',
+                    'ean13' => '',
+                    'price_impact' => '0.76',
+                    'price_ttc' => null,
+                    'stock' => '5',
+                ],
+            ]),
+            $this->createAttributeQueryBuilder(10, []),
+        ]));
+
+        $product = $service->findById(1);
+
+        $this->assertNotNull($product);
+        $this->assertSame(23.90, $product['price']);
+        $this->assertSame('base', $product['price_basis']);
+        $this->assertSame(0.76, $product['combinations'][0]['price_impact']);
+        $this->assertSame('base', $product['combinations'][0]['price_basis']);
     }
 
     public function testGetActiveCategoriesMapsPrimitiveTypes(): void
