@@ -2,7 +2,7 @@
  * Numpad component — reusable numpad with digits, clear, backspace, presets.
  */
 const Numpad = {
-    props: ['presets', 'showDecimal'],
+    props: ['presets', 'showDecimal', 'presetColumns'],
     emits: ['input', 'clear'],
     setup(props, { emit }) {
         const keys = ['7','8','9','4','5','6','1','2','3',',','0','←'];
@@ -17,7 +17,9 @@ const Numpad = {
             }
         }
 
-        return { keys, onKey };
+        const presetColumns = Vue.computed(() => Number(props.presetColumns) > 0 ? Number(props.presetColumns) : 3);
+
+        return { keys, onKey, presetColumns };
     },
     template: `
         <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:7px;">
@@ -25,9 +27,9 @@ const Numpad = {
                 {{ k }}
             </button>
         </div>
-        <div v-if="presets && presets.length" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:8px;">
+        <div v-if="presets && presets.length" :style="{ display: 'grid', gridTemplateColumns: 'repeat(' + presetColumns + ', 1fr)', gap: '6px', marginTop: '8px' }">
             <button v-for="p in presets" :key="p.value" class="numpad-btn"
-                style="flex:1; min-width:60px; font-size:13px;"
+                style="font-size:13px;"
                 @click="$emit('input', 'preset:' + p.value)">
                 {{ p.label }}
             </button>
