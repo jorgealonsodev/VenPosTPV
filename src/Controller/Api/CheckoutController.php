@@ -10,6 +10,7 @@ use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Attribute\AsController;
 use Symfony\Component\Routing\Attribute\Route;
 use VenPosTPV\Service\Cash\CashSessionService;
+use VenPosTPV\Service\Cash\Exception\NoOpenCashSessionException;
 use VenPosTPV\Service\Checkout\CheckoutService;
 use VenPosTPV\Service\Checkout\Exception\CheckoutException;
 
@@ -50,11 +51,37 @@ class CheckoutController
 
         try {
             $this->cashSessionService->requireOpenSession($userId);
+        } catch (NoOpenCashSessionException $e) {
+            return new JsonResponse(
+                [
+                    'error' => 'No hay caja abierta. Abre la caja antes de cobrar.',
+                    'code' => 'cash_session_closed',
+                    'retry' => false,
+                ],
+                Response::HTTP_CONFLICT
+            );
+        } catch (\Throwable $e) {
+            return new JsonResponse(
+                ['error' => 'Internal server error', 'retry' => true],
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
+        }
+
+        try {
             $result = $this->checkoutService->createOrder($userId, $cartData, $paymentMethod, $amountTendered);
 
             $result['print_status'] = 'dispatched';
 
             return new JsonResponse(['data' => $result], Response::HTTP_OK);
+        } catch (NoOpenCashSessionException $e) {
+            return new JsonResponse(
+                [
+                    'error' => 'No hay caja abierta. Abre la caja antes de cobrar.',
+                    'code' => 'cash_session_closed',
+                    'retry' => false,
+                ],
+                Response::HTTP_CONFLICT
+            );
         } catch (CheckoutException $e) {
             if ($e->getCode() === 422) {
                 return new JsonResponse(

@@ -6,7 +6,9 @@ namespace VenPosTPV\Tests\Unit\Service\Cash;
 
 use Doctrine\DBAL\Connection;
 use PHPUnit\Framework\TestCase;
+use Symfony\Component\HttpFoundation\RequestStack;
 use VenPosTPV\Service\Cash\CashSessionService;
+use VenPosTPV\Service\Cash\Exception\NoOpenCashSessionException;
 use VenPosTPV\Service\Cash\TerminalService;
 
 final class CashSessionServiceTest extends TestCase
@@ -42,7 +44,7 @@ final class CashSessionServiceTest extends TestCase
         ]);
         $conn->method('fetchOne')->willReturn(100);
 
-        $service = new CashSessionService($conn, $terminal);
+        $service = new CashSessionService($conn, $terminal, new RequestStack());
         $current = $service->getCurrentSession(1);
 
         $this->assertNotNull($current);
@@ -73,11 +75,25 @@ final class CashSessionServiceTest extends TestCase
 
         $conn->expects($this->never())->method('insert');
 
-        $service = new CashSessionService($conn, $terminal);
+        $service = new CashSessionService($conn, $terminal, new RequestStack());
 
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('Cash session already open for terminal');
 
         $service->openSession(5, 100.0);
+    }
+
+    public function testRequireOpenSessionUsesDedicatedExceptionWhenUserHasNoOpenSession(): void
+    {
+        $conn = $this->createMock(Connection::class);
+        $terminal = $this->createMock(TerminalService::class);
+        $conn->method('fetchAssociative')->willReturn(false);
+
+        $service = new CashSessionService($conn, $terminal, new RequestStack());
+
+        $this->expectException(NoOpenCashSessionException::class);
+        $this->expectExceptionMessage('No open cash session');
+
+        $service->requireOpenSession(5);
     }
 }

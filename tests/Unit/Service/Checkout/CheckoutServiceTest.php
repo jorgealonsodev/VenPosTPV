@@ -9,10 +9,13 @@ use PHPUnit\Framework\TestCase;
 use Symfony\Component\Messenger\MessageBusInterface;
 use VenPosTPV\Service\Cart\CartService;
 use VenPosTPV\Service\Cash\CashSessionService;
+use VenPosTPV\Service\Cash\Exception\NoOpenCashSessionException;
 use VenPosTPV\Service\Checkout\CheckoutService;
 use VenPosTPV\Service\Checkout\Exception\CheckoutException;
 use VenPosTPV\Service\Checkout\PsOrderClient;
+use VenPosTPV\Service\PrestaShop\PrestaShopApiClient;
 use VenPosTPV\Service\Print\PrinterService;
+use VenPosTPV\Service\Sync\SyncLogRepository;
 
 final class CheckoutServiceTest extends TestCase
 {
@@ -23,6 +26,8 @@ final class CheckoutServiceTest extends TestCase
         ?CashSessionService $cashSessionService = null,
         ?MessageBusInterface $messageBus = null,
         ?PrinterService $printerService = null,
+        ?PrestaShopApiClient $psApiClient = null,
+        ?SyncLogRepository $syncLogRepo = null,
     ): CheckoutService {
         return new CheckoutService(
             $cart ?? $this->createMock(CartService::class),
@@ -31,6 +36,8 @@ final class CheckoutServiceTest extends TestCase
             $cashSessionService ?? $this->createMock(CashSessionService::class),
             $messageBus ?? $this->createMock(MessageBusInterface::class),
             $printerService ?? $this->createMock(PrinterService::class),
+            $psApiClient ?? $this->createMock(PrestaShopApiClient::class),
+            $syncLogRepo ?? $this->createMock(SyncLogRepository::class),
         );
     }
 
@@ -114,6 +121,91 @@ final class CheckoutServiceTest extends TestCase
         $this->assertSame(99.99, $result['total']);
         $this->assertSame(0.01, $result['change_due']);
         $this->assertSame('cash', $result['payment_method']);
+    }
+
+    public function testMissingCashSessionStopsBeforePsOrderAndKeepsCart(): void
+    {
+        $client = $this->createMock(PsOrderClient::class);
+        $client->expects($this->never())->method('createOrder');
+
+        $cashSessionService = $this->createMock(CashSessionService::class);
+        $cashSessionService->expects($this->once())
+            ->method('requireOpenSession')
+            ->with(1)
+            ->willThrowException(new NoOpenCashSessionException());
+
+        $cart = $this->createMock(CartService::class);
+        $cart->expects($this->never())->method('clear');
+
+        $conn = $this->createMock(Connection::class);
+        $conn->method('fetchOne')->willReturn(10);
+
+        $service = $this->createService(
+            cart: $cart,
+            client: $client,
+            conn: $conn,
+            cashSessionService: $cashSessionService,
+        );
+
+        $this->expectException(NoOpenCashSessionException::class);
+        $service->createOrder(1, [
+            'lines' => [['product_id' => 1, 'qty' => 1, 'price' => 10.0]],
+            'total' => 10.0,
+        ], 'cash', 10.0);
+    }
+
+    public function testCashSessionClosureAfterPsOrderReturnsCreatedOrderAndCompletesLocalSaga(): void
+    {
+        $client = $this->createMock(PsOrderClient::class);
+        $client->expects($this->once())
+            ->method('createOrder')
+            ->willReturn([
+                'order_id' => 77,
+                'reference' => 'ORD-077',
+                'total_paid' => 10.0,
+            ]);
+
+        $conn = $this->createMock(Connection::class);
+        $conn->method('fetchOne')->willReturn(10);
+        $insertedTables = [];
+        $conn->expects($this->exactly(2))
+            ->method('insert')
+            ->willReturnCallback(function (string $table) use (&$insertedTables): int {
+                $insertedTables[] = $table;
+
+                return 1;
+            });
+        $conn->expects($this->once())
+            ->method('executeStatement')
+            ->willReturn(1);
+
+        $cashSessionService = $this->createMock(CashSessionService::class);
+        $cashSessionService->expects($this->once())
+            ->method('requireOpenSession')
+            ->willReturn(['session_id' => 12, 'terminal_id' => 3, 'shop_id' => 1, 'user_id' => 1]);
+        $cashSessionService->expects($this->once())
+            ->method('addMovement')
+            ->willThrowException(new NoOpenCashSessionException());
+
+        $cart = $this->createMock(CartService::class);
+        $cart->expects($this->once())->method('clear');
+
+        $service = $this->createService(
+            cart: $cart,
+            client: $client,
+            conn: $conn,
+            cashSessionService: $cashSessionService,
+        );
+
+        $result = $service->createOrder(1, [
+            'lines' => [['product_id' => 1, 'qty' => 1, 'price' => 10.0]],
+            'total' => 10.0,
+        ], 'cash', 10.0);
+
+        $this->assertSame(77, $result['ps_order_id']);
+        $this->assertSame('ORD-077', $result['reference']);
+        $this->assertTrue($result['saga_error']);
+        $this->assertSame(['order_meta', 'audit_log'], $insertedTables);
     }
 
     public function testSagaLogsOrphanWhenOrderMetaFails(): void

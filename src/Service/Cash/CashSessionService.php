@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace VenPosTPV\Service\Cash;
 
 use Doctrine\DBAL\Connection;
+use VenPosTPV\Service\Cash\Exception\NoOpenCashSessionException;
 use Symfony\Component\HttpFoundation\RequestStack;
 
 class CashSessionService
@@ -68,7 +69,7 @@ class CashSessionService
     {
         $session = $this->findCurrentSessionByUser($userId);
         if ($session === null) {
-            throw new \RuntimeException('No open cash session');
+            throw new NoOpenCashSessionException();
         }
 
         return [

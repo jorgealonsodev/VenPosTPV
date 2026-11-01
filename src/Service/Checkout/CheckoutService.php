@@ -83,18 +83,31 @@ class CheckoutService
         $reference = (string) $psResponse['reference'];
         $changeDue = max(0.0, round($amountTendered - $total, 2));
 
-        // Persist order_meta and stock with saga
+        // Once PrestaShop creates the order, local follow-up failures must not invite a duplicate retry.
         $sagaError = false;
         try {
             $this->insertOrderMeta($psOrderId, $userId, $reference, $total, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines);
-            if ($cashImpactAmount > 0) {
-                $this->cashSessionService->addMovement($userId, 'sale', $cashImpactAmount, 'Checkout sale', $psOrderId);
-            }
-            $this->decrementStock($lines);
-        } catch (CheckoutException $e) {
-            $this->logCheckoutOrphan($psOrderId, $reference, $paymentMethod, $total, $payload);
+        } catch (\Throwable $e) {
             $sagaError = true;
-            // Do NOT re-throw: PS order exists; return success to frontend
+        }
+
+        if ($cashImpactAmount > 0) {
+            try {
+                // addMovement rechecks the session, which may have closed after the PS order was created.
+                $this->cashSessionService->addMovement($userId, 'sale', $cashImpactAmount, 'Checkout sale', $psOrderId);
+            } catch (\Throwable $e) {
+                $sagaError = true;
+            }
+        }
+
+        try {
+            $this->decrementStock($lines);
+        } catch (\Throwable $e) {
+            $sagaError = true;
+        }
+
+        if ($sagaError) {
+            $this->logCheckoutOrphan($psOrderId, $reference, $paymentMethod, $total, $payload);
         }
 
         // Dispatch async print ticket
