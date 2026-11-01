@@ -123,6 +123,47 @@ class CouponCheckout
         ];
     }
 
+    /**
+     * Prepare a quoted coupon cart for one validateOrder callback.
+     *
+     * The endpoint keeps coupon order requests unavailable until the final
+     * serialized redemption delivery supplies lock and replay protection.
+     */
+    public function redeem(array $data, callable $createOrder): array
+    {
+        $coupon = $data['coupon'] ?? null;
+        if (!is_array($coupon)) {
+            throw new CouponCheckoutException('Coupon binding is required');
+        }
+        $quote = $this->verifyQuote($coupon['quote'] ?? null);
+        $this->assertRequestMatchesQuote($data, $coupon, $quote);
+
+        $cart = new Cart((int) $quote['cart_id']);
+        if (!Validate::isLoadedObject($cart)) {
+            throw new CouponCheckoutException('Preview cart no longer exists');
+        }
+        $this->assertCartMatchesQuote($cart, $data, $quote);
+        $this->assertQuotedRuleApplied($cart, $quote);
+        if (method_exists($cart, 'checkQuantities') && !$cart->checkQuantities()) {
+            throw new CouponCheckoutException('Cart product quantities are no longer available');
+        }
+        $this->validateNativeRule($cart, (string) $quote['coupon_code'], (int) $quote['coupon_id'], (string) $quote['coupon_expires_at'], true);
+        $beforeDiscountTotal = $this->grossOrderTotal($cart);
+        $totalPaid = $this->payableOrderTotal($cart);
+        if (!$this->sameMoney($beforeDiscountTotal, (float) $quote['before_discount_total'])
+            || !$this->sameMoney($totalPaid, (float) $quote['total_paid'])
+            || !$this->sameMoney($totalPaid, (float) $coupon['expected_total_paid'])) {
+            throw new CouponCheckoutException('Coupon or cart totals changed; request a new preview');
+        }
+
+        $result = $createOrder($cart, $totalPaid);
+        if (!is_array($result)) {
+            throw new RuntimeException('Order creation did not return an order');
+        }
+        $result['total_paid'] = $totalPaid;
+        return $result;
+    }
+
     /** Public so isolated tests can make an expired or forged binding. */
     public static function signQuote(array $quote, string $secret): string
     {
@@ -174,16 +215,63 @@ class CouponCheckout
         return $cart;
     }
 
-    private function validateNativeRule(Cart $cart, string $code): CartRule
+    private function verifyQuote(mixed $token): array
+    {
+        if (!is_string($token) || substr_count($token, '.') !== 1) {
+            throw new CouponCheckoutException('Coupon quote is invalid');
+        }
+        [$encoded, $signature] = explode('.', $token, 2);
+        $expected = hash_hmac('sha256', $encoded, $this->secret);
+        if (!hash_equals($expected, $signature)) {
+            throw new CouponCheckoutException('Coupon quote is invalid');
+        }
+        $json = base64_decode(strtr($encoded, '-_', '+/'), true);
+        $quote = $json === false ? null : json_decode($json, true);
+        $required = ['cart_id', 'customer_id', 'shop_id', 'currency_id', 'coupon_id', 'coupon_code', 'coupon_expires_at', 'products', 'cart_rules', 'before_discount_total', 'discount_amount', 'total_paid', 'expires_at'];
+        if (!is_array($quote) || array_diff($required, array_keys($quote)) || !is_int($quote['expires_at']) || $quote['expires_at'] < time()) {
+            throw new CouponCheckoutException('Coupon quote is invalid or expired');
+        }
+        return $quote;
+    }
+
+    private function assertRequestMatchesQuote(array $data, array $coupon, array $quote): void
+    {
+        if ((int) ($coupon['preview_cart_id'] ?? 0) !== $quote['cart_id']
+            || !is_string($coupon['code'] ?? null) || !hash_equals($quote['coupon_code'], $coupon['code'])
+            || (int) ($data['id_customer'] ?? 0) !== $quote['customer_id']
+            || (int) ($data['id_shop'] ?? 0) !== $quote['shop_id']
+            || (int) ($data['id_currency'] ?? 0) !== $quote['currency_id']
+            || $this->requestProductFingerprint($data['products'] ?? []) !== $quote['products']) {
+            throw new CouponCheckoutException('Coupon quote does not match this order');
+        }
+    }
+
+    private function assertCartMatchesQuote(Cart $cart, array $data, array $quote): void
+    {
+        if ((int) $cart->id_customer !== $quote['customer_id'] || (int) $cart->id_shop !== $quote['shop_id']
+            || (int) $cart->id_currency !== $quote['currency_id'] || $this->cartProductFingerprint($cart->getProducts()) !== $quote['products']) {
+            throw new CouponCheckoutException('Preview cart changed; request a new preview');
+        }
+        $this->setContext($cart, new Customer((int) $data['id_customer']), new Currency((int) $data['id_currency']));
+    }
+
+    private function validateNativeRule(Cart $cart, string $code, ?int $expectedId = null, ?string $expectedExpiry = null, bool $alreadyInCart = false): CartRule
     {
         $this->setContext($cart, new Customer((int) $cart->id_customer), new Currency((int) $cart->id_currency));
         $idRule = (int) CartRule::getIdByCode($code, (int) $this->context->language->id);
         $rule = new CartRule($idRule);
-        if ($idRule < 1 || !Validate::isLoadedObject($rule)) {
+        if ($idRule < 1 || !Validate::isLoadedObject($rule) || $expectedId !== null && (int) $rule->id !== $expectedId
+            || $expectedExpiry !== null && $this->ruleExpiry($rule) !== $expectedExpiry) {
             throw new CouponCheckoutException('Coupon is invalid');
         }
+
+        if ($alreadyInCart && !$this->ruleIsCurrent($rule)) {
+            throw new CouponCheckoutException('Coupon is no longer eligible');
+        }
         // PS 8.1 returns null (not true) for a valid check with display_error.
-        if ($rule->checkValidity($this->context, false, true) !== null) {
+        // For an attached rule, native duplicate detection is intentionally
+        // bypassed while ruleIsCurrent() freshly checks status/date/quantity.
+        if ($rule->checkValidity($this->context, $alreadyInCart, true) !== null) {
             throw new CouponCheckoutException('Coupon is no longer eligible');
         }
         return $rule;
@@ -197,9 +285,54 @@ class CouponCheckout
         $this->context->shop = new Shop((int) $cart->id_shop);
     }
 
+    private function ruleIsCurrent(CartRule $rule): bool
+    {
+        $now = date('Y-m-d H:i:s');
+        return (bool) $rule->active && (int) $rule->quantity > 0
+            && (string) $rule->date_from <= $now && (string) $rule->date_to >= $now;
+    }
+
+    private function assertQuotedRuleApplied(Cart $cart, array $quote): void
+    {
+        $cartRules = $this->cartRuleFingerprint($cart);
+        if (!$this->sameCartRuleFingerprint($cartRules, $quote['cart_rules'])) {
+            throw new CouponCheckoutException('Coupon attachment changed; request a new preview');
+        }
+
+        foreach ($cartRules as $cartRule) {
+            if ($cartRule['id_cart_rule'] === (int) $quote['coupon_id']
+                && $this->sameMoney($cartRule['value_real'], (float) $quote['discount_amount'])) {
+                return;
+            }
+        }
+        throw new CouponCheckoutException('Coupon discount changed; request a new preview');
+    }
+
+    private function sameCartRuleFingerprint(array $current, mixed $quoted): bool
+    {
+        if (!is_array($quoted) || count($current) !== count($quoted)) {
+            return false;
+        }
+        foreach ($current as $index => $cartRule) {
+            if (!is_array($quoted[$index] ?? null)
+                || $cartRule['id_cart_rule'] !== (int) ($quoted[$index]['id_cart_rule'] ?? 0)
+                || !$this->sameMoney($cartRule['value_real'], (float) ($quoted[$index]['value_real'] ?? NAN))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private function requestProductFingerprint(array $products): array
     {
         return $this->productFingerprint($products, 'quantity');
+    }
+
+    private function cartProductFingerprint(array $products): array
+    {
+        // Cart::getProducts() exposes requested amount as cart_quantity;
+        // quantity is stock availability and must not bind the checkout quote.
+        return $this->productFingerprint($products, 'cart_quantity');
     }
 
     private function productFingerprint(array $products, string $quantityField): array
@@ -252,5 +385,10 @@ class CouponCheckout
     private function money(float|int $amount): float
     {
         return round((float) $amount, 2);
+    }
+
+    private function sameMoney(float $left, float $right): bool
+    {
+        return abs($this->money($left) - $this->money($right)) < 0.00001;
     }
 }
