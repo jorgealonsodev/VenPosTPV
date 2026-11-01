@@ -1,7 +1,7 @@
 <?php
 /**
  * Test bootstrap for tpvconnect module.
- * Provides isolated cart-contract doubles without a PS runtime.
+ * Provides isolated PrestaShop-contract doubles without a PS runtime.
  */
 
 declare(strict_types=1);
@@ -60,9 +60,16 @@ if (!class_exists('CouponTestState', false)) {
         public static array $carts = [];
         public static array $orders = [];
         public static array $productPrices = [];
+        public static array $heldLocks = [];
+        public static array $acquiredLocks = [];
+        public static array $lockQueries = [];
+        public static ?string $throwOnGetLock = null;
+        public static float $payableAdjustment = 0.0;
+        public static array $totalQueries = [];
         public static int $nextCartId = 1;
         public static int $nextAddressId = 1;
         public static int $ordersCreated = 0;
+        public static int $locksReleased = 0;
         public static int $stockQuantity = 999;
 
         public static function reset(): void
@@ -71,9 +78,16 @@ if (!class_exists('CouponTestState', false)) {
             self::$carts = [];
             self::$orders = [];
             self::$productPrices = [1 => 100.0];
+            self::$heldLocks = [];
+            self::$acquiredLocks = [];
+            self::$lockQueries = [];
+            self::$throwOnGetLock = null;
+            self::$payableAdjustment = 0.0;
+            self::$totalQueries = [];
             self::$nextCartId = 1;
             self::$nextAddressId = 1;
             self::$ordersCreated = 0;
+            self::$locksReleased = 0;
             self::$stockQuantity = 999;
             Context::$context = new Context();
             Context::$context->language = (object) ['id' => 1];
@@ -89,7 +103,25 @@ if (!class_exists('Db', false)) {
         private static ?self $instance = null;
         public static function getInstance(): self { return self::$instance ??= new self(); }
         public function execute(string $sql): bool { return true; }
-        public function executeS(string $sql): array|false { return []; }
+        public function executeS(string $sql, bool $array = true, bool $useCache = true): array|false
+        {
+            if (preg_match("/(GET_LOCK|RELEASE_LOCK)\\('([^']+)'/", $sql, $matches)) {
+                [, $operation, $lockName] = $matches;
+                CouponTestState::$lockQueries[] = ['operation' => $operation, 'name' => $lockName, 'use_cache' => $useCache];
+                if ($operation === 'GET_LOCK') {
+                    if (CouponTestState::$throwOnGetLock === $lockName) {
+                        throw new RuntimeException('Simulated GET_LOCK failure');
+                    }
+                    $available = !isset(CouponTestState::$heldLocks[$lockName]) && !isset(CouponTestState::$acquiredLocks[$lockName]);
+                    if ($available) { CouponTestState::$acquiredLocks[$lockName] = true; }
+                    return [['locked' => $available ? '1' : '0']];
+                }
+                unset(CouponTestState::$acquiredLocks[$lockName]);
+                CouponTestState::$locksReleased++;
+                return [['released' => '1']];
+            }
+            return [];
+        }
         public function insert(string $table, array $data, bool $nullValues = false, bool $useCache = true, int $type = 1): bool { return true; }
     }
 }
@@ -182,15 +214,20 @@ if (!class_exists('Cart', false)) {
         }
         public function getOrderTotal(bool $withTaxes = true, int $type = self::BOTH, mixed $products = null, mixed $idCarrier = null, bool $useCache = false, bool $keepOrderPrices = false): float
         {
+            CouponTestState::$totalQueries[] = ['type' => $type, 'use_cache' => $useCache];
             $productsTotal = 0.0;
             foreach ($this->products as $product) { $productsTotal += (CouponTestState::$productPrices[$product['id_product']] ?? 0) * $product['cart_quantity']; }
-            if ($type === self::ONLY_PRODUCTS) { return max(0, $productsTotal); }
+            if ($type === self::ONLY_PRODUCTS) {
+                return max(0, $productsTotal);
+            }
             $discounts = 0.0;
             foreach ($this->cartRules as $id) {
                 foreach (CouponTestState::$rules as $rule) { if ($rule['id'] === $id) { $discounts += $rule['reduction']; } }
             }
-            if ($type === self::ONLY_DISCOUNTS) { return -$discounts; }
-            return max(0, $productsTotal - $discounts);
+            if ($type === self::ONLY_DISCOUNTS) {
+                return -$discounts;
+            }
+            return max(0, $productsTotal - $discounts + CouponTestState::$payableAdjustment);
         }
     }
 }
@@ -232,6 +269,28 @@ if (!class_exists('CartRule', false)) {
             if ($error !== null) { return $displayError ? $error : false; }
             return $displayError ? null : true;
         }
+    }
+}
+
+if (!class_exists('Order', false)) {
+    class Order
+    {
+        public int $id = 0;
+        public string $reference = '';
+        public float $total_paid = 0.0;
+        public array $cart_rules = [];
+        public bool $loaded = false;
+        public function __construct(int $id = 0)
+        {
+            if (isset(CouponTestState::$orders[$id])) { foreach (CouponTestState::$orders[$id] as $key => $value) { $this->$key = $value; } $this->loaded = true; }
+        }
+        public static function getIdByCartId(int $idCart): int { return CouponTestState::$orders['cart:' . $idCart]['id'] ?? 0; }
+        public static function record(int $idCart, int $idOrder, float $total, string $reference, array $cartRules = []): void
+        {
+            CouponTestState::$orders[$idOrder] = ['id' => $idOrder, 'reference' => $reference, 'total_paid' => $total, 'cart_rules' => $cartRules];
+            CouponTestState::$orders['cart:' . $idCart] = ['id' => $idOrder];
+        }
+        public function getCartRules(): array { return CouponTestState::$orders[$this->id]['cart_rules'] ?? []; }
     }
 }
 if (!class_exists('Validate', false)) {

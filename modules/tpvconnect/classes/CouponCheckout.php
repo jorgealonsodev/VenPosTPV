@@ -24,10 +24,16 @@ class CouponCheckoutException extends RuntimeException
     }
 }
 
-/** Shared cart construction for ordinary orders and future coupon previews. */
+/**
+ * Builds the module's carts and binds a native CartRule preview to one cart.
+ *
+ * This deliberately delegates eligibility and consumption to PrestaShop:
+ * CartRule::checkValidity(), Cart::addCartRule(), and validateOrder().
+ */
 class CouponCheckout
 {
     private const QUOTE_TTL_SECONDS = 300;
+    private const LOCK_WAIT_SECONDS = 5;
 
     public function __construct(private string $secret, private ?Context $context = null)
     {
@@ -124,10 +130,8 @@ class CouponCheckout
     }
 
     /**
-     * Prepare a quoted coupon cart for one validateOrder callback.
-     *
-     * The endpoint keeps coupon order requests unavailable until the final
-     * serialized redemption delivery supplies lock and replay protection.
+     * Revalidate a quoted cart and call validateOrder exactly once while its
+     * module-local cart lock is held. The callback must create the order.
      */
     public function redeem(array $data, callable $createOrder): array
     {
@@ -138,30 +142,70 @@ class CouponCheckout
         $quote = $this->verifyQuote($coupon['quote'] ?? null);
         $this->assertRequestMatchesQuote($data, $coupon, $quote);
 
-        $cart = new Cart((int) $quote['cart_id']);
-        if (!Validate::isLoadedObject($cart)) {
-            throw new CouponCheckoutException('Preview cart no longer exists');
-        }
-        $this->assertCartMatchesQuote($cart, $data, $quote);
-        $this->assertQuotedRuleApplied($cart, $quote);
-        if (method_exists($cart, 'checkQuantities') && !$cart->checkQuantities()) {
-            throw new CouponCheckoutException('Cart product quantities are no longer available');
-        }
-        $this->validateNativeRule($cart, (string) $quote['coupon_code'], (int) $quote['coupon_id'], (string) $quote['coupon_expires_at'], true);
-        $beforeDiscountTotal = $this->grossOrderTotal($cart);
-        $totalPaid = $this->payableOrderTotal($cart);
-        if (!$this->sameMoney($beforeDiscountTotal, (float) $quote['before_discount_total'])
-            || !$this->sameMoney($totalPaid, (float) $quote['total_paid'])
-            || !$this->sameMoney($totalPaid, (float) $coupon['expected_total_paid'])) {
-            throw new CouponCheckoutException('Coupon or cart totals changed; request a new preview');
-        }
+        // The rule lock serializes separate preview carts for one coupon; the
+        // cart lock keeps retries for this exact quote in a deterministic order.
+        $lockNames = [
+            'tpvconnect_coupon_rule_' . (int) $quote['coupon_id'],
+            'tpvconnect_coupon_cart_' . (int) $quote['cart_id'],
+        ];
+        $acquiredLocks = [];
+        try {
+            foreach ($lockNames as $lockName) {
+                if (!$this->acquireLock($lockName)) {
+                    throw new CouponCheckoutException('Coupon checkout is busy; request a new preview', 503);
+                }
+                $acquiredLocks[] = $lockName;
+            }
 
-        $result = $createOrder($cart, $totalPaid);
-        if (!is_array($result)) {
-            throw new RuntimeException('Order creation did not return an order');
+            $cart = new Cart((int) $quote['cart_id']);
+            if (!Validate::isLoadedObject($cart)) {
+                throw new CouponCheckoutException('Preview cart no longer exists');
+            }
+            $this->assertCartMatchesQuote($cart, $data, $quote);
+            $this->assertQuotedRuleApplied($cart, $quote);
+
+            // A successful exact retry must replay the first order even though
+            // validateOrder has already consumed the single-use CartRule.
+            $existingOrderId = (int) Order::getIdByCartId((int) $cart->id);
+            if ($existingOrderId > 0) {
+                $order = new Order($existingOrderId);
+                if (!Validate::isLoadedObject($order)) {
+                    throw new CouponCheckoutException('Existing order is unavailable');
+                }
+                if (!$this->sameMoney((float) $order->total_paid, (float) $quote['total_paid'])) {
+                    throw new CouponCheckoutException('Existing order total does not match preview');
+                }
+                $this->assertOrderCouponLineage($order, $quote);
+                return [
+                    'order_id' => (int) $order->id,
+                    'reference' => (string) $order->reference,
+                    'total_paid' => $this->money((float) $order->total_paid),
+                ];
+            }
+
+            if (method_exists($cart, 'checkQuantities') && !$cart->checkQuantities()) {
+                throw new CouponCheckoutException('Cart product quantities are no longer available');
+            }
+            $this->validateNativeRule($cart, (string) $quote['coupon_code'], (int) $quote['coupon_id'], (string) $quote['coupon_expires_at'], true);
+            $beforeDiscountTotal = $this->grossOrderTotal($cart);
+            $totalPaid = $this->payableOrderTotal($cart);
+            if (!$this->sameMoney($beforeDiscountTotal, (float) $quote['before_discount_total'])
+                || !$this->sameMoney($totalPaid, (float) $quote['total_paid'])
+                || !$this->sameMoney($totalPaid, (float) $coupon['expected_total_paid'])) {
+                throw new CouponCheckoutException('Coupon or cart totals changed; request a new preview');
+            }
+
+            $result = $createOrder($cart, $totalPaid);
+            if (!is_array($result)) {
+                throw new RuntimeException('Order creation did not return an order');
+            }
+            $result['total_paid'] = $totalPaid;
+            return $result;
+        } finally {
+            foreach (array_reverse($acquiredLocks) as $acquiredLock) {
+                $this->releaseLock($acquiredLock);
+            }
         }
-        $result['total_paid'] = $totalPaid;
-        return $result;
     }
 
     /** Public so isolated tests can make an expired or forged binding. */
@@ -349,6 +393,27 @@ class CouponCheckout
         return $fingerprint;
     }
 
+    private function assertOrderCouponLineage(Order $order, array $quote): void
+    {
+        if (!method_exists($order, 'getCartRules')) {
+            throw new CouponCheckoutException('Existing order coupon lineage is unavailable');
+        }
+        $recordedRules = [];
+        foreach ($order->getCartRules() as $cartRule) {
+            if (!isset($cartRule['id_cart_rule'], $cartRule['value'])) {
+                throw new CouponCheckoutException('Existing order coupon lineage is unavailable');
+            }
+            $recordedRules[] = [
+                'id_cart_rule' => (int) $cartRule['id_cart_rule'],
+                'value_real' => $this->money((float) $cartRule['value']),
+            ];
+        }
+        usort($recordedRules, static fn (array $left, array $right): int => $left <=> $right);
+        if (!$this->sameCartRuleFingerprint($recordedRules, $quote['cart_rules'])) {
+            throw new CouponCheckoutException('Existing order coupon lineage does not match preview');
+        }
+    }
+
     private function grossOrderTotal(Cart $cart): float
     {
         // This does not remove or mutate the attached CartRule. ONLY_PRODUCTS
@@ -375,6 +440,17 @@ class CouponCheckout
         }
         usort($fingerprint, static fn (array $left, array $right): int => $left <=> $right);
         return $fingerprint;
+    }
+
+    private function acquireLock(string $lockName): bool
+    {
+        $rows = Db::getInstance()->executeS("SELECT GET_LOCK('" . pSQL($lockName) . "', " . self::LOCK_WAIT_SECONDS . ') AS locked', true, false);
+        return is_array($rows) && isset($rows[0]['locked']) && (int) $rows[0]['locked'] === 1;
+    }
+
+    private function releaseLock(string $lockName): void
+    {
+        Db::getInstance()->executeS("SELECT RELEASE_LOCK('" . pSQL($lockName) . "') AS released", true, false);
     }
 
     private function ruleExpiry(CartRule $rule): string

@@ -143,12 +143,12 @@ class TpvconnectOrdersModuleFrontController extends ModuleFrontController
      */
     private function createOrder(array $data, string $secret): array
     {
+        $checkout = new CouponCheckout($secret, $this->context);
         if (array_key_exists('coupon', $data)) {
-            throw new CouponCheckoutException('Coupon redemption is not available');
+            return $checkout->redeem($data, fn (Cart $cart, float $totalPaid): array => $this->validateOrderFromCart($cart, $data, $totalPaid));
         }
 
         // Retain the existing non-coupon path, sharing only cart construction.
-        $checkout = new CouponCheckout($secret, $this->context);
         $cart = $checkout->buildCart($data);
         return $this->validateOrderFromCart($cart, $data, (float) $cart->getOrderTotal(true, Cart::BOTH));
     }
