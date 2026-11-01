@@ -105,13 +105,43 @@ async function testResolvingFailureLeavesTheCartUntouched() {
     assert.equal(useCart.cart.lines[0].price, 23.90);
 }
 
+async function testVatComesFromTheShopPricesNotFromTheFixedRate() {
+    const useCart = loadCart();
+    // 10% VAT: the fixed 21% fallback would report 1.74 instead of 0.91.
+    useCart.add({ id: 1, name: 'Libro', price: 10, net_price: 9.09, stock: 5 });
+
+    assert.equal(useCart.cart.total, 10);
+    assert.equal(useCart.cart.iva, 0.91);
+}
+
+async function testVatFallsBackToTheStandardRateWithoutANetPrice() {
+    const useCart = loadCart();
+    useCart.add({ id: 2, name: 'Sin neto', price: 10, stock: 5 });
+
+    assert.equal(useCart.cart.iva, 1.74);
+}
+
+async function testRepriceAlsoRefreshesTheNetPrice() {
+    const useCart = loadCart();
+    useCart.add({ id: 1, name: 'Libro', price: 10, net_price: 9.09, stock: 5 });
+
+    await useCart.reprice(async () => ({ id: 1, price: 12, net_price: 10.91, combinations: [] }));
+
+    assert.equal(useCart.cart.lines[0].price, 12);
+    assert.equal(useCart.cart.lines[0].net_price, 10.91);
+    assert.equal(useCart.cart.iva, 1.09);
+}
+
 async function main() {
     await testStaleSnapshotPriceIsReplacedByTheCatalogPrice();
     await testCombinationLineUsesTheCatalogCombinationImpact();
     await testUnknownProductKeepsTheLineSoTheCheckoutCanRejectIt();
     await testUnchangedPricesReportNoChange();
     await testResolvingFailureLeavesTheCartUntouched();
-    console.log('cartReprice functional harness: 5 passed');
+    await testVatComesFromTheShopPricesNotFromTheFixedRate();
+    await testVatFallsBackToTheStandardRateWithoutANetPrice();
+    await testRepriceAlsoRefreshesTheNetPrice();
+    console.log('cartReprice functional harness: 8 passed');
 }
 
 main().catch((error) => {

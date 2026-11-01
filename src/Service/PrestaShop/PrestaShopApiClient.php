@@ -18,6 +18,9 @@ class PrestaShopApiClient
      */
     private const TTC_PRICE_KEY = 'tpv_ttc';
 
+    /** Request/response key for the tax-excluded price with reductions applied. */
+    private const NET_PRICE_KEY = 'tpv_net';
+
     public function __construct(
         string $baseUrl,
         private readonly string $apiKey,
@@ -102,17 +105,45 @@ class PrestaShopApiClient
      */
     public function getTaxIncludedUnitPrice(int $productId, int $combinationId = 0): ?float
     {
-        $priceParameters = [
-            'use_tax' => 1,
-            'use_reduction' => 1,
-        ];
+        $prices = $this->getAuthoritativePrices($productId, $combinationId);
+
+        return $prices['ttc'] ?? null;
+    }
+
+    /**
+     * Returns both authoritative unit prices PrestaShop would charge for a product
+     * or for one of its combinations, resolved in a single request:
+     *
+     * - `ttc`: tax included, with reductions applied — the amount the shop books.
+     * - `net`: tax excluded, with reductions applied — the base the shop applies
+     *   its tax to, so `ttc - net` is the VAT actually charged.
+     *
+     * The tax-excluded price is NOT `catalog_product.price`: that one is the raw
+     * Web Service base price, which ignores reductions.
+     *
+     * The calculated-price parameter only works on a single product resource, so
+     * this costs one request per product.
+     *
+     * @return array{ttc: float|null, net: float|null}|null null when PrestaShop
+     *                                                      returns no product payload
+     *
+     * @throws PsApiException on network or HTTP error
+     */
+    public function getAuthoritativePrices(int $productId, int $combinationId = 0): ?array
+    {
+        $ttcParameters = ['use_tax' => 1, 'use_reduction' => 1];
+        $netParameters = ['use_tax' => 0, 'use_reduction' => 1];
 
         if ($combinationId > 0) {
-            $priceParameters['product_attribute'] = $combinationId;
+            $ttcParameters['product_attribute'] = $combinationId;
+            $netParameters['product_attribute'] = $combinationId;
         }
 
         $query = http_build_query([
-            'price' => [self::TTC_PRICE_KEY => $priceParameters],
+            'price' => [
+                self::TTC_PRICE_KEY => $ttcParameters,
+                self::NET_PRICE_KEY => $netParameters,
+            ],
             'output_format' => 'JSON',
         ]);
 
@@ -125,7 +156,18 @@ class PrestaShopApiClient
             return null;
         }
 
-        $value = $product[self::TTC_PRICE_KEY] ?? null;
+        return [
+            'ttc' => $this->scalarPrice($product[self::TTC_PRICE_KEY] ?? null),
+            'net' => $this->scalarPrice($product[self::NET_PRICE_KEY] ?? null),
+        ];
+    }
+
+    /**
+     * Reads a calculated price defensively: a missing, empty or non-numeric value
+     * must never be cast to 0.00 and accepted as authoritative.
+     */
+    private function scalarPrice(mixed $value): ?float
+    {
         if (\is_array($value)) {
             $value = $value['value'] ?? null;
         }

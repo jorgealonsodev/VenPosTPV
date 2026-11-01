@@ -307,6 +307,43 @@ final class PrestaShopApiClientTest extends TestCase
         }
     }
 
+    public function testGetAuthoritativePricesReturnsBothPricesFromOneRequest(): void
+    {
+        $requestedUrls = [];
+        $httpClient = new MockHttpClient(function (string $method, string $url) use (&$requestedUrls) {
+            $requestedUrls[] = $url;
+
+            return $this->createJsonResponse([
+                'product' => [
+                    'id' => 1,
+                    'price' => '23.900000',
+                    'tpv_ttc' => '23.140000',
+                    'tpv_net' => '19.120000',
+                ],
+            ]);
+        });
+
+        $client = new PrestaShopApiClient('http://localhost/prestashop/api', 'TEST_KEY', $httpClient);
+        $prices = $client->getAuthoritativePrices(1, 7);
+
+        $this->assertSame(['ttc' => 23.14, 'net' => 19.12], $prices);
+        $this->assertCount(1, $requestedUrls, 'both prices must come from a single request');
+        $this->assertStringContainsString('use_tax%5D=1', $requestedUrls[0]);
+        $this->assertStringContainsString('use_tax%5D=0', $requestedUrls[0]);
+        $this->assertStringContainsString('product_attribute%5D=7', $requestedUrls[0]);
+    }
+
+    public function testGetAuthoritativePricesKeepsTtcWhenNetIsUnavailable(): void
+    {
+        $client = $this->createClient([
+            $this->createJsonResponse([
+                'product' => ['id' => 1, 'tpv_ttc' => '23.140000'],
+            ]),
+        ]);
+
+        $this->assertSame(['ttc' => 23.14, 'net' => null], $client->getAuthoritativePrices(1));
+    }
+
     public function testGetTaxIncludedUnitPriceThrowsOnRejectedCredentials(): void
     {
         $client = $this->createClient([

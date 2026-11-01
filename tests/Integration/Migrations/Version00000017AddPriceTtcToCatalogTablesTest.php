@@ -123,7 +123,7 @@ class Version00000017AddPriceTtcToCatalogTablesTest extends TestCase
         }
     }
 
-    public function testMigrationAddsAndDropsNullablePriceTtcColumns(): void
+    public function testMigrationAddsAndDropsNullableColumns(): void
     {
         $conn = $this->getConnection();
 
@@ -171,5 +171,11 @@ class Version00000017AddPriceTtcToCatalogTablesTest extends TestCase
         $this->assertNull($this->column($conn, 'catalog_combination', 'price_ttc'), 'up() must be reversible');
         $this->assertNotNull($this->column($conn, 'catalog_product', 'price'));
         $this->assertNotNull($this->column($conn, 'catalog_combination', 'price_impact'));
+
+        // Leave the schema migrated: the application needs the columns, so a test
+        // run must not end by removing them.
+        $this->runMigration($conn, 'up');
+        $this->assertNotNull($this->column($conn, 'catalog_product', 'price_ttc'));
+        $this->assertNotNull($this->column($conn, 'catalog_combination', 'price_ttc'));
     }
 }

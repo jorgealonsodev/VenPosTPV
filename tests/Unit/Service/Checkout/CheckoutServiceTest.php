@@ -586,6 +586,42 @@ final class CheckoutServiceTest extends TestCase
      *
      * @param array<string, string|array<string, string|null>|null> $catalogPrices
      */
+
+    public function testOrderMetaRecordsTheExactVatOfEachLine(): void
+    {
+        $conn = $this->catalogConnection([
+            '1' => ['price' => 23.90, 'price_ttc' => 23.14, 'price_net' => 19.12],
+        ], 10);
+
+        $inserted = [];
+        $conn = $this->createMock(Connection::class);
+        $conn->method('fetchOne')->willReturn(10);
+        $conn->method('fetchAssociative')->willReturn(['price' => 23.90, 'price_ttc' => 23.14, 'price_net' => 19.12]);
+        $conn->method('executeStatement')->willReturn(1);
+        $conn->method('insert')->willReturnCallback(function (string $table, array $data) use (&$inserted): int {
+            $inserted[$table] = $data;
+
+            return 1;
+        });
+
+        $client = $this->createMock(PsOrderClient::class);
+        $client->method('createOrder')->willReturn(['order_id' => 7, 'reference' => 'ORD-007', 'total_paid' => 46.28]);
+
+        $service = $this->createService(client: $client, conn: $conn);
+
+        $service->createOrder(1, [
+            'lines' => [['product_id' => 1, 'qty' => 2, 'price' => 23.14]],
+            'total' => 46.28,
+        ], 'cash', 50.0);
+
+        $breakdown = json_decode($inserted['order_meta']['payment_breakdown'], true);
+
+        $this->assertSame(46.28, $breakdown['subtotal']);
+        // 2 units x (23.14 tax included - 19.12 tax excluded) = 8.04 of VAT, taken
+        // from the shop prices instead of an assumed rate.
+        $this->assertSame(8.04, $breakdown['tax']);
+    }
+
     private function catalogConnection(array $catalogPrices, int $stock = 10): Connection
     {
         $conn = $this->createMock(Connection::class);

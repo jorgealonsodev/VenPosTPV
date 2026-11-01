@@ -60,7 +60,32 @@ const useCart = (function () {
         cart.discount_amount = Math.round(discAmt * 100) / 100;
         const total = Math.max(0, cart.subtotal - cart.discount_amount);
         cart.total = Math.round(total * 100) / 100;
-        cart.iva = Math.round((total * IVA_RATE / (1 + IVA_RATE)) * 100) / 100;
+
+        // VAT is what each line carries, `price - net_price`, taken from the shop's
+        // own prices and scaled by the discount, because VAT is owed on the amount
+        // the customer actually pays. The fixed rate is only a fallback for a line
+        // whose net price the catalog could not resolve.
+        let vat = 0;
+        let linesWithNet = 0;
+        cart.lines.forEach(line => {
+            const net = line.net_price === null || line.net_price === undefined
+                ? null
+                : parseFloat(line.net_price);
+            if (net === null || !Number.isFinite(net)) {
+                return;
+            }
+            const price = parseFloat(line.price) || 0;
+            const qty = parseInt(line.qty, 10) || 1;
+            const disc = parseFloat(line.discount) || 0;
+            vat += (price - net) * qty * (1 - disc / 100);
+            linesWithNet += 1;
+        });
+
+        if (linesWithNet > 0 && cart.subtotal > 0) {
+            cart.iva = Math.round(vat * (total / cart.subtotal) * 100) / 100;
+        } else {
+            cart.iva = Math.round((total * IVA_RATE / (1 + IVA_RATE)) * 100) / 100;
+        }
     }
 
     function add(product) {
@@ -84,6 +109,9 @@ const useCart = (function () {
                     : product.name,
                 reference: product.reference || '',
                 price: product.price,
+                net_price: product.net_price === undefined || product.net_price === null
+                    ? null
+                    : Number(product.net_price),
                 qty: 1,
                 discount: 0,
             });
@@ -209,6 +237,12 @@ const useCart = (function () {
                 continue;
             }
 
+            const net = catalogUnitNet(product, Number(line.id_product_attribute) || 0);
+            if (net !== null && Math.abs(net - (Number(line.net_price) || 0)) > 0.001) {
+                line.net_price = net;
+                changed = true;
+            }
+
             if (Math.abs(price - (Number(line.price) || 0)) > 0.001) {
                 line.price = price;
                 changed = true;
@@ -246,6 +280,24 @@ const useCart = (function () {
         const impact = Number(combination.price_impact) || 0;
 
         return Math.round((basePrice + impact) * 100) / 100;
+    }
+
+    /**
+     * Tax-excluded price of the line, with reductions applied, so the VAT of a line
+     * is `price - net_price`. Returns null when the catalog does not know it.
+     */
+    function catalogUnitNet(product, combinationId) {
+        if (combinationId > 0) {
+            const combinations = Array.isArray(product.combinations) ? product.combinations : [];
+            const combination = combinations.find((c) => Number(c.id) === combinationId);
+            if (combination && combination.net_price !== undefined && combination.net_price !== null) {
+                return Number(combination.net_price);
+            }
+        }
+
+        return product.net_price === undefined || product.net_price === null
+            ? null
+            : Number(product.net_price);
     }
 
     /**

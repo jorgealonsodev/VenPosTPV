@@ -29,6 +29,9 @@ class CheckoutService
     private const PRICE_TOLERANCE = 0.02;
     private const TOTAL_TOLERANCE = 0.02;
 
+    /** Used only when the sync could not resolve a tax-excluded price for any line. */
+    private const ASSUMED_TAX_RATE = 0.21;
+
     public function __construct(
         private readonly CartService $cart,
         private readonly PsOrderClient $client,
@@ -200,6 +203,9 @@ class CheckoutService
             // submitted price is then kept so an incomplete sync cannot block the sale.
             $unitPrice = $expectedUnitPrice ?? $submittedPrice;
             $line['price'] = $unitPrice;
+            $line['price_net'] = $expectedUnitPrice !== null
+                ? $this->resolveCatalogNetPrice($productId, $combinationId)
+                : null;
             $line['qty'] = $qty;
             $priced[] = $line;
 
@@ -287,6 +293,38 @@ class CheckoutService
             : 0.0;
 
         return round($basePrice + $impact, 2);
+    }
+
+    /**
+     * Returns the tax-excluded price with reductions applied, so the VAT actually
+     * charged is `price - price_net`. It is intentionally NOT `catalog_product.price`,
+     * which is the raw Web Service base price and ignores reductions.
+     *
+     * Null when the sync could not resolve it; the caller then falls back to an
+     * estimated rate instead of reporting a meaningless difference.
+     */
+    private function resolveCatalogNetPrice(int $productId, int $combinationId): ?float
+    {
+        if ($productId <= 0) {
+            return null;
+        }
+
+        if ($combinationId > 0) {
+            $combination = $this->conn->fetchAssociative(
+                'SELECT price_net FROM catalog_combination WHERE id = ? AND id_product = ?',
+                [$combinationId, $productId]
+            );
+            if ($combination !== false && isset($combination['price_net']) && is_numeric($combination['price_net'])) {
+                return round((float) $combination['price_net'], 2);
+            }
+        }
+
+        $product = $this->conn->fetchAssociative('SELECT price_net FROM catalog_product WHERE id = ?', [$productId]);
+        if ($product === false || !isset($product['price_net']) || !is_numeric($product['price_net'])) {
+            return null;
+        }
+
+        return round((float) $product['price_net'], 2);
     }
 
     /**
@@ -389,6 +427,8 @@ class CheckoutService
                 $subtotal += $bl['line_total'];
             }
 
+            $tax = $this->resolveVatAmount($lines, $subtotal, $total);
+
             $this->conn->insert('order_meta', [
                 'ps_order_id' => $psOrderId,
                 'terminal_id' => (int) ($cashContext['terminal_id'] ?? 1),
@@ -401,7 +441,7 @@ class CheckoutService
                     'amount_tendered' => $amountTendered,
                     'change_due' => $changeDue,
                     'subtotal' => $subtotal,
-                    'tax' => round($total - $subtotal, 2),
+                    'tax' => $tax,
                     'lines' => $breakdownLines,
                 ], JSON_THROW_ON_ERROR),
                 'printed' => 0,
@@ -411,6 +451,48 @@ class CheckoutService
         } catch (\Throwable $e) {
             throw CheckoutException::orderMetaFailed($psOrderId, $reference, $e);
         }
+    }
+
+    /**
+     * Sums the VAT each line actually carries, `price - price_net`, and scales it by
+     * the discount applied to the whole sale, because VAT is owed on the amount the
+     * customer pays.
+     *
+     * The previous formula, `total - subtotal`, is meaningless now that both values
+     * are tax included: it returned zero or a negative number.
+     *
+     * When the sync could not resolve a net price for any line, it falls back to the
+     * standard rate the point of sale has always assumed, and never to a negative
+     * amount.
+     *
+     * @param array<int, array<string, mixed>> $lines
+     */
+    private function resolveVatAmount(array $lines, float $subtotal, float $total): float
+    {
+        $vatSum = 0.0;
+        $linesWithNet = 0;
+
+        foreach ($lines as $line) {
+            if (!isset($line['price_net']) || !is_numeric($line['price_net'])) {
+                continue;
+            }
+
+            $qty = (int) ($line['qty'] ?? $line['quantity'] ?? 1);
+            $price = (float) ($line['price'] ?? 0);
+            $net = (float) $line['price_net'];
+            $lineDiscount = max(0.0, min(100.0, (float) ($line['discount'] ?? 0)));
+
+            $vatSum += ($price - $net) * $qty * (1 - $lineDiscount / 100);
+            ++$linesWithNet;
+        }
+
+        if ($linesWithNet === 0) {
+            return round($total * self::ASSUMED_TAX_RATE / (1 + self::ASSUMED_TAX_RATE), 2);
+        }
+
+        $discountFactor = $subtotal > 0 ? $total / $subtotal : 1.0;
+
+        return round(max(0.0, $vatSum * $discountFactor), 2);
     }
 
     /**

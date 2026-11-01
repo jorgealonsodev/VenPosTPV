@@ -263,8 +263,10 @@ final class CatalogSyncServiceTest extends TestCase
             ['id' => 10, 'id_product' => 1, 'reference' => 'COMB010', 'ean13' => '', 'price' => 0.0],
         ]);
         $apiClient->method('getStockAvailables')->willReturn([]);
-        $apiClient->method('getTaxIncludedUnitPrice')
-            ->willReturnCallback(static fn (int $productId, int $combinationId = 0): float => $combinationId > 0 ? 25.96 : 23.14);
+        $apiClient->method('getAuthoritativePrices')
+            ->willReturnCallback(static fn (int $productId, int $combinationId = 0): array => $combinationId > 0
+                ? ['ttc' => 25.96, 'net' => 21.45]
+                : ['ttc' => 23.14, 'net' => 19.12]);
 
         $service = new CatalogSyncService($apiClient, $conn, $syncLogRepo);
         $result = $service->syncAll();
@@ -279,6 +281,29 @@ final class CatalogSyncServiceTest extends TestCase
         $this->assertSame(2, $result['ttc_prices'], 'products and combinations with a resolved price are counted');
     }
 
+    public function testSyncAllStoresTheTaxExcludedPriceWithReductionsApplied(): void
+    {
+        $conn = $this->createCapturingConnection();
+        $apiClient = $this->createMockApiClient();
+        $syncLogRepo = $this->createMockSyncLogRepo();
+
+        $apiClient->method('getProducts')->willReturn([
+            ['id' => 1, 'name' => 'Product 1', 'reference' => 'REF001', 'ean13' => '', 'price' => 23.90, 'active' => 1],
+        ]);
+        $apiClient->method('getCombinations')->willReturn([]);
+        $apiClient->method('getStockAvailables')->willReturn([]);
+        $apiClient->method('getAuthoritativePrices')
+            ->willReturn(['ttc' => 23.14, 'net' => 19.12]);
+
+        $service = new CatalogSyncService($apiClient, $conn, $syncLogRepo);
+        $service->syncAll();
+
+        $productParams = $this->capturedParamsForTable('catalog_product');
+        $this->assertContains(23.14, $productParams, 'the tax-included price is stored');
+        $this->assertContains(19.12, $productParams, 'the tax-excluded price with reductions is stored, so VAT is price_ttc - price_net');
+        $this->assertContains(23.90, $productParams, 'the raw Web Service base price is still stored');
+    }
+
     public function testSyncAllStoresNullTaxIncludedPriceAndStillCompletesWhenTheLookupFails(): void
     {
         $conn = $this->createCapturingConnection();
@@ -290,7 +315,7 @@ final class CatalogSyncServiceTest extends TestCase
         ]);
         $apiClient->method('getCombinations')->willReturn([]);
         $apiClient->method('getStockAvailables')->willReturn([]);
-        $apiClient->method('getTaxIncludedUnitPrice')->willThrowException(new PsApiException('PS API down'));
+        $apiClient->method('getAuthoritativePrices')->willThrowException(new PsApiException('PS API down'));
 
         $service = new CatalogSyncService($apiClient, $conn, $syncLogRepo);
         $result = $service->syncAll();
@@ -322,10 +347,10 @@ final class CatalogSyncServiceTest extends TestCase
         ]);
         $apiClient->method('getCombinations')->willReturn([]);
         $apiClient->method('getStockAvailables')->willReturn([]);
-        $apiClient->method('getTaxIncludedUnitPrice')->willReturnCallback(function () use (&$events): float {
+        $apiClient->method('getAuthoritativePrices')->willReturnCallback(function () use (&$events): array {
             $events[] = 'ttc';
 
-            return 23.14;
+            return ['ttc' => 23.14, 'net' => 19.12];
         });
 
         $service = new CatalogSyncService($apiClient, $conn, $syncLogRepo);

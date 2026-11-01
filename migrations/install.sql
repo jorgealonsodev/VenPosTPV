@@ -166,6 +166,7 @@ CREATE TABLE IF NOT EXISTS catalog_product (
     ean13 VARCHAR(13),
     price DECIMAL(20,6) NOT NULL,
     price_ttc DECIMAL(20,6) NULL,
+    price_net DECIMAL(20,6) NULL,
     id_category_default INT UNSIGNED,
     active TINYINT(1) NOT NULL DEFAULT 1,
     synced_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -179,6 +180,7 @@ CREATE TABLE IF NOT EXISTS catalog_combination (
     ean13 VARCHAR(13),
     price_impact DECIMAL(20,6) NOT NULL DEFAULT 0,
     price_ttc DECIMAL(20,6) NULL,
+    price_net DECIMAL(20,6) NULL,
     synced_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_product (id_product),
     INDEX idx_ean13 (ean13)

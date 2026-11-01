@@ -98,6 +98,31 @@ class ProductSearchServiceTest extends TestCase
         $this->assertSame([], $service->search(null, null, 50));
     }
 
+public function testSearchExposesTheTaxExcludedReducedPrice(): void
+    {
+        $service = new ProductSearchService($this->createConnectionWithQueryBuilders([
+            $this->createQueryBuilderForRows([
+                [
+                    'id' => '1',
+                    'name' => 'Camiseta',
+                    'reference' => 'CAM-001',
+                    'ean13' => '',
+                    'price' => '23.90',
+                    'price_ttc' => '23.14',
+                    'price_net' => '19.12',
+                    'category_id' => '2',
+                    'stock' => '4',
+                    'has_combinations' => '0',
+                ],
+            ]),
+        ]));
+
+        $results = $service->search(null, null, 10);
+
+        $this->assertSame(23.14, $results[0]['price']);
+        $this->assertSame(19.12, $results[0]['net_price'], 'VAT is price - net_price, so the net price must be projected');
+    }
+
     public function testFindByIdReturnsNullForMissingProduct(): void
     {
         $service = new ProductSearchService($this->createConnectionWithQueryBuilders([

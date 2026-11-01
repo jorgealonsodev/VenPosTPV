@@ -34,6 +34,7 @@ class ProductSearchService
                 'p.ean13',
                 'p.price',
                 'p.price_ttc',
+                'p.price_net',
                 'p.id_category_default AS category_id',
                 'p.image_url',
                 'COALESCE(s.quantity, 0) AS stock',
@@ -87,6 +88,7 @@ class ProductSearchService
                 'p.ean13',
                 'p.price',
                 'p.price_ttc',
+                'p.price_net',
                 'p.id_category_default AS category_id',
                 'p.image_url',
                 'COALESCE(s.quantity, 0) AS stock',
@@ -119,6 +121,7 @@ class ProductSearchService
                 'c.ean13',
                 'c.price_impact',
                 'c.price_ttc',
+                'c.price_net',
                 'COALESCE(cs.quantity, 0) AS stock',
             ])
             ->from('catalog_combination', 'c')
@@ -168,6 +171,7 @@ class ProductSearchService
         $row['price'] = $ttcPrice ?? $basePrice;
         $row['base_price'] = $basePrice;
         $row['price_ttc'] = $ttcPrice;
+        $row['net_price'] = isset($row['price_net']) && is_numeric($row['price_net']) ? (float) $row['price_net'] : null;
         $row['price_basis'] = $ttcPrice !== null ? self::PRICE_BASIS_TTC : self::PRICE_BASIS_BASE;
 
         return $row;
@@ -225,6 +229,9 @@ class ProductSearchService
 
         $combination['base_price_impact'] = $baseImpact;
         $combination['price_ttc'] = $combinationTtcPrice;
+        $combination['net_price'] = isset($combination['price_net']) && is_numeric($combination['price_net'])
+            ? (float) $combination['price_net']
+            : null;
 
         return $combination;
     }
