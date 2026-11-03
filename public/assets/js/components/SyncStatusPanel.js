@@ -67,7 +67,13 @@ const SyncStatusPanel = {
             setTimeout(() => { isSyncing.value = false; }, 3000);
         }
 
-        return { onBackdropClick, stateLabel, stateColor, formatDate, isSyncing, handleSyncNow };
+        // Pending uploads behind an incident only go up once an administrator retries it.
+        const blockedText = Vue.computed(() => {
+            const blocked = Number((props.outbox && props.outbox.blocked) || 0);
+            return blocked > 0 ? blocked + ' esperando a una incidencia' : '';
+        });
+
+        return { onBackdropClick, stateLabel, stateColor, formatDate, isSyncing, handleSyncNow, blockedText };
     },
     template: `
         <div v-if="open" @click="onBackdropClick" style="position:fixed; inset:0; background:rgba(0,0,0,0.45); display:flex; align-items:flex-start; justify-content:flex-end; z-index:900; padding:60px 16px 16px;">
@@ -122,6 +128,7 @@ const SyncStatusPanel = {
                     <div style="flex:1; padding:10px; background:var(--surface2); border-radius:10px; text-align:center;">
                         <div style="font-size:12px; color:var(--text3); margin-bottom:2px;">Pendientes de subir</div>
                         <div style="font-size:18px; font-weight:700; color:var(--text);">{{ outbox ? outbox.pending : '—' }}</div>
+                        <div v-if="blockedText" style="font-size:11px; color:var(--amber); margin-top:2px;">{{ blockedText }}</div>
                     </div>
                     <div style="flex:1; padding:10px; background:var(--surface2); border-radius:10px; text-align:center;">
                         <div style="font-size:12px; color:var(--text3); margin-bottom:2px;">Incidencias</div>

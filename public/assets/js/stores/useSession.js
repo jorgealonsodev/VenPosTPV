@@ -25,7 +25,7 @@ const useSession = (function () {
         theme: 'dark',
         syncState: 'unknown',
         syncData: null,
-        // Uploads to PrestaShop still to do and incidents (PRD I1): { pending, incidents }.
+        // Uploads to PrestaShop still to do and incidents (PRD I1): { pending, incidents, blocked }.
         outbox: null,
         dataphoneMode: 'integrated',
         printerType: 'pdf',
@@ -225,6 +225,8 @@ const useSession = (function () {
                 session.outbox = {
                     pending: Number(response.data.pending || 0),
                     incidents: Number(response.data.incidents || 0),
+                    // Part of pending that waits for an incident: it does not upload on its own.
+                    blocked: Number(response.data.blocked || 0),
                 };
             }
         } catch (e) {

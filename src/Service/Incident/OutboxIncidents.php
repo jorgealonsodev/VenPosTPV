@@ -8,7 +8,8 @@ use Doctrine\DBAL\Connection;
 
 /**
  * What the sync indicator and the incidents screen read from the outbox (PRD I1,
- * I3). PrestaShop rejected an incident row for good (404/422): the data is corrected
+ * I3). PrestaShop rejected an incident row for good (404/422), or its answer could
+ * not be recorded locally several times in a row: the data is corrected
  * in PrestaShop or in the TPV and the row is retried here; nothing else is changed.
  * A retried row goes back to `pending` and OutboxSync uploads it again, still behind
  * the earlier rows of its sale.
@@ -27,7 +28,9 @@ class OutboxIncidents
     }
 
     /**
-     * @return array{pending: int, incidents: int} pending also counts the rows being uploaded now
+     * @return array{pending: int, incidents: int, blocked: int} pending also counts the rows being
+     *         uploaded now; blocked is the part of pending that waits for an incident (behind it in
+     *         its sale, or for a customer in incident) and does not upload until it is retried
      */
     public function counts(): array
     {
@@ -36,8 +39,17 @@ class OutboxIncidents
                     COALESCE(SUM(status = 'incident'), 0) AS incidents
              FROM outbox WHERE status IN ('pending', 'processing', 'incident')"
         );
+        $blocked = $this->connection->fetchOne(
+            "SELECT COUNT(*) FROM outbox w
+             WHERE w.status = 'pending' AND (
+                 EXISTS (SELECT 1 FROM outbox p WHERE p.order_id = w.order_id AND p.sequence < w.sequence AND p.status = 'incident')
+                 OR EXISTS (SELECT 1 FROM outbox d WHERE d.id = w.depends_on AND d.status = 'incident')
+                 OR EXISTS (SELECT 1 FROM outbox p JOIN outbox d ON d.id = p.depends_on
+                            WHERE p.order_id = w.order_id AND p.sequence < w.sequence AND d.status = 'incident')
+             )"
+        );
 
-        return ['pending' => (int) ($row['pending'] ?? 0), 'incidents' => (int) ($row['incidents'] ?? 0)];
+        return ['pending' => (int) ($row['pending'] ?? 0), 'incidents' => (int) ($row['incidents'] ?? 0), 'blocked' => (int) $blocked];
     }
 
     /**
@@ -55,7 +67,12 @@ class OutboxIncidents
                     (SELECT r.credit_note_number FROM refund r WHERE r.request_id = o.request_id LIMIT 1) AS credit_note_number,
                     o.attempts, o.last_error, o.created_at, o.updated_at,
                     (SELECT COUNT(*) FROM outbox w
-                     WHERE o.order_id IS NOT NULL AND w.order_id = o.order_id AND w.sequence > o.sequence AND w.status <> 'done') AS waiting_behind
+                     WHERE w.status <> 'done' AND (
+                         (o.order_id IS NOT NULL AND w.order_id = o.order_id AND w.sequence > o.sequence)
+                         -- a sale for a customer created at the till, and what waits behind that sale
+                         OR w.depends_on = o.id
+                         OR w.order_id IN (SELECT d.order_id FROM outbox d WHERE d.depends_on = o.id AND d.order_id IS NOT NULL)
+                     )) AS waiting_behind
              FROM outbox o
              LEFT JOIN order_meta m ON m.id = o.order_id
              WHERE o.status = 'incident'
@@ -91,7 +108,7 @@ class OutboxIncidents
         $now = $this->now();
 
         return $this->connection->executeStatement(
-            "UPDATE outbox SET status = 'pending', attempts = 0, next_attempt_at = ?, claim_token = NULL, claimed_at = NULL, updated_at = ?
+            "UPDATE outbox SET status = 'pending', attempts = 0, record_failures = 0, next_attempt_at = ?, claim_token = NULL, claimed_at = NULL, updated_at = ?
              WHERE id = ? AND status = 'incident'",
             [$now, $now, $id]
         ) === 1;

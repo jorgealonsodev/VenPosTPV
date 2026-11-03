@@ -187,4 +187,47 @@ final class OutboxIncidentsMySqlIntegrationTest extends TestCase
         $this->assertSame('incident', $this->outbox($otherSale)['status'], 'another sale is not touched');
         $this->assertSame([], $this->incidents()->retryOrder($sale), 'nothing left to retry');
     }
+
+    /** A sale for a customer created at the till waits through depends_on; its refunds wait behind it. */
+    public function testWhatWaitsBehindACustomerIncidentIsCountedToo(): void
+    {
+        $customer = $this->row(null, 1, 'incident', 'customer', 1, 'HTTP 422: Validation error: "email"');
+        $sale = $this->sale('Z26000050');
+        $saleRow = $this->row($sale, 1, 'pending', attempts: 0);
+        $this->connection->update('outbox', ['depends_on' => $customer], ['id' => $saleRow]);
+        $this->row($sale, 2, 'pending', 'refund', 0);
+        $this->row($this->sale('Z26000051'), 1, 'pending', attempts: 0);
+
+        $mine = array_values(array_filter($this->incidents()->list(), static fn (array $r): bool => $r['id'] === $customer));
+
+        $this->assertSame('customer', $mine[0]['type']);
+        $this->assertSame(2, $mine[0]['waiting_behind'], 'its sale and the refund behind that sale');
+    }
+
+    /** Pending uploads blocked by an incident do not upload on their own: the indicator says so. */
+    public function testTheCountsSayHowManyPendingUploadsWaitForAnIncident(): void
+    {
+        $this->connection->beginTransaction();
+        $before = $this->incidents()->counts();
+
+        $rejected = $this->sale('Z26000060');
+        $this->row($rejected, 1, 'incident');
+        $this->row($rejected, 2, 'pending', 'refund', 0);
+        $customer = $this->row(null, 1, 'incident', 'customer', 1);
+        $waiting = $this->sale('Z26000061');
+        $saleRow = $this->row($waiting, 1, 'pending', attempts: 0);
+        $this->connection->update('outbox', ['depends_on' => $customer], ['id' => $saleRow]);
+        $this->row($waiting, 2, 'pending', 'refund', 0);
+        $free = $this->sale('Z26000062');
+        $this->row($free, 1, 'pending', attempts: 0);
+        $this->row($free, 2, 'processing', 'refund', 1);
+        $after = $this->incidents()->counts();
+        $this->connection->rollBack();
+
+        $this->assertSame(['pending' => 5, 'incidents' => 2, 'blocked' => 3], [
+            'pending' => $after['pending'] - $before['pending'],
+            'incidents' => $after['incidents'] - $before['incidents'],
+            'blocked' => ($after['blocked'] ?? 0) - ($before['blocked'] ?? 0),
+        ]);
+    }
 }

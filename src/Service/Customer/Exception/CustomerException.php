@@ -11,4 +11,10 @@ final class CustomerException extends \RuntimeException
     {
         return new self($message, 422);
     }
+
+    /** Another till is storing a customer with the same email right now: nothing was stored. */
+    public static function busy(string $message): self
+    {
+        return new self($message, 409);
+    }
 }

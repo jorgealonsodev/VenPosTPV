@@ -47,7 +47,17 @@ const CashCloseScreen = {
             return incidents + ' en incidencia: un administrador debe revisarlas en Incidencias';
         });
 
-        return { counted, denoms, total, expected, diff, handleDiscardParked, pendingUploadsText, incidentsText };
+        // Uploads behind an incident wait for an administrator; the rest go up on their own.
+        const blockedUploadsText = Vue.computed(() => {
+            const blocked = Number((props.outbox && props.outbox.blocked) || 0);
+            return blocked > 0 ? blocked + ' esperando a una incidencia' : '';
+        });
+        const uploadsOnTheirOwn = Vue.computed(() => {
+            const pending = Number((props.outbox && props.outbox.pending) || 0);
+            return pending - Number((props.outbox && props.outbox.blocked) || 0) > 0;
+        });
+
+        return { counted, denoms, total, expected, diff, handleDiscardParked, pendingUploadsText, blockedUploadsText, uploadsOnTheirOwn, incidentsText };
     },
     template: `
         <div style="width:100%; height:100%; background:var(--bg); overflow:auto; padding:32px; display:flex; flex-direction:column; gap:24px;">
@@ -82,9 +92,10 @@ const CashCloseScreen = {
             <div v-if="pendingUploadsText || incidentsText" class="tpv-banner tpv-banner-warn" role="status" style="max-width:900px;">
                 <div style="display:flex; flex-direction:column; gap:2px;">
                     <div v-if="pendingUploadsText" style="font-size:14px; font-weight:700; color:var(--amber);">{{ pendingUploadsText }}</div>
+                    <div v-if="blockedUploadsText" style="font-size:13px; font-weight:600; color:var(--amber);">{{ blockedUploadsText }}</div>
                     <div v-if="incidentsText" style="font-size:14px; font-weight:700; color:var(--amber);">{{ incidentsText }}</div>
                     <div style="font-size:13px; color:var(--text2);">
-                        Se suben solas cuando PrestaShop responde. Puedes cerrar la caja igualmente.
+                        <span v-if="uploadsOnTheirOwn">Se suben solas cuando PrestaShop responde. </span>Puedes cerrar la caja igualmente.
                     </div>
                 </div>
             </div>

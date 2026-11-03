@@ -40,12 +40,17 @@ final class CustomerController
         if ($request->getSession()->get('user_id') === null) {
             return new JsonResponse(['error' => 'Unauthorized'], Response::HTTP_UNAUTHORIZED);
         }
+        // Like the device endpoints: only a JSON request (a cross-site form post
+        // cannot send one without a CORS preflight).
+        if ($request->getContentTypeFormat() !== 'json') {
+            return new JsonResponse(['error' => 'Se espera un cuerpo JSON'], Response::HTTP_UNSUPPORTED_MEDIA_TYPE);
+        }
         $body = json_decode((string) $request->getContent(), true);
 
         try {
             $customer = $this->customers->create(\is_array($body) ? $body : []);
         } catch (CustomerException $e) {
-            return new JsonResponse(['error' => $e->getMessage()], Response::HTTP_UNPROCESSABLE_ENTITY);
+            return new JsonResponse(['error' => $e->getMessage()], $e->getCode() === Response::HTTP_CONFLICT ? Response::HTTP_CONFLICT : Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
         return new JsonResponse(['data' => $customer], $customer['existing'] ? Response::HTTP_OK : Response::HTTP_CREATED);

@@ -84,11 +84,15 @@ async function testSessionStoreKeepsTheOutboxCounts() {
     const store = context.__store;
     store.startSyncPolling();
     await settle();
-    assert.deepEqual({ ...store.session.outbox }, { pending: 2, incidents: 1 });
+    assert.deepEqual({ ...store.session.outbox }, { pending: 2, incidents: 1, blocked: 0 }, 'an older server sends no blocked count');
 
     context.ApiClient.outboxStatus = () => Promise.reject(new Error('HTTP 500'));
     await store.refreshOutbox();
-    assert.deepEqual({ ...store.session.outbox }, { pending: 2, incidents: 1 }, 'a failed read keeps the last counts');
+    assert.deepEqual({ ...store.session.outbox }, { pending: 2, incidents: 1, blocked: 0 }, 'a failed read keeps the last counts');
+
+    context.ApiClient.outboxStatus = () => Promise.resolve({ data: { pending: 4, incidents: 1, blocked: 3 } });
+    await store.refreshOutbox();
+    assert.deepEqual({ ...store.session.outbox }, { pending: 4, incidents: 1, blocked: 3 });
 }
 
 // I2, A6: the close warns about pending uploads and incidents, and still closes.
@@ -108,6 +112,31 @@ function testCashCloseWarnsAboutPendingUploadsWithoutBlocking() {
     assert.ok(closeButton, 'the close button exists');
     assert.doesNotMatch(closeButton[0], /disabled/, 'pending uploads never disable the close');
     assert.match(component.template, /v-if="pendingUploadsText \|\| incidentsText"/);
+}
+
+// I2: uploads blocked by an incident do not upload on their own, and the close says so.
+function testCashCloseSaysWhichUploadsWaitForAnIncident() {
+    const { component } = load('public/assets/js/components/CashCloseScreen.js', 'CashCloseScreen');
+    const blocked = setup(component, { session: {}, outbox: { pending: 3, incidents: 1, blocked: 3 } });
+    assert.equal(blocked.pendingUploadsText.value, 'Hay 3 operaciones pendientes de subir a PrestaShop');
+    assert.equal(blocked.blockedUploadsText.value, '3 esperando a una incidencia');
+    assert.equal(blocked.uploadsOnTheirOwn.value, false, 'all of them wait for the incident');
+    const mixed = setup(component, { session: {}, outbox: { pending: 3, incidents: 1, blocked: 1 } });
+    assert.equal(mixed.blockedUploadsText.value, '1 esperando a una incidencia');
+    assert.equal(mixed.uploadsOnTheirOwn.value, true);
+    const free = setup(component, { session: {}, outbox: { pending: 2, incidents: 0 } });
+    assert.equal(free.blockedUploadsText.value, '', 'an older server sends no blocked count');
+    assert.equal(free.uploadsOnTheirOwn.value, true);
+    assert.match(component.template, /v-if="blockedUploadsText"[^>]*>\{\{ blockedUploadsText \}\}/);
+    assert.match(component.template, /<span v-if="uploadsOnTheirOwn">Se suben solas cuando PrestaShop responde\. <\/span>Puedes cerrar la caja igualmente\./);
+}
+
+function testPanelSaysWhichPendingUploadsWaitForAnIncident() {
+    const { component } = load('public/assets/js/components/SyncStatusPanel.js', 'SyncStatusPanel');
+    assert.equal(setup(component, { outbox: { pending: 4, incidents: 1, blocked: 2 } }).blockedText.value, '2 esperando a una incidencia');
+    assert.equal(setup(component, { outbox: { pending: 4, incidents: 0, blocked: 0 } }).blockedText.value, '');
+    assert.equal(setup(component, { outbox: null }).blockedText.value, '');
+    assert.match(component.template, /v-if="blockedText"[^>]*>\{\{ blockedText \}\}/);
 }
 
 function loadSaleScreenFunction(name) {
@@ -290,6 +319,8 @@ function testThePageLoadsTheIncidentsScreenAndNewVersionsOfTheChangedAssets() {
     testPanelOffersIncidentsToAdministratorsOnly();
     await testSessionStoreKeepsTheOutboxCounts();
     testCashCloseWarnsAboutPendingUploadsWithoutBlocking();
+    testCashCloseSaysWhichUploadsWaitForAnIncident();
+    testPanelSaysWhichPendingUploadsWaitForAnIncident();
     testStockWarningsNameTheProductsAfterTheSale();
     await testSaleCompletionShowsTheStockNoticeAndStillClears();
     testTicketPanelMarksLinesTheLocalStockDoesNotCover();

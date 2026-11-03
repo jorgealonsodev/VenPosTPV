@@ -134,7 +134,8 @@ final class LocalCustomersMySqlIntegrationTest extends TestCase
             }
             $this->orders[] = $payload;
 
-            return ['order_id' => 942199, 'reference' => (string) $payload['reference'], 'total_paid' => self::PRICE, 'replayed' => false];
+            // 942199 for the first order, then one more per order.
+            return ['order_id' => 942198 + \count($this->orders), 'reference' => (string) $payload['reference'], 'total_paid' => self::PRICE, 'replayed' => false];
         });
         $api = $this->createMock(PrestaShopApiClient::class);
         $api->method('findCustomerIdByEmail')->willReturnCallback(function (string $email) use ($customers): ?int {
@@ -292,5 +293,138 @@ final class LocalCustomersMySqlIntegrationTest extends TestCase
         $this->assertNull($row['depends_on']);
         $this->assertSame(self::PS_IDS[0], json_decode((string) $row['payload'], true)['id_customer'], 'the local copy is authoritative, not the browser id');
         $this->assertSame(77, json_decode((string) $this->saleRow($legacy['order_id'])['payload'], true)['id_customer'], 'a cart with only a PrestaShop id behaves as before');
+    }
+
+    /** Two tills created the same email at once (rows from before the create lock, or another TPV). */
+    public function testTwoTillRowsWithTheSameEmailAreMergedAndBothSalesUploadForOnePrestaShopCustomer(): void
+    {
+        $c = $this->connection;
+        $first = $this->directory()->create(['firstname' => 'Eva', 'lastname' => 'Uno', 'email' => $this->email('dup')]);
+        // The second till's create read the email before the first one committed.
+        $secondId = $c->transactional(function () use ($c): int {
+            $c->insert('customer', ['firstname' => 'Eva', 'lastname' => 'Dos', 'email' => $this->email('dup'), 'active' => 1]);
+            $id = (int) $c->lastInsertId();
+            $outboxId = (new Outbox($c))->enqueueCustomer($id, ['firstname' => 'Eva', 'lastname' => 'Dos', 'email' => $this->email('dup')]);
+            $c->executeStatement('UPDATE customer SET outbox_id = ? WHERE id = ?', [$outboxId, $id]);
+
+            return $id;
+        });
+        $saleFirst = $this->checkout()->createOrder(1, $this->cart(['local_id' => $first['local_id']]), 'cash', 20.0);
+        $saleSecond = $this->checkout()->createOrder(1, $this->cart(['local_id' => $secondId]), 'cash', 20.0);
+
+        $created = false;
+        $counts = $this->sync(function (string $op) use (&$created): ?int {
+            if ($op === 'find') {
+                return $created ? self::PS_IDS[3] : null;
+            }
+            $created = true;
+
+            return self::PS_IDS[3];
+        })->run();
+
+        $customers = $c->fetchAllAssociative('SELECT o.status, o.last_error FROM outbox o JOIN customer cu ON cu.outbox_id = o.id WHERE cu.email = ? ORDER BY o.id', [$this->email('dup')]);
+        $this->assertSame([['status' => 'done', 'last_error' => null], ['status' => 'done', 'last_error' => null]], $customers);
+        $this->assertSame(['find', 'create', 'find', 'order', 'order'], $this->calls, 'PrestaShop gets one customer; the second row is linked to it');
+        $this->assertSame(4, $counts['uploaded'], 'two customers and two sales');
+        $this->assertSame([self::PS_IDS[3], self::PS_IDS[3]], array_column($this->orders, 'id_customer'));
+        $this->assertSame([(int) $first['local_id'], 1, null], array_map(
+            static fn ($v) => $v === null ? null : (int) $v,
+            array_values($c->fetchAssociative('SELECT merged_into, active = 0 AS inactive, ps_customer_id FROM customer WHERE id = ?', [$secondId]))
+        ), 'the duplicate points at the customer it was merged into');
+        $this->assertSame(self::PS_IDS[3], (int) $c->fetchOne('SELECT ps_customer_id FROM customer WHERE id = ?', [$first['local_id']]));
+        $this->assertSame(['done', 'done'], [$this->saleRow($saleFirst['order_id'])['status'], $this->saleRow($saleSecond['order_id'])['status']]);
+        $this->assertSame([$first['local_id']], array_column($this->directory()->search('dup' . self::EMAIL_DOMAIN), 'local_id'), 'the search offers one Eva');
+
+        // A cart or parked ticket still holding the duplicate sells to the merged customer.
+        $this->assertSame(['ps_customer_id' => self::PS_IDS[3], 'local_id' => null, 'depends_on' => null], $this->directory()->resolveForSale(['local_id' => $secondId]));
+    }
+
+    /** A duplicate that is merged before its sale is uploaded: the waiting sale is sent with the merged customer. */
+    public function testASaleWaitingForAMergedDuplicateIsRepointedAndSentWithTheMergedCustomer(): void
+    {
+        $c = $this->connection;
+        $first = $this->directory()->create(['firstname' => 'Eva', 'lastname' => 'Uno', 'email' => $this->email('dup2')]);
+        $this->sync(static fn (string $op): ?int => $op === 'find' ? null : self::PS_IDS[3])->run();
+        $secondId = $c->transactional(function () use ($c): int {
+            $c->insert('customer', ['firstname' => 'Eva', 'lastname' => 'Dos', 'email' => $this->email('dup2'), 'active' => 1]);
+            $id = (int) $c->lastInsertId();
+            $outboxId = (new Outbox($c))->enqueueCustomer($id, ['firstname' => 'Eva', 'lastname' => 'Dos', 'email' => $this->email('dup2')]);
+            $c->executeStatement('UPDATE customer SET outbox_id = ? WHERE id = ?', [$outboxId, $id]);
+
+            return $id;
+        });
+        $sale = $this->checkout()->createOrder(1, $this->cart(['local_id' => $secondId]), 'cash', 20.0);
+        $this->calls = [];
+
+        // Orders are offline: only the customer row can finish, and it is merged.
+        $this->sync(static fn (string $op): ?int => self::PS_IDS[3], false)->run();
+
+        $row = $this->saleRow($sale['order_id']);
+        $this->assertSame((int) $first['local_id'], json_decode((string) $row['payload'], true)['_customer_local_id'], 'the waiting sale now names the merged customer');
+        $this->assertSame((int) $c->fetchOne('SELECT outbox_id FROM customer WHERE id = ?', [$first['local_id']]), (int) $row['depends_on']);
+        $this->assertSame('pending', $row['status']);
+
+        $this->now = $this->now->modify('+2 hours');
+        $this->sync(static fn (): never => throw new \LogicException('no customer call expected'))->run();
+        $this->assertSame('done', $this->saleRow($sale['order_id'])['status']);
+        $this->assertSame(self::PS_IDS[3], end($this->orders)['id_customer']);
+    }
+
+    public function testCreatingTheSameEmailsFromSeveralTillsAtOnceStoresEachEmailOnce(): void
+    {
+        $workers = [];
+        for ($w = 0; $w < 3; ++$w) {
+            $process = proc_open([PHP_BINARY, '-d', 'variables_order=EGPCS', __DIR__ . '/fixtures/customer_create_worker.php', self::EMAIL_DOMAIN, '15'], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+            $this->assertIsResource($process);
+            $workers[] = [$process, $pipes];
+        }
+        $existing = 0;
+        foreach ($workers as [$process, $pipes]) {
+            $out = stream_get_contents($pipes[1]) . stream_get_contents($pipes[2]);
+            $this->assertSame(0, proc_close($process), $out);
+            $this->assertStringContainsString('"ok":true', $out);
+            $existing += (int) (json_decode($out, true)['existing'] ?? 0);
+        }
+
+        $this->assertSame(15, (int) $this->connection->fetchOne('SELECT COUNT(*) FROM customer WHERE email LIKE ?', ['%' . self::EMAIL_DOMAIN]));
+        $this->assertSame(15, (int) $this->connection->fetchOne('SELECT COUNT(DISTINCT email) FROM customer WHERE email LIKE ?', ['%' . self::EMAIL_DOMAIN]));
+        $this->assertSame(30, $existing, 'the other tills got the stored customer back');
+    }
+
+    /** Any failure recording PrestaShop's answer is retried, but not forever: the fifth one is an incident. */
+    public function testAnAnswerThatCannotBeRecordedFiveTimesInARowBecomesAnIncident(): void
+    {
+        $c = $this->connection;
+        $customer = $this->directory()->create(['firstname' => 'Rosa', 'lastname' => 'Bloqueo', 'email' => $this->email('record')]);
+        $outboxId = (int) $c->fetchOne('SELECT outbox_id FROM customer WHERE id = ?', [$customer['local_id']]);
+        $c->executeStatement('DROP TRIGGER IF EXISTS t_customer_record_fails');
+        try {
+            $c->executeStatement(sprintf("CREATE TRIGGER t_customer_record_fails BEFORE UPDATE ON customer FOR EACH ROW
+                BEGIN IF NEW.ps_customer_id = %d THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'disk full'; END IF; END", self::PS_IDS[2]));
+        } catch (\Doctrine\DBAL\Exception $e) {
+            $this->markTestSkipped('The test database user cannot create triggers: ' . $e->getMessage());
+        }
+
+        try {
+            $statuses = [];
+            for ($i = 1; $i <= 5; ++$i) {
+                $this->sync(static fn (string $op): ?int => self::PS_IDS[2])->run();
+                $row = $c->fetchAssociative('SELECT status, attempts, last_error FROM outbox WHERE id = ?', [$outboxId]);
+                $statuses[] = $row['status'] . '/' . $row['attempts'];
+                $this->now = $this->now->modify('+2 hours');
+            }
+        } finally {
+            $c->executeStatement('DROP TRIGGER IF EXISTS t_customer_record_fails');
+        }
+
+        $this->assertSame(['pending/1', 'pending/2', 'pending/3', 'pending/4', 'incident/5'], $statuses);
+        $this->assertStringContainsString('Recording the PrestaShop answer failed', (string) $row['last_error']);
+        $this->assertStringContainsString('disk full', (string) $row['last_error']);
+        $this->assertNull($c->fetchOne('SELECT ps_customer_id FROM customer WHERE id = ?', [$customer['local_id']]));
+
+        // Retried by the administrator once fixed: it starts counting again and uploads.
+        $this->assertTrue((new \VenPosTPV\Service\Incident\OutboxIncidents($c, fn () => $this->now))->retry($outboxId));
+        $this->sync(static fn (string $op): ?int => self::PS_IDS[2])->run();
+        $this->assertSame('done', $c->fetchOne('SELECT status FROM outbox WHERE id = ?', [$outboxId]));
     }
 }

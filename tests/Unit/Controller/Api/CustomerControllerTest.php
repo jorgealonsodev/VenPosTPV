@@ -16,13 +16,13 @@ use VenPosTPV\Service\Customer\Exception\CustomerException;
 final class CustomerControllerTest extends TestCase
 {
     /** @param array<string, mixed> $query @param array<string, mixed>|null $body */
-    private function request(?int $userId, array $query = [], ?array $body = null): Request
+    private function request(?int $userId, array $query = [], ?array $body = null, string $contentType = 'application/json'): Request
     {
         $session = new Session(new MockArraySessionStorage());
         if ($userId !== null) {
             $session->set('user_id', $userId);
         }
-        $request = new Request($query, [], [], [], [], [], $body === null ? '' : (string) json_encode($body));
+        $request = new Request($query, [], [], [], [], ['CONTENT_TYPE' => $contentType], $body === null ? '' : (string) json_encode($body));
         $request->setSession($session);
 
         return $request;
@@ -85,5 +85,30 @@ final class CustomerControllerTest extends TestCase
 
         $this->assertSame(Response::HTTP_UNPROCESSABLE_ENTITY, $response->getStatusCode());
         $this->assertSame(['error' => 'El email no es válido.'], $this->decode($response));
+    }
+
+    public function testCreateNeedsAJsonBody(): void
+    {
+        $directory = $this->createMock(CustomerDirectory::class);
+        $directory->expects($this->never())->method('create');
+        $controller = new CustomerController($directory);
+        $body = ['firstname' => 'Marta', 'lastname' => 'Ruiz', 'email' => 'marta@x.es'];
+
+        foreach (['text/plain', 'application/x-www-form-urlencoded', ''] as $type) {
+            $response = $controller->create($this->request(1, [], $body, $type));
+            $this->assertSame(Response::HTTP_UNSUPPORTED_MEDIA_TYPE, $response->getStatusCode(), $type);
+            $this->assertSame(['error' => 'Se espera un cuerpo JSON'], $this->decode($response));
+        }
+    }
+
+    public function testCreateAnswers409WhileAnotherTillStoresTheSameEmail(): void
+    {
+        $directory = $this->createMock(CustomerDirectory::class);
+        $directory->method('create')->willThrowException(CustomerException::busy('Otro cliente con este email se está guardando ahora mismo. Inténtalo otra vez.'));
+
+        $response = (new CustomerController($directory))->create($this->request(1, [], ['email' => 'marta@x.es']));
+
+        $this->assertSame(Response::HTTP_CONFLICT, $response->getStatusCode());
+        $this->assertSame(['error' => 'Otro cliente con este email se está guardando ahora mismo. Inténtalo otra vez.'], $this->decode($response));
     }
 }

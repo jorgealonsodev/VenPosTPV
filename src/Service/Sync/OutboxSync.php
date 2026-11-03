@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace VenPosTPV\Service\Sync;
 
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\ParameterType;
 use Doctrine\DBAL\Exception\RetryableException;
 use Psr\Log\LoggerInterface;
 use VenPosTPV\Service\Checkout\Exception\CheckoutException;
@@ -42,7 +43,13 @@ use VenPosTPV\Service\Refund\PsRestockClient;
  *   customer (incident) keeps its sales waiting without spending their attempts.
  *   The sale is sent with the PrestaShop customer id read when it is sent. A
  *   customer is looked up by email before it is created, so a retry after an
- *   unknown outcome links the customer instead of creating another one.
+ *   unknown outcome links the customer instead of creating another one. When that
+ *   PrestaShop customer is already linked to another local customer (two tills
+ *   created the same email), the row being uploaded is merged into that one: its
+ *   waiting sales are pointed at it and the duplicate becomes inactive (merged_into).
+ * - Recording PrestaShop's answer locally can fail too (a database error): it is
+ *   retried with the same backoff, and after MAX_RECORD_FAILURES failures in a row
+ *   the row becomes an incident instead of waiting silently for ever.
  */
 class OutboxSync
 {
@@ -51,6 +58,9 @@ class OutboxSync
 
     /** Linking a created order is retried this many times after a deadlock. */
     private const LINK_TRIES = 3;
+
+    /** Consecutive failures recording PrestaShop's answer before the row is an incident. */
+    public const MAX_RECORD_FAILURES = 5;
 
     /** A claim older than this belongs to a worker that died. */
     public const STUCK_AFTER_SECONDS = 300;
@@ -192,7 +202,11 @@ class OutboxSync
     {
         if (isset($payload['_customer_local_id'])) {
             // A customer created at the till: its PrestaShop id is known only now.
-            $psCustomerId = $this->connection->fetchOne('SELECT ps_customer_id FROM customer WHERE id = ?', [(int) $payload['_customer_local_id']]);
+            // A duplicate merged meanwhile sells to the customer it was merged into.
+            $psCustomerId = $this->connection->fetchOne(
+                'SELECT COALESCE(m.ps_customer_id, c.ps_customer_id) FROM customer c LEFT JOIN customer m ON m.id = c.merged_into WHERE c.id = ?',
+                [(int) $payload['_customer_local_id']]
+            );
             if ($psCustomerId === false) {
                 return $this->incident($row, sprintf('The customer %d of this sale does not exist', (int) $payload['_customer_local_id']));
             }
@@ -238,7 +252,7 @@ class OutboxSync
                 }
 
                 // The order exists in PrestaShop: the next attempt replays and links it.
-                return $this->retry($row, 'Linking the PrestaShop order failed: ' . $e->getMessage());
+                return $this->recordingFailed($row, 'Linking the PrestaShop order failed: ' . $e->getMessage());
             } catch (\Throwable $e) {
                 // E.g. the PrestaShop id is already linked to another local sale.
                 $this->logger?->error('Outbox row {id}: PrestaShop order {order} could not be linked: {message}', ['id' => $row['id'], 'order' => $order['order_id'], 'message' => $e->getMessage()]);
@@ -261,7 +275,7 @@ class OutboxSync
 
         return $this->connection->transactional(function () use ($row, $order, $orderId, $now): bool {
             $done = $this->connection->executeStatement(
-                "UPDATE outbox SET status = 'done', claim_token = NULL, last_error = NULL, done_at = ?, updated_at = ?
+                "UPDATE outbox SET status = 'done', claim_token = NULL, last_error = NULL, record_failures = 0, done_at = ?, updated_at = ?
                  WHERE id = ? AND claim_token = ?",
                 [$now, $now, (int) $row['id'], (string) $row['claim_token']]
             );
@@ -419,18 +433,57 @@ class OutboxSync
             return $this->retry($row, $e->getMessage());
         }
 
-        return $this->closeWith($row, function () use ($localId, $psCustomerId): void {
+        return $this->closeWith($row, function () use ($row, $localId, $psCustomerId): void {
             // The copy the customer sync may have brought meanwhile is the same person.
             $this->connection->executeStatement(
                 'DELETE FROM customer WHERE ps_customer_id = ? AND id <> ? AND outbox_id IS NULL',
                 [$psCustomerId, $localId]
             );
             $now = $this->now();
+            // Another customer created at a till already has this PrestaShop customer.
+            $survivor = $this->connection->fetchAssociative(
+                'SELECT id, outbox_id FROM customer WHERE ps_customer_id = ? AND id <> ? FOR UPDATE',
+                [$psCustomerId, $localId]
+            );
+            if ($survivor !== false) {
+                $this->mergeCustomer($localId, (int) $row['id'], (int) $survivor['id'], $survivor['outbox_id'] !== null ? (int) $survivor['outbox_id'] : null, $now);
+
+                return;
+            }
             $this->connection->executeStatement(
                 'UPDATE customer SET ps_customer_id = ?, synced_at = ?, updated_at = ? WHERE id = ?',
                 [$psCustomerId, $now, $now, $localId]
             );
         });
+    }
+
+    /**
+     * Merges a customer created at the till into the local customer that already has
+     * its PrestaShop customer: the sales still waiting for the duplicate's upload
+     * wait for (and are sent with) the survivor, and the duplicate stays inactive,
+     * pointing at the survivor, for carts and parked tickets that still name it.
+     */
+    private function mergeCustomer(int $duplicateId, int $duplicateOutboxId, int $survivorId, ?int $survivorOutboxId, string $now): void
+    {
+        $this->logger?->notice('Customer {duplicate} has the PrestaShop customer of {survivor}: merged', ['duplicate' => $duplicateId, 'survivor' => $survivorId]);
+        foreach ($this->connection->fetchFirstColumn("SELECT id FROM outbox WHERE depends_on = ? AND status <> 'done'", [$duplicateOutboxId]) as $dependantId) {
+            $this->connection->executeStatement(
+                "UPDATE outbox SET depends_on = ?,
+                     payload = IF(JSON_EXTRACT(payload, '$._customer_local_id') = ?, JSON_SET(payload, '$._customer_local_id', ?), payload),
+                     updated_at = ?
+                 WHERE id = ?",
+                [$survivorOutboxId, $duplicateId, $survivorId, $now, (int) $dependantId],
+                [ParameterType::INTEGER, ParameterType::INTEGER, ParameterType::INTEGER, ParameterType::STRING, ParameterType::INTEGER]
+            );
+        }
+        $this->connection->executeStatement(
+            'UPDATE customer SET merged_into = ?, updated_at = ? WHERE merged_into = ?',
+            [$survivorId, $now, $duplicateId]
+        );
+        $this->connection->executeStatement(
+            'UPDATE customer SET active = 0, merged_into = ?, synced_at = ?, updated_at = ? WHERE id = ?',
+            [$survivorId, $now, $now, $duplicateId]
+        );
     }
 
     /**
@@ -448,7 +501,7 @@ class OutboxSync
         try {
             $closed = $this->connection->transactional(function () use ($row, $record, $now): bool {
                 $done = $this->connection->executeStatement(
-                    "UPDATE outbox SET status = 'done', claim_token = NULL, last_error = NULL, done_at = ?, updated_at = ?
+                    "UPDATE outbox SET status = 'done', claim_token = NULL, last_error = NULL, record_failures = 0, done_at = ?, updated_at = ?
                      WHERE id = ? AND claim_token = ?",
                     [$now, $now, (int) $row['id'], (string) $row['claim_token']]
                 );
@@ -461,22 +514,52 @@ class OutboxSync
             });
         } catch (\Throwable $e) {
             // PrestaShop already has it: the next attempt is replayed by request_id.
-            return $this->retry($row, 'Recording the PrestaShop answer failed: ' . $e->getMessage());
+            return $this->recordingFailed($row, 'Recording the PrestaShop answer failed: ' . $e->getMessage());
         }
 
         return $closed ? 'uploaded' : null;
     }
 
-    /** @param array<string, mixed> $row @return 'retried'|null */
-    private function retry(array $row, string $error): ?string
+    /**
+     * PrestaShop answered but the answer could not be stored here. Retried like a
+     * temporary error, until it failed MAX_RECORD_FAILURES times in a row: then the
+     * administrator sees it on the incidents screen.
+     *
+     * @param array<string, mixed> $row
+     *
+     * @return 'retried'|'incidents'|null
+     */
+    private function recordingFailed(array $row, string $error): ?string
+    {
+        $this->connection->executeStatement(
+            'UPDATE outbox SET record_failures = record_failures + 1 WHERE id = ? AND claim_token = ?',
+            [(int) $row['id'], (string) $row['claim_token']]
+        );
+        $failures = (int) $this->connection->fetchOne('SELECT record_failures FROM outbox WHERE id = ? AND claim_token = ?', [(int) $row['id'], (string) $row['claim_token']]);
+        if ($failures >= self::MAX_RECORD_FAILURES) {
+            return $this->incident($row, sprintf('Failed %d times in a row. %s', $failures, $error));
+        }
+
+        return $this->retry($row, $error, true);
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     * @param bool $recording a failure recording PrestaShop's answer, which keeps counting;
+     *                        any other failure starts that count again
+     *
+     * @return 'retried'|null
+     */
+    private function retry(array $row, string $error, bool $recording = false): ?string
     {
         $attempts = max(1, (int) $row['attempts']);
         $minutes = self::BACKOFF_MINUTES[min($attempts, \count(self::BACKOFF_MINUTES)) - 1];
         $now = ($this->clock)();
         $released = $this->connection->executeStatement(
-            "UPDATE outbox SET status = 'pending', claim_token = NULL, claimed_at = NULL, next_attempt_at = ?, last_error = ?, updated_at = ?
+            "UPDATE outbox SET status = 'pending', claim_token = NULL, claimed_at = NULL, next_attempt_at = ?, last_error = ?, updated_at = ?,
+                 record_failures = IF(?, record_failures, 0)
              WHERE id = ? AND claim_token = ?",
-            [$now->modify(sprintf('+%d minutes', $minutes))->format('Y-m-d H:i:s'), mb_substr($error, 0, 1000), $now->format('Y-m-d H:i:s'), (int) $row['id'], (string) $row['claim_token']]
+            [$now->modify(sprintf('+%d minutes', $minutes))->format('Y-m-d H:i:s'), mb_substr($error, 0, 1000), $now->format('Y-m-d H:i:s'), $recording ? 1 : 0, (int) $row['id'], (string) $row['claim_token']]
         );
 
         return $released === 1 ? 'retried' : null;

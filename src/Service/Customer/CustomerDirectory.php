@@ -15,6 +15,11 @@ use VenPosTPV\Service\Sync\OutboxSyncTrigger;
  * upload is an outbox row of type `customer`; a sale for that customer waits for
  * that row (Outbox depends_on) and is sent with the PrestaShop id it got.
  *
+ * A customer can only be created once per email at a time (a named lock around the
+ * check and the insert). Duplicates that still reach the outbox (rows from before
+ * that lock, or another TPV on its own database) are merged when uploaded: see
+ * OutboxSync. A merged row is inactive and points at the survivor (merged_into).
+ *
  * Cart customers carry `local_id` (this table) and `id` (the PrestaShop id, null
  * until uploaded). The server always takes the PrestaShop id from this table, never
  * from the browser; a cart with only `id` (older screens, parked tickets) keeps the
@@ -23,6 +28,9 @@ use VenPosTPV\Service\Sync\OutboxSyncTrigger;
 class CustomerDirectory
 {
     private const SEARCH_LIMIT = 20;
+
+    /** How long a till waits for another one creating the same email. */
+    private const EMAIL_LOCK_SECONDS = 10;
 
     /** PrestaShop's Validate::isCustomerName: no digits nor these symbols, a dot only before a space or the end. */
     private const NAME = '/^(?!\s*$)(?:[^0-9!<>,;?=+()\/\\\\@#"°*`{}_^$%:¤\[\]|\.。]|[\.。](?:\s|$))*$/u';
@@ -66,6 +74,7 @@ class CustomerDirectory
      * @return array<string, mixed> the customer as the screen shows it, plus `existing`
      *
      * @throws CustomerException 422 when the form is not valid
+     * @throws CustomerException 409 when another till holds the email for too long
      */
     public function create(array $input): array
     {
@@ -80,30 +89,37 @@ class CustomerDirectory
             throw CustomerException::invalid('El teléfono solo puede llevar números, espacios y + ( ) - . (máximo 32).');
         }
 
-        $existing = $this->connection->fetchAssociative('SELECT * FROM customer WHERE email = ? AND active = 1 ORDER BY id LIMIT 1', [$email]);
-        if ($existing !== false) {
-            return $this->view($existing) + ['existing' => true];
+        // Two tills creating the same email at once: the check and the insert run under
+        // a named lock per email, so the second one finds the first one's customer.
+        $lock = $this->lockEmail($email);
+        try {
+            $existing = $this->connection->fetchAssociative('SELECT * FROM customer WHERE email = ? AND active = 1 ORDER BY id LIMIT 1', [$email]);
+            if ($existing !== false) {
+                return $this->view($existing) + ['existing' => true];
+            }
+
+            $outbox = $this->outbox ?? new Outbox($this->connection);
+            $id = $this->connection->transactional(function () use ($outbox, $firstname, $lastname, $email, $phone): int {
+                $now = (new \DateTimeImmutable())->format('Y-m-d H:i:s');
+                $this->connection->insert('customer', [
+                    'ps_customer_id' => null,
+                    'firstname' => $firstname,
+                    'lastname' => $lastname,
+                    'email' => $email,
+                    'phone' => $phone !== '' ? $phone : null,
+                    'active' => 1,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ]);
+                $id = (int) $this->connection->lastInsertId();
+                $outboxId = $outbox->enqueueCustomer($id, ['firstname' => $firstname, 'lastname' => $lastname, 'email' => $email]);
+                $this->connection->executeStatement('UPDATE customer SET outbox_id = ? WHERE id = ?', [$outboxId, $id]);
+
+                return $id;
+            });
+        } finally {
+            $this->connection->executeQuery('SELECT RELEASE_LOCK(?)', [$lock]);
         }
-
-        $outbox = $this->outbox ?? new Outbox($this->connection);
-        $id = $this->connection->transactional(function () use ($outbox, $firstname, $lastname, $email, $phone): int {
-            $now = (new \DateTimeImmutable())->format('Y-m-d H:i:s');
-            $this->connection->insert('customer', [
-                'ps_customer_id' => null,
-                'firstname' => $firstname,
-                'lastname' => $lastname,
-                'email' => $email,
-                'phone' => $phone !== '' ? $phone : null,
-                'active' => 1,
-                'created_at' => $now,
-                'updated_at' => $now,
-            ]);
-            $id = (int) $this->connection->lastInsertId();
-            $outboxId = $outbox->enqueueCustomer($id, ['firstname' => $firstname, 'lastname' => $lastname, 'email' => $email]);
-            $this->connection->executeStatement('UPDATE customer SET outbox_id = ? WHERE id = ?', [$outboxId, $id]);
-
-            return $id;
-        });
         // Uploaded right after the response; the minute task covers the rest.
         $this->syncTrigger?->request();
 
@@ -124,7 +140,14 @@ class CustomerDirectory
             return ['ps_customer_id' => 0, 'local_id' => null, 'depends_on' => null];
         }
         if (\is_int($customer['local_id'] ?? null) && $customer['local_id'] > 0) {
-            $row = $this->connection->fetchAssociative('SELECT id, ps_customer_id, outbox_id FROM customer WHERE id = ?', [$customer['local_id']]);
+            // A duplicate merged into another customer sells to that one (carts and
+            // parked tickets may still hold the duplicate's local id).
+            $row = $this->connection->fetchAssociative(
+                'SELECT COALESCE(m.id, c.id) AS id, COALESCE(m.ps_customer_id, c.ps_customer_id) AS ps_customer_id,
+                        IF(m.id IS NULL, c.outbox_id, m.outbox_id) AS outbox_id
+                 FROM customer c LEFT JOIN customer m ON m.id = c.merged_into WHERE c.id = ?',
+                [$customer['local_id']]
+            );
             if ($row !== false) {
                 if ($row['ps_customer_id'] !== null) {
                     return ['ps_customer_id' => (int) $row['ps_customer_id'], 'local_id' => null, 'depends_on' => null];
@@ -137,6 +160,22 @@ class CustomerDirectory
         $id = $customer['id'] ?? null;
 
         return ['ps_customer_id' => \is_int($id) && $id > 0 ? $id : 0, 'local_id' => null, 'depends_on' => null];
+    }
+
+    /**
+     * MariaDB named locks are server-wide: the name carries the database, so a test
+     * database never waits for the live one.
+     *
+     * @return string the lock name, for RELEASE_LOCK
+     */
+    private function lockEmail(string $email): string
+    {
+        $name = substr('tpv_customer_email:' . sha1((string) $this->connection->fetchOne('SELECT DATABASE()') . ':' . $email), 0, 64);
+        if ((int) $this->connection->fetchOne('SELECT GET_LOCK(?, ?)', [$name, self::EMAIL_LOCK_SECONDS]) !== 1) {
+            throw CustomerException::busy('Otro cliente con este email se está guardando ahora mismo. Inténtalo otra vez.');
+        }
+
+        return $name;
     }
 
     private function name(mixed $value, string $label): string
