@@ -32,6 +32,58 @@ class PsOrderClient
     }
 
     /**
+     * Uploads a local sale with its ticket code as the order reference (module
+     * 0.6.0, ReferencedOrderCreator). The reference is the idempotency key, so a
+     * retry of an order PrestaShop already created answers 200 with replayed=true.
+     *
+     * @param array<string, mixed> $payload the order request, with `reference`
+     *
+     * @return array{order_id: int, reference: string, total_paid: float, replayed: bool}
+     *
+     * @throws CheckoutException code 422 when PrestaShop rejects the order for good (404, 422);
+     *                           code 0 for anything worth retrying (network, 409 lock busy, 401, 5xx, incomplete answer)
+     * @throws \InvalidArgumentException when the payload has no ticket code
+     */
+    public function createReferencedOrder(array $payload): array
+    {
+        if (!is_string($payload['reference'] ?? null) || $payload['reference'] === '') {
+            throw new \InvalidArgumentException('A referenced order needs the ticket code as reference');
+        }
+
+        $response = $this->send($payload);
+        try {
+            $statusCode = $response->getStatusCode();
+            $content = $response->getContent(false);
+        } catch (TransportExceptionInterface $e) {
+            throw CheckoutException::psUnavailable($e->getMessage(), $e);
+        }
+
+        if ($statusCode === 200 || $statusCode === 201) {
+            $data = json_decode($content, true);
+            if (!is_array($data) || !is_int($data['order_id'] ?? null) || $data['order_id'] < 1
+                || !is_string($data['reference'] ?? null) || $data['reference'] === '') {
+                throw CheckoutException::psUnavailable(sprintf('Incomplete order answer from PS module (HTTP %d)', $statusCode));
+            }
+
+            return [
+                'order_id' => $data['order_id'],
+                'reference' => $data['reference'],
+                'total_paid' => round((float) ($data['total_paid'] ?? 0), 2),
+                'replayed' => ($data['replayed'] ?? false) === true,
+            ];
+        }
+
+        if ($statusCode === 404 || $statusCode === 422) {
+            $data = json_decode($content, true);
+            $details = is_array($data) && isset($data['details']) ? json_encode($data['details']) : $content;
+
+            throw CheckoutException::psRejected($statusCode, (string) $details);
+        }
+
+        throw CheckoutException::psUnavailable(sprintf('PS module returned HTTP %d: %s', $statusCode, mb_substr($content, 0, 500)));
+    }
+
+    /**
      * The preview endpoint is deliberately distinct from the ordinary order
      * client. A response from an older module is never treated as a preview.
      *
