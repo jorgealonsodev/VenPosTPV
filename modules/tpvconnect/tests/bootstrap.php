@@ -300,3 +300,6 @@ if (!class_exists('Validate', false)) {
 require_once __DIR__ . '/../classes/SsoToken.php';
 require_once __DIR__ . '/../install/install.php';
 require_once __DIR__ . '/../classes/CouponCheckout.php';
+if (is_file(__DIR__ . '/../classes/RefundProcessor.php')) {
+    require_once __DIR__ . '/../classes/RefundProcessor.php';
+}
