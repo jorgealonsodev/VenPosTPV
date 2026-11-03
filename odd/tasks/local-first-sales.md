@@ -14,8 +14,8 @@ S8. Visibility (PRD I1-I3): sync indicator with pending and incident counts; "In
 S9. Search (PRD S6): searching the code in the TPV or in PrestaShop finds the same ticket and order.
 
 ## Tasks
-T1 | S2 | delegated (parallel with T2, context backstop) | pending | Module 0.6.0: reference hook + idempotent create by reference.
-T2 | S1 | delegated (parallel with T1, context backstop) | pending | Terminal letter + gapless ticket number sequence per terminal/year.
+T1 | S2 | delegated (parallel with T2, context backstop) | done | Module 0.6.0 (ReferencedOrderCreator): optional reference ^[A-Z]\d{8}$ else 422; GET_LOCK per reference, existing order replayed 200 replayed:true, new 201; 409 when lock busy; hook actionGenerateDocumentReference answers once only for our pending order. Module 107 OK. Commit: see git log "create TPV orders with the TPV reference". Not deployed yet (T8).
+T2 | S1 | delegated (parallel with T1, context backstop) | done | d65c786: V30 terminal.ticket_letter (unique, A.. by id) + ticket_sequence(letter, year); TicketNumberer prepareYear (outside tx) + next (inside tx) -> A26000123; Settings "Letra de caja" 422 messages. RED 21 -> GREEN; PHP 567 OK; 6 procs x 30 with rollbacks gapless. Dev DB: terminal 1 = A.
 T3 | S3 | pending | Local-first checkout: order_meta local key migration, outbox, print without PS. High risk (items 1, 4).
 T4 | S4 | pending | Outbox sync: immediate attempt, tpv:sync:outbox every minute, lock, backoff, incidents.
 T5 | S5 | pending | Refunds/exchanges queued behind their sale; offline voucher warning.
@@ -26,3 +26,5 @@ T8 | all | pending | Live acceptance A1-A8 against PrestaShop + final independen
 ## Log
 L1. User (2026-11-03): "Por que igual podriamos crar una base de datos mysql o mariadb propia del tpv, que fuera guardando todo, por si no se puede sincronizar contra prestashop o hay algun problema, ademas de guardar en el navegador tambien guardara en un base de datos propia. que opinas." Then "si", and "el codigo del ticket y de la venta de preshop tiene que ser el mismo o por lo menos tienen que estar unidos, si metes la referencia de presashop, en el tpv aparece el ticket igualmente y cuando sicronice tambien tiene que aparecer el codigo de prestashop en el ticket, a ver que se te ocurre". Decisions recorded in docs/prd/venta-local-primero.md.
 L2. 2026-11-03 user: "haz lo que consideres mas optimo" after the refunds feature closed; started this feature. Open point kept: gestoría should validate the series (A26000123 tickets, R… credit notes) before going live; numbering stays configurable by terminal letter.
+L3. 2026-11-03 user: "No muestres en los tickets el nombre el VenPosTPV" -> 2392962 store name in Settings (store_name -> legal_name -> env). User: "donde estan los ajustes?" / "no veo la rueda ahora" -> cause: pos.html.twig ?v= not bumped after Settings changes (browser cache); 81660fe labels the button "⚙ Ajustes" and bumps versions. Rule: bump the ?v= of every changed JS file in templates/pos.html.twig.
+L4. T1 7aeb4a1 and T2 d65c786 committed. T3 must call TicketNumberer::prepareYear before the sale transaction and next() inside it; module replay answers 200 and fresh create 201.
