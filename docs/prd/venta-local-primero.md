@@ -22,7 +22,7 @@ Que la tienda pueda **cobrar, devolver y cambiar aunque PrestaShop no responda**
 |---|---|
 | Alcance sin conexión | Ventas, devoluciones y cambios. Solo los **vales** esperan a PrestaShop. |
 | Modo | **Siempre primero en local**: un único camino, con y sin conexión. |
-| Número del ticket | **Serie propia del TPV, una por terminal** (p. ej. `T1-2026-000123`). La referencia de PrestaShop se guarda al sincronizar. |
+| Número del ticket | **Un único código, igual en el TPV y en PrestaShop**: 9 caracteres `<caja><año><número>`, p. ej. `A26000123` (caja A, 2026, nº 123). Se decide al cobrar y PrestaShop crea el pedido con esa misma referencia. |
 | Stock local 0 | **Avisar y permitir.** |
 | Pendientes de subir | **Indicador de sincronización + aviso al cerrar caja**, sin bloquear el cierre. |
 | Cupones de descuento | **No admitirlos sin conexión.** El resto de la venta sigue. |
@@ -36,16 +36,22 @@ Que la tienda pueda **cobrar, devolver y cambiar aunque PrestaShop no responda**
 ### 4.1 Venta
 - **V1.** Al cobrar, la venta se guarda en una sola transacción local: líneas con lo pagado, reparto efectivo/tarjeta, movimiento de caja, stock local, número de ticket de la serie del terminal y un registro de **salida pendiente** (outbox) con un `request_id` único.
 - **V2.** El ticket se imprime y el cajón se abre **sin esperar a PrestaShop**.
-- **V3.** La numeración es correlativa y sin huecos por terminal y año (`T<terminal>-<año>-NNNNNN`), con el mismo patrón que la serie R de abonos.
+- **V3.** El código del ticket es la **referencia definitiva del pedido** y tiene 9 caracteres, el máximo de `orders.reference` en PrestaShop 8.1.7:
+  - 1 letra de caja (`A` = caja 1, `B` = caja 2…);
+  - 2 cifras de año;
+  - 6 cifras correlativas sin huecos por caja y año.
+
+  Por ejemplo, `A26000123`. Lleva cifras, así que nunca coincide con las referencias de la web, que son 9 letras. Se imprime al momento en el texto y en el código de barras.
 - **V4.** Si el stock local de una línea es 0 o menos, se avisa al cajero y se permite vender.
 - **V5.** Un cupón de PrestaShop solo se acepta si PrestaShop responde en ese momento. Si no, se avisa y se cobra sin él.
 
 ### 4.2 Sincronización
 - **S1.** Tras cada operación se intenta subir enseguida. Una tarea del servidor reintenta lo pendiente **cada minuto**, con o sin TPV abierto.
 - **S2.** Las operaciones de un mismo pedido se suben **en orden**: la venta antes que su abono o su cambio.
-- **S3.** El módulo crea el pedido de forma **idempotente** por `request_id`. Reintentar nunca crea dos pedidos y devuelve el ya creado.
+- **S3.** El módulo crea el pedido con **esa misma referencia**, a través del gancho de PrestaShop `actionGenerateDocumentReference`. La referencia es también la clave de idempotencia: si ya existe un pedido con ella, el módulo lo devuelve en vez de crear otro.
 - **S4.** Errores temporales (red, PrestaShop caído): reintento con espera creciente. Rechazos definitivos (404 o 422, por ejemplo un producto borrado): la operación pasa a la **lista de incidencias**, sin tocar la venta local ni la caja.
-- **S5.** Al subir, se guardan en el TPV el `ps_order_id` y la referencia de PrestaShop. El ticket ya impreso no cambia.
+- **S5.** Al subir, se guarda en el TPV el `ps_order_id`. Si PrestaShop devolviera una referencia distinta (otro módulo que imponga la suya), se guarda también: la búsqueda la acepta y las reimpresiones la muestran como «Pedido web: XXXX». La unión nunca se pierde.
+- **S6.** Buscar por el código, en el TPV o en PrestaShop, encuentra el mismo ticket y el mismo pedido.
 
 ### 4.3 Devoluciones y cambios
 - **D1.** Se pueden hacer sin conexión, también sobre ventas aún no subidas. Las reglas del PRD de devoluciones no cambian (importes, motivos, plazo, reposición), salvo R21.
@@ -69,7 +75,9 @@ Que la tienda pueda **cobrar, devolver y cambiar aunque PrestaShop no responda**
   - `order_meta` pasa a tener clave local;
   - `ps_order_id` y referencia de PrestaShop quedan como columnas que pueden ir vacías.
 - **Devoluciones y cambios:** encolan su envío en lugar de llamar a PrestaShop en el momento.
-- **Módulo `tpvconnect` (0.5.0):** crear pedido idempotente por `request_id`.
+- **Módulo `tpvconnect` (0.5.0):**
+  - gancho `actionGenerateDocumentReference` para usar la referencia del TPV en los pedidos que vienen del TPV;
+  - creación de pedidos idempotente por esa referencia.
 - **Sincronizador:**
   - intento al terminar la petición;
   - comando `tpv:sync:outbox` cada minuto (cron o worker);
@@ -90,7 +98,8 @@ Que la tienda pueda **cobrar, devolver y cambiar aunque PrestaShop no responda**
 - **A4.** Se vende un producto borrado en PrestaShop: la operación aparece en incidencias y la caja local no cambia.
 - **A5.** Con PrestaShop parado, un cupón se rechaza con aviso y la venta sin cupón se cobra.
 - **A6.** Al cerrar caja con pendientes se ve el aviso y el cierre se permite.
-- **A7.** Dos terminales venden a la vez sin conexión: cada uno con su serie, sin huecos ni duplicados.
+- **A7.** Dos terminales venden a la vez sin conexión: cada una con su letra de caja, sin huecos ni duplicados.
+- **A8.** Una venta impresa como `A26000123` aparece en PrestaShop con la referencia `A26000123`, y buscar `A26000123` en el TPV abre ese ticket.
 
 ## 7. Riesgos
 
@@ -101,5 +110,5 @@ Que la tienda pueda **cobrar, devolver y cambiar aunque PrestaShop no responda**
 
 ## 8. Puntos abiertos
 
-- Que la gestoría valide la serie de facturas simplificadas por terminal (`T<n>`) y su relación con la serie R de abonos, que hoy es única.
+- Que la gestoría valide el formato de numeración por caja (`A26000123`) y su relación con la serie R de abonos, que hoy es única.
 - Cómo se ejecuta la tarea cada minuto en producción: cron del sistema o servicio worker.
