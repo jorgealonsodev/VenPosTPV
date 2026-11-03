@@ -56,7 +56,11 @@ enum Command {
     /// Muestra el estado del servicio, la conexión y las impresoras.
     Status,
     /// Lista las impresoras de este equipo.
-    ListPrinters,
+    ListPrinters {
+        /// Escribe solo los nombres de las colas (UTF-16LE con BOM, una por línea) para el instalador.
+        #[arg(long, hide = true, value_name = "FILE")]
+        names_file: Option<PathBuf>,
+    },
     /// Elige la impresora de tickets o de etiquetas (un modo por impresora).
     SetPrinter {
         #[arg(long, value_enum)]
@@ -78,6 +82,9 @@ enum Command {
     TestPrint {
         #[arg(long, value_enum, default_value = "ticket")]
         target: TargetArg,
+        /// Envía tal cual los bytes de este fichero, sin pasar por el servicio (pruebas de CI).
+        #[arg(long, hide = true, value_name = "FILE")]
+        bytes_file: Option<PathBuf>,
     },
     /// Instala el servicio (Windows: servicio; Linux: unidad systemd).
     Install,
@@ -168,8 +175,14 @@ fn dispatch(cmd: Command, paths: &Paths) -> Result<(), Failure> {
     match cmd {
         Command::Pair { code, server } => pair(paths, &code, &server),
         Command::Status => status(paths),
-        Command::ListPrinters => {
-            for p in SystemPrinter.list() {
+        Command::ListPrinters { names_file } => {
+            let printers = SystemPrinter.list();
+            if let Some(file) = names_file {
+                let names: Vec<&str> = printers.iter().filter_map(|p| queue_name(&p.destination)).collect();
+                return std::fs::write(&file, utf16_lines(&names))
+                    .map_err(|e| Failure::new(ExitCode::Other, format!("{}: {e}", file.display())));
+            }
+            for p in printers {
                 println!("{}\t{}", describe(&p.destination), p.detail);
             }
             Ok(())
@@ -195,7 +208,10 @@ fn dispatch(cmd: Command, paths: &Paths) -> Result<(), Failure> {
             };
             set_printer(paths, target.into(), dest)
         }
-        Command::TestPrint { target } => test_print(paths, target.into()),
+        Command::TestPrint { target, bytes_file } => match bytes_file {
+            Some(file) => print_bytes_file(paths, target.into(), &file),
+            None => test_print(paths, target.into()),
+        },
         Command::Install => install(paths),
         Command::Uninstall => uninstall(),
         Command::Version => {
@@ -217,6 +233,27 @@ fn describe(d: &Destination) -> String {
         Destination::Device { path } => format!("--device {}", path.display()),
         Destination::Network { address } => format!("--network {address}"),
     }
+}
+
+/// The queue name a system printer is chosen by (`set-printer --spooler/--cups`).
+fn queue_name(d: &Destination) -> Option<&str> {
+    match d {
+        Destination::Spooler { printer } => Some(printer),
+        Destination::Cups { queue } => Some(queue),
+        _ => None,
+    }
+}
+
+/// UTF-16LE with BOM, CRLF after each line: what NSIS `FileReadUTF16LE`
+/// reads without mangling accented printer names.
+fn utf16_lines(lines: &[&str]) -> Vec<u8> {
+    let mut out = vec![0xFF, 0xFE];
+    for line in lines {
+        for unit in line.encode_utf16().chain("\r\n".encode_utf16()) {
+            out.extend(unit.to_le_bytes());
+        }
+    }
+    out
 }
 
 fn pair(paths: &Paths, code: &str, server: &str) -> Result<(), Failure> {
@@ -385,6 +422,23 @@ fn test_print(paths: &Paths, target: Target) -> Result<(), Failure> {
     Ok(())
 }
 
+/// CI byte check (AC9): the file's bytes, unchanged, to the chosen printer.
+fn print_bytes_file(paths: &Paths, target: Target, file: &std::path::Path) -> Result<(), Failure> {
+    let data = std::fs::read(file).map_err(|e| Failure::new(ExitCode::Other, format!("{}: {e}", file.display())))?;
+    let cfg = Config::load(&paths.config_file)?;
+    let dest = cfg.destinations.get(target).ok_or_else(|| {
+        Failure::new(
+            ExitCode::Printer,
+            format!("no hay impresora de {} elegida", target.as_str()),
+        )
+    })?;
+    SystemPrinter
+        .write_raw(dest, "VenPos prueba", &data)
+        .map_err(|e| Failure::new(ExitCode::Printer, e.to_string()))?;
+    println!("Enviados {} bytes", data.len());
+    Ok(())
+}
+
 #[cfg(windows)]
 fn install(paths: &Paths) -> Result<(), Failure> {
     windows_svc::install(paths)
@@ -403,4 +457,20 @@ fn uninstall() -> Result<(), Failure> {
 #[cfg(not(windows))]
 fn uninstall() -> Result<(), Failure> {
     linux_svc::uninstall()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::utf16_lines;
+
+    #[test]
+    fn names_file_is_utf16le_with_bom_and_crlf() {
+        assert_eq!(utf16_lines(&[]), vec![0xFF, 0xFE]);
+        assert_eq!(
+            utf16_lines(&["Añ", "B"]),
+            vec![
+                0xFF, 0xFE, b'A', 0, 0xF1, 0, b'\r', 0, b'\n', 0, b'B', 0, b'\r', 0, b'\n', 0
+            ]
+        );
+    }
 }

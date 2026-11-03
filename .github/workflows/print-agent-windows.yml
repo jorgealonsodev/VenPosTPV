@@ -1,0 +1,220 @@
+# Print agent (agent/): Rust tests, Windows installer and its acceptance test
+# (PRD I1, AC9, §6 Pruebas): silent install, service RUNNING, exact RAW
+# bytes through the Windows spooler to a "Generic / Text Only" printer whose
+# port is a file, reinstall over the running service, silent uninstall.
+name: print-agent
+
+on:
+  push:
+    paths:
+      - "agent/**"
+      - ".github/workflows/print-agent-windows.yml"
+  pull_request:
+    paths:
+      - "agent/**"
+      - ".github/workflows/print-agent-windows.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: print-agent-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    name: Linux tests and cross-build (build.sh)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install mingw-w64 (Windows gnu cross-build)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu,x86_64-pc-windows-gnu
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: agent
+      - run: cargo test --workspace --locked
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo clippy --workspace --target x86_64-pc-windows-gnu --locked -- -D warnings
+      - run: ./build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: venpos-agent-gnu-builds
+          path: agent/dist/
+          if-no-files-found: error
+
+  windows:
+    name: Windows installer (silent install, service, exact RAW bytes)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: agent
+    env:
+      CI_DIR: C:\venpos-ci
+      CI_PRINTER: VenPosCI
+      INSTALL_DIR: C:\Program Files\VenPos Agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: agent
+
+      - name: cargo test
+        run: cargo test --workspace --locked
+      - name: cargo build --release
+        run: cargo build --release --locked -p venpos-agent -p venpos-agent-tray
+
+      - name: Stage binaries and read the version
+        run: |
+          New-Item -ItemType Directory -Force dist\windows-x86_64 | Out-Null
+          Copy-Item target\release\venpos-agent.exe, target\release\venpos-agent-tray.exe dist\windows-x86_64\
+          $version = (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages |
+            Where-Object name -eq 'venpos-agent' | Select-Object -ExpandProperty version
+          if (-not $version) { throw 'no version in cargo metadata' }
+          "AGENT_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          & dist\windows-x86_64\venpos-agent.exe version
+
+      - name: Install NSIS
+        run: choco install nsis -y --no-progress
+
+      - name: Build the installer
+        run: |
+          $makensis = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'
+          & $makensis /V3 "/DVERSION=$env:AGENT_VERSION" installer\venpos-agent.nsi
+          if ($LASTEXITCODE -ne 0) { throw "makensis exit $LASTEXITCODE" }
+          $setup = Resolve-Path "dist\VenPosAgent-$env:AGENT_VERSION-setup.exe"
+          "SETUP=$setup" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Get-Item $setup | Format-List Name, Length, VersionInfo
+
+      - name: Add a "Generic / Text Only" printer that prints to a file
+        run: |
+          Start-Service Spooler
+          New-Item -ItemType Directory -Force $env:CI_DIR | Out-Null
+          # The spooler and the service account must be able to write the output.
+          icacls $env:CI_DIR /grant '*S-1-1-0:(OI)(CI)F' | Out-Null
+          $port = Join-Path $env:CI_DIR 'out.prn'
+          Add-PrinterDriver -Name 'Generic / Text Only'
+          Add-PrinterPort -Name $port
+          Add-Printer -Name $env:CI_PRINTER -DriverName 'Generic / Text Only' -PortName $port
+          Get-Printer -Name $env:CI_PRINTER | Format-List Name, DriverName, PortName, PrinterStatus
+
+      - name: Silent install without a code (unpaired)
+        run: |
+          $p = Start-Process -FilePath $env:SETUP -ArgumentList "/S /PRINTER=$env:CI_PRINTER" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "installer exit $($p.ExitCode)" }
+          foreach ($f in 'venpos-agent.exe', 'venpos-agent-tray.exe', 'uninstall.exe') {
+            if (-not (Test-Path (Join-Path $env:INSTALL_DIR $f))) { throw "missing $f" }
+          }
+          $run = Get-ItemPropertyValue 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Run' -Name VenPosAgentTray
+          if ($run -ne "`"$env:INSTALL_DIR\venpos-agent-tray.exe`"") { throw "Run key: $run" }
+          $un = Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\VenPosAgent'
+          if ($un.DisplayVersion -ne $env:AGENT_VERSION) { throw "DisplayVersion: $($un.DisplayVersion)" }
+
+      - name: Service is RUNNING (sc query)
+        run: |
+          for ($i = 0; $i -lt 30; $i++) {
+            $q = sc.exe query VenPosAgent | Out-String
+            if ($q -match 'STATE\s+:\s+4\s+RUNNING') { break }
+            Start-Sleep -Seconds 1
+          }
+          Write-Output $q
+          if ($q -notmatch 'RUNNING') { throw 'VenPosAgent is not RUNNING' }
+          sc.exe qc VenPosAgent
+          $status = & "$env:INSTALL_DIR\venpos-agent.exe" status | Out-String
+          Write-Output $status
+          if ($status -notmatch 'Servicio: en marcha') { throw 'status does not reach the service' }
+          if ($status -notmatch "Impresora ticket: $env:CI_PRINTER") { throw 'ticket printer not chosen' }
+
+      - name: Test page through the service reaches the printer
+        run: |
+          $out = Join-Path $env:CI_DIR 'out.prn'
+          Remove-Item $out -ErrorAction SilentlyContinue
+          & "$env:INSTALL_DIR\venpos-agent.exe" test-print --target ticket
+          if ($LASTEXITCODE -ne 0) { throw "test-print exit $LASTEXITCODE" }
+          for ($i = 0; $i -lt 30 -and -not ((Test-Path $out) -and -not (Get-PrintJob -PrinterName $env:CI_PRINTER))); $i++) {
+            Start-Sleep -Seconds 1
+          }
+          $got = [IO.File]::ReadAllBytes($out)
+          $head = [BitConverter]::ToString($got[0..4])
+          Write-Output "test page: $($got.Length) bytes, starts $head"
+          # ESC @, ESC t 16 (WPC1252), as agent-core/src/escpos.rs test_page.
+          if ($head -ne '1B-40-1B-74-10') { throw "unexpected start $head" }
+
+      - name: Exact RAW bytes through the spooler (test-print --bytes-file)
+        run: |
+          $out = Join-Path $env:CI_DIR 'out.prn'
+          Remove-Item $out -ErrorAction SilentlyContinue
+          # ESC @, ESC t 16, "VenPos CI año 2026 €" in WPC1252, NUL, 0x80, 0xFF,
+          # CR LF, ESC d 4, GS V 66 0: control bytes and high bytes must pass untouched.
+          [byte[]]$expected = @(0x1B, 0x40, 0x1B, 0x74, 0x10) +
+            [Text.Encoding]::ASCII.GetBytes('VenPos CI a') + @(0xF1) +
+            [Text.Encoding]::ASCII.GetBytes('o 2026 ') + @(0x80, 0x0A, 0x00, 0x80, 0xFF, 0x0D, 0x0A,
+            0x1B, 0x64, 0x04, 0x1D, 0x56, 0x42, 0x00)
+          $in = Join-Path $env:CI_DIR 'expected.bin'
+          [IO.File]::WriteAllBytes($in, $expected)
+          & "$env:INSTALL_DIR\venpos-agent.exe" test-print --target ticket --bytes-file $in
+          if ($LASTEXITCODE -ne 0) { throw "test-print --bytes-file exit $LASTEXITCODE" }
+          for ($i = 0; $i -lt 30 -and -not ((Test-Path $out) -and -not (Get-PrintJob -PrinterName $env:CI_PRINTER))); $i++) {
+            Start-Sleep -Seconds 1
+          }
+          $got = [IO.File]::ReadAllBytes($out)
+          $e = [BitConverter]::ToString($expected)
+          $g = [BitConverter]::ToString($got)
+          Write-Output "expected: $e"
+          Write-Output "got:      $g"
+          if ($g -ne $e) { throw 'printed bytes differ from the RAW input' }
+
+      - name: Reinstall over the running service (upgrade path)
+        run: |
+          $p = Start-Process -FilePath $env:SETUP -ArgumentList "/S /PRINTER=$env:CI_PRINTER" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "reinstall exit $($p.ExitCode)" }
+          for ($i = 0; $i -lt 30; $i++) {
+            if ((Get-Service VenPosAgent).Status -eq 'Running') { break }
+            Start-Sleep -Seconds 1
+          }
+          sc.exe query VenPosAgent
+          if ((Get-Service VenPosAgent).Status -ne 'Running') { throw 'not running after reinstall' }
+
+      - name: Silent uninstall removes the service
+        run: |
+          # _?= keeps the uninstaller in place so -Wait really waits.
+          $p = Start-Process -FilePath "$env:INSTALL_DIR\uninstall.exe" -ArgumentList "/S /PURGE _?=$env:INSTALL_DIR" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "uninstall exit $($p.ExitCode)" }
+          for ($i = 0; $i -lt 30; $i++) {
+            sc.exe query VenPosAgent | Out-Null
+            if ($LASTEXITCODE -eq 1060) { break }
+            Start-Sleep -Seconds 1
+          }
+          if ($LASTEXITCODE -ne 1060) { throw "service still present (sc exit $LASTEXITCODE)" }
+          if (Test-Path "$env:INSTALL_DIR\venpos-agent.exe") { throw 'agent exe still installed' }
+          if (Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Run' -Name VenPosAgentTray -ErrorAction SilentlyContinue) { throw 'Run key left' }
+          if (Test-Path "$env:ProgramData\VenPos Agent") { throw '/PURGE left %ProgramData%\VenPos Agent' }
+          # sc.exe left 1060 in LASTEXITCODE; the runner would report it as the step result.
+          exit 0
+
+      - name: Service log on failure
+        if: failure()
+        run: Get-Content "$env:ProgramData\VenPos Agent\logs\agent.log*" -ErrorAction SilentlyContinue
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: venpos-agent-windows
+          path: |
+            agent/dist/VenPosAgent-*-setup.exe
+            agent/dist/windows-x86_64/*.exe
+          if-no-files-found: warn

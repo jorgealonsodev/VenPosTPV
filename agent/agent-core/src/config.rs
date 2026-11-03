@@ -80,7 +80,10 @@ impl Destination {
                 }
             }
             Destination::Device { path } => {
-                let ok = path.is_absolute()
+                // `has_root` equals `is_absolute` on Unix; on Windows it keeps
+                // the same rule for `/dev/...` (no drive letter), so the
+                // Windows test run agrees with Linux.
+                let ok = path.has_root()
                     && path.starts_with("/dev/")
                     && !path.components().any(|c| matches!(c, std::path::Component::ParentDir));
                 if !ok {

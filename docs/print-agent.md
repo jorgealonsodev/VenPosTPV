@@ -2,6 +2,89 @@
 
 El agente es un programa pequeño que se instala en el ordenador de cada caja. Se conecta al TPV por HTTPS, recoge los trabajos de su caja (tickets, apertura del cajón, etiquetas) y los envía a las impresoras de la tienda. Así el TPV puede estar en Plesk y seguir imprimiendo en la tienda. La especificación completa está en `docs/prd/agente-impresion.md` (v2).
 
+## Qué es
+
+El agente tiene dos partes:
+
+- **El servicio «VenPos Agent»**: trabaja solo, sin ventana, desde que se enciende el ordenador. Es el que imprime.
+- **El icono de la bandeja** (junto al reloj): solo enseña cómo va. Verde: conectado. Ámbar: sin conexión con el TPV. Rojo: la impresora tiene un problema. Si cierras el icono, el servicio sigue imprimiendo.
+
+El agente nunca abre el cajón por su cuenta: solo cuando el TPV lo pide al cobrar.
+
+## Requisitos
+
+- Windows 10 u 11 de 64 bits (o Linux, ver más abajo).
+- La impresora instalada en Windows **para todo el equipo**, con un driver **v3** o con el driver **«Generic / Text Only»**. Los driver v4 a veces no dejan imprimir tickets. Si la impresora no imprime con su driver, instálala con «Generic / Text Only».
+- La dirección del TPV (empieza por `https://`) y acceso de administrador en Ajustes → Cajas para sacar el código.
+
+## Instalar en Windows
+
+1. Descarga `VenPosAgent-<versión>-setup.exe` y ábrelo con doble clic.
+2. Windows avisará con **«Windows protegió su PC»** porque el instalador todavía no va firmado. Pulsa **Más información** y luego **Ejecutar de todas formas**. Si Windows pregunta si quieres permitir cambios en el equipo, pulsa **Sí**.
+3. Si el antivirus lo bloquea o lo pone en cuarentena, márcalo como permitido (es un programa nuevo y el antivirus no lo conoce todavía) y vuelve a abrirlo.
+4. **Conectar con el TPV**: escribe la dirección del TPV y el código de 6 cifras (ver «Emparejar» abajo) y pulsa Siguiente. Si sale un error, léelo: casi siempre es el código caducado (dura 10 minutos) o la dirección mal escrita. Si todavía no tienes el código, marca **«Emparejar más tarde»**.
+5. **Elegir impresoras**: elige la impresora de tickets y, si la tienes, la de etiquetas. Deja marcada **«Imprimir una página de prueba»**.
+6. Pulsa Instalar. Al terminar sale una hoja de prueba por la impresora de tickets y el icono aparece junto al reloj (puede estar escondido en la flechita «^»).
+
+El agente se instala en `C:\Program Files\VenPos Agent`. Su configuración y su registro están en `C:\ProgramData\VenPos Agent`.
+
+## Emparejar la caja
+
+1. En el TPV, entra en **Ajustes → Cajas** y genera el código de emparejado de la caja de ese ordenador.
+2. Escríbelo en el instalador antes de 10 minutos. Cada código sirve una sola vez.
+3. En Ajustes → Cajas la caja pasa a «Conectado».
+
+Si elegiste «Emparejar más tarde», vuelve a abrir el instalador (no borra nada) y escribe el código, o en una ventana de «Símbolo del sistema» abierta como administrador:
+
+```
+"C:\Program Files\VenPos Agent\venpos-agent.exe" pair 123456 --server https://tu-tpv
+```
+
+Para pasar el agente a otra caja o si en el icono pone «Vuelve a conectar el agente», genera un código nuevo y empareja otra vez.
+
+## Elegir o cambiar las impresoras
+
+Haz clic con el botón derecho en el icono → **Elegir impresoras** → **Tickets** o **Etiquetas**, y marca la impresora. Para comprobarla: botón derecho → **Imprimir prueba**.
+
+## Comprobar el estado
+
+- Pasa el ratón por encima del icono o ábrelo con el botón derecho: dice si está conectado y cómo están las impresoras.
+- En el TPV, Ajustes → Cajas muestra si el agente está conectado y si la impresora tiene algún problema.
+- Desde «Símbolo del sistema»: `"C:\Program Files\VenPos Agent\venpos-agent.exe" status`.
+
+## No imprime: qué hago
+
+Ve paso a paso y para en cuanto vuelva a imprimir:
+
+1. **¿La impresora está encendida, con papel y la tapa cerrada?** Apágala y enciéndela.
+2. **¿El icono está rojo?** El problema es la impresora: mira en Windows, Configuración → Impresoras, que no esté «en pausa» ni «sin conexión», y borra los documentos atascados en la cola.
+3. **¿El icono está ámbar?** No hay conexión con el TPV: comprueba Internet abriendo el TPV en el navegador. El agente vuelve a conectar solo en cuanto hay red.
+4. **¿No ves el icono?** Puede estar escondido en la flechita «^». Si no está, reinicia el ordenador; el servicio y el icono arrancan solos.
+5. **Botón derecho en el icono → Imprimir prueba.** Si la prueba sale pero los tickets no, revisa en Ajustes → Cajas que la caja usa «Agente de impresión».
+6. **Si en el icono pone «Vuelve a conectar el agente»**: genera un código nuevo en Ajustes → Cajas y empareja otra vez.
+7. **Si cambiaste el nombre de la impresora en Windows**, elígela de nuevo desde el icono (Ajustes mostrará «No encontrada»).
+8. **Mientras tanto, cobra igual**: el TPV ofrece el ticket en PDF si no se imprime.
+9. Si nada funciona: botón derecho en el icono → **Ver registro**, y envía ese fichero a quien te da soporte.
+
+## Instalar en Linux (fase 1)
+
+En Linux no hay instalador con ventanas ni icono todavía: se instala con órdenes. Con el binario `venpos-agent` y el script `agent/packaging/linux/install.sh` en la misma carpeta:
+
+```
+sudo ./install.sh ./venpos-agent --server https://tu-tpv --code 123456
+sudo venpos-agent list-printers
+sudo venpos-agent set-printer --target ticket --cups Epson_TM-T20II   # o --device /dev/usb/lp0
+sudo venpos-agent test-print
+sudo venpos-agent status
+```
+
+El script copia el programa a `/usr/local/bin`, crea el usuario `venpos-agent` (grupo `lp`) y deja el servicio `venpos-agent` en marcha con systemd. Sin `--code` se instala sin emparejar; empareja después con `sudo venpos-agent pair <código> --server https://tu-tpv`. El registro se ve con `journalctl -u venpos-agent` y en `/var/log/venpos-agent`.
+
+## Desinstalar
+
+- **Windows**: Configuración → Aplicaciones → **VenPos Agent** → Desinstalar. Al final pregunta si quieres borrar también la configuración, la clave de emparejado y el registro; contesta **No** si vas a reinstalarlo en la misma caja. Después, en Ajustes → Cajas, desconecta el agente de esa caja.
+- **Linux**: `sudo venpos-agent uninstall` y `sudo rm /usr/local/bin/venpos-agent`. La configuración queda en `/etc/venpos-agent`; bórrala si no vas a volver a usarlo.
+
 ## Puesta en marcha en el servidor
 
 1. Aplicar la migración `Version00000037PrintAgent` (`php bin/console doctrine:migrations:migrate`). Crea `print_job`, `print_agent`, `agent_pairing`, `drawer_audit` y `rate_limit`, y añade el tipo de impresora `agent`. Hasta aplicarla, las cajas con CUPS, red o PDF funcionan igual que antes; las rutas del agente responden 503 `print_agent_unavailable`.

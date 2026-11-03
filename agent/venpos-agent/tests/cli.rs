@@ -181,3 +181,87 @@ fn set_printer_and_status_without_service() {
     assert!(text.contains("Impresora ticket: --cups Epson_TM-T20II"), "{text}");
     assert!(text.contains("Impresora label: (sin elegir)"), "{text}");
 }
+
+#[test]
+fn test_print_bytes_file_sends_the_exact_bytes() {
+    let d = dir("bytes");
+    let dd = d.to_str().unwrap();
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = format!("127.0.0.1:{}", l.local_addr().unwrap().port());
+    let h = std::thread::spawn(move || {
+        let (mut s, _) = l.accept().unwrap();
+        let mut got = Vec::new();
+        s.read_to_end(&mut got).unwrap();
+        got
+    });
+    let set = bin()
+        .args([
+            "--config-dir",
+            dd,
+            "set-printer",
+            "--target",
+            "ticket",
+            "--network",
+            &addr,
+        ])
+        .output()
+        .unwrap();
+    assert!(set.status.success(), "{}", String::from_utf8_lossy(&set.stderr));
+    let bytes: Vec<u8> = (0..=255u8).chain([0x1B, 0x40, 0x00, 0x0A]).collect();
+    let file = d.join("in.bin");
+    std::fs::write(&file, &bytes).unwrap();
+
+    let out = bin()
+        .args(["--config-dir", dd, "test-print", "--bytes-file", file.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("Enviados 260 bytes"));
+    assert_eq!(h.join().unwrap(), bytes);
+}
+
+#[test]
+fn test_print_bytes_file_without_printer_exits_6() {
+    let d = dir("bytes-none");
+    let file = d.join("in.bin");
+    std::fs::write(&file, b"x").unwrap();
+    let out = bin()
+        .args([
+            "--config-dir",
+            d.to_str().unwrap(),
+            "test-print",
+            "--bytes-file",
+            file.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(6));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("no hay impresora de ticket elegida"));
+}
+
+#[test]
+fn list_printers_names_file_starts_with_utf16_bom_and_plain_list_still_works() {
+    let d = dir("names");
+    let file = d.join("names.txt");
+    let out = bin()
+        .args(["list-printers", "--names-file", file.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(out.stdout.is_empty());
+    let bytes = std::fs::read(&file).unwrap();
+    assert_eq!(&bytes[..2], &[0xFF, 0xFE]);
+    assert_eq!(bytes.len() % 2, 0);
+    // Previous behaviour: without the option it prints to stdout and writes nothing.
+    let plain = bin().arg("list-printers").output().unwrap();
+    assert!(plain.status.success());
+}
+
+#[test]
+fn hidden_options_stay_out_of_help() {
+    let out = bin().args(["test-print", "--help"]).output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("--target"), "{text}");
+    assert!(!text.contains("--bytes-file"), "{text}");
+}
