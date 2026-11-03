@@ -301,6 +301,13 @@ pub fn serve(handler: Arc<Handler>, name: &str) -> io::Result<std::thread::JoinH
         opts.security_descriptor(SecurityDescriptor::deserialize(&sddl)?)
     };
     let listener = opts.create_sync()?;
+    // The mode option is subject to the process umask (it differs between hosts and CI
+    // runners): set 0660 explicitly so only the service user and its group can connect.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(name, std::fs::Permissions::from_mode(0o660))?;
+    }
     std::thread::Builder::new().name("ipc".into()).spawn(move || {
         for conn in listener.incoming() {
             match conn {

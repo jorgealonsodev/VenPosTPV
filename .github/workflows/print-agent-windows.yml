@@ -145,8 +145,12 @@ jobs:
           Remove-Item $out -ErrorAction SilentlyContinue
           & "$env:INSTALL_DIR\venpos-agent.exe" test-print --target ticket
           if ($LASTEXITCODE -ne 0) { throw "test-print exit $LASTEXITCODE" }
-          for ($i = 0; $i -lt 30 -and -not ((Test-Path $out) -and -not (Get-PrintJob -PrinterName $env:CI_PRINTER))); $i++) {
+          $i = 0
+          while ($i -lt 30) {
+            $pending = @(Get-PrintJob -PrinterName $env:CI_PRINTER -ErrorAction SilentlyContinue)
+            if ((Test-Path $out) -and $pending.Count -eq 0) { break }
             Start-Sleep -Seconds 1
+            $i++
           }
           $got = [IO.File]::ReadAllBytes($out)
           $head = [BitConverter]::ToString($got[0..4])
@@ -168,8 +172,12 @@ jobs:
           [IO.File]::WriteAllBytes($in, $expected)
           & "$env:INSTALL_DIR\venpos-agent.exe" test-print --target ticket --bytes-file $in
           if ($LASTEXITCODE -ne 0) { throw "test-print --bytes-file exit $LASTEXITCODE" }
-          for ($i = 0; $i -lt 30 -and -not ((Test-Path $out) -and -not (Get-PrintJob -PrinterName $env:CI_PRINTER))); $i++) {
+          $i = 0
+          while ($i -lt 30) {
+            $pending = @(Get-PrintJob -PrinterName $env:CI_PRINTER -ErrorAction SilentlyContinue)
+            if ((Test-Path $out) -and $pending.Count -eq 0) { break }
             Start-Sleep -Seconds 1
+            $i++
           }
           $got = [IO.File]::ReadAllBytes($out)
           $e = [BitConverter]::ToString($expected)
