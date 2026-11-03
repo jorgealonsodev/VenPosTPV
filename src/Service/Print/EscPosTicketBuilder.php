@@ -6,6 +6,7 @@ namespace VenPosTPV\Service\Print;
 
 use Mike42\Escpos\CapabilityProfile;
 use Mike42\Escpos\PrintConnectors\PrintConnector;
+use Mike42\Escpos\GdEscposImage;
 use Mike42\Escpos\Printer;
 
 class EscPosTicketBuilder
@@ -66,6 +67,10 @@ class EscPosTicketBuilder
 
         // Header
         $printer->setJustification(Printer::JUSTIFY_CENTER);
+        $logo = $this->logoImage($ticketData->ticketLogo);
+        if ($logo !== null) {
+            $printer->bitImage($logo);
+        }
         $printer->selectPrintMode(Printer::MODE_DOUBLE_HEIGHT | Printer::MODE_DOUBLE_WIDTH | Printer::MODE_EMPHASIZED);
         $printer->text($this->sanitize($ticketData->storeName) . "\n");
         $printer->selectPrintMode(Printer::MODE_EMPHASIZED);
@@ -173,6 +178,48 @@ class EscPosTicketBuilder
         $printer->close();
 
         return $connector->getData();
+    }
+
+    /** Widest logo, in printer dots: about 48 mm on the 203 dpi, 80 mm paper. */
+    private const LOGO_MAX_WIDTH_DOTS = 384;
+
+    /**
+     * Turns the terminal's logo (a data: URI uploaded in Settings) into a printable
+     * raster image: transparency flattened on white and scaled to the paper. A logo
+     * that cannot be read is skipped so the ticket always prints.
+     */
+    private function logoImage(?string $dataUri): ?GdEscposImage
+    {
+        if ($dataUri === null || !\function_exists('imagecreatefromstring')
+            || !preg_match('#^data:image/(?:png|jpe?g|gif|webp);base64,(.+)$#s', $dataUri, $m)) {
+            return null;
+        }
+
+        try {
+            $bytes = base64_decode($m[1], true);
+            $source = $bytes !== false ? @imagecreatefromstring($bytes) : false;
+            if ($source === false) {
+                return null;
+            }
+
+            $width = imagesx($source);
+            $height = imagesy($source);
+            $targetWidth = min(self::LOGO_MAX_WIDTH_DOTS, $width);
+            $targetHeight = max(1, (int) round($height * $targetWidth / $width));
+
+            $canvas = imagecreatetruecolor($targetWidth, $targetHeight);
+            imagefill($canvas, 0, 0, imagecolorallocate($canvas, 255, 255, 255));
+            imagecopyresampled($canvas, $source, 0, 0, 0, 0, $targetWidth, $targetHeight, $width, $height);
+
+            $image = new GdEscposImage();
+            // mike42 documents a GD resource; since PHP 8 GD returns GdImage objects, which it accepts.
+            /** @phpstan-ignore argument.type */
+            $image->readImageFromGdResource($canvas);
+
+            return $image;
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     private function sanitize(string $text): string

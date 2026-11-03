@@ -290,4 +290,50 @@ final class EscPosTicketBuilderTest extends TestCase
         $this->assertStringContainsString($qr, $both);
         $this->assertStringContainsString($barcode, $both);
     }
+
+    private function withLogo(?string $logo): TicketData
+    {
+        $t = $this->createTicketData();
+
+        return new TicketData(
+            orderId: $t->orderId, reference: $t->reference, storeName: $t->storeName, storeAddress: $t->storeAddress,
+            ticketHeader: $t->ticketHeader, ticketFooter: $t->ticketFooter, ticketLogo: $logo, ticketWidthPx: $t->ticketWidthPx,
+            date: $t->date, cashierName: $t->cashierName, lines: $t->lines, subtotal: $t->subtotal, tax: $t->tax, total: $t->total,
+            paymentMethod: $t->paymentMethod, amountTendered: $t->amountTendered, changeDue: $t->changeDue, verificationUrl: $t->verificationUrl,
+        );
+    }
+
+    private function pngDataUri(int $width, int $height, bool $transparent): string
+    {
+        $img = imagecreatetruecolor($width, $height);
+        imagesavealpha($img, true);
+        imagefill($img, 0, 0, imagecolorallocatealpha($img, 0, 0, 0, $transparent ? 127 : 0));
+        imagefilledrectangle($img, (int) ($width / 4), (int) ($height / 4), (int) ($width * 3 / 4), (int) ($height * 3 / 4), imagecolorallocate($img, 0, 0, 0));
+        ob_start();
+        imagepng($img);
+
+        return 'data:image/png;base64,' . base64_encode((string) ob_get_clean());
+    }
+
+    public function testLogoIsPrintedAsARasterImageScaledToThePaper(): void
+    {
+        $out = $this->createBuilder()->build($this->withLogo($this->pngDataUri(1254, 1254, true)));
+
+        // GS v 0: raster bit image. xL xH is the width in bytes, at most 384 dots = 48 bytes.
+        $pos = strpos($out, "\x1dv0");
+        $this->assertNotFalse($pos, 'the logo is sent as a raster image');
+        $widthBytes = ord($out[$pos + 4]) + 256 * ord($out[$pos + 5]);
+        $this->assertSame(48, $widthBytes);
+        $this->assertLessThan(strpos($out, 'Mi Tienda'), $pos, 'logo goes above the store name');
+    }
+
+    public function testInvalidOrMissingLogoNeverBreaksTheTicket(): void
+    {
+        foreach ([null, '', 'data:image/png;base64,not-an-image', '/uploads/logo.png'] as $logo) {
+            $out = $this->createBuilder()->build($this->withLogo($logo));
+
+            $this->assertStringNotContainsString("\x1dv0", $out);
+            $this->assertStringContainsString('Mi Tienda', $out);
+        }
+    }
 }
