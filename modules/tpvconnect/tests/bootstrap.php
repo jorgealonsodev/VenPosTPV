@@ -303,3 +303,6 @@ require_once __DIR__ . '/../classes/CouponCheckout.php';
 if (is_file(__DIR__ . '/../classes/RefundProcessor.php')) {
     require_once __DIR__ . '/../classes/RefundProcessor.php';
 }
+if (is_file(__DIR__ . '/../classes/RestockProcessor.php')) {
+    require_once __DIR__ . '/../classes/RestockProcessor.php';
+}

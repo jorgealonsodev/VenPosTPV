@@ -30,6 +30,70 @@ final class RefundControllerTest extends TestCase
         );
     }
 
+    public function testNoTicketRefundRequiresASession(): void
+    {
+        $response = $this->createController()->refundWithoutTicket(SessionRequest::json(['method' => 'cash']));
+
+        $this->assertSame(Response::HTTP_UNAUTHORIZED, $response->getStatusCode());
+    }
+
+    public function testNoTicketRefundPassesTheBodyAndShopAndPrintsTheCreditNote(): void
+    {
+        $lines = [['product_id' => 3, 'id_product_attribute' => 7, 'quantity' => 1, 'restock' => false]];
+        $refundService = $this->createMock(RefundService::class);
+        $refundService->expects($this->once())->method('processNoTicketRefund')
+            ->with(1, 2, $lines, 'voucher', 'other', 'Sin caja', false)
+            ->willReturn(['refund_id' => 8, 'credit_note_number' => 'R2026-000008', 'refunded_amount' => 30.25, 'voucher_code' => 'VALE2345', 'saga_error' => false]);
+        $printer = $this->createMock(PrinterService::class);
+        $printer->expects($this->once())->method('printRefundTicket')->with(8)->willReturn('printed');
+
+        $response = $this->createController($refundService, printer: $printer)->refundWithoutTicket(SessionRequest::json(
+            ['lines' => $lines, 'method' => 'voucher', 'reason_code' => 'other', 'reason_text' => 'Sin caja', 'price' => 0.01],
+            ['user_id' => 1, 'shop_id' => 2]
+        ));
+
+        $this->assertSame(Response::HTTP_OK, $response->getStatusCode());
+        $data = json_decode((string) $response->getContent(), true)['data'];
+        $this->assertSame('VALE2345', $data['voucher_code']);
+        $this->assertSame('printed', $data['print_status']);
+    }
+
+    public function testNoTicketRefundMapsErrorsLikeRefundsWithTicket(): void
+    {
+        foreach ([[new \VenPosTPV\Service\Cash\Exception\NoOpenCashSessionException(), 409, false], [RefundException::validationFailed('Choose cash, card or voucher'), 422, false], [RefundException::conflict('voucher unknown'), 409, false], [RefundException::psUnavailable('down'), 502, true]] as [$error, $status, $retry]) {
+            $refundService = $this->createMock(RefundService::class);
+            $refundService->method('processNoTicketRefund')->willThrowException($error);
+
+            $response = $this->createController($refundService)->refundWithoutTicket(SessionRequest::json(['lines' => [], 'method' => 'bizum', 'card_confirmed' => 'yes'], ['user_id' => 1]));
+
+            $this->assertSame($status, $response->getStatusCode());
+            $this->assertSame($retry, json_decode((string) $response->getContent(), true)['retry']);
+        }
+    }
+
+    public function testNoTicketRefundIgnoresNonArrayLinesAndNonBooleanConfirmation(): void
+    {
+        $refundService = $this->createMock(RefundService::class);
+        $refundService->expects($this->once())->method('processNoTicketRefund')
+            ->with(1, 0, [], 'card', '', '', false)
+            ->willThrowException(RefundException::validationFailed('Select at least one product'));
+
+        $response = $this->createController($refundService)->refundWithoutTicket(SessionRequest::json(['lines' => 'x', 'method' => 'card', 'card_confirmed' => 'true'], ['user_id' => 1]));
+
+        $this->assertSame(Response::HTTP_UNPROCESSABLE_ENTITY, $response->getStatusCode());
+    }
+
+    public function testPendingNoTicketRefundsAreListedForRetry(): void
+    {
+        $refundService = $this->createMock(RefundService::class);
+        $refundService->method('pendingNoTicketRefunds')->willReturn([['id' => 5, 'total' => 12.5, 'method' => 'voucher', 'created_at' => '2026-11-03 10:00:00', 'error' => null, 'voucher_unknown' => true]]);
+
+        $this->assertSame(Response::HTTP_UNAUTHORIZED, $this->createController($refundService)->pendingWithoutTicket(SessionRequest::json([]))->getStatusCode());
+        $response = $this->createController($refundService)->pendingWithoutTicket(SessionRequest::json([], ['user_id' => 1]));
+
+        $this->assertSame(5, json_decode((string) $response->getContent(), true)['data'][0]['id']);
+    }
+
     public function testRefundReturns401WithoutSession(): void
     {
         $response = $this->createController()->refund(SessionRequest::json(['ps_order_id' => 42]));

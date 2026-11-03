@@ -320,7 +320,11 @@ class RefundProcessor
 class PsRefundGateway implements RefundGateway
 {
     private const LOCK_WAIT_SECONDS = 5;
-    private const REQUEST_KEY_PREFIX = 'TPVCONNECT_RFQ_';
+
+    /** @param string $requestKeyPrefix configuration-name prefix of stored request results */
+    public function __construct(private readonly string $requestKeyPrefix = 'TPVCONNECT_RFQ_')
+    {
+    }
 
     public function loadOrder(int $orderId): ?array
     {
@@ -387,7 +391,7 @@ class PsRefundGateway implements RefundGateway
         // Read the table directly, uncached: Configuration::get() serves a per-request
         // cache that cannot see a result written by a concurrent request.
         $stored = Db::getInstance()->getValue(
-            'SELECT `value` FROM `' . _DB_PREFIX_ . "configuration` WHERE `name` = '" . pSQL(self::REQUEST_KEY_PREFIX . md5($requestId)) . "'",
+            'SELECT `value` FROM `' . _DB_PREFIX_ . "configuration` WHERE `name` = '" . pSQL($this->requestKeyPrefix . md5($requestId)) . "'",
             false
         );
         if (!is_string($stored) || $stored === '') {
@@ -402,7 +406,7 @@ class PsRefundGateway implements RefundGateway
     {
         // html=true: otherwise pSQL() strip_tags() the JSON and a '<' in an error
         // message would truncate it, breaking the replay.
-        if (!Configuration::updateGlobalValue(self::REQUEST_KEY_PREFIX . md5($requestId), json_encode($result), true)) {
+        if (!Configuration::updateGlobalValue($this->requestKeyPrefix . md5($requestId), json_encode($result), true)) {
             throw new RuntimeException('Could not record the refund request result');
         }
     }

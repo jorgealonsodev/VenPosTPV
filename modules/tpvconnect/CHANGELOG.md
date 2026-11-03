@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0
+
+- Adds `POST /module/tpvconnect/restock` (HMAC, rate limited) for TPV refunds without a ticket: adds each returned quantity as a delta to the live stock of the exact product combination, with no order or credit slip.
+- Rejects unknown products or combinations (404) before any stock moves; 422 for an invalid body; 409 while the same request is in progress.
+- Requests carry a `request_id`; a retried request replays the first result (HTTP 200) instead of restocking twice. An interrupted request replays as an unconfirmed restock, never as a second one.
+- Additive contract: deploy before the TPV refunds-without-ticket change.
+
 ## 0.3.0
 
 - Fixes refunds: credit slips are created through the real `OrderSlip::create` contract for the amount the customer actually paid.

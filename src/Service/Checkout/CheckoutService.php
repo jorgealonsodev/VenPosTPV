@@ -9,6 +9,8 @@ use Symfony\Component\Messenger\MessageBusInterface;
 use VenPosTPV\Message\PrintTicketMessage;
 use VenPosTPV\Service\Cart\CartService;
 use VenPosTPV\Service\Cash\CashSessionService;
+use VenPosTPV\Service\Catalog\CatalogPriceResolver;
+use VenPosTPV\Service\Catalog\Exception\ProductNotInCatalogException;
 use VenPosTPV\Service\Checkout\Exception\CheckoutException;
 use VenPosTPV\Service\Print\PrinterService;
 
@@ -38,6 +40,7 @@ class CheckoutService
         private readonly MessageBusInterface $messageBus,
         private readonly PrinterService $printerService,
         private readonly bool $couponCheckoutEnabled = false,
+        private readonly ?CatalogPriceResolver $priceResolver = null,
     ) {
     }
 
@@ -553,68 +556,20 @@ class CheckoutService
     }
 
     /**
-     * Returns the authoritative unit price from the synced catalog.
-     *
-     * The tax-included price wins because it is what PrestaShop charges and books:
-     * `catalog_product.price_ttc` for a plain product, and
-     * `catalog_combination.price_ttc` (absolute, it already includes the product
-     * price and the impact) when a combination is selected. The previous behaviour
-     * (base `price` + `price_impact`) is kept only while the TTC value is NULL, so
-     * an un-synced price still allows the sale.
-     *
-     * Returns null only when the product row exists without a usable price.
+     * Returns the authoritative unit price from the synced catalog (see
+     * CatalogPriceResolver); null only when the product row exists without a usable price.
      *
      * @throws CheckoutException when the product has no row in `catalog_product`,
      *                           so the submitted price cannot be validated
      */
     private function resolveCatalogUnitPrice(int $productId, int $combinationId): ?float
     {
-        if ($productId <= 0) {
-            // Not a catalog lookup; validateStock() rejects this line with a 422.
-            return null;
-        }
-
-        $product = $this->conn->fetchAssociative('SELECT price, price_ttc FROM catalog_product WHERE id = ?', [$productId]);
-        if ($product === false) {
+        try {
+            return ($this->priceResolver ?? new CatalogPriceResolver($this->conn))->unitPrice($productId, $combinationId);
+        } catch (ProductNotInCatalogException $e) {
             // Fail closed: an unknown product must never fall back to the browser price.
-            throw CheckoutException::psValidationFailed(sprintf(
-                'Product %d is not in the synced catalog; the price cannot be validated',
-                $productId
-            ));
+            throw CheckoutException::psValidationFailed($e->getMessage());
         }
-
-        $basePrice = isset($product['price']) ? (float) $product['price'] : null;
-        $productTtcPrice = isset($product['price_ttc']) && is_numeric($product['price_ttc'])
-            ? (float) $product['price_ttc']
-            : null;
-
-        if ($combinationId <= 0) {
-            if ($productTtcPrice !== null) {
-                return round($productTtcPrice, 2);
-            }
-
-            return $basePrice !== null ? round($basePrice, 2) : null;
-        }
-
-        $combination = $this->conn->fetchAssociative(
-            'SELECT price_impact, price_ttc FROM catalog_combination WHERE id = ? AND id_product = ?',
-            [$combinationId, $productId]
-        );
-
-        if ($combination !== false && isset($combination['price_ttc']) && is_numeric($combination['price_ttc'])) {
-            // Absolute TTC price of the combination, not an impact.
-            return round((float) $combination['price_ttc'], 2);
-        }
-
-        if ($basePrice === null) {
-            return null;
-        }
-
-        $impact = $combination !== false && isset($combination['price_impact'])
-            ? (float) $combination['price_impact']
-            : 0.0;
-
-        return round($basePrice + $impact, 2);
     }
 
     /**

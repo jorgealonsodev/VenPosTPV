@@ -94,12 +94,14 @@ class TicketDataResolver
     /**
      * Credit note (abono) of a completed refund: the refunded lines and amounts,
      * the ticket it rectifies and how the money went back. VAT is the sale's VAT
-     * share applied to the refunded total.
+     * share applied to the refunded total. A refund without a ticket rectifies
+     * "Sin ticket", names its lines from the catalog and takes the VAT from the
+     * current catalog prices.
      */
     public function resolveRefund(int $refundId): ?TicketData
     {
         $refund = $this->connection->fetchAssociative(
-            "SELECT id, ps_order_id, terminal_id, user_id, credit_note_number, reason_code, reason_text, total, cash_amount, card_amount, created_at, completed_at
+            "SELECT id, ps_order_id, terminal_id, user_id, credit_note_number, reason_code, reason_text, total, cash_amount, card_amount, voucher_code, voucher_amount, created_at, completed_at
              FROM refund WHERE id = ? AND status = 'done'",
             [$refundId]
         );
@@ -107,7 +109,8 @@ class TicketDataResolver
             return null;
         }
 
-        $order = $this->connection->fetchAssociative(
+        $withoutTicket = $refund['ps_order_id'] === null;
+        $order = $withoutTicket ? false : $this->connection->fetchAssociative(
             'SELECT payment_breakdown, created_at FROM order_meta WHERE ps_order_id = ?',
             [(int) $refund['ps_order_id']]
         );
@@ -116,12 +119,19 @@ class TicketDataResolver
         $saleLines = \is_array($breakdown['lines'] ?? null) ? array_values($breakdown['lines']) : [];
 
         $lines = [];
-        foreach ($this->connection->fetchAllAssociative('SELECT line_index, quantity, amount FROM refund_line WHERE refund_id = ? ORDER BY id', [$refundId]) as $line) {
+        $catalogTax = 0.0;
+        foreach ($this->connection->fetchAllAssociative('SELECT line_index, product_id, id_product_attribute, quantity, amount FROM refund_line WHERE refund_id = ? ORDER BY id', [$refundId]) as $line) {
             $quantity = max(1, (int) $line['quantity']);
             $amount = round((float) $line['amount'], 2);
-            $saleLine = $line['line_index'] !== null ? ($saleLines[(int) $line['line_index']] ?? []) : [];
+            if ($withoutTicket) {
+                [$name, $taxShare] = $this->catalogLine((int) $line['product_id'], (int) $line['id_product_attribute']);
+                $catalogTax += $amount * $taxShare;
+            } else {
+                $saleLine = $line['line_index'] !== null ? ($saleLines[(int) $line['line_index']] ?? []) : [];
+                $name = isset($saleLine['name']) && \is_string($saleLine['name']) ? $saleLine['name'] : 'Producto';
+            }
             $lines[] = new TicketLine(
-                name: isset($saleLine['name']) && \is_string($saleLine['name']) ? $saleLine['name'] : 'Producto',
+                name: $name,
                 quantity: $quantity,
                 unitPrice: round($amount / $quantity, 2),
                 lineTotal: $amount,
@@ -131,7 +141,9 @@ class TicketDataResolver
         $total = round((float) $refund['total'], 2);
         $saleTotal = (float) ($breakdown['total'] ?? 0);
         $saleTax = (float) ($breakdown['tax'] ?? 0);
-        $tax = $saleTotal > 0 ? round($total * $saleTax / $saleTotal, 2) : 0.0;
+        $tax = $withoutTicket
+            ? round($catalogTax, 2)
+            : ($saleTotal > 0 ? round($total * $saleTax / $saleTotal, 2) : 0.0);
         $reference = isset($breakdown['reference']) && \is_string($breakdown['reference']) ? $breakdown['reference'] : '';
         $number = (string) $refund['credit_note_number'];
 
@@ -144,7 +156,7 @@ class TicketDataResolver
 
         $token = $this->verificationService->generateToken([
             'order_id' => (int) $refund['ps_order_id'],
-            'reference' => $reference,
+            'reference' => $withoutTicket ? $number : $reference,
             'total' => $saleTotal,
         ]);
         [$storeAddress, $ticketHeader, $ticketFooter, $ticketLogo, $ticketWidthPx] = $this->terminalPresentation((int) $refund['terminal_id']);
@@ -164,19 +176,63 @@ class TicketDataResolver
             subtotal: round($total - $tax, 2),
             tax: $tax,
             total: $total,
-            paymentMethod: (string) ($breakdown['payment_method'] ?? ''),
+            paymentMethod: $withoutTicket ? $this->noTicketMethod($refund) : (string) ($breakdown['payment_method'] ?? ''),
             amountTendered: 0.0,
             changeDue: 0.0,
             verificationUrl: $this->verificationService->buildVerificationUrl($token),
             creditNote: new CreditNoteInfo(
                 number: $number,
-                rectifiesReference: $reference,
+                rectifiesReference: $withoutTicket ? 'Sin ticket' : $reference,
                 rectifiesDate: $order !== false ? new \DateTimeImmutable((string) $order['created_at']) : null,
                 reason: $reason,
                 cashAmount: round((float) $refund['cash_amount'], 2),
                 cardAmount: round((float) $refund['card_amount'], 2),
+                voucherCode: isset($refund['voucher_code']) && $refund['voucher_code'] !== '' ? (string) $refund['voucher_code'] : null,
+                voucherAmount: $refund['voucher_amount'] !== null ? round((float) $refund['voucher_amount'], 2) : null,
             ),
         );
+    }
+
+    /** @param array<string, mixed> $refund */
+    private function noTicketMethod(array $refund): string
+    {
+        if ($refund['voucher_amount'] !== null) {
+            return 'voucher';
+        }
+
+        return (float) $refund['card_amount'] > 0 ? 'card' : 'cash';
+    }
+
+    /**
+     * Name of a refunded product as the catalog shows it ("Camisa (Talla: M)") and
+     * the VAT share of its current tax-included price (0 when the catalog lacks it).
+     *
+     * @return array{0: string, 1: float}
+     */
+    private function catalogLine(int $productId, int $attributeId): array
+    {
+        $product = $this->connection->fetchAssociative('SELECT name, price_ttc, price_net FROM catalog_product WHERE id = ?', [$productId]);
+        $name = $product !== false && \is_string($product['name']) && $product['name'] !== '' ? $product['name'] : 'Producto';
+        $ttc = $product !== false ? $product['price_ttc'] : null;
+        $net = $product !== false ? $product['price_net'] : null;
+
+        if ($attributeId > 0) {
+            $attributes = $this->connection->fetchAllAssociative(
+                'SELECT group_name, attribute_name FROM catalog_combination_attribute WHERE combination_id = ? ORDER BY group_name, attribute_name',
+                [$attributeId]
+            );
+            if ($attributes !== []) {
+                $name .= ' (' . implode(' / ', array_map(static fn (array $a): string => $a['group_name'] . ': ' . $a['attribute_name'], $attributes)) . ')';
+            }
+            $combination = $this->connection->fetchAssociative('SELECT price_ttc, price_net FROM catalog_combination WHERE id = ? AND id_product = ?', [$attributeId, $productId]);
+            if ($combination !== false && is_numeric($combination['price_ttc']) && is_numeric($combination['price_net'])) {
+                [$ttc, $net] = [$combination['price_ttc'], $combination['price_net']];
+            }
+        }
+
+        $taxShare = is_numeric($ttc) && is_numeric($net) && (float) $ttc > 0 ? max(0.0, 1 - (float) $net / (float) $ttc) : 0.0;
+
+        return [$name, $taxShare];
     }
 
     private function cashierName(int $userId): string

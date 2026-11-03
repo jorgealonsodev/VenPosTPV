@@ -70,6 +70,30 @@ final class CashReportByMethodMySqlIntegrationTest extends TestCase
         $this->connection->executeStatement('DELETE FROM session WHERE id = ?', [self::SESSION_ID]);
     }
 
+    public function testVoucherRefundsWithoutTicketAreTheirOwnLineInTheTotalAndNetButNeverInTheDrawer(): void
+    {
+        $c = $this->connection;
+        // Without ticket: 20 paid by voucher (done) and a pending voucher that must not count.
+        foreach ([['done', 20], ['pending', 50]] as $i => [$status, $amount]) {
+            $c->insert('refund', ['request_id' => 'cashreportv' . $i, 'status' => $status, 'ps_order_id' => null, 'terminal_id' => 1,
+                'session_id' => self::SESSION_ID, 'user_id' => 1, 'reason_code' => 'size', 'total' => $amount, 'cash_amount' => 0, 'card_amount' => 0, 'voucher_amount' => $amount]);
+        }
+        $_SESSION = ['shop_id' => 1, 'cash_session_id' => self::SESSION_ID];
+        $service = new CashSessionService($this->connection, $this->createMock(TerminalService::class), new RequestStack());
+
+        $report = $service->getXReport(1);
+        $totals = $report['totals'];
+
+        $this->assertSame(20.0, $totals['refunds_voucher']);
+        $this->assertSame(17.0, $totals['refunds_cash']);
+        $this->assertSame(15.0, $totals['refunds_card']);
+        $this->assertSame(52.0, $totals['refunds_total']);
+        $this->assertSame(88.0, $totals['net_total']);
+        $this->assertSame(4, $totals['counts']['refunds']);
+        $this->assertSame(143.0, $totals['expected_cash'], 'a voucher never leaves the drawer');
+        $this->assertSame(20.0, $report['refunds_voucher']);
+    }
+
     public function testXReportShowsRefundsByMethodSeparatelyWithNetAndCashDrawerUnchanged(): void
     {
         $_SESSION = ['shop_id' => 1, 'cash_session_id' => self::SESSION_ID];
@@ -90,5 +114,6 @@ final class CashReportByMethodMySqlIntegrationTest extends TestCase
         $this->assertSame(143.0, $totals['expected_cash']);
         $this->assertSame(15.0, $report['refunds_card']);
         $this->assertSame(108.0, $report['net_total']);
+        $this->assertSame(0.0, $totals['refunds_voucher']);
     }
 }

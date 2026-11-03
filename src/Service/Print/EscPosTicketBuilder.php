@@ -127,6 +127,9 @@ class EscPosTicketBuilder
             if ($creditNote->cardAmount > 0) {
                 $printer->text('Tarjeta: ' . number_format($creditNote->cardAmount, 2) . " €\n");
             }
+            if ($creditNote->voucherCode !== null) {
+                $printer->text('Vale: ' . $this->sanitize($creditNote->voucherCode) . '  ' . number_format((float) $creditNote->voucherAmount, 2) . " €\n");
+            }
             $printer->text("\n");
         } elseif (!$giftMode) {
             // Totals

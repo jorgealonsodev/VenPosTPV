@@ -11,6 +11,7 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 use Symfony\Component\HttpKernel\Attribute\AsController;
 use Symfony\Component\Routing\Attribute\Route;
 use VenPosTPV\Service\Cash\CashSessionService;
+use VenPosTPV\Service\Cash\Exception\NoOpenCashSessionException;
 use VenPosTPV\Service\Print\PrinterService;
 use VenPosTPV\Service\Print\TicketDataResolver;
 use VenPosTPV\Service\Print\TicketPdfGenerator;
@@ -97,6 +98,75 @@ class RefundController
                 ['error' => 'Internal server error', 'retry' => true],
                 Response::HTTP_INTERNAL_SERVER_ERROR
             );
+        }
+    }
+
+    /**
+     * Refund without a ticket: {lines: [{product_id, id_product_attribute, quantity,
+     * restock}], method: cash|card|voucher, reason_code, reason_text, card_confirmed}.
+     * Amounts come from the current catalog price on the server; any price the
+     * browser sends is ignored.
+     */
+    #[Route('/refund/no-ticket', methods: ['POST'])]
+    public function refundWithoutTicket(Request $request): JsonResponse
+    {
+        $session = $request->getSession();
+        if ($session->get('user_id') === null) {
+            return new JsonResponse(['error' => 'Unauthorized'], Response::HTTP_UNAUTHORIZED);
+        }
+
+        $body = json_decode((string) $request->getContent(), true);
+        if (!\is_array($body)) {
+            $body = [];
+        }
+
+        $lines = isset($body['lines']) && \is_array($body['lines']) ? array_values($body['lines']) : [];
+        $method = isset($body['method']) && \is_string($body['method']) ? $body['method'] : '';
+        $reasonCode = isset($body['reason_code']) && \is_string($body['reason_code']) ? $body['reason_code'] : '';
+        $reasonText = isset($body['reason_text']) && \is_string($body['reason_text']) ? $body['reason_text'] : '';
+        $cardConfirmed = ($body['card_confirmed'] ?? false) === true;
+
+        try {
+            $result = $this->refundService->processNoTicketRefund(
+                (int) $session->get('user_id'),
+                (int) $session->get('shop_id', 0),
+                $lines,
+                $method,
+                $reasonCode,
+                $reasonText,
+                $cardConfirmed,
+            );
+            $result['print_status'] = $this->printCreditNote($result, $request);
+
+            return new JsonResponse(['data' => $result], Response::HTTP_OK);
+        } catch (RefundException $e) {
+            $status = match ($e->getCode()) {
+                404 => Response::HTTP_NOT_FOUND,
+                409 => Response::HTTP_CONFLICT,
+                422 => Response::HTTP_UNPROCESSABLE_ENTITY,
+                default => Response::HTTP_BAD_GATEWAY,
+            };
+
+            return new JsonResponse(['error' => $e->getMessage(), 'retry' => $status === Response::HTTP_BAD_GATEWAY], $status);
+        } catch (NoOpenCashSessionException $e) {
+            return new JsonResponse(['error' => $e->getMessage(), 'retry' => false], Response::HTTP_CONFLICT);
+        } catch (\Throwable) {
+            return new JsonResponse(['error' => 'Internal server error', 'retry' => true], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    /** Refunds without a ticket still waiting for PrestaShop, to retry them from the screen. */
+    #[Route('/refund/pending-no-ticket', methods: ['GET'])]
+    public function pendingWithoutTicket(Request $request): JsonResponse
+    {
+        if ($request->getSession()->get('user_id') === null) {
+            return new JsonResponse(['error' => 'Unauthorized'], Response::HTTP_UNAUTHORIZED);
+        }
+
+        try {
+            return new JsonResponse(['data' => $this->refundService->pendingNoTicketRefunds()], Response::HTTP_OK);
+        } catch (\Throwable) {
+            return new JsonResponse(['error' => 'Internal server error'], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 

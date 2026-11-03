@@ -95,6 +95,17 @@ const ApiClient = (function () {
         refundPdf: (refundId) => {
             window.open(BASE_URL + '/api/refund/' + encodeURIComponent(refundId) + '/pdf', '_blank');
         },
+        // Never queued offline: a replayed POST would be a second refund.
+        refundNoTicket: (refund) => request('/api/refund/no-ticket', { method: 'POST', body: JSON.stringify(refund), queueOnNetworkFailure: false }),
+        refundPendingNoTicket: () => request('/api/refund/pending-no-ticket', { method: 'GET' }),
+        // Same catalog endpoints the sale screen uses (useCatalog / CatalogPanel).
+        searchCatalog: (query) => {
+            const qs = new URLSearchParams();
+            if (query) qs.set('q', query);
+            qs.set('limit', '20');
+            return request('/api/catalog/search?' + qs.toString(), { method: 'GET' });
+        },
+        catalogProduct: (productId) => request('/api/catalog/product/' + encodeURIComponent(productId), { method: 'GET' }),
         refundRetry: (refundId) => request('/api/refund/' + encodeURIComponent(refundId) + '/retry', { method: 'POST', body: JSON.stringify({}) }),
         searchOrders: (query, params = {}) => {
             const qs = new URLSearchParams();

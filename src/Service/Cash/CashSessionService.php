@@ -192,6 +192,7 @@ class CashSessionService
             'refunds_cash' => $totals['refunds_cash'],
             'sales_card' => $totals['sales_card'],
             'refunds_card' => $totals['refunds_card'],
+            'refunds_voucher' => $totals['refunds_voucher'],
             'net_total' => $totals['net_total'],
             'cash_in_total' => $totals['cash_in_total'],
             'cash_out_total' => $totals['cash_out_total'],
@@ -249,13 +250,18 @@ class CashSessionService
             "SELECT COALESCE(SUM(card_amount), 0) FROM refund WHERE session_id = ? AND status = 'done'",
             [$sessionId]
         );
+        // Vouchers (refunds without ticket) are neither cash nor card.
+        $refundsVoucher = (float) $this->connection->fetchOne(
+            "SELECT COALESCE(SUM(voucher_amount), 0) FROM refund WHERE session_id = ? AND status = 'done'",
+            [$sessionId]
+        );
         $counts['refunds'] = (int) $this->connection->fetchOne(
             "SELECT COUNT(*) FROM refund WHERE session_id = ? AND status = 'done'",
             [$sessionId]
         );
 
         $salesTotal = round($sales + $salesCard, 2);
-        $refundsTotal = round($refunds + $refundsCard, 2);
+        $refundsTotal = round($refunds + $refundsCard + $refundsVoucher, 2);
 
         return [
             'opening_cash' => round($openingCash, 2),
@@ -264,6 +270,7 @@ class CashSessionService
             'sales_total' => $salesTotal,
             'refunds_cash' => round($refunds, 2),
             'refunds_card' => round($refundsCard, 2),
+            'refunds_voucher' => round($refundsVoucher, 2),
             'refunds_total' => $refundsTotal,
             'net_total' => round($salesTotal - $refundsTotal, 2),
             'cash_in_total' => round($cashIn, 2),

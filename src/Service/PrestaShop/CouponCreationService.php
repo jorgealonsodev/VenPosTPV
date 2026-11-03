@@ -31,13 +31,24 @@ class CouponCreationService
         }
     }
 
-    /** @param array<string, mixed> $input @return array{id:int,code:string,type:string,value:float,expires_at:string,quantity:int,quantity_per_user:int} */
+    /**
+     * Optional `partial_use` (bool, default false): when true, PrestaShop keeps the
+     * unspent balance of an amount coupon as a new coupon instead of losing it.
+     *
+     * @param array<string, mixed> $input
+     *
+     * @return array{id:int,code:string,type:string,value:float,expires_at:string,quantity:int,quantity_per_user:int}
+     */
     public function create(array $input, int $shopId): array
     {
         $coupon = $this->validate($input, $shopId);
+        $partialUse = $input['partial_use'] ?? false;
+        if (!\is_bool($partialUse)) {
+            throw CouponCreationException::validation('El uso parcial no es válido.');
+        }
         $code = $this->generateCode();
         $languageIds = $this->fetchNameLanguageIds($shopId);
-        $xml = $this->buildXml($coupon, $shopId, $languageIds, $code);
+        $xml = $this->buildXml($coupon, $shopId, $languageIds, $code, $partialUse);
 
         try {
             $response = $this->httpClient->request('POST', $this->url('/api/cart_rules?id_shop=' . $shopId), [
@@ -126,8 +137,9 @@ class CouponCreationService
     }
 
     /** @param array{type:string,value:float,expires_at:string,quantity:int,quantity_per_user:int} $coupon @param list<int> $languageIds */
-    private function buildXml(array $coupon, int $shopId, array $languageIds, string $code): string
+    private function buildXml(array $coupon, int $shopId, array $languageIds, string $code, bool $partialUse = false): string
     {
+        $partial = $partialUse ? '1' : '0';
         $amount = $coupon['type'] === 'amount' ? number_format($coupon['value'], 2, '.', '') : '0';
         $percent = $coupon['type'] === 'percentage' ? (string) $coupon['value'] : '0';
         $name = htmlspecialchars('Cupón TPV ' . $code, ENT_XML1 | ENT_QUOTES, 'UTF-8');
@@ -135,7 +147,7 @@ class CouponCreationService
         return '<?xml version="1.0" encoding="UTF-8"?><prestashop><cart_rule>'
             . "<name>{$names}</name>"
             . "<code>{$code}</code><date_from>" . (new DateTimeImmutable('now', $this->timezone))->format('Y-m-d H:i:s') . "</date_from><date_to>{$coupon['expires_at']} 23:59:59</date_to>"
-            . "<quantity>{$coupon['quantity']}</quantity><quantity_per_user>{$coupon['quantity_per_user']}</quantity_per_user><priority>1</priority><partial_use>0</partial_use><active>1</active><free_shipping>0</free_shipping><reduction_percent>{$percent}</reduction_percent><reduction_amount>{$amount}</reduction_amount><reduction_tax>1</reduction_tax><reduction_currency>{$this->defaultCurrencyId}</reduction_currency><reduction_product>0</reduction_product><reduction_exclude_special>0</reduction_exclude_special><minimum_amount>0</minimum_amount><minimum_amount_tax>0</minimum_amount_tax><minimum_amount_currency>0</minimum_amount_currency><minimum_amount_shipping>0</minimum_amount_shipping></cart_rule></prestashop>";
+            . "<quantity>{$coupon['quantity']}</quantity><quantity_per_user>{$coupon['quantity_per_user']}</quantity_per_user><priority>1</priority><partial_use>{$partial}</partial_use><active>1</active><free_shipping>0</free_shipping><reduction_percent>{$percent}</reduction_percent><reduction_amount>{$amount}</reduction_amount><reduction_tax>1</reduction_tax><reduction_currency>{$this->defaultCurrencyId}</reduction_currency><reduction_product>0</reduction_product><reduction_exclude_special>0</reduction_exclude_special><minimum_amount>0</minimum_amount><minimum_amount_tax>0</minimum_amount_tax><minimum_amount_currency>0</minimum_amount_currency><minimum_amount_shipping>0</minimum_amount_shipping></cart_rule></prestashop>";
     }
 
     /** @return array{id:int,code:string} */

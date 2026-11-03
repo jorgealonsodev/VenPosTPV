@@ -44,6 +44,22 @@ final class CreditNoteTemplateTest extends TestCase
         $this->assertStringNotContainsString('Tarjeta:', $html);
     }
 
+    public function testCreditNoteWithoutTicketShowsSinTicketAndTheVoucher(): void
+    {
+        $html = $this->render(new CreditNoteInfo('R2026-000008', 'Sin ticket', null, 'No le gusta', 0.0, 0.0, 'VALE2345', 24.18));
+
+        $this->assertStringContainsString('Rectifica: Sin ticket</div>', $html);
+        $this->assertStringContainsString('Vale: VALE2345  24,18 €', $html);
+        $this->assertStringNotContainsString('Efectivo:', $html);
+    }
+
+    public function testCreditNoteWithTicketHasNoVoucherLine(): void
+    {
+        $html = $this->render(new CreditNoteInfo('R2026-000007', 'REF42', null, 'Defectuoso', 24.18, 0.0));
+
+        $this->assertStringNotContainsString('Vale:', $html);
+    }
+
     public function testSaleTicketIsUnchanged(): void
     {
         $html = $this->render(null);

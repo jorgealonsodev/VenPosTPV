@@ -71,6 +71,12 @@ services:
             $messageBus: '@Symfony\Component\Messenger\MessageBusInterface'
             $printerService: '@VenPosTPV\Service\Print\PrinterService'
             $couponCheckoutEnabled: '%env(bool:TPV_COUPON_CHECKOUT_ENABLED)%'
+            $priceResolver: '@VenPosTPV\Service\Catalog\CatalogPriceResolver'
+
+    # Current catalog TTC price, shared by checkout and refunds without ticket
+    VenPosTPV\Service\Catalog\CatalogPriceResolver:
+        arguments:
+            $conn: '@doctrine.dbal.tpv_connection'
 
     # Ticket Verification Service
     VenPosTPV\Service\Print\TicketVerificationService:
@@ -147,12 +153,20 @@ services:
             $shopUrl: '%ps.api.url%'
             $sharedSecret: '%sso.shared_secret%'
 
+    VenPosTPV\Service\Refund\PsRestockClient:
+        arguments:
+            $shopUrl: '%ps.api.url%'
+            $sharedSecret: '%sso.shared_secret%'
+
     VenPosTPV\Service\Refund\RefundService:
         arguments:
             $orderSearchService: '@VenPosTPV\Service\Refund\OrderSearchService'
             $client: '@VenPosTPV\Service\Refund\PsRefundClient'
             $conn: '@doctrine.dbal.tpv_connection'
             $cashSessionService: '@VenPosTPV\Service\Cash\CashSessionService'
+            $restockClient: '@VenPosTPV\Service\Refund\PsRestockClient'
+            $couponCreationService: '@VenPosTPV\Service\PrestaShop\CouponCreationService'
+            $priceResolver: '@VenPosTPV\Service\Catalog\CatalogPriceResolver'
 
     # Messenger Handler
     VenPosTPV\MessageHandler\SyncCatalogMessageHandler:

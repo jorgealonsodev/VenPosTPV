@@ -129,6 +129,54 @@ final class CouponCreationServiceTest extends TestCase
         self::assertSame(2, $requests);
     }
 
+    /** @return array{0: CouponCreationService, 1: \ArrayObject<int, string>} service and the POST bodies it sent */
+    private function capturingService(): array
+    {
+        $bodies = new \ArrayObject();
+        $client = new MockHttpClient(function (string $method, string $url, array $options) use ($bodies): MockResponse {
+            if ($method === 'GET') {
+                return new MockResponse(self::BLANK_SCHEMA);
+            }
+            $bodies[] = $options['body'];
+
+            return new MockResponse('<?xml version="1.0"?><prestashop><cart_rule><id>44</id><code>' . $this->codeFromBody($options['body']) . '</code></cart_rule></prestashop>', ['http_code' => 201]);
+        });
+
+        return [new CouponCreationService('https://shop.test', 'key', $client, 2, 'Europe/Madrid'), $bodies];
+    }
+
+    public function testCouponsAreSingleUseUnlessPartialUseIsAsked(): void
+    {
+        [$service, $bodies] = $this->capturingService();
+
+        $result = $service->create($this->validInput(), 3);
+
+        self::assertStringContainsString('<partial_use>0</partial_use>', $bodies[0]);
+        self::assertArrayNotHasKey('partial_use', $result, 'the result shape of existing callers is unchanged');
+    }
+
+    public function testPartialUseKeepsTheRemainingBalanceInPrestaShop(): void
+    {
+        [$service, $bodies] = $this->capturingService();
+
+        $service->create($this->validInput() + ['partial_use' => true], 3);
+
+        self::assertStringContainsString('<partial_use>1</partial_use>', $bodies[0]);
+    }
+
+    public function testPartialUseMustBeABoolean(): void
+    {
+        [$service, $bodies] = $this->capturingService();
+
+        try {
+            $service->create($this->validInput() + ['partial_use' => 'yes'], 3);
+            self::fail('Expected a validation error');
+        } catch (CouponCreationException $e) {
+            self::assertSame(422, $e->getCode());
+        }
+        self::assertCount(0, $bodies);
+    }
+
     private function codeFromBody(string $body): string
     {
         preg_match('/<code>([^<]+)<\/code>/', $body, $matches);

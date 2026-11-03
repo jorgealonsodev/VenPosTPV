@@ -147,6 +147,40 @@ final class EscPosTicketBuilderTest extends TestCase
         self::assertSame($bytesDefault, $bytesExplicit);
     }
 
+    public function testCreditNoteWithoutTicketPrintsSinTicketAndTheVoucherCodeAndAmount(): void
+    {
+        $sale = $this->createTicketData();
+        $ticket = new TicketData(
+            orderId: 0, reference: 'R2026-000008', storeName: $sale->storeName, storeAddress: $sale->storeAddress,
+            ticketHeader: '', ticketFooter: '', ticketLogo: null, ticketWidthPx: null, date: new \DateTimeImmutable('2026-11-03 12:00'),
+            cashierName: 'Ana', lines: [new TicketLine('Camisa (Talla: M)', 1, 30.25, 30.25)], subtotal: 25.0, tax: 5.25, total: 30.25,
+            paymentMethod: 'voucher', amountTendered: 0.0, changeDue: 0.0, verificationUrl: 'http://tpv/v',
+            creditNote: new CreditNoteInfo('R2026-000008', 'Sin ticket', null, 'No le gusta', 0.0, 0.0, 'VALE2345', 30.25),
+        );
+
+        $out = $this->createBuilder()->build($ticket);
+
+        $this->assertStringContainsString('Rectifica: Sin ticket', $out);
+        $this->assertStringNotContainsString('Rectifica: Sin ticket (', $out);
+        $this->assertStringContainsString('Vale: VALE2345  30.25', $out);
+        $this->assertStringNotContainsString('Efectivo:', $out);
+        $this->assertStringNotContainsString('Tarjeta:', $out);
+    }
+
+    public function testCreditNoteWithTicketHasNoVoucherLine(): void
+    {
+        $sale = $this->createTicketData();
+        $ticket = new TicketData(
+            orderId: 42, reference: 'R2026-000007', storeName: $sale->storeName, storeAddress: $sale->storeAddress,
+            ticketHeader: '', ticketFooter: '', ticketLogo: null, ticketWidthPx: null, date: new \DateTimeImmutable('2026-11-03 12:00'),
+            cashierName: 'Ana', lines: [new TicketLine('Camisa M', 1, 24.18, 24.18)], subtotal: 19.98, tax: 4.2, total: 24.18,
+            paymentMethod: 'cash', amountTendered: 0.0, changeDue: 0.0, verificationUrl: 'http://tpv/v',
+            creditNote: new CreditNoteInfo('R2026-000007', 'REF42', null, 'Defectuoso', 24.18, 0.0),
+        );
+
+        $this->assertStringNotContainsString('Vale:', $this->createBuilder()->build($ticket));
+    }
+
     public function testCreditNoteShowsNumberRectifiedTicketRefundSplitAndNoTenderedCash(): void
     {
         $sale = $this->createTicketData();
