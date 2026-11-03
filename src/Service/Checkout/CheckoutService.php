@@ -108,7 +108,10 @@ class CheckoutService
         // Once PrestaShop creates the order, local follow-up failures must not invite a duplicate retry.
         $sagaError = false;
         try {
-            $this->insertOrderMeta($psOrderId, $userId, $reference, $total, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines);
+            $this->insertOrderMeta($psOrderId, $userId, $reference, $total, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines, null, [
+                'cash' => $cashImpactAmount,
+                'card' => round(max(0.0, $total - $cashImpactAmount), 2),
+            ]);
         } catch (\Throwable $e) {
             $sagaError = true;
         }
@@ -273,7 +276,7 @@ class CheckoutService
                         'payable' => $payable,
                         'cash_collected' => $cashCollected,
                         'card_collected' => $cardCollected,
-                    ]);
+                    ], ['cash' => $cashCollected, 'card' => $cardCollected]);
                     if ($cashCollected > 0) {
                         $this->insertCouponCashMovement($cashContext, $userId, $cashCollected, $psOrderId);
                     }
@@ -728,18 +731,30 @@ class CheckoutService
         array $cashContext,
         array $lines,
         ?array $coupon = null,
+        array $tender = ['cash' => 0.0, 'card' => 0.0],
     ): void {
         try {
             $breakdownLines = [];
+            $netTotals = [];
             foreach ($lines as $line) {
                 $qty = (int) ($line['qty'] ?? $line['quantity'] ?? 1);
                 $price = (float) ($line['price'] ?? 0);
+                $lineDiscount = max(0.0, min(100.0, (float) ($line['discount'] ?? 0)));
+                $netTotals[] = $qty * $price * (1 - $lineDiscount / 100);
                 $breakdownLines[] = [
                     'name' => (string) ($line['name'] ?? 'Producto'),
+                    'product_id' => (int) ($line['product_id'] ?? $line['id'] ?? 0),
+                    'id_product_attribute' => (int) ($line['id_product_attribute'] ?? 0),
                     'qty' => $qty,
                     'price' => $price,
                     'line_total' => round($qty * $price, 2),
                 ];
+            }
+
+            // What the customer actually paid per line: line discounts, then the cart
+            // discount or coupon spread proportionally. Refunds return exactly this.
+            foreach ($this->prorate($netTotals, $total) as $index => $paid) {
+                $breakdownLines[$index]['paid_total'] = $paid;
             }
 
             $subtotal = 0.0;
@@ -763,6 +778,10 @@ class CheckoutService
                     'subtotal' => $subtotal,
                     'tax' => $tax,
                     'lines' => $breakdownLines,
+                    'tender' => [
+                        'cash' => round((float) ($tender['cash'] ?? 0), 2),
+                        'card' => round((float) ($tender['card'] ?? 0), 2),
+                    ],
                     // Deliberately excludes bearer coupon code and quote.
                     'coupon' => $coupon,
                 ], JSON_THROW_ON_ERROR),
@@ -873,6 +892,35 @@ class CheckoutService
         } catch (\Throwable $e) {
             throw CheckoutException::stockUpdateFailed(0, $e);
         }
+    }
+
+    /**
+     * Splits $total across lines in proportion to their weights, in cents, so the
+     * shares always add up to $total exactly; the last line absorbs rounding.
+     *
+     * @param array<int, float> $weights
+     *
+     * @return array<int, float>
+     */
+    private function prorate(array $weights, float $total): array
+    {
+        $sum = array_sum($weights);
+        $totalCents = (int) round($total * 100);
+        $shares = [];
+        $assigned = 0;
+        $last = array_key_last($weights);
+
+        foreach ($weights as $index => $weight) {
+            if ($index === $last) {
+                $cents = $totalCents - $assigned;
+            } else {
+                $cents = $sum > 0 ? (int) round($totalCents * $weight / $sum) : 0;
+                $assigned += $cents;
+            }
+            $shares[$index] = $cents / 100;
+        }
+
+        return $shares;
     }
 
     /**

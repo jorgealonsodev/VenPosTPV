@@ -631,6 +631,77 @@ final class CheckoutServiceTest extends TestCase
         $this->assertSame([[2, 3, 2]], $localStockUpdates);
     }
 
+    /** @return array<string, mixed> decoded order_meta.payment_breakdown */
+    private function captureBreakdown(array $cartData, string $paymentMethod, float $tendered): array
+    {
+        $client = $this->createMock(PsOrderClient::class);
+        $client->method('createOrder')->willReturn(['order_id' => 77, 'reference' => 'REF77', 'total_paid' => 60.0]);
+        $cashSession = $this->createMock(CashSessionService::class);
+        $cashSession->method('requireOpenSession')->willReturn(['session_id' => 1, 'terminal_id' => 2]);
+        $conn = $this->createMock(Connection::class);
+        $conn->method('fetchOne')->willReturn(10);
+        $conn->method('executeStatement')->willReturn(1);
+        $conn->method('fetchAssociative')->willReturnCallback(function (string $sql, array $params = []): array|false {
+            if (str_contains($sql, 'FROM catalog_product')) {
+                return ['price' => null, 'price_ttc' => ['3' => 30.0, '4' => 20.0][(string) $params[0]] ?? null];
+            }
+            if (str_contains($sql, 'FROM catalog_combination')) {
+                return ['price_impact' => 0, 'price_ttc' => 30.0];
+            }
+
+            return false;
+        });
+        $breakdown = null;
+        $conn->method('insert')->willReturnCallback(function (string $table, array $data) use (&$breakdown): int {
+            if ($table === 'order_meta') {
+                $breakdown = json_decode($data['payment_breakdown'], true, 512, JSON_THROW_ON_ERROR);
+            }
+
+            return 1;
+        });
+
+        $this->createService(client: $client, conn: $conn, cashSessionService: $cashSession)
+            ->createOrder(1, $cartData, $paymentMethod, $tendered);
+        $this->assertIsArray($breakdown);
+
+        return $breakdown;
+    }
+
+    public function testOrderMetaKeepsProductIdsPaidLineTotalsAndTenderSplitForRefunds(): void
+    {
+        // 30 with 10% line discount = 27, plus 2 x 20 = 40 -> 67, minus a 7 cart discount = 60.
+        $breakdown = $this->captureBreakdown([
+            'lines' => [
+                ['product_id' => 3, 'id_product_attribute' => 7, 'qty' => 1, 'price' => 30.0, 'discount' => 10, 'name' => 'Camisa M'],
+                ['product_id' => 4, 'qty' => 2, 'price' => 20.0, 'name' => 'Calcetines'],
+            ],
+            'discount' => ['type' => 'amt', 'value' => 7],
+            'total' => 60.0,
+            'cash_amount' => 25.0,
+        ], 'mixed', 25.0);
+
+        $this->assertEquals(60.0, $breakdown['total']);
+        $this->assertEquals(['cash' => 25.0, 'card' => 35.0], $breakdown['tender']);
+        $this->assertSame(3, $breakdown['lines'][0]['product_id']);
+        $this->assertSame(7, $breakdown['lines'][0]['id_product_attribute']);
+        $this->assertSame(4, $breakdown['lines'][1]['product_id']);
+        $this->assertSame(0, $breakdown['lines'][1]['id_product_attribute']);
+        // Paid share of the 60 actually charged: 27/67 and 40/67, rounding absorbed by the last line.
+        $this->assertEquals(24.18, $breakdown['lines'][0]['paid_total']);
+        $this->assertEquals(35.82, $breakdown['lines'][1]['paid_total']);
+        // Existing ticket fields keep their meaning.
+        $this->assertEquals(30.0, $breakdown['lines'][0]['line_total']);
+        $this->assertSame('Camisa M', $breakdown['lines'][0]['name']);
+    }
+
+    public function testOrderMetaTenderForSingleMethodSales(): void
+    {
+        $cart = ['lines' => [['product_id' => 4, 'qty' => 1, 'price' => 20.0]], 'total' => 20.0];
+
+        $this->assertEquals(['cash' => 20.0, 'card' => 0.0], $this->captureBreakdown($cart, 'cash', 50.0)['tender']);
+        $this->assertEquals(['cash' => 0.0, 'card' => 20.0], $this->captureBreakdown($cart, 'card', 20.0)['tender']);
+    }
+
     public function testCustomerResolutionUsesCartCustomerId(): void
     {
         $client = $this->createMock(PsOrderClient::class);
