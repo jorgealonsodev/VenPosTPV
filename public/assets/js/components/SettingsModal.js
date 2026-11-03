@@ -118,15 +118,52 @@ const SettingsModal = {
             }
         }
 
-        function handleLogoUpload(event) {
-            const file = event.target.files[0];
+        const logoError = Vue.ref('');
+        const logoDragOver = Vue.ref(false);
+        const LOGO_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+        const LOGO_MAX_BYTES = 2 * 1024 * 1024;
+
+        // One path for the button, drag & drop and paste, so the logo can be set even
+        // where the browser's file dialog does not open (kiosk, fullscreen, portals).
+        function setLogoFromFile(file) {
+            logoError.value = '';
             if (!file) return;
-            if (!file.type.startsWith('image/')) return;
+            if (!LOGO_TYPES.includes(file.type)) {
+                logoError.value = 'Formato no admitido: usa PNG, JPG, GIF o WebP (la impresora no imprime SVG).';
+                return;
+            }
+            if (file.size > LOGO_MAX_BYTES) {
+                logoError.value = 'La imagen supera 2 MB. Usa una más pequeña.';
+                return;
+            }
             const reader = new FileReader();
             reader.onload = (e) => {
-                terminal.value.ticket_logo = e.target.result;
+                if (terminal.value) terminal.value.ticket_logo = e.target.result;
             };
             reader.readAsDataURL(file);
+        }
+
+        function handleLogoUpload(event) {
+            const files = event && event.target && event.target.files;
+            setLogoFromFile(files && files[0]);
+            if (event && event.target && 'value' in event.target) event.target.value = '';
+        }
+
+        function handleLogoDrop(event) {
+            event.preventDefault();
+            logoDragOver.value = false;
+            const files = event.dataTransfer && event.dataTransfer.files;
+            setLogoFromFile(files && files[0]);
+        }
+
+        function handleLogoPaste(event) {
+            const items = (event.clipboardData && event.clipboardData.items) || [];
+            for (const item of Array.from(items)) {
+                if (item.kind === 'file' && item.type.indexOf('image/') === 0) {
+                    setLogoFromFile(item.getAsFile());
+                    return;
+                }
+            }
         }
 
         function removeLogo() {
@@ -280,7 +317,7 @@ const SettingsModal = {
             editingId, editForm, editError, saving, startEdit, cancelEdit, handleSave,
             handleDeactivate, handleUnlock,
             terminal, terminalLoading, terminalSaving, terminalError, saveTerminal,
-            handleLogoUpload, removeLogo,
+            handleLogoUpload, handleLogoDrop, handleLogoPaste, logoError, logoDragOver, removeLogo,
             syncInterval, syncPushInterval, syncSaving, syncPushSaving, syncError,
             syncNowRunning, syncLastResult,
             saveSyncInterval, saveSyncPushInterval, syncNow,
@@ -516,9 +553,17 @@ const SettingsModal = {
                                     <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Logo del ticket</label>
                                     <div style="display:flex; align-items:flex-start; gap:16px; flex-wrap:wrap;">
                                         <div style="flex:1; min-width:200px;">
-                                            <input type="file" accept="image/*" @change="handleLogoUpload"
-                                                style="font-size:13px; color:var(--text2); cursor:pointer;">
-                                            <div style="font-size:12px; color:var(--text3); margin-top:4px;">PNG, JPG o SVG. Se almacena como imagen en base64.</div>
+                                            <div tabindex="0" @dragover.prevent="logoDragOver = true" @dragleave="logoDragOver = false" @drop="handleLogoDrop" @paste="handleLogoPaste"
+                                                :style="{ borderColor: logoDragOver ? 'var(--primary)' : 'var(--border)' }"
+                                                style="border:2px dashed var(--border); border-radius:10px; padding:14px; text-align:center; color:var(--text2); font-size:13px; outline:none;">
+                                                <label style="display:inline-block; padding:6px 14px; border-radius:8px; background:var(--primary); color:#fff; cursor:pointer; font-size:13px; font-weight:600;">
+                                                    Elegir imagen
+                                                    <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" @change="handleLogoUpload" style="display:none;">
+                                                </label>
+                                                <div style="margin-top:8px;">o arrastra la imagen aquí, o haz clic en este recuadro y pégala con Ctrl+V</div>
+                                            </div>
+                                            <div style="font-size:12px; color:var(--text3); margin-top:4px;">PNG, JPG, GIF o WebP, hasta 2 MB. Pulsa «Guardar» para conservarlo.</div>
+                                            <div v-if="logoError" style="font-size:12px; color:var(--red); margin-top:4px;">{{ logoError }}</div>
                                             <button v-if="terminal.ticket_logo" @click="removeLogo"
                                                 style="margin-top:8px; padding:4px 12px; border-radius:6px; border:1px solid var(--red); background:transparent; color:var(--red); cursor:pointer; font-family:inherit; font-size:12px;">
                                                 Quitar logo
