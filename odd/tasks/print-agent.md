@@ -1,23 +1,23 @@
-# Print agent — tickets and cash drawer when the TPV runs online (Plesk subdomain)
-Branch: feat/print-agent (from feat/local-first-sales). Delivery: ask-on-risk, one commit per task. Runners: PHPUnit (.runtime/php-8.5.12/bin/php vendor/bin/phpunit), Node harnesses (tests/Functional/*.test.cjs), Go (`go test ./...` in agent/).
-Context: the TPV will be deployed on a Plesk subdomain next to PrestaShop; the server cannot reach the shop's USB Epson. A small agent in the shop prints and opens the drawer.
+# Print agent — tickets, drawer and labels when the TPV runs on Plesk (Phase 1)
+Branch: feat/print-agent (from feat/local-first-sales). Delivery: ask-on-risk, one commit per task. Runners: PHPUnit (.runtime/php-8.5.12/bin/php vendor/bin/phpunit), Node harnesses (tests/Functional/*.test.cjs), Rust (`cargo test` in agent/, targets x86_64-unknown-linux-gnu and x86_64-pc-windows-gnu).
+Binding spec: docs/prd/agente-impresion.md v2 (rules E*, T*, C*, L*, S*, A*, I*, U*, API tables, AC*). Only Phase 1 (PRD §4) is in scope.
 
 ## Specs
-S1. User decision (2026-11-03): "lo quiero desplegar en un subdominio en plesk, al lado de la tienda pricipal de prestahop"; printing option chosen: "Agente en la tienda (Recomendado)" — "Un programa pequeño en el ordenador de la caja se conecta al subdominio por HTTPS (saliente, sin abrir puertos), recoge los tickets de su caja y los manda a la Epson USB, y abre el cajón. Mismo resultado que ahora: ticket automático y cajón." Operating systems: "Crea el de windows y el de linux".
-S2. Server contract (TPV, PHP): new printer type `agent` per till. When a till uses `agent`, every print (sale ticket, gift ticket, reprint, credit note, test print) and every drawer opening becomes a job in a `print_job` queue for that till instead of going to CUPS/IP; the bytes are the same ESC/POS the builder produces today. Agent authenticates with a per-till agent token (random ≥256-bit, only its sha256 stored), created by an admin in Ajustes → Cajas ("Conectar agente de impresión", shown once, can be regenerated which revokes the old one).
-S3. Agent API (HTTPS, JSON, `Authorization: Bearer <token>`):
-  - `GET /api/agent/jobs?wait=25` long-poll: returns up to 10 jobs `{id, kind: "ticket"|"drawer", data_base64, created_at}` claimed for this agent (claim with token + timeout 60 s; unacknowledged claims return to queued), or `[]` after the wait. Also records the agent heartbeat (last_seen_at, agent version, hostname, printer name).
-  - `POST /api/agent/jobs/{id}/done` and `POST /api/agent/jobs/{id}/failed {"error": "..."}` (idempotent; failed jobs retried up to 3 times then marked failed).
-  - Jobs older than 10 minutes and never printed expire (status expired) so a reconnecting agent does not print old tickets or open the drawer late; drawer jobs expire after 60 s.
-  - 401 for missing/invalid/revoked token; tokens never in URLs or logs.
-S4. Agent program (Go, single binary per OS, `agent/` folder): config file (server URL, token, printer name), loop long-poll → send raw bytes to the printer → ack; reconnect with backoff; log file with rotation; Windows: runs as a Windows service, prints RAW via the Windows spooler (winspool OpenPrinter/StartDocPrinter with datatype RAW/WritePrinter); Linux: systemd service, prints via `lp -d <queue> -o raw` (or a device path). Commands: `install`, `uninstall`, `run`, `test-print`, `list-printers`. Builds: `venpos-print-agent-windows-amd64.exe`, `venpos-print-agent-linux-amd64`. No inbound ports.
-S5. Visibility: Ajustes → Cajas shows agent status per till (conectado / sin conexión desde hh:mm, version, printer); the sale screen warns when the till's agent has been offline > 2 min ("La impresora no está conectada: el ticket se puede ver en PDF"); printing never blocks a sale: if no agent picks the job up within 15 s, the payment screen offers the PDF.
-S6. Docs: docs/print-agent.md (install on Windows and Linux, pairing, troubleshooting) in Spanish for the shop owner.
+S1. User approval (2026-11-03): "si, adelante con la fase 1". Scope = PRD §4 "Fase 1": emparejar, desconectar y vigilar la clave; tickets, cajón, reimpresión, abonos, prueba; avisos en caja y PDF de reserva; instalador de Windows con servicio e icono, elección de impresoras; binario de Linux con comandos; etiquetas en ESC/POS en la TM-T20, desde la ficha y desde la lista, con vista previa; estado del agente y de la cola, avisos por trabajo fallido; historial de 30 días con filtros; aviso de versión nueva y descarga manual; pruebas de Windows en GitHub Actions.
+S2. Server core: PRD E1-E9 (server side), E6, E7, T0-T11, S1, S4 (retention), U1, API tables (agent v1 + POS), migration V37.
+S3. POS UX: PRD C1-C5, S3, S5 (display), E1 steps 1-4 (Ajustes → Cajas), history filters (S4), U1 notice.
+S4. Labels: PRD L1-L9, AC5, AC6, AC14, AC15.
+S5. Agent (Rust): PRD A1-A10, E10, E11, T3-T8 (agent side), S1, S2 (phase 1 part), S5, AC10, AC11.
+S6. Windows delivery: PRD I1, I2, AC9, GitHub Actions windows-latest (silent install, sc query, exact RAW bytes to a Generic / Text Only printer to file); Linux binary + commands (I3 phase 1).
+S7. Acceptance: AC1-AC4, AC7 (phase 1 part), AC10-AC13, AC16 live on this machine with the TM-T20 where possible; independent verifier (security item 2).
 
 ## Tasks
-T1 | S2, S3, S5 (server + UI) | delegated (parallel with T2) | pending | print_job queue, agent token, agent API, PrinterService routing, Ajustes Cajas pairing + status, sale-screen warning.
-T2 | S3, S4, S6 | delegated (parallel with T1) | pending | Go agent for Windows and Linux, install as service, docs.
-T3 | all | pending | Live test on this machine: agent (Linux) against local TPV with the Epson; cross-built Windows binary smoke-tested where possible; independent verifier (security item 2).
+T1 | S2 | delegated (parallel with T4) | pending | Server core: V37, queue, agent API v1, pairing + rate limiter, routing (T0/T9), drawer audit, POS endpoints.
+T2 | S3 | pending (after T1) | POS UX: payment modal states, drawer warning, offline banner, Ajustes Cajas pairing/status/history/version.
+T3 | S4 | pending (after T1) | Labels: ESC/POS generation, preview, product sheet + Etiquetas screen.
+T4 | S5 | delegated (parallel with T1) | Rust agent: service, client, printing (Windows RAW / CUPS / direct), dedupe, IPC, Windows tray, CLI.
+T5 | S6 | pending (after T4) | NSIS installer, GitHub Actions Windows workflow, Linux binary packaging.
+T6 | S7 | pending | Live acceptance + independent verifier.
 
 ## Log
 L1. 2026-11-03 user: "si esta pagina la despliego online me imprimira tickets y abrira el cajon?" → explained the server prints via CUPS/IP and cannot reach the shop from Plesk. User: "lo quiero desplegar en un subdominio en plesk, al lado de la tienda pricipal de prestahop". Chose "Agente en la tienda (Recomendado)"; OS: "Crea el de windows y el de linux". Noted: with the TPV online, a shop internet outage stops checkout (local-first protects only against PrestaShop failures); browser offline mode would be a separate feature.
