@@ -100,6 +100,9 @@ const SettingsModal = {
                     ticket_width_px: terminal.value.ticket_width_px,
                 };
                 if (terminal.value.ticket_code) payload.ticket_code = terminal.value.ticket_code;
+                // Only sent when set: a terminal without a letter can still save its other settings.
+                const ticketLetter = String(terminal.value.ticket_letter ?? '').trim();
+                if (ticketLetter !== '') payload.ticket_letter = ticketLetter.toUpperCase();
                 if (terminal.value.refund_window_days != null && terminal.value.refund_window_days !== '') {
                     payload.refund_window_days = Number(terminal.value.refund_window_days);
                 }
@@ -621,6 +624,12 @@ const SettingsModal = {
                                     <input v-model="terminal.tax_id" type="text" maxlength="16" autocapitalize="characters" placeholder="B12345674"
                                         style="width:100%; max-width:200px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box; text-transform:uppercase;">
                                     <div style="font-size:12px; color:var(--text3); margin-top:4px;">Obligatorio en la factura simplificada. Se comprueba la letra o cifra de control.</div>
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Letra de caja</label>
+                                    <input v-model="terminal.ticket_letter" type="text" maxlength="1" autocapitalize="characters" placeholder="A"
+                                        style="width:100%; max-width:200px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box; text-transform:uppercase;">
+                                    <div style="font-size:12px; color:var(--text3); margin-top:4px;">Primera letra del número de ticket (A26000123). Cada caja tiene la suya.</div>
                                 </div>
                                 <div>
                                     <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Dirección de la tienda</label>

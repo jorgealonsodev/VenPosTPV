@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace VenPosTPV\Controller\Api;
 
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Exception\UniqueConstraintViolationException;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -32,7 +33,7 @@ final class TerminalController
         }
 
         $row = $this->connection->fetchAssociative(
-            'SELECT id, ps_shop_id, name, printer_config, scanner_config, hotkeys, dataphone_mode, printer_type, store_name, store_address, legal_name, tax_id, ticket_header, ticket_footer, ticket_logo, ticket_width_px, stock_sync_interval_seconds, stock_push_interval_seconds, refund_window_days, ticket_code, active, created_at, updated_at FROM terminal WHERE id = ?',
+            'SELECT id, ps_shop_id, name, ticket_letter, printer_config, scanner_config, hotkeys, dataphone_mode, printer_type, store_name, store_address, legal_name, tax_id, ticket_header, ticket_footer, ticket_logo, ticket_width_px, stock_sync_interval_seconds, stock_push_interval_seconds, refund_window_days, ticket_code, active, created_at, updated_at FROM terminal WHERE id = ?',
             [$id]
         );
 
@@ -79,6 +80,18 @@ final class TerminalController
 
         if (isset($body['name'])) {
             $fields['name'] = trim((string) $body['name']);
+        }
+
+        if (array_key_exists('ticket_letter', $body)) {
+            // First character of every ticket number (A26000123): one letter per terminal.
+            $letter = strtoupper(trim((string) $body['ticket_letter']));
+            if (!preg_match('/^[A-Z]$/', $letter)) {
+                return new JsonResponse(['error' => 'La letra de caja debe ser una letra de la A a la Z'], Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
+            if ($this->letterUsedByAnotherTerminal($letter, $id)) {
+                return $this->letterInUse();
+            }
+            $fields['ticket_letter'] = $letter;
         }
 
         if (isset($body['dataphone_mode'])) {
@@ -201,7 +214,12 @@ final class TerminalController
         }
 
         if ($fields) {
-            $this->connection->update('terminal', $fields, ['id' => $id]);
+            try {
+                $this->connection->update('terminal', $fields, ['id' => $id]);
+            } catch (UniqueConstraintViolationException) {
+                // Another terminal took the same letter between the check and the update.
+                return $this->letterInUse();
+            }
         }
 
         return new JsonResponse(['data' => ['updated' => true]]);
@@ -217,6 +235,19 @@ final class TerminalController
     private function unauthorized(): JsonResponse
     {
         return new JsonResponse(['error' => 'Acceso denegado — solo administradores'], Response::HTTP_FORBIDDEN);
+    }
+
+    private function letterUsedByAnotherTerminal(string $letter, int $id): bool
+    {
+        return (int) $this->connection->fetchOne(
+            'SELECT COUNT(*) FROM terminal WHERE ticket_letter = ? AND id <> ?',
+            [$letter, $id]
+        ) > 0;
+    }
+
+    private function letterInUse(): JsonResponse
+    {
+        return new JsonResponse(['error' => 'Esa letra ya la usa otra caja'], Response::HTTP_UNPROCESSABLE_ENTITY);
     }
 
     private function normalizeNullableText(mixed $value): ?string

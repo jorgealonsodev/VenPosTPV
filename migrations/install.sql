@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS terminal (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     ps_shop_id INT UNSIGNED NOT NULL,
     name VARCHAR(64) NOT NULL,
+    ticket_letter CHAR(1) NULL,
     printer_config JSON,
     scanner_config JSON,
     hotkeys JSON,
@@ -36,7 +37,8 @@ CREATE TABLE IF NOT EXISTS terminal (
     refund_window_days INT UNSIGNED NOT NULL DEFAULT 30,
     active TINYINT(1) NOT NULL DEFAULT 1,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_terminal_ticket_letter (ticket_letter)
 ) ENGINE=InnoDB;
 
 -- 3. user
@@ -313,4 +315,12 @@ CREATE TABLE IF NOT EXISTS exchange (
 CREATE TABLE IF NOT EXISTS credit_note_sequence (
     year SMALLINT UNSIGNED NOT NULL PRIMARY KEY,
     last_number INT UNSIGNED NOT NULL
+) ENGINE=InnoDB;
+
+-- ticket_sequence (Version00000030): gapless ticket numbers per terminal letter and year (A26000123)
+CREATE TABLE IF NOT EXISTS ticket_sequence (
+    letter CHAR(1) NOT NULL,
+    year SMALLINT UNSIGNED NOT NULL,
+    last_number INT UNSIGNED NOT NULL,
+    PRIMARY KEY (letter, year)
 ) ENGINE=InnoDB;
