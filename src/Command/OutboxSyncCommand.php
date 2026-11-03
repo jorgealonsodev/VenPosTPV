@@ -9,6 +9,7 @@ use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
+use VenPosTPV\Service\PrintAgent\PrintRetention;
 use VenPosTPV\Service\Sync\OutboxSync;
 
 /**
@@ -18,11 +19,15 @@ use VenPosTPV\Service\Sync\OutboxSync;
  *     * * * * * php /path/to/VenPosTPV/bin/console tpv:sync:outbox
  *
  * Overlapping runs are safe: each row is claimed by one process only.
+ *
+ * The same minute task cleans the print agent history (docs/prd/agente-impresion.md
+ * S4) through PrintRetention; that cleanup never changes this command's output or
+ * exit code.
  */
 #[AsCommand(name: 'tpv:sync:outbox', description: 'Upload pending sales to PrestaShop')]
 final class OutboxSyncCommand extends Command
 {
-    public function __construct(private readonly OutboxSync $sync)
+    public function __construct(private readonly OutboxSync $sync, private readonly ?PrintRetention $printRetention = null)
     {
         parent::__construct();
     }
@@ -39,6 +44,12 @@ final class OutboxSyncCommand extends Command
             $output->writeln('<error>--limit must be a positive integer</error>');
 
             return Command::INVALID;
+        }
+
+        try {
+            $this->printRetention?->run();
+        } catch (\Throwable) {
+            // Never affects the upload (the print agent tables may not exist yet).
         }
 
         try {

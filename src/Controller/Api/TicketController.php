@@ -15,6 +15,7 @@ use VenPosTPV\Service\Print\TicketData;
 use VenPosTPV\Service\Print\TicketDataResolver;
 use VenPosTPV\Service\Print\TicketPdfGenerator;
 use VenPosTPV\Service\Print\TicketVerificationService;
+use VenPosTPV\Service\PrintAgent\TerminalNotResolvedException;
 
 #[AsController]
 final class TicketController
@@ -95,7 +96,12 @@ final class TicketController
         }
 
         try {
-            $terminalId = (int) ($session->get('terminal_id') ?? 1);
+            $sessionTerminal = $session->get('terminal_id');
+            if ($sessionTerminal === null && $this->printerService->usesAgent(null)) {
+                // T9: a print agent job never falls back to till 1.
+                return new JsonResponse(['error' => (new TerminalNotResolvedException())->getMessage(), 'code' => TerminalNotResolvedException::CODE], Response::HTTP_BAD_REQUEST);
+            }
+            $terminalId = (int) ($sessionTerminal ?? 1);
             $result = $this->printerService->reprintTicket($orderId, $terminalId, $giftMode);
 
             return new JsonResponse(['data' => $result], Response::HTTP_OK);

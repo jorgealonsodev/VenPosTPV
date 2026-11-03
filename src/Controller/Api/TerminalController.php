@@ -116,7 +116,7 @@ final class TerminalController
 
         if (isset($body['printer_type'])) {
             $type = (string) $body['printer_type'];
-            if (!in_array($type, ['none', 'pdf', 'escpos', 'system'], true)) {
+            if (!in_array($type, ['none', 'pdf', 'escpos', 'system', 'agent'], true)) {
                 return new JsonResponse(['error' => 'Tipo de impresora no válido'], Response::HTTP_UNPROCESSABLE_ENTITY);
             }
             $fields['printer_type'] = $type;
@@ -138,6 +138,9 @@ final class TerminalController
                     return new JsonResponse(['error' => 'Elige una impresora instalada en este equipo'], Response::HTTP_UNPROCESSABLE_ENTITY);
                 }
                 $config = ['enabled' => true, 'type' => 'system', 'queue' => $queue];
+            } elseif ($type === 'agent') {
+                // The print agent on the till's computer prints; it chooses its printers itself (PRD S5).
+                $config = ['enabled' => true, 'type' => 'agent'];
             } else {
                 $config = ['enabled' => false, 'type' => $type];
             }

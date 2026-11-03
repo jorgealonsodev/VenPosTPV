@@ -8,6 +8,7 @@ use PHPUnit\Framework\TestCase;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Tester\CommandTester;
 use VenPosTPV\Command\OutboxSyncCommand;
+use VenPosTPV\Service\PrintAgent\PrintRetention;
 use VenPosTPV\Service\Sync\OutboxSync;
 
 final class OutboxSyncCommandTest extends TestCase
@@ -48,5 +49,29 @@ final class OutboxSyncCommandTest extends TestCase
 
         $this->assertSame(Command::FAILURE, $tester->execute([]));
         $this->assertStringContainsString('Outbox sync failed: Connection refused', $tester->getDisplay());
+    }
+
+    public function testThePrintHistoryIsCleanedByTheSameMinuteTaskWithoutChangingItsOutput(): void
+    {
+        $sync = $this->createMock(OutboxSync::class);
+        $sync->method('run')->willReturn(['uploaded' => 0, 'retried' => 0, 'incidents' => 0, 'recovered' => 0]);
+        $retention = $this->createMock(PrintRetention::class);
+        $retention->expects($this->once())->method('run')->willReturn(['payloads' => 4, 'deleted' => 2]);
+        $tester = new CommandTester(new OutboxSyncCommand($sync, $retention));
+
+        $this->assertSame(Command::SUCCESS, $tester->execute([]));
+        $this->assertSame("Outbox sync: 0 uploaded, 0 to retry, 0 incidents, 0 recovered\n", $tester->getDisplay());
+    }
+
+    public function testACleanupFailureNeverChangesTheUploadRun(): void
+    {
+        $sync = $this->createMock(OutboxSync::class);
+        $sync->expects($this->once())->method('run')->willReturn(['uploaded' => 1, 'retried' => 0, 'incidents' => 0, 'recovered' => 0]);
+        $retention = $this->createMock(PrintRetention::class);
+        $retention->method('run')->willThrowException(new \RuntimeException("Table 'print_job' doesn't exist"));
+        $tester = new CommandTester(new OutboxSyncCommand($sync, $retention));
+
+        $this->assertSame(Command::SUCCESS, $tester->execute([]));
+        $this->assertSame("Outbox sync: 1 uploaded, 0 to retry, 0 incidents, 0 recovered\n", $tester->getDisplay());
     }
 }

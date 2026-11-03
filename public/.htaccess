@@ -13,8 +13,14 @@ Action application/x-httpd-php85 /tpv/php85.cgi virtual
     SetHandler cgi-script
 </Files>
 
+# The print agent authenticates with "Authorization: Bearer"; CGI drops that
+# header unless it is passed explicitly.
+CGIPassAuth On
+
 <IfModule mod_rewrite.c>
     RewriteEngine On
+    RewriteCond %{HTTP:Authorization} .
+    RewriteRule ^ - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteCond %{REQUEST_FILENAME} !-d
     RewriteRule ^ index.php [L]

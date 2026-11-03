@@ -127,6 +127,9 @@ final class TestDatabase
         }
 
         self::runMigration($connection, 'Version00000003CreateCatalogTables');
+        // order_meta.print_attempts/printed_at: test databases built from an older
+        // install.sql lack them, and confirming a printed ticket writes them.
+        self::runMigration($connection, 'Version00000004AddPrintColumnsToOrderMeta');
 
         if (!$connection->createSchemaManager()->introspectTable('catalog_product')->hasColumn('image_url')) {
             self::runMigration($connection, 'Version00000006AddImageUrlToCatalogProduct');
@@ -158,6 +161,7 @@ final class TestDatabase
         self::runMigration($connection, 'Version00000034LocalCustomers');
         self::runMigration($connection, 'Version00000035CustomerEmailRace');
         self::runMigration($connection, 'Version00000036OutboxDiscard');
+        self::runMigration($connection, 'Version00000037PrintAgent');
     }
 
     private static function applyInstallSchema(Connection $connection): void

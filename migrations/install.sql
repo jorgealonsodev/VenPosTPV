@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS terminal (
     scanner_config JSON,
     hotkeys JSON,
     dataphone_mode ENUM('integrated','independent') NOT NULL DEFAULT 'integrated',
-    printer_type ENUM('none','pdf','escpos','system') NOT NULL DEFAULT 'pdf',
+    printer_type ENUM('none','pdf','escpos','system','agent') NOT NULL DEFAULT 'pdf',
     store_name VARCHAR(120) NULL,
     store_address VARCHAR(255) NOT NULL DEFAULT '',
     legal_name VARCHAR(120) NULL,
@@ -414,3 +414,96 @@ CREATE TABLE IF NOT EXISTS customer (
     KEY idx_customer_email (email),
     KEY idx_customer_name (lastname, firstname)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- print_job (Version00000037): each till's print queue for its print agent
+-- (docs/prd/agente-impresion.md T0-T9). Payload nulled 24 h after it finished,
+-- rows deleted after 30 days (S4).
+CREATE TABLE IF NOT EXISTS print_job (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    terminal_id INT UNSIGNED NOT NULL,
+    type ENUM('ticket','drawer','label') NOT NULL,
+    target ENUM('ticket','label') NOT NULL DEFAULT 'ticket',
+    priority TINYINT UNSIGNED NOT NULL DEFAULT 0,
+    status ENUM('pending','claimed','done','failed','expired','cancelled') NOT NULL DEFAULT 'pending',
+    attempts SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+    claim_token CHAR(32) NULL,
+    lease_until DATETIME NULL,
+    next_attempt_at DATETIME NULL,
+    expires_at DATETIME NOT NULL,
+    payload MEDIUMBLOB NULL,
+    payload_size INT UNSIGNED NOT NULL DEFAULT 0,
+    sha256 CHAR(64) NULL,
+    source VARCHAR(32) NOT NULL,
+    source_ref VARCHAR(64) NULL,
+    created_by_user_id INT UNSIGNED NULL,
+    error_code VARCHAR(64) NULL,
+    error VARCHAR(500) NULL,
+    created_at DATETIME NOT NULL,
+    claimed_at DATETIME NULL,
+    finished_at DATETIME NULL,
+    KEY idx_print_job_queue (terminal_id, status, priority, id),
+    KEY idx_print_job_created (created_at),
+    KEY idx_print_job_finished (finished_at)
+) ENGINE=InnoDB;
+
+-- print_agent (Version00000037): the paired agent of each till; only the SHA-256
+-- of its key is stored (E3).
+CREATE TABLE IF NOT EXISTS print_agent (
+    terminal_id INT UNSIGNED NOT NULL,
+    key_hash CHAR(64) NOT NULL,
+    paired_at DATETIME NOT NULL,
+    paired_by_user_id INT UNSIGNED NULL,
+    last_seen_at DATETIME NULL,
+    last_ip VARCHAR(45) NULL,
+    agent_version VARCHAR(32) NULL,
+    hostname VARCHAR(255) NULL,
+    os VARCHAR(64) NULL,
+    printers JSON NULL,
+    revoked_at DATETIME NULL,
+    PRIMARY KEY (terminal_id),
+    UNIQUE KEY uk_print_agent_key (key_hash),
+    CONSTRAINT fk_print_agent_terminal FOREIGN KEY (terminal_id) REFERENCES terminal (id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- agent_pairing (Version00000037): 6-digit pairing codes, HMAC only, 10 minutes,
+-- single use, void after 5 failures (E2, E7).
+CREATE TABLE IF NOT EXISTS agent_pairing (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    code_hash CHAR(64) NOT NULL,
+    terminal_id INT UNSIGNED NOT NULL,
+    created_by_user_id INT UNSIGNED NULL,
+    created_at DATETIME NOT NULL,
+    expires_at DATETIME NOT NULL,
+    used_at DATETIME NULL,
+    failed_attempts TINYINT UNSIGNED NOT NULL DEFAULT 0,
+    KEY idx_agent_pairing_code (code_hash),
+    KEY idx_agent_pairing_terminal (terminal_id),
+    CONSTRAINT fk_agent_pairing_terminal FOREIGN KEY (terminal_id) REFERENCES terminal (id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- drawer_audit (Version00000037): every drawer opening (T11); never purged.
+CREATE TABLE IF NOT EXISTS drawer_audit (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    terminal_id INT UNSIGNED NOT NULL,
+    user_id INT UNSIGNED NULL,
+    reason VARCHAR(32) NOT NULL,
+    order_id BIGINT NULL,
+    sale_reference VARCHAR(64) NULL,
+    job_id BIGINT UNSIGNED NULL,
+    printer_type VARCHAR(16) NOT NULL,
+    result VARCHAR(16) NOT NULL,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NULL,
+    KEY idx_drawer_audit_terminal (terminal_id, created_at),
+    KEY idx_drawer_audit_job (job_id)
+) ENGINE=InnoDB;
+
+-- rate_limit (Version00000037): one-minute windows for pairing and invalid agent
+-- keys (E7).
+CREATE TABLE IF NOT EXISTS rate_limit (
+    rate_key VARCHAR(128) NOT NULL,
+    window_start DATETIME NOT NULL,
+    count INT UNSIGNED NOT NULL DEFAULT 0,
+    PRIMARY KEY (rate_key, window_start),
+    KEY idx_rate_limit_window (window_start)
+) ENGINE=InnoDB;

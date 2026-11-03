@@ -15,6 +15,7 @@ use VenPosTPV\Service\Cash\Exception\NoOpenCashSessionException;
 use VenPosTPV\Service\Print\PrinterService;
 use VenPosTPV\Service\Print\TicketDataResolver;
 use VenPosTPV\Service\Print\TicketPdfGenerator;
+use VenPosTPV\Service\PrintAgent\TerminalNotResolvedException;
 use VenPosTPV\Service\Refund\CreditNoteHandOver;
 use VenPosTPV\Service\Refund\Exception\RefundException;
 use VenPosTPV\Service\Refund\OrderSearchService;
@@ -29,7 +30,7 @@ class RefundController
         private readonly RefundService $refundService,
         private readonly OrderSearchService $orderSearchService,
         private readonly CashSessionService $cashSessionService,
-        PrinterService $printerService,
+        private readonly PrinterService $printerService,
         private readonly TicketDataResolver $ticketDataResolver,
         private readonly TicketPdfGenerator $pdfGenerator,
         ?CreditNoteHandOver $handOver = null,
@@ -78,8 +79,7 @@ class RefundController
             $result = isset($target['order_id'])
                 ? $this->refundService->processSaleRefund($userId, $target['order_id'], $lines, $reasonCode, $reasonText, $cardConfirmed, $shopId, $voucherFallback)
                 : $this->refundService->processRefund($userId, $target['ps_order_id'], $lines, $reasonCode, $reasonText, $cardConfirmed, $shopId, $voucherFallback);
-            $result['print_status'] = $this->printCreditNote($result, $request);
-            $this->openDrawerForCash($result, $request);
+            $result = $this->handOverRefund($result, $request);
 
             return new JsonResponse(['data' => $result], Response::HTTP_OK);
         } catch (RefundException $e) {
@@ -174,8 +174,7 @@ class RefundController
                 $reasonText,
                 $cardConfirmed,
             );
-            $result['print_status'] = $this->printCreditNote($result, $request);
-            $this->openDrawerForCash($result, $request);
+            $result = $this->handOverRefund($result, $request);
 
             return new JsonResponse(['data' => $result], Response::HTTP_OK);
         } catch (RefundException $e) {
@@ -212,8 +211,7 @@ class RefundController
 
         try {
             $result = $this->refundService->retryPending((int) $session->get('user_id'), $id);
-            $result['print_status'] = $this->printCreditNote($result, $request);
-            $this->openDrawerForCash($result, $request);
+            $result = $this->handOverRefund($result, $request);
 
             return new JsonResponse(['data' => $result], Response::HTTP_OK);
         } catch (RefundException $e) {
@@ -249,16 +247,50 @@ class RefundController
         );
     }
 
-    /** @param array<string, mixed> $result */
-    private function openDrawerForCash(array $result, Request $request): void
+    /**
+     * Credit note and drawer of a completed refund (shared with exchanges). A till
+     * with a print agent also gets the ids of the queued jobs (print_job_id,
+     * drawer_job_id); without a till in the session its jobs are not created and
+     * print_error is terminal_not_resolved (T9).
+     *
+     * @param array<string, mixed> $result
+     *
+     * @return array<string, mixed>
+     */
+    public static function handOverForTill(array $result, ?int $terminalId, CreditNoteHandOver $handOver, ?PrinterService $printerService): array
     {
-        $this->handOver->openDrawerForCash($result, (int) ($request->getSession()->get('terminal_id') ?? 1));
+        if ($terminalId === null && $printerService !== null && $printerService->usesAgent(null)) {
+            $result['print_status'] = isset($result['refund_id']) ? 'pdf' : 'none';
+            $result['print_error'] = TerminalNotResolvedException::CODE;
+
+            return $result;
+        }
+
+        $terminalId ??= 1;
+        $result['print_status'] = $handOver->printCreditNote($result, $terminalId);
+        if ($result['print_status'] === 'queued' && $printerService?->queuedJobId('ticket') !== null) {
+            $result['print_job_id'] = $printerService->queuedJobId('ticket');
+        }
+        $drawerBefore = $printerService?->queuedJobId('drawer');
+        $handOver->openDrawerForCash($result, $terminalId);
+        $drawerJob = $printerService?->queuedJobId('drawer');
+        if ($drawerJob !== null && $drawerJob !== $drawerBefore) {
+            $result['drawer_job_id'] = $drawerJob;
+        }
+
+        return $result;
     }
 
-    /** @param array<string, mixed> $result */
-    private function printCreditNote(array $result, Request $request): string
+    /**
+     * @param array<string, mixed> $result
+     *
+     * @return array<string, mixed>
+     */
+    private function handOverRefund(array $result, Request $request): array
     {
-        return $this->handOver->printCreditNote($result, (int) ($request->getSession()->get('terminal_id') ?? 1));
+        $terminal = $request->getSession()->get('terminal_id');
+
+        return self::handOverForTill($result, $terminal !== null ? (int) $terminal : null, $this->handOver, $this->printerService);
     }
 
     #[Route('/orders/search', methods: ['GET'])]

@@ -112,8 +112,9 @@ class CheckoutController
         try {
             $result = $this->checkoutService->createOrder($userId, $cartData, $paymentMethod, $amountTendered, 0.0, $requestId);
 
-            // A replayed sale was printed by the request that created it.
-            $result['print_status'] = !empty($result['replayed']) ? 'none' : 'dispatched';
+            // A replayed sale was printed by the request that created it. A till with a
+            // print agent reports its queued job ('queued' + print_job_id, PRD C1).
+            $result['print_status'] = !empty($result['replayed']) ? 'none' : ($result['print_status'] ?? 'dispatched');
 
             return new JsonResponse(['data' => $result], Response::HTTP_OK);
         } catch (NoOpenCashSessionException $e) {

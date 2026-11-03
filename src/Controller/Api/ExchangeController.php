@@ -11,6 +11,7 @@ use Symfony\Component\HttpKernel\Attribute\AsController;
 use Symfony\Component\Routing\Attribute\Route;
 use VenPosTPV\Service\Cash\Exception\NoOpenCashSessionException;
 use VenPosTPV\Service\Exchange\ExchangeService;
+use VenPosTPV\Service\Print\PrinterService;
 use VenPosTPV\Service\Refund\CreditNoteHandOver;
 use VenPosTPV\Service\Refund\Exception\RefundException;
 use VenPosTPV\Service\Refund\OrderSearchService;
@@ -37,6 +38,7 @@ class ExchangeController
         private readonly ExchangeService $exchangeService,
         private readonly CreditNoteHandOver $handOver,
         private readonly OrderSearchService $orderSearchService,
+        private readonly ?PrinterService $printerService = null,
     ) {
     }
 
@@ -118,19 +120,19 @@ class ExchangeController
             return $this->errorResponse($e);
         }
 
-        $terminalId = (int) ($request->getSession()->get('terminal_id') ?? 1);
+        $terminal = $request->getSession()->get('terminal_id');
         $refund = \is_array($result['refund'] ?? null) ? $result['refund'] : [];
         if (!empty($refund['resumed'])) {
             // Completed, printed and paid out by an earlier call.
             $refund['print_status'] = 'none';
         } else {
-            $refund['print_status'] = $this->handOver->printCreditNote($refund, $terminalId);
-            $this->handOver->openDrawerForCash($refund, $terminalId);
+            $refund = RefundController::handOverForTill($refund, $terminal !== null ? (int) $terminal : null, $this->handOver, $this->printerService);
         }
         $result['refund'] = $refund;
         if (\is_array($result['sale'] ?? null)) {
-            // Printed asynchronously by the checkout, like any sale.
-            $result['sale']['print_status'] = 'dispatched';
+            // Printed asynchronously by the checkout, like any sale; a print agent
+            // till reports its queued job (print_status 'queued', print_job_id).
+            $result['sale']['print_status'] = $result['sale']['print_status'] ?? 'dispatched';
         }
 
         return new JsonResponse(['data' => $result], Response::HTTP_OK);

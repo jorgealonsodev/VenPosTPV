@@ -7,6 +7,11 @@ parameters:
     env(TPV_COUPON_CHECKOUT_ENABLED): '0'
     # New native coupon creation uses the shop's local calendar day.
     env(PS_SHOP_TIMEZONE): 'Europe/Madrid'
+    # Print agent versions (docs/prd/agente-impresion.md U1, U4): empty = none.
+    # TPV_AGENT_DOWNLOAD_URL may contain {os}, {arch} and {version}.
+    env(TPV_AGENT_MIN_VERSION): ''
+    env(TPV_AGENT_LATEST_VERSION): ''
+    env(TPV_AGENT_DOWNLOAD_URL): ''
 
 services:
     _defaults:
@@ -178,6 +183,17 @@ services:
             $restockClient: '@VenPosTPV\Service\Refund\PsRestockClient'
             $couponCreationService: '@VenPosTPV\Service\PrestaShop\CouponCreationService'
             $priceResolver: '@VenPosTPV\Service\Catalog\CatalogPriceResolver'
+
+    # Print agent: pairing codes are stored as an HMAC with the app secret (E2, E3)
+    VenPosTPV\Service\PrintAgent\AgentRegistry:
+        arguments:
+            $secret: '%env(APP_SECRET)%'
+
+    VenPosTPV\Service\PrintAgent\AgentReleasePolicy:
+        arguments:
+            $minVersion: '%env(TPV_AGENT_MIN_VERSION)%'
+            $latestVersion: '%env(TPV_AGENT_LATEST_VERSION)%'
+            $downloadUrl: '%env(TPV_AGENT_DOWNLOAD_URL)%'
 
     # Messenger Handler
     VenPosTPV\MessageHandler\SyncCatalogMessageHandler:

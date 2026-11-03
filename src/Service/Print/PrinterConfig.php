@@ -30,6 +30,15 @@ final class PrinterConfig
             || ($this->type === 'system' && SystemPrintQueue::isValidQueueName($this->queue));
     }
 
+    /**
+     * True when the till prints through its print agent (docs/prd/agente-impresion.md
+     * T0): jobs are queued in `print_job`, never sent from this server.
+     */
+    public function usesAgent(): bool
+    {
+        return $this->enabled && $this->type === 'agent';
+    }
+
     public static function fromJson(?string $json): self
     {
         if ($json === null || $json === '') {

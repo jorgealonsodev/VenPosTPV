@@ -36,8 +36,12 @@ final class DeviceListener
         '/api/parked-tickets',
     ];
 
-    /** No till context needed (and no database lookup) for these. */
-    private const SKIPPED = ['/api/health', '/api/auth/'];
+    /**
+     * No till context needed (and no database lookup) for these. The print agent
+     * API works with its Bearer key only: no session and no cookies (PRD E9), so
+     * this listener must not open the session there.
+     */
+    private const SKIPPED = ['/api/health', '/api/auth/', '/api/agent/v1/'];
 
     /** Session keys of the drawer cached for one till. */
     private const CASH_CACHE = ['cash_session_id', 'cash_opened_at', 'opening_cash'];

@@ -242,17 +242,16 @@ class CheckoutService
             throw CheckoutException::localSaveFailed($e);
         }
 
-        try {
-            $this->messageBus->dispatch(new PrintTicketMessage(TicketDataResolver::saleKey($orderId), $terminalId));
-        } catch (\Throwable $e) {
-            // Print dispatch failure must not block checkout
+        $print = $this->printForAgent($cashContext, $terminalId, TicketDataResolver::saleKey($orderId));
+        if ($print === null) {
+            try {
+                $this->messageBus->dispatch(new PrintTicketMessage(TicketDataResolver::saleKey($orderId), $terminalId));
+            } catch (\Throwable $e) {
+                // Print dispatch failure must not block checkout
+            }
         }
         if ($paymentMethod === 'cash' || $paymentMethod === 'mixed') {
-            try {
-                $this->printerService->openDrawer($terminalId);
-            } catch (\Throwable $e) {
-                // Drawer failure must not block checkout
-            }
+            $print = $this->openDrawerForSale($print, $cashContext, $terminalId, $userId, $orderId, $reference);
         }
         // Upload attempt once the response is sent; the minute task covers the rest.
         $this->syncTrigger?->request();
@@ -268,7 +267,7 @@ class CheckoutService
             'terminal_id' => $terminalId,
             'saga_error' => false,
             'stock_warnings' => $stockWarnings,
-        ];
+        ] + ($print ?? []);
         if ($exchangeCredit > 0) {
             // The exchange's new items never came from the sale screen cart.
             return $result + ['payable' => $payable, 'exchange_credit' => $tender['exchange_credit']];
@@ -441,18 +440,18 @@ class CheckoutService
         }
 
         $terminalId = (int) ($cashContext['terminal_id'] ?? 1);
+        $print = null;
         if (!$sagaError && !$alreadyRecorded) {
-            try {
-                $this->messageBus->dispatch(new PrintTicketMessage($psOrderId, $terminalId));
-            } catch (\Throwable $e) {
-                // Print dispatch failure must not block checkout.
+            $print = $this->printForAgent($cashContext, $terminalId, $psOrderId);
+            if ($print === null) {
+                try {
+                    $this->messageBus->dispatch(new PrintTicketMessage($psOrderId, $terminalId));
+                } catch (\Throwable $e) {
+                    // Print dispatch failure must not block checkout.
+                }
             }
             if ($cashCollected > 0) {
-                try {
-                    $this->printerService->openDrawer($terminalId);
-                } catch (\Throwable $e) {
-                    // Drawer failure must not block checkout.
-                }
+                $print = $this->openDrawerForSale($print, $cashContext, $terminalId, $userId, null, $reference);
             }
         }
         if (!$sagaError) {
@@ -471,7 +470,70 @@ class CheckoutService
             'payment_method' => $paymentMethod,
             'terminal_id' => $terminalId,
             'saga_error' => $sagaError,
-        ] + ($requestId !== null ? ['replayed' => $alreadyRecorded] : []);
+        ] + ($print ?? []) + ($requestId !== null ? ['replayed' => $alreadyRecorded] : []);
+    }
+
+    /**
+     * PRD T0, T9: for a till that prints through its print agent the ticket job is
+     * created in this request (never through Messenger) and never on till 1 by
+     * default. Null for the other printers: the ticket is dispatched as before.
+     *
+     * @param array<string, mixed> $cashContext
+     *
+     * @return array<string, mixed>|null print_status 'queued' with print_job_id, or 'failed' with print_error
+     */
+    private function printForAgent(array $cashContext, int $terminalId, int $orderKey): ?array
+    {
+        $resolved = isset($cashContext['terminal_id']) && (int) $cashContext['terminal_id'] > 0;
+        try {
+            if (!$this->printerService->usesAgent($resolved ? $terminalId : null)) {
+                return null;
+            }
+        } catch (\Throwable) {
+            return null;
+        }
+        if (!$resolved) {
+            return ['print_status' => 'failed', 'print_error' => 'terminal_not_resolved'];
+        }
+
+        try {
+            $this->printerService->printTicket($orderKey, $terminalId);
+
+            return ['print_status' => 'queued', 'print_job_id' => $this->printerService->queuedJobId('ticket')];
+        } catch (\Throwable) {
+            // The sale is stored: the screen offers the PDF (C1, C2).
+            return ['print_status' => 'failed', 'print_error' => 'print_job_failed'];
+        }
+    }
+
+    /**
+     * Opens the drawer for a cash sale (T11: recorded with the sale); with the print
+     * agent the response says whether its job was queued.
+     *
+     * @param array<string, mixed>|null $print
+     * @param array<string, mixed> $cashContext
+     *
+     * @return array<string, mixed>|null
+     */
+    private function openDrawerForSale(?array $print, array $cashContext, int $terminalId, int $userId, ?int $orderId, string $reference): ?array
+    {
+        if ($print !== null && ($print['print_error'] ?? null) === 'terminal_not_resolved') {
+            return $print + ['drawer_status' => 'failed'];
+        }
+
+        try {
+            $this->printerService->openDrawer($terminalId, 'sale', $userId, $orderId, $reference);
+            if ($print !== null) {
+                return $print + ['drawer_status' => 'queued', 'drawer_job_id' => $this->printerService->queuedJobId('drawer')];
+            }
+        } catch (\Throwable $e) {
+            // Drawer failure must not block checkout
+            if ($print !== null) {
+                return $print + ['drawer_status' => 'failed'];
+            }
+        }
+
+        return $print;
     }
 
     private function assertCouponCheckoutEnabled(): void
