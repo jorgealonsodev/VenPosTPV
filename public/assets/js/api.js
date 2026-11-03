@@ -89,6 +89,10 @@ const ApiClient = (function () {
         couponPreview: (payload) => request('/api/checkout/coupon-preview', { method: 'POST', body: JSON.stringify(payload), queueOnNetworkFailure: false }),
         couponCheckout: (payload) => request('/api/checkout', { method: 'POST', body: JSON.stringify(payload), queueOnNetworkFailure: false }),
         createCoupon: (payload) => request('/api/coupons', { method: 'POST', body: JSON.stringify(payload), queueOnNetworkFailure: false }),
+        // PRD C1, C2: the till's local customer copy; a new customer is stored locally and
+        // uploaded before its sale. Never queued offline: the server itself stores it.
+        customerSearch: (query) => request('/api/customers?q=' + encodeURIComponent(query || ''), { method: 'GET' }),
+        customerCreate: (customer) => request('/api/customers', { method: 'POST', body: JSON.stringify(customer), queueOnNetworkFailure: false }),
         cashOpen: (openingCash) => request('/api/cash/open', { method: 'POST', body: JSON.stringify({ opening_cash: openingCash }) }),
         cashCurrent: () => request('/api/cash/current', { method: 'GET' }),
         cashMovement: (payload) => request('/api/cash/movement', { method: 'POST', body: JSON.stringify(payload) }),
@@ -136,6 +140,11 @@ const ApiClient = (function () {
         },
         authLogout: () => request('/api/auth/logout', { method: 'POST', body: JSON.stringify({}) }),
         syncStatus: () => request('/api/sync/status', { method: 'GET' }),
+        // PRD I1-I3: uploads to PrestaShop still to do and incidents; retries are admin-only and never queued.
+        outboxStatus: () => request('/api/sync/outbox-status', { method: 'GET' }),
+        incidentsList: () => request('/api/incidents', { method: 'GET' }),
+        incidentRetry: (id) => request('/api/incidents/' + encodeURIComponent(id) + '/retry', { method: 'POST', body: JSON.stringify({}), queueOnNetworkFailure: false }),
+        incidentRetryOrder: (orderId) => request('/api/incidents/order/' + encodeURIComponent(orderId) + '/retry', { method: 'POST', body: JSON.stringify({}), queueOnNetworkFailure: false }),
         syncStock: () => request('/api/sync/stock', { method: 'POST', body: JSON.stringify({}) }),
         syncNow: () => request('/api/sync/now', { method: 'POST', body: JSON.stringify({}) }),
         terminalGet: (id) => request('/api/terminal/' + encodeURIComponent(id), { method: 'GET' }),

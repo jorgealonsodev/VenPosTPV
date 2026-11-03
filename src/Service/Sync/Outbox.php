@@ -11,6 +11,8 @@ use Doctrine\DBAL\Connection;
  * transaction as the local operation it uploads, so an operation is never stored
  * without its upload, nor uploaded without being stored. Rows of one sale upload in
  * `sequence` order: 1 is the sale itself, its refunds and exchanges come after.
+ * A row may also wait for one other row (`depends_on`): a sale for a customer
+ * created at the till waits for that customer's upload (PRD C2).
  */
 class Outbox
 {
@@ -21,6 +23,12 @@ class Outbox
 
     /** The restock of a refund without a ticket: it belongs to no sale. */
     public const TYPE_RESTOCK = 'restock';
+
+    /**
+     * A customer created at the till (PRD C2). It belongs to no sale; every sale for
+     * that customer waits for it (depends_on) and is sent with its PrestaShop id.
+     */
+    public const TYPE_CUSTOMER = 'customer';
 
     public const STATUS_PENDING = 'pending';
     public const STATUS_PROCESSING = 'processing';
@@ -37,14 +45,29 @@ class Outbox
      * a missing range would make concurrent sales deadlock on the index gap).
      *
      * @param array<string, mixed> $payload the module's order request, with the ticket code as `reference`
+     * @param int|null $dependsOn the outbox row (a new customer's upload) that must be done first
      *
      * @return string the request_id
      *
      * @throws \LogicException outside the sale transaction
      */
-    public function enqueueSale(int $orderId, array $payload): string
+    public function enqueueSale(int $orderId, array $payload, ?int $dependsOn = null): string
     {
-        return $this->insert(self::TYPE_SALE, $orderId, 1, $payload);
+        return $this->insert(self::TYPE_SALE, $orderId, 1, $payload, null, $dependsOn);
+    }
+
+    /**
+     * Queues the upload of a customer created at the till; it waits for nothing.
+     *
+     * @param array<string, mixed> $payload firstname, lastname, email
+     *
+     * @return int the outbox row id, which the customer's sales depend on
+     */
+    public function enqueueCustomer(int $customerId, array $payload): int
+    {
+        $this->insert(self::TYPE_CUSTOMER, null, 1, $payload + ['_local' => ['customer_id' => $customerId]]);
+
+        return (int) $this->connection->lastInsertId();
     }
 
     /**
@@ -75,7 +98,7 @@ class Outbox
     }
 
     /** @param array<string, mixed> $payload */
-    private function insert(string $type, ?int $orderId, int $sequence, array $payload, ?string $requestId = null): string
+    private function insert(string $type, ?int $orderId, int $sequence, array $payload, ?string $requestId = null, ?int $dependsOn = null): string
     {
         if (!$this->connection->isTransactionActive()) {
             throw new \LogicException('Outbox rows must be written inside the transaction of their operation');
@@ -94,7 +117,7 @@ class Outbox
             'next_attempt_at' => $now,
             'created_at' => $now,
             'updated_at' => $now,
-        ]);
+        ] + ($dependsOn !== null ? ['depends_on' => $dependsOn] : []));
 
         return $requestId;
     }

@@ -93,11 +93,25 @@ class PsOrderClient
      */
     public function previewCoupon(array $payload): array
     {
-        $response = $this->send($payload);
-        $statusCode = $response->getStatusCode();
-        $content = $response->getContent(false);
+        // A preview books nothing anywhere, so any failure to reach PrestaShop
+        // (network, timeout, a gateway in front of a stopped shop) is coupon_offline.
+        try {
+            $response = $this->send($payload);
+            $statusCode = $response->getStatusCode();
+            $content = $response->getContent(false);
+        } catch (TransportExceptionInterface $e) {
+            throw CheckoutException::couponOffline($e);
+        } catch (CheckoutException $e) {
+            if ($e->getCode() === 0) {
+                throw CheckoutException::couponOffline($e);
+            }
+            throw $e;
+        }
 
         if ($statusCode !== 200) {
+            if (\in_array($statusCode, self::GATEWAY_DOWN, true)) {
+                throw CheckoutException::couponOffline();
+            }
             if ($statusCode === 422) {
                 throw CheckoutException::psValidationFailed('Coupon preview rejected by PS module');
             }
@@ -148,7 +162,23 @@ class PsOrderClient
     public function createCouponOrder(array $payload): array
     {
         try {
-            return $this->handleOrderResponse($this->send($payload), true);
+            $response = $this->send($payload);
+        } catch (CheckoutException $e) {
+            // The request was never issued (code 0); an encoding error stays 422.
+            throw $e->getCode() === 0 ? CheckoutException::couponOffline($e) : $e;
+        }
+        try {
+            $response->getStatusCode();
+        } catch (TransportExceptionInterface $e) {
+            if (self::neverReachedPrestaShop($response, $e)) {
+                throw CheckoutException::couponOffline($e);
+            }
+            // It may have reached PrestaShop: the order could exist.
+            throw CheckoutException::couponReconciliationRequired($e->getMessage(), $e);
+        }
+
+        try {
+            return $this->handleOrderResponse($response, true);
         } catch (CheckoutException $e) {
             if ($e->getCode() === 422) {
                 throw $e;
@@ -156,6 +186,24 @@ class PsOrderClient
 
             throw CheckoutException::couponReconciliationRequired($e->getMessage(), $e);
         }
+    }
+
+    /** HTTP answers of a proxy or web server in front of a PrestaShop that does not answer. */
+    private const GATEWAY_DOWN = [502, 503, 504];
+
+    /**
+     * True only when the connection to PrestaShop was never established (DNS
+     * failure, refused, unreachable, connect timeout), so the request cannot have
+     * created anything. A timeout after connecting is not: the order may exist.
+     */
+    private static function neverReachedPrestaShop(ResponseInterface $response, TransportExceptionInterface $e): bool
+    {
+        $connectTime = $response->getInfo('connect_time');
+        if (is_numeric($connectTime) && (float) $connectTime > 0) {
+            return false;
+        }
+
+        return preg_match('/could not resolve|couldn\'t resolve|failed to connect|couldn\'t connect|connection refused|network is unreachable|no route to host|connection timed out/i', $e->getMessage()) === 1;
     }
 
     /**

@@ -44,6 +44,68 @@ class PrestaShopApiClient
     }
 
     /**
+     * Every customer PrestaShop still has, for the till's local copy (PRD C1).
+     * The customer resource has no phone; addresses do, and they are not read.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function getCustomers(): array
+    {
+        return $this->paginate('/customers?display=[id,firstname,lastname,email,active]&filter[deleted]=0&output_format=JSON');
+    }
+
+    /**
+     * The PrestaShop customer with this email, if any (the first one when there are several).
+     *
+     * @throws PsApiException
+     */
+    public function findCustomerIdByEmail(string $email): ?int
+    {
+        $url = sprintf(
+            '%s/api/customers?display=[id]&filter[email]=[%s]&filter[deleted]=0&sort=[id_ASC]&output_format=JSON',
+            $this->baseUrl,
+            rawurlencode($email)
+        );
+        $rows = $this->decodeResponse($this->request('GET', $url))['customers'] ?? [];
+        if (!\is_array($rows) || $rows === [] || !\is_array($rows[0] ?? null) || (int) ($rows[0]['id'] ?? 0) < 1) {
+            return null;
+        }
+
+        return (int) $rows[0]['id'];
+    }
+
+    /**
+     * Creates a customer through the webservice (POST /api/customers, XML as
+     * PrestaShop requires for writes). The password is random: the customer can
+     * reset it from the shop. No group is sent, so PrestaShop's default
+     * applies (to confirm against the live shop).
+     *
+     * @return int the new PrestaShop customer id
+     *
+     * @throws PsApiException with the HTTP status as code (400 when PrestaShop rejects the data)
+     */
+    public function createCustomer(string $firstname, string $lastname, string $email): int
+    {
+        $xml = sprintf(
+            '<?xml version="1.0" encoding="UTF-8"?><prestashop xmlns:xlink="http://www.w3.org/1999/xlink"><customer><firstname>%s</firstname><lastname>%s</lastname><email>%s</email><passwd>%s</passwd><active>1</active></customer></prestashop>',
+            htmlspecialchars($firstname, \ENT_XML1 | \ENT_QUOTES, 'UTF-8'),
+            htmlspecialchars($lastname, \ENT_XML1 | \ENT_QUOTES, 'UTF-8'),
+            htmlspecialchars($email, \ENT_XML1 | \ENT_QUOTES, 'UTF-8'),
+            bin2hex(random_bytes(12)),
+        );
+        $response = $this->request('POST', sprintf('%s/api/customers?output_format=JSON', $this->baseUrl), 15, [
+            'headers' => ['Content-Type' => 'application/xml'],
+            'body' => $xml,
+        ]);
+        $id = (int) ($this->decodeResponse($response)['customer']['id'] ?? 0);
+        if ($id < 1) {
+            throw PsApiException::httpError($response->getStatusCode(), 'The created customer has no id', $response);
+        }
+
+        return $id;
+    }
+
+    /**
      * @return array<int, array<string, mixed>>
      */
     public function getCombinations(): array
@@ -289,15 +351,16 @@ class PrestaShopApiClient
         }
     }
 
-    private function request(string $method, string $url, int $timeout = 10): ResponseInterface
+    /** @param array{headers?: array<string, string>, body?: string} $options */
+    private function request(string $method, string $url, int $timeout = 10, array $options = []): ResponseInterface
     {
         try {
             $response = $this->httpClient->request($method, $url, [
                 'headers' => [
                     'Authorization' => 'Basic ' . $this->buildAuthHeader(),
-                ],
+                ] + ($options['headers'] ?? []),
                 'timeout' => $timeout,
-            ]);
+            ] + (isset($options['body']) ? ['body' => $options['body']] : []));
 
             $statusCode = $response->getStatusCode();
 
@@ -363,6 +426,10 @@ class PrestaShopApiClient
 
         if (str_contains($endpoint, '/stock_availables')) {
             return 'stock_availables';
+        }
+
+        if (str_contains($endpoint, '/customers')) {
+            return 'customers';
         }
 
         if (str_contains($endpoint, '/categories')) {

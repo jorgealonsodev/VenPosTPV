@@ -13,6 +13,7 @@ use VenPosTPV\Service\Cash\Exception\NoOpenCashSessionException;
 use VenPosTPV\Service\Catalog\CatalogPriceResolver;
 use VenPosTPV\Service\Catalog\Exception\ProductNotInCatalogException;
 use VenPosTPV\Service\Checkout\Exception\CheckoutException;
+use VenPosTPV\Service\Customer\CustomerDirectory;
 use VenPosTPV\Service\Print\PrinterService;
 use VenPosTPV\Service\Print\TicketDataResolver;
 use VenPosTPV\Service\Sale\TicketNumberer;
@@ -26,8 +27,12 @@ use VenPosTPV\Service\Sync\OutboxSyncTrigger;
  * not wait for PrestaShop, and OutboxSync uploads the order with the ticket code as
  * its reference. The new items of an exchange are a local sale too (PRD D1). Native
  * coupons still create the PrestaShop order first (PrestaShop must validate them at
- * once, PRD V5, T6). A browser request_id makes a repeated checkout return the sale
- * it already created instead of charging it twice.
+ * once, PRD V5); when PrestaShop cannot be reached the coupon is refused
+ * (coupon_offline) with nothing booked, and the cart is charged without it. A
+ * browser request_id makes a repeated checkout, with or without coupon, return the
+ * sale it already created instead of charging it twice. The sale's customer comes
+ * from the local customer copy; one created at the till and not uploaded yet makes
+ * the sale's upload wait for it (PRD C2).
  *
  * Prices are resolved from the synced catalog on a tax-included basis, because
  * that is what PrestaShop actually charges: `catalog_product.price_ttc` for a
@@ -56,7 +61,13 @@ class CheckoutService
         private readonly ?TicketNumberer $ticketNumberer = null,
         private readonly ?Outbox $outbox = null,
         private readonly ?OutboxSyncTrigger $syncTrigger = null,
+        private readonly ?CustomerDirectory $customers = null,
     ) {
+    }
+
+    private function customerDirectory(): CustomerDirectory
+    {
+        return $this->customers ?? new CustomerDirectory($this->conn);
     }
 
     /**
@@ -117,7 +128,7 @@ class CheckoutService
                 throw CheckoutException::psValidationFailed('Coupons cannot be used in an exchange');
             }
 
-            return $this->createCouponOrder($userId, $cartData, $paymentMethod, $amountTendered);
+            return $this->createCouponOrder($userId, $cartData, $paymentMethod, $amountTendered, $requestId);
         }
 
         return $this->createLocalOrder($userId, $cartData, $paymentMethod, $amountTendered, $exchangeCredit, $requestId);
@@ -179,7 +190,8 @@ class CheckoutService
         $total = $pricing['total'];
         $stockWarnings = $this->validateStock($lines);
 
-        $payload = $this->orderPayload($lines, $cartData, $paymentMethod, $amountTendered);
+        $customer = $this->customerDirectory()->resolveForSale($cartData['customer'] ?? null);
+        $payload = $this->orderPayload($lines, $customer, $paymentMethod, $amountTendered);
         $cashContext = $this->cashSessionService->requireOpenSession($userId);
         // What the customer still pays; the whole total without an exchange credit.
         $payable = round(max(0.0, $total - $exchangeCredit), 2);
@@ -200,14 +212,14 @@ class CheckoutService
 
         try {
             $numberer->prepareYear($terminalId, $date);
-            [$orderId, $reference] = $this->conn->transactional(function () use ($numberer, $outbox, $terminalId, $sessionId, $date, $userId, $total, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines, $tender, $cashImpactAmount, $payload, $requestId): array {
+            [$orderId, $reference] = $this->conn->transactional(function () use ($numberer, $outbox, $terminalId, $sessionId, $date, $userId, $total, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines, $tender, $cashImpactAmount, $payload, $requestId, $customer): array {
                 $reference = $numberer->next($terminalId, $date);
                 $orderId = $this->insertOrderMeta(null, $userId, $reference, $total, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines, null, $tender, false, $requestId);
                 if ($cashImpactAmount > 0) {
                     $this->cashSessionService->recordMovementInTransaction($sessionId, 'sale', $cashImpactAmount, 'Checkout sale', null, $orderId);
                 }
                 $this->decrementStock($lines);
-                $outbox->enqueueSale($orderId, $payload + ['reference' => $reference]);
+                $outbox->enqueueSale($orderId, $payload + ['reference' => $reference], $customer['depends_on']);
 
                 return [$orderId, $reference];
             });
@@ -266,8 +278,13 @@ class CheckoutService
         return $result + ($requestId !== null ? ['replayed' => false] : []);
     }
 
-    /** @param array<int, array<string, mixed>> $lines @param array<string, mixed> $cartData @return array<string, mixed> */
-    private function orderPayload(array $lines, array $cartData, string $paymentMethod, float $amountTendered): array
+    /**
+     * @param array<int, array<string, mixed>> $lines
+     * @param array{ps_customer_id: int, local_id: int|null, depends_on: int|null} $customer
+     *
+     * @return array<string, mixed>
+     */
+    private function orderPayload(array $lines, array $customer, string $paymentMethod, float $amountTendered): array
     {
         $products = [];
         foreach ($lines as $line) {
@@ -279,21 +296,15 @@ class CheckoutService
             ];
         }
 
-        $customer = $cartData['customer'] ?? null;
-        $idCustomer = 0;
-        if (is_array($customer) && isset($customer['id']) && \is_int($customer['id']) && $customer['id'] > 0) {
-            $idCustomer = $customer['id'];
-        }
-
         return [
             'products' => $products,
-            'id_customer' => $idCustomer,
+            'id_customer' => $customer['ps_customer_id'],
             'id_currency' => 1,
             'id_shop' => (int) ($_SESSION['shop_id'] ?? 1),
             'payment_method' => $paymentMethod,
             'amount_tendered' => $amountTendered,
             'notes' => '',
-        ];
+        ] + ($customer['local_id'] !== null ? ['_customer_local_id' => $customer['local_id']] : []);
     }
 
     /**
@@ -339,9 +350,14 @@ class CheckoutService
      * discounts, codes, and quote fields are never used as an accounting basis.
      *
      * @param array<string, mixed> $cartData
-     * @return array{ps_order_id: int, reference: string, total: float, change_due: float, payment_method: string, terminal_id: int, saga_error: bool}
+     * A request_id is stored with the sale, so a repeated attempt is answered by
+     * createOrder from the stored sale without asking PrestaShop again.
+     *
+     * @return array<string, mixed> ps_order_id, reference, total, change_due, payment_method, terminal_id, saga_error
+     *
+     * @throws CheckoutException coupon_offline (nothing booked) when PrestaShop cannot be reached
      */
-    private function createCouponOrder(int $userId, array $cartData, string $paymentMethod, float $amountTendered): array
+    private function createCouponOrder(int $userId, array $cartData, string $paymentMethod, float $amountTendered, ?string $requestId = null): array
     {
         $this->assertCouponCheckoutEnabled();
         $this->assertNoManualDiscountWithCoupon($cartData);
@@ -391,12 +407,12 @@ class CheckoutService
         $sagaError = false;
         $alreadyRecorded = false;
         try {
-            $alreadyRecorded = $this->withCouponOrderLock($psOrderId, function () use ($psOrderId, $userId, $reference, $payable, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines, $quote, $cashCollected, $cardCollected): bool {
+            $alreadyRecorded = $this->withCouponOrderLock($psOrderId, function () use ($psOrderId, $userId, $reference, $payable, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines, $quote, $cashCollected, $cardCollected, $requestId): bool {
                 // CashSessionService and this service share the configured TPV
                 // DBAL connection. Its public mutation helper correctly rejects
                 // nested transactions, so keep these three local writes on the
                 // same connection and transaction here.
-                return $this->conn->transactional(function () use ($psOrderId, $userId, $reference, $payable, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines, $quote, $cashCollected, $cardCollected): bool {
+                return $this->conn->transactional(function () use ($psOrderId, $userId, $reference, $payable, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines, $quote, $cashCollected, $cardCollected, $requestId): bool {
                     if ($this->conn->fetchOne('SELECT 1 FROM order_meta WHERE ps_order_id = ?', [$psOrderId]) !== false) {
                         return true;
                     }
@@ -406,7 +422,7 @@ class CheckoutService
                         'payable' => $payable,
                         'cash_collected' => $cashCollected,
                         'card_collected' => $cardCollected,
-                    ], ['cash' => $cashCollected, 'card' => $cardCollected]);
+                    ], ['cash' => $cashCollected, 'card' => $cardCollected], true, $requestId);
                     if ($cashCollected > 0) {
                         $this->insertCouponCashMovement($cashContext, $userId, $cashCollected, $psOrderId);
                     }
@@ -455,7 +471,7 @@ class CheckoutService
             'payment_method' => $paymentMethod,
             'terminal_id' => $terminalId,
             'saga_error' => $sagaError,
-        ];
+        ] + ($requestId !== null ? ['replayed' => $alreadyRecorded] : []);
     }
 
     private function assertCouponCheckoutEnabled(): void
@@ -491,8 +507,12 @@ class CheckoutService
                 'price' => (float) ($line['price'] ?? 0),
             ];
         }
-        $customer = $cartData['customer'] ?? null;
-        $idCustomer = is_array($customer) && isset($customer['id']) && is_int($customer['id']) && $customer['id'] > 0 ? $customer['id'] : 0;
+        $customer = $this->customerDirectory()->resolveForSale($cartData['customer'] ?? null);
+        if ($customer['local_id'] !== null) {
+            // PrestaShop validates the coupon for a customer it must already know.
+            throw CheckoutException::psValidationFailed('El cliente aún no está en PrestaShop: no se puede aplicar el cupón. Cobra sin él o espera a que se suba.');
+        }
+        $idCustomer = $customer['ps_customer_id'];
 
         return [
             'products' => $products,

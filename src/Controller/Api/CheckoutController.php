@@ -45,6 +45,9 @@ class CheckoutController
                 'retry' => false,
             ], Response::HTTP_CONFLICT);
         } catch (CheckoutException $e) {
+            if ($e->isCouponOffline()) {
+                return $this->couponOffline($e);
+            }
             if ($e->getCode() === 503) {
                 return new JsonResponse(['error' => $e->getMessage(), 'code' => 'coupon_unavailable', 'retry' => false], Response::HTTP_SERVICE_UNAVAILABLE);
             }
@@ -123,6 +126,9 @@ class CheckoutController
                 Response::HTTP_CONFLICT
             );
         } catch (CheckoutException $e) {
+            if ($e->isCouponOffline()) {
+                return $this->couponOffline($e);
+            }
             if ($e->getCode() === 409) {
                 return new JsonResponse(
                     ['error' => $e->getMessage(), 'code' => 'coupon_reconcile_required', 'retry' => false],
@@ -152,5 +158,14 @@ class CheckoutController
                 Response::HTTP_INTERNAL_SERVER_ERROR
             );
         }
+    }
+
+    /**
+     * PRD V5: PrestaShop did not answer, nothing was booked; the screen offers
+     * "Cobrar sin cupón", the same cart through the local-first sale.
+     */
+    private function couponOffline(CheckoutException $e): JsonResponse
+    {
+        return new JsonResponse(['error' => $e->getMessage(), 'code' => 'coupon_offline', 'retry' => false], Response::HTTP_SERVICE_UNAVAILABLE);
     }
 }

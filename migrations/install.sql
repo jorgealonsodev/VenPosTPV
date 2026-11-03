@@ -356,6 +356,7 @@ CREATE TABLE IF NOT EXISTS outbox (
     type VARCHAR(32) NOT NULL,
     order_id BIGINT UNSIGNED NULL,
     sequence INT UNSIGNED NOT NULL,
+    depends_on BIGINT UNSIGNED NULL,
     request_id VARCHAR(64) NOT NULL,
     payload JSON NOT NULL,
     status VARCHAR(16) NOT NULL DEFAULT 'pending',
@@ -369,7 +370,8 @@ CREATE TABLE IF NOT EXISTS outbox (
     done_at DATETIME NULL,
     UNIQUE KEY uk_outbox_request (request_id),
     UNIQUE KEY uk_outbox_order_sequence (order_id, sequence),
-    KEY idx_outbox_due (status, next_attempt_at)
+    KEY idx_outbox_due (status, next_attempt_at),
+    KEY idx_outbox_depends_on (depends_on)
 ) ENGINE=InnoDB;
 
 -- terminal_device (Version00000033): the computer linked to each till. Only the
@@ -384,3 +386,23 @@ CREATE TABLE IF NOT EXISTS terminal_device (
     UNIQUE KEY uk_terminal_device_terminal (terminal_id),
     CONSTRAINT fk_terminal_device_terminal FOREIGN KEY (terminal_id) REFERENCES terminal (id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
+
+-- customer (Version00000034): the till's copy of the PrestaShop customers
+-- (tpv:customers:sync) plus the customers created at the till, which have no
+-- ps_customer_id until their outbox row (outbox_id) is uploaded (PRD C1, C2).
+CREATE TABLE IF NOT EXISTS customer (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    ps_customer_id INT UNSIGNED NULL,
+    firstname VARCHAR(255) NOT NULL,
+    lastname VARCHAR(255) NOT NULL,
+    email VARCHAR(255) NULL,
+    phone VARCHAR(32) NULL,
+    active TINYINT(1) NOT NULL DEFAULT 1,
+    outbox_id BIGINT UNSIGNED NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    synced_at DATETIME NULL,
+    UNIQUE KEY uk_customer_ps (ps_customer_id),
+    KEY idx_customer_email (email),
+    KEY idx_customer_name (lastname, firstname)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

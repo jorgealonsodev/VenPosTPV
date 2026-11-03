@@ -30,6 +30,9 @@ const PaymentModal = {
         const voucherCashInput = Vue.ref('');
         const voucherPreviewRevision = Vue.ref(0);
         const voucherReconciliationRequired = Vue.ref(false);
+        // PRD V5: PrestaShop did not answer for the coupon; nothing was booked and the
+        // same cart can be charged without it ("Cobrar sin cupón").
+        const couponOffline = Vue.ref(false);
         const completedTotal = Vue.ref(null);
         const completedChange = Vue.ref(null);
         const isSubmitting = Vue.ref(false);
@@ -94,7 +97,20 @@ const PaymentModal = {
             });
         }
 
+        /** The server's own message inside an ApiClient error ("HTTP 503: {...}"). */
+        function serverMessage(msg) {
+            const start = msg.indexOf('{');
+            if (start < 0) return msg;
+            try {
+                const body = JSON.parse(msg.slice(start));
+                return body && body.error ? body.error : msg;
+            } catch (e) {
+                return msg;
+            }
+        }
+
         function invalidateVoucher() {
+            couponOffline.value = false;
             voucherPreviewRevision.value += 1;
             activeVoucherSnapshot = null;
             voucherPreview.value = null;
@@ -145,7 +161,9 @@ const PaymentModal = {
                 voucherCashInput.value = Number(response.data.total_paid).toFixed(2).replace('.', ',');
             } catch (err) {
                 if (voucherPreviewRevision.value === previewRevision) {
-                    voucherError.value = err.message || 'No se pudo validar el cupón.';
+                    const msg = err.message || 'No se pudo validar el cupón.';
+                    couponOffline.value = msg.includes('coupon_offline');
+                    voucherError.value = couponOffline.value ? serverMessage(msg) : msg;
                 }
             } finally {
                 if (voucherPreviewRevision.value === previewRevision) {
@@ -194,10 +212,9 @@ const PaymentModal = {
                 };
             }
             const payload = { payment_method: paymentMethod, amount_tendered: amountTendered, cart_data: cartData };
-            if (!isVoucher) {
-                if (!attemptRequestId) attemptRequestId = newRequestId();
-                payload.request_id = attemptRequestId;
-            }
+            // Coupon checkouts too: a repeated attempt returns the sale it created.
+            if (!attemptRequestId) attemptRequestId = newRequestId();
+            payload.request_id = attemptRequestId;
 
             try {
                 const response = isVoucher ? await ApiClient.couponCheckout(payload) : await ApiClient.checkout(payload);
@@ -242,10 +259,14 @@ const PaymentModal = {
                     // The server is authoritative: leave sale rather than offering a stale checkout retry.
                     await useSession.hydrateCashSession();
                 }
-                // A coupon checkout request may have reached PrestaShop even when the
-                // browser cannot classify its failure. Lock every such outcome rather
-                // than inferring safety from an English transport error message.
-                const couponResultUnknown = isVoucher;
+                // coupon_offline: the server knows PrestaShop never got the order and
+                // booked nothing, so the cart may be charged without the coupon.
+                const offline = isVoucher && msg.includes('coupon_offline');
+                couponOffline.value = offline;
+                // Any other coupon checkout failure may have reached PrestaShop even when
+                // the browser cannot classify it. Lock every such outcome rather than
+                // inferring safety from an English transport error message.
+                const couponResultUnknown = isVoucher && !offline;
                 if (couponResultUnknown) {
                     voucherReconciliationRequired.value = true;
                     invalidateVoucher();
@@ -255,7 +276,7 @@ const PaymentModal = {
                     || msg.includes('Failed to fetch') || msg.includes('NetworkError'));
                 errorMsg.value = couponResultUnknown
                     ? msg + ' No reintentes automáticamente; reconcilia el resultado antes de volver a cobrar.'
-                    : msg;
+                    : (offline ? serverMessage(msg) : msg);
                 errorRetry.value = retry;
                 step.value = 'error';
             } finally {
@@ -269,6 +290,29 @@ const PaymentModal = {
             } else if (lastOrderId.value) {
                 ApiClient.ticketPdf(lastOrderId.value);
             }
+        }
+
+        /**
+         * "Cobrar sin cupón": drops the coupon and charges the same cart through the
+         * normal local-first sale, with the tender the cashier had chosen. A cash
+         * amount that no longer covers the full total goes back to the keypad.
+         */
+        function chargeWithoutCoupon() {
+            if (!couponOffline.value || voucherReconciliationRequired.value || isSubmitting.value) return;
+            const tender = voucherTender.value;
+            const handed = voucherCashInput.value;
+            couponOffline.value = false;
+            invalidateVoucher();
+            voucherCode.value = '';
+            errorMsg.value = '';
+            // A different cart total: a new payment attempt.
+            attemptRequestId = null;
+            const atCheckout = step.value === 'error';
+            step.value = 'select';
+            method.value = tender === 'card' ? 'card' : 'cash';
+            if (method.value === 'cash') cashInput.value = handed;
+            if (atCheckout && canConfirm()) return handleConfirm();
+            return undefined;
         }
 
         function retryCheckout() {
@@ -322,7 +366,7 @@ const PaymentModal = {
             cashInput.value = props.total.toFixed(2).replace('.', ',');
         }
 
-        return { method, cashInput, card1, card2, step, errorMsg, errorRetry, lastOrderId, lastSaleId, methods, cashParsed, change, cardParsed, card2Parsed, dataphoneMode, printerType, voucherCode, voucherPreview, voucherBusy, voucherError, voucherTender, voucherCashInput, voucherPayable, voucherDiscount, voucherGross, voucherCashParsed, voucherChange, voucherReconciliationRequired, completedTotal, completedChange, doneTotal, doneChange, isSubmitting, canConfirm, handleConfirm, retryCheckout, returnToSelection, appendNum, exacto, downloadTicket, applyVoucher, invalidateVoucher };
+        return { method, cashInput, card1, card2, step, errorMsg, errorRetry, lastOrderId, lastSaleId, methods, cashParsed, change, cardParsed, card2Parsed, dataphoneMode, printerType, voucherCode, voucherPreview, voucherBusy, voucherError, voucherTender, voucherCashInput, voucherPayable, voucherDiscount, voucherGross, voucherCashParsed, voucherChange, voucherReconciliationRequired, couponOffline, chargeWithoutCoupon, completedTotal, completedChange, doneTotal, doneChange, isSubmitting, canConfirm, handleConfirm, retryCheckout, returnToSelection, appendNum, exacto, downloadTicket, applyVoucher, invalidateVoucher };
     },
     template: `
         <div class="modal-backdrop" @click.self="$emit('close')">
@@ -353,6 +397,10 @@ const PaymentModal = {
                 <div style="font-size:20px; font-weight:700; color:var(--red);">Error en el cobro</div>
                 <div style="color:var(--text2); font-size:14px;">{{ errorMsg }}</div>
                 <div style="display:flex; gap:12px; margin-top:8px;">
+                    <button v-if="couponOffline" @click="chargeWithoutCoupon"
+                        style="padding:12px 24px; border-radius:10px; border:1px solid var(--green-dim); background:var(--green-bg); color:var(--green); cursor:pointer; font-weight:600;">
+                        Cobrar sin cupón
+                    </button>
                     <button v-if="errorRetry" @click="retryCheckout"
                         style="padding:12px 24px; border-radius:10px; border:1px solid var(--green-dim); background:var(--green-bg); color:var(--green); cursor:pointer; font-weight:600;">
                         Reintentar
@@ -449,6 +497,10 @@ const PaymentModal = {
                                     </button>
                                 </div>
                                 <div v-if="voucherError" style="color:var(--red); font-size:12px;">{{ voucherError }}</div>
+                                <button v-if="couponOffline" @click="chargeWithoutCoupon"
+                                    style="padding:10px 14px; border-radius:10px; border:1px solid var(--green-dim); background:var(--green-bg); color:var(--green); font-weight:600; cursor:pointer;">
+                                    Cobrar sin cupón
+                                </button>
                                 <div v-if="voucherPreview" style="background:var(--green-bg); border:1px solid var(--green-dim); border-radius:10px; padding:12px; display:flex; flex-direction:column; gap:7px;">
                                     <div style="font-size:12px; color:var(--text2);">Cupón aplicado como descuento; no es saldo ni medio de pago.</div>
                                     <div style="display:flex; justify-content:space-between;"><span>Bruto</span><strong>{{ voucherGross.toFixed(2) }}€</strong></div>

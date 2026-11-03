@@ -9,6 +9,8 @@ use Doctrine\DBAL\Exception\RetryableException;
 use Psr\Log\LoggerInterface;
 use VenPosTPV\Service\Checkout\Exception\CheckoutException;
 use VenPosTPV\Service\Checkout\PsOrderClient;
+use VenPosTPV\Service\PrestaShop\Exception\PsApiException;
+use VenPosTPV\Service\PrestaShop\PrestaShopApiClient;
 use VenPosTPV\Service\Refund\Exception\RefundException;
 use VenPosTPV\Service\Refund\PsRefundClient;
 use VenPosTPV\Service\Refund\PsRestockClient;
@@ -34,6 +36,13 @@ use VenPosTPV\Service\Refund\PsRestockClient;
  *   upload has none yet. The module replays a refund or restock by its request_id,
  *   so sending one again after an unknown outcome never refunds twice. Restocks of
  *   refunds without a ticket (type restock) belong to no sale and wait for nothing.
+ * - Customers created at the till (type customer, PRD C2) are uploaded through the
+ *   webservice before the sales that use them: such a sale depends_on the
+ *   customer's row and is not even claimed until that row is done, so a rejected
+ *   customer (incident) keeps its sales waiting without spending their attempts.
+ *   The sale is sent with the PrestaShop customer id read when it is sent. A
+ *   customer is looked up by email before it is created, so a retry after an
+ *   unknown outcome links the customer instead of creating another one.
  */
 class OutboxSync
 {
@@ -57,6 +66,7 @@ class OutboxSync
         ?\Closure $clock = null,
         private readonly ?PsRefundClient $refundClient = null,
         private readonly ?PsRestockClient $restockClient = null,
+        private readonly ?PrestaShopApiClient $customerClient = null,
     ) {
         $this->clock = $clock ?? static fn (): \DateTimeImmutable => new \DateTimeImmutable();
     }
@@ -115,6 +125,7 @@ class OutboxSync
                AND NOT EXISTS (
                    SELECT 1 FROM outbox p WHERE p.order_id = o.order_id AND p.sequence < o.sequence AND p.status <> 'done'
                )
+               AND (o.depends_on IS NULL OR EXISTS (SELECT 1 FROM outbox d WHERE d.id = o.depends_on AND d.status = 'done'))
              ORDER BY o.id LIMIT 10",
             [$now]
         );
@@ -154,6 +165,7 @@ class OutboxSync
             Outbox::TYPE_SALE => $this->processSale($row, $payload),
             Outbox::TYPE_REFUND => $this->processRefund($row, $payload),
             Outbox::TYPE_RESTOCK => $this->processRestock($row, $payload),
+            Outbox::TYPE_CUSTOMER => $this->processCustomer($row, $payload),
             default => $this->incident($row, sprintf("Uploading '%s' operations is not supported", (string) $row['type'])),
         };
     }
@@ -166,6 +178,20 @@ class OutboxSync
      */
     private function processSale(array $row, array $payload): ?string
     {
+        if (isset($payload['_customer_local_id'])) {
+            // A customer created at the till: its PrestaShop id is known only now.
+            $psCustomerId = $this->connection->fetchOne('SELECT ps_customer_id FROM customer WHERE id = ?', [(int) $payload['_customer_local_id']]);
+            if ($psCustomerId === false) {
+                return $this->incident($row, sprintf('The customer %d of this sale does not exist', (int) $payload['_customer_local_id']));
+            }
+            if ($psCustomerId === null) {
+                // Not reachable while the customer's own row is not done; kept safe anyway.
+                return $this->retry($row, 'The customer of this sale is not in PrestaShop yet');
+            }
+            unset($payload['_customer_local_id']);
+            $payload['id_customer'] = (int) $psCustomerId;
+        }
+
         try {
             $order = $this->client->createReferencedOrder($payload);
         } catch (CheckoutException $e) {
@@ -350,6 +376,48 @@ class OutboxSync
                     [!empty($line['restocked']) ? 1 : 0, (int) ($local['refund_id'] ?? 0), (int) ($line['id_product'] ?? 0), (int) ($line['id_product_attribute'] ?? 0)]
                 );
             }
+        });
+    }
+
+    /**
+     * A customer created at the till: linked to the PrestaShop customer with its
+     * email when there is one, created through the webservice otherwise.
+     *
+     * @param array<string, mixed> $row
+     * @param array<string, mixed> $payload {firstname, lastname, email, _local: {customer_id}}
+     *
+     * @return 'uploaded'|'retried'|'incidents'|null
+     */
+    private function processCustomer(array $row, array $payload): ?string
+    {
+        if ($this->customerClient === null) {
+            return $this->retry($row, 'The PrestaShop customer client is not configured');
+        }
+        $localId = (int) (\is_array($payload['_local'] ?? null) ? ($payload['_local']['customer_id'] ?? 0) : 0);
+        $email = (string) ($payload['email'] ?? '');
+
+        try {
+            $psCustomerId = $this->customerClient->findCustomerIdByEmail($email)
+                ?? $this->customerClient->createCustomer((string) ($payload['firstname'] ?? ''), (string) ($payload['lastname'] ?? ''), $email);
+        } catch (PsApiException $e) {
+            // 400/422: PrestaShop refused the data; 401/403/404/405: the webservice key
+            // cannot create customers. The administrator fixes it and retries.
+            return \in_array($e->getCode(), [400, 401, 403, 404, 405, 422], true) ? $this->incident($row, $e->getMessage()) : $this->retry($row, $e->getMessage());
+        } catch (\Throwable $e) {
+            return $this->retry($row, $e->getMessage());
+        }
+
+        return $this->closeWith($row, function () use ($localId, $psCustomerId): void {
+            // The copy the customer sync may have brought meanwhile is the same person.
+            $this->connection->executeStatement(
+                'DELETE FROM customer WHERE ps_customer_id = ? AND id <> ? AND outbox_id IS NULL',
+                [$psCustomerId, $localId]
+            );
+            $now = $this->now();
+            $this->connection->executeStatement(
+                'UPDATE customer SET ps_customer_id = ?, synced_at = ?, updated_at = ? WHERE id = ?',
+                [$psCustomerId, $now, $now, $localId]
+            );
         });
     }
 

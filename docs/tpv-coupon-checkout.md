@@ -20,6 +20,9 @@ The gate defaults to `0`; `env.example` documents `TPV_COUPON_CHECKOUT_ENABLED=0
 - Changing the code, cart, quantities, prices, customer, discount, or total invalidates the preview. Validate again before confirmation.
 - Manual TPV discounts cannot be combined with a native coupon until module support exists; remove the manual discount first.
 - If a coupon checkout reports an uncertain result, do not retry. Reconcile the referenced native order before any new charge or preview.
+- **PrestaShop not answering (PRD V5, `coupon_offline`).** A coupon is only accepted while PrestaShop answers. When the preview cannot reach PrestaShop (network error, timeout, HTTP 502/503/504), or the coupon order never reached it (DNS failure, connection refused or unreachable, connect timeout), the TPV answers HTTP 503 `{"code": "coupon_offline", "error": "Sin conexión con PrestaShop: no se puede aplicar el cupón. Puedes cobrar sin él."}` and books nothing. The payment screen shows that message and **Cobrar sin cupón**: it removes the coupon and charges the same cart through the normal local-first sale (card at once; cash goes back to the keypad when the amount handed no longer covers the full total). A coupon order that may have reached PrestaShop (timeout after connecting, 5xx, incomplete answer) is still `coupon_reconcile_required` and locks the screen, because the order could exist.
+- A coupon checkout carries the payment attempt's `request_id` like any other sale: a repeated request returns the stored sale (`replayed: true`) without asking PrestaShop again.
+- A customer created at the till that is not in PrestaShop yet cannot get a coupon (422): charge without it or wait until it is uploaded.
 
 ## Accounting and limits
 

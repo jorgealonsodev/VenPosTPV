@@ -255,4 +255,40 @@ final class CheckoutControllerTest extends TestCase
         $this->assertSame(Response::HTTP_INTERNAL_SERVER_ERROR, $response->getStatusCode());
         $this->assertSame(['error' => 'Internal server error', 'retry' => true], $this->decode($response));
     }
+
+    public function testCouponThatCannotReachPrestaShopAnswersCouponOfflineOnPreviewAndCheckout(): void
+    {
+        $cashService = $this->createMock(CashSessionService::class);
+        $cashService->method('requireOpenSession')->willReturn(self::OPEN_SESSION);
+        $checkoutService = $this->createMock(CheckoutService::class);
+        $checkoutService->method('previewCoupon')->willThrowException(CheckoutException::couponOffline());
+        $checkoutService->method('createOrder')->willThrowException(CheckoutException::couponOffline());
+        $controller = new CheckoutController($checkoutService, $cashService);
+
+        $preview = $controller->couponPreview($this->makeRequest(['coupon_code' => 'SAVE10', 'cart_data' => []], 1));
+        $checkout = $controller->checkout($this->makeRequest(['payment_method' => 'cash', 'cart_data' => ['coupon' => []]], 1));
+
+        foreach ([$preview, $checkout] as $response) {
+            $this->assertSame(Response::HTTP_SERVICE_UNAVAILABLE, $response->getStatusCode());
+            $this->assertSame([
+                'error' => 'Sin conexión con PrestaShop: no se puede aplicar el cupón. Puedes cobrar sin él.',
+                'code' => 'coupon_offline',
+                'retry' => false,
+            ], $this->decode($response));
+        }
+    }
+
+    public function testCheckoutCouponGateOffStillAnswersCouponUnavailable(): void
+    {
+        $cashService = $this->createMock(CashSessionService::class);
+        $cashService->method('requireOpenSession')->willReturn(self::OPEN_SESSION);
+        $checkoutService = $this->createMock(CheckoutService::class);
+        $checkoutService->method('createOrder')->willThrowException(CheckoutException::couponUnavailable('coupon_unavailable: deploy module first'));
+        $controller = new CheckoutController($checkoutService, $cashService);
+
+        $response = $controller->checkout($this->makeRequest(['payment_method' => 'cash', 'cart_data' => ['coupon' => []]], 1));
+
+        $this->assertSame(Response::HTTP_SERVICE_UNAVAILABLE, $response->getStatusCode());
+        $this->assertSame('coupon_unavailable', $this->decode($response)['code']);
+    }
 }

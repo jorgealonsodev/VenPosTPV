@@ -9,6 +9,29 @@ use Throwable;
 
 final class CheckoutException extends RuntimeException
 {
+    /** PRD V5: what the cashier reads when a coupon needs a PrestaShop that does not answer. */
+    public const COUPON_OFFLINE_MESSAGE = 'Sin conexión con PrestaShop: no se puede aplicar el cupón. Puedes cobrar sin él.';
+
+    private bool $couponOffline = false;
+
+    /**
+     * PrestaShop could not be reached for a coupon preview or a coupon order that
+     * never arrived: nothing exists in PrestaShop nor in the TPV, so the cashier
+     * can charge the same cart without the coupon (PRD V5).
+     */
+    public static function couponOffline(?Throwable $previous = null): self
+    {
+        $e = new self(self::COUPON_OFFLINE_MESSAGE, 503, $previous);
+        $e->couponOffline = true;
+
+        return $e;
+    }
+
+    public function isCouponOffline(): bool
+    {
+        return $this->couponOffline;
+    }
+
     public static function psUnavailable(string $message, ?Throwable $previous = null): self
     {
         return new self(
