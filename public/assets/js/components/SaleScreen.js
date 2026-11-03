@@ -353,7 +353,7 @@ const SaleScreen = {
                     <button @click="handleSyncNow" :disabled="syncingNow" title="Sincronizar ahora con PrestaShop" aria-label="Sincronizar ahora"
                         :class="{ 'tpv-spin': syncingNow }"
                         style="min-height:44px; min-width:44px; background:transparent; border:1px solid var(--border); border-radius:8px; padding:4px 8px; color:var(--text2); cursor:pointer; display:flex; align-items:center; justify-content:center;">
-                        <icon name="sync" :size="16" />
+                        <icon name="refresh" :size="16" />
                     </button>
                     <button @click="toggleTheme" style="min-height:44px; background:transparent; border:1px solid var(--border); border-radius:8px; padding:4px 8px; color:var(--text3); font-size:11px; cursor:pointer; font-family:inherit; display:flex; align-items:center; gap:4px;">
                         <icon :name="session.theme === 'dark' ? 'sun' : 'moon'" :size="13" />
