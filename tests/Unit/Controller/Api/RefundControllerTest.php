@@ -155,6 +155,26 @@ final class RefundControllerTest extends TestCase
         $this->assertSame(Response::HTTP_UNPROCESSABLE_ENTITY, $response->getStatusCode());
     }
 
+    public function testRefundPassesTheShopSoAnExchangeCreditShareCanBecomeAVoucher(): void
+    {
+        $cashService = $this->createMock(CashSessionService::class);
+        $cashService->method('requireOpenSession')->willReturn(['session_id' => 1, 'terminal_id' => 1]);
+        $refundService = $this->createMock(RefundService::class);
+        $refundService->expects($this->once())->method('processRefund')
+            ->with(1, 42, null, 'size', '', false, 3)
+            ->willReturn(['refund_id' => 7, 'credit_note_number' => 'R2026-000007', 'order_slip_id' => 9, 'refunded_amount' => 40.0, 'cash_amount' => 0.0, 'card_amount' => 0.0, 'voucher_code' => 'CRED1', 'lines' => [], 'restock_failed' => [], 'saga_error' => false, 'already_completed' => false]);
+        $printer = $this->createMock(PrinterService::class);
+        $printer->method('printRefundTicket')->willReturn('printed');
+        $printer->expects($this->never())->method('openDrawer');
+
+        $response = $this->createController($refundService, cashService: $cashService, printer: $printer)->refund(SessionRequest::json([
+            'ps_order_id' => 42, 'reason_code' => 'size',
+        ], ['user_id' => 1, 'shop_id' => 3]));
+
+        $this->assertSame(Response::HTTP_OK, $response->getStatusCode());
+        $this->assertSame('CRED1', json_decode((string) $response->getContent(), true)['data']['voucher_code']);
+    }
+
     public function testRetryRequiresSessionAndMapsUnknownOutcomeTo502(): void
     {
         $this->assertSame(Response::HTTP_UNAUTHORIZED, $this->createController()->retry(SessionRequest::json([]), 5)->getStatusCode());

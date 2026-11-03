@@ -5,10 +5,13 @@ declare(strict_types=1);
 namespace VenPosTPV\Service\Exchange;
 
 use Doctrine\DBAL\Connection;
+use VenPosTPV\Service\Cash\CashSessionService;
 use VenPosTPV\Service\Checkout\CheckoutService;
 use VenPosTPV\Service\Checkout\Exception\CheckoutException;
+use VenPosTPV\Service\PrestaShop\CouponCreationService;
 use VenPosTPV\Service\Refund\Exception\RefundException;
 use VenPosTPV\Service\Refund\RefundService;
+use VenPosTPV\Service\Refund\VoucherIssuer;
 
 /**
  * Product exchange with a balance, in one operation (R13): the returned lines are a
@@ -26,8 +29,10 @@ use VenPosTPV\Service\Refund\RefundService;
  *  - pending:     the refund's outcome is unknown (PrestaShop down); retry() resends
  *                 it with the same request_id, then creates the sale;
  *  - credit_open: the refund is done (and any difference paid out once) but the new
- *                 sale failed; retry() only creates the sale;
- *  - done / failed: terminal.
+ *                 sale failed; retry() only creates the sale, or closeWithVoucher()
+ *                 gives the open credit back as a PrestaShop voucher when the sale
+ *                 can never be completed;
+ *  - done / failed / closed_voucher: terminal.
  * A retry holds a named lock on the exchange, so two terminals cannot create the
  * sale twice, and never sends or pays the returned part again.
  *
@@ -42,16 +47,25 @@ class ExchangeService
     /** Payment method stored and sent to PrestaShop when the credit pays everything. */
     public const NO_PAYMENT_METHOD = 'exchange';
 
+    /** Final state of an exchange whose open credit was given back as a voucher. */
+    public const CLOSED_VOUCHER = 'closed_voucher';
+
+    private readonly VoucherIssuer $voucherIssuer;
+
     public function __construct(
         private readonly RefundService $refundService,
         private readonly CheckoutService $checkoutService,
         private readonly Connection $conn,
+        ?CouponCreationService $couponCreationService = null,
+        private readonly ?CashSessionService $cashSessionService = null,
     ) {
+        $this->voucherIssuer = new VoucherIssuer($conn, $couponCreationService);
     }
 
     /**
      * @param array<int, mixed> $returnLines [{line_index, quantity, restock}] of the original sale
      * @param array<string, mixed> $newCartData same shape as /api/checkout cart_data
+     * @param int $shopId PrestaShop shop of the voucher for a difference owed on exchange credit
      *
      * @return array<string, mixed> see result()
      *
@@ -67,6 +81,7 @@ class ExchangeService
         string $paymentMethod,
         float $amountTendered,
         bool $cardConfirmed,
+        int $shopId = 0,
     ): array {
         try {
             $newTotal = $this->checkoutService->quoteCart($newCartData);
@@ -104,6 +119,7 @@ class ExchangeService
                     ]);
                     $reservation['exchange_id'] = (int) $this->conn->lastInsertId();
                 },
+                $shopId,
             );
         } catch (RefundException $e) {
             $exchangeId = (int) $reservation['exchange_id'];
@@ -137,6 +153,12 @@ class ExchangeService
             if ($exchange === false || !\in_array($exchange['status'], ['pending', 'credit_open'], true)) {
                 throw RefundException::conflict(sprintf('Exchange #%d is not waiting to be completed', $exchangeId));
             }
+            if (($exchange['voucher_requested_at'] ?? null) !== null) {
+                throw RefundException::conflict(sprintf(
+                    'A voucher was requested for the open credit of exchange #%d; check it in PrestaShop. The new sale is not created any more',
+                    $exchangeId
+                ));
+            }
             $exchange = $this->exchange($exchangeId);
 
             $refund = null;
@@ -151,6 +173,68 @@ class ExchangeService
             }
 
             return $this->afterRefund($userId, $exchange, $refund);
+        } finally {
+            $this->conn->fetchOne('SELECT RELEASE_LOCK(?)', [$lockName]);
+        }
+    }
+
+    /**
+     * Closes an exchange whose new sale cannot be completed by giving its open
+     * credit back as a PrestaShop voucher (1 year, partial use). Shares the lock of
+     * retry(), so a sale and a voucher can never both come out of one credit; the
+     * voucher is requested at most once (see VoucherIssuer) and the exchange ends
+     * closed_voucher, so neither retry() nor this can run again. The voucher counts
+     * in the cash session it is issued in (refunds_voucher of the X/Z report).
+     *
+     * @return array{exchange_id: int, status: string, voucher_code: string, voucher_amount: float}
+     *
+     * @throws RefundException
+     */
+    public function closeWithVoucher(int $userId, int $exchangeId, int $shopId): array
+    {
+        if ($shopId <= 0) {
+            throw RefundException::validationFailed('The shop is unknown, so no voucher can be issued');
+        }
+        if ($this->cashSessionService === null) {
+            throw RefundException::psUnavailable('The cash session service is not configured');
+        }
+        $cashContext = $this->cashSessionService->requireOpenSession($userId);
+
+        $lockName = 'venpostpv_exchange_' . $exchangeId;
+        if ((int) $this->conn->fetchOne('SELECT GET_LOCK(?, 0)', [$lockName]) !== 1) {
+            throw RefundException::conflict(sprintf('Exchange #%d is being completed on another terminal', $exchangeId));
+        }
+
+        try {
+            $row = $this->conn->fetchAssociative('SELECT status, credit_applied, voucher_code FROM exchange WHERE id = ?', [$exchangeId]);
+            if ($row === false || $row['status'] !== 'credit_open') {
+                throw RefundException::conflict($row !== false && $row['status'] === self::CLOSED_VOUCHER
+                    ? sprintf('Exchange #%d was already closed with voucher %s', $exchangeId, (string) $row['voucher_code'])
+                    : sprintf('Exchange #%d has no open credit to give back as a voucher', $exchangeId));
+            }
+            if ($this->refundService->refundStatus($this->exchange($exchangeId)['refund_id']) !== 'done') {
+                throw RefundException::conflict(sprintf('The return of exchange #%d is not complete', $exchangeId));
+            }
+
+            // The amount is fixed once; the session is the one the voucher is finally issued in.
+            $this->conn->executeStatement(
+                'UPDATE exchange SET voucher_amount = COALESCE(voucher_amount, credit_applied), voucher_session_id = ? WHERE id = ? AND voucher_code IS NULL',
+                [(int) $cashContext['session_id'], $exchangeId]
+            );
+            $code = $this->voucherIssuer->issue('exchange', $exchangeId, $shopId);
+
+            $this->conn->update('exchange', [
+                'status' => self::CLOSED_VOUCHER,
+                'error_message' => null,
+                'completed_at' => (new \DateTimeImmutable())->format('Y-m-d H:i:s'),
+            ], ['id' => $exchangeId, 'status' => 'credit_open']);
+
+            return [
+                'exchange_id' => $exchangeId,
+                'status' => self::CLOSED_VOUCHER,
+                'voucher_code' => $code,
+                'voucher_amount' => round((float) $this->conn->fetchOne('SELECT voucher_amount FROM exchange WHERE id = ?', [$exchangeId]), 2),
+            ];
         } finally {
             $this->conn->fetchOne('SELECT RELEASE_LOCK(?)', [$lockName]);
         }

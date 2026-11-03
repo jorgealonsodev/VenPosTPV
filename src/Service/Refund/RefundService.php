@@ -9,7 +9,6 @@ use VenPosTPV\Service\Cash\CashSessionService;
 use VenPosTPV\Service\Catalog\CatalogPriceResolver;
 use VenPosTPV\Service\Catalog\Exception\ProductNotInCatalogException;
 use VenPosTPV\Service\PrestaShop\CouponCreationService;
-use VenPosTPV\Service\PrestaShop\Exception\CouponCreationException;
 use VenPosTPV\Service\Refund\Exception\RefundException;
 
 /**
@@ -25,6 +24,10 @@ use VenPosTPV\Service\Refund\Exception\RefundException;
  * retry, numbering on completion) with no order: the amount is the current
  * catalog price, the cashier picks cash, card or a PrestaShop voucher, and the
  * shop only restocks.
+ *
+ * A sale paid (partly) with exchange credit is refunded by its whole tender
+ * {cash, card, exchange_credit}: the credit share becomes a PrestaShop voucher
+ * instead of cash that never entered the drawer for that sale.
  */
 class RefundService
 {
@@ -41,7 +44,7 @@ class RefundService
 
     public const NO_TICKET_METHODS = ['cash', 'card', 'voucher'];
 
-    private const VOUCHER_VALIDITY = '+1 year';
+    private readonly VoucherIssuer $voucherIssuer;
 
     public function __construct(
         private readonly OrderSearchService $orderSearchService,
@@ -50,13 +53,15 @@ class RefundService
         private readonly CashSessionService $cashSessionService,
         private readonly ?CreditNoteNumberer $creditNoteNumberer = null,
         private readonly ?PsRestockClient $restockClient = null,
-        private readonly ?CouponCreationService $couponCreationService = null,
+        ?CouponCreationService $couponCreationService = null,
         private readonly ?CatalogPriceResolver $priceResolver = null,
     ) {
+        $this->voucherIssuer = new VoucherIssuer($conn, $couponCreationService);
     }
 
     /**
      * @param array<int, array{line_index?: mixed, quantity?: mixed, restock?: mixed}>|null $lines null refunds everything still refundable
+     * @param int $shopId PrestaShop shop of the voucher issued for an exchange-credit share
      *
      * @return array{refund_id: int, credit_note_number: ?string, order_slip_id: int, refunded_amount: float, cash_amount: float, card_amount: float, voucher_code: ?string, lines: array<int, array<string, mixed>>, restock_failed: array<int, mixed>, saga_error: bool, already_completed: bool}
      *
@@ -69,8 +74,9 @@ class RefundService
         string $reasonCode,
         string $reasonText = '',
         bool $cardConfirmed = false,
+        int $shopId = 0,
     ): array {
-        return $this->startOrderRefund($userId, $psOrderId, $lines, $reasonCode, $reasonText, $cardConfirmed, null, null);
+        return $this->startOrderRefund($userId, $psOrderId, $lines, $reasonCode, $reasonText, $cardConfirmed, null, null, $shopId);
     }
 
     /**
@@ -98,6 +104,7 @@ class RefundService
         bool $cardConfirmed,
         float $newTotal,
         callable $reserved,
+        int $shopId = 0,
     ): array {
         if ($lines === []) {
             throw RefundException::validationFailed('Select at least one line to return');
@@ -106,7 +113,7 @@ class RefundService
             throw RefundException::validationFailed('Add at least one new item to the exchange');
         }
 
-        return $this->startOrderRefund($userId, $psOrderId, $lines, $reasonCode, $reasonText, $cardConfirmed, $newTotal, $reserved);
+        return $this->startOrderRefund($userId, $psOrderId, $lines, $reasonCode, $reasonText, $cardConfirmed, $newTotal, $reserved, $shopId);
     }
 
     /**
@@ -135,6 +142,7 @@ class RefundService
         bool $cardConfirmed,
         ?float $exchangeTotal,
         ?callable $reserved,
+        int $shopId,
     ): array {
         $reasonText = $this->assertReason($reasonCode, $reasonText);
 
@@ -144,7 +152,7 @@ class RefundService
 
         // Planning and reserving happen under a lock on the sale row, so two
         // terminals refunding the same sale cannot both take the same units.
-        [$refundId, $payload] = $this->conn->transactional(function () use ($psOrderId, $lines, $cardConfirmed, $requestId, $cashContext, $userId, $reasonCode, $reasonText, $exchangeTotal, $reserved): array {
+        [$refundId, $payload] = $this->conn->transactional(function () use ($psOrderId, $lines, $cardConfirmed, $requestId, $cashContext, $userId, $reasonCode, $reasonText, $exchangeTotal, $reserved, $shopId): array {
             $locked = $this->conn->fetchOne('SELECT ps_order_id FROM order_meta WHERE ps_order_id = ? FOR UPDATE', [$psOrderId]);
             if ($locked === false) {
                 throw RefundException::orderNotFound($psOrderId);
@@ -179,8 +187,16 @@ class RefundService
             // In an exchange only what the new items do not absorb leaves the shop.
             $exchangeCredit = $exchangeTotal !== null ? round(min($total, $exchangeTotal), 2) : null;
             $payout = $exchangeCredit !== null ? round($total - $exchangeCredit, 2) : $total;
-            [$cashAmount, $cardAmount] = $payout > 0 ? $this->splitByTender($order, $payout) : [0.0, 0.0];
+            [$cashAmount, $cardAmount, $voucherAmount] = $payout > 0 ? $this->splitByTender($order, $payout) : [0.0, 0.0, 0.0];
             $this->assertCardConfirmed($cardAmount, $cardConfirmed);
+            if ($voucherAmount > 0) {
+                if ($shopId <= 0) {
+                    throw RefundException::validationFailed('Part of this sale was paid with exchange credit and the shop is unknown, so no voucher can be issued');
+                }
+                if (!$this->voucherIssuer->isConfigured()) {
+                    throw RefundException::psUnavailable('The voucher service is not configured');
+                }
+            }
 
             $payload = [
                 'ps_order_id' => $psOrderId,
@@ -195,6 +211,9 @@ class RefundService
                     'restock' => $line['restock'],
                 ], $planned),
             ];
+            // Stored with the row only (never sent to the refund module): where the
+            // voucher for the exchange-credit share is issued, also on a retry.
+            $stored = $voucherAmount > 0 ? $payload + ['voucher_shop_id' => $shopId] : $payload;
 
             $row = [
                 'request_id' => $requestId,
@@ -209,9 +228,12 @@ class RefundService
                 'cash_amount' => $cashAmount,
                 'card_amount' => $cardAmount,
                 'card_confirmed' => $cardConfirmed ? 1 : 0,
-                'ps_payload' => json_encode($payload, JSON_THROW_ON_ERROR),
+                'ps_payload' => json_encode($stored, JSON_THROW_ON_ERROR),
                 'created_at' => (new \DateTimeImmutable())->format('Y-m-d H:i:s'),
             ];
+            if ($voucherAmount > 0) {
+                $row['voucher_amount'] = $voucherAmount;
+            }
             if ($exchangeCredit !== null) {
                 $row['exchange_credit'] = $exchangeCredit;
             }
@@ -240,7 +262,7 @@ class RefundService
                 ]);
             }
 
-            return [$refundId, $payload];
+            return [$refundId, $stored];
         });
 
         return $this->send($refundId, $payload, (int) $cashContext['session_id']);
@@ -396,6 +418,9 @@ class RefundService
             return $this->sendNoTicket($refundId, $payload, $sessionId);
         }
 
+        $voucherShopId = isset($payload['voucher_shop_id']) ? (int) $payload['voucher_shop_id'] : null;
+        unset($payload['voucher_shop_id']);
+
         try {
             $psResponse = $this->client->createRefund($payload);
         } catch (RefundException $e) {
@@ -410,6 +435,12 @@ class RefundService
             // Otherwise the outcome is unknown and the row stays pending for resumePending().
 
             throw $e;
+        }
+
+        if ($voucherShopId !== null) {
+            // The slip exists; an unknown voucher outcome keeps the refund pending
+            // and a retry replays the slip but never creates a second voucher.
+            $this->voucherIssuer->issue('refund', $refundId, $voucherShopId);
         }
 
         return $this->complete($refundId, $psResponse, $sessionId);
@@ -450,77 +481,10 @@ class RefundService
         }
 
         if (($payload['method'] ?? null) === 'voucher') {
-            $this->issueVoucher($refundId, (int) ($payload['shop_id'] ?? 0));
+            $this->voucherIssuer->issue('refund', $refundId, (int) ($payload['shop_id'] ?? 0));
         }
 
         return $this->complete($refundId, $psResponse, $sessionId);
-    }
-
-    /**
-     * Issues the refund's voucher at most once. The request is marked before the
-     * cart rule is posted; when its outcome is unknown the mark stays, and the
-     * refund stays pending until someone checks PrestaShop: a second voucher is
-     * never created automatically.
-     *
-     * @throws RefundException
-     */
-    private function issueVoucher(int $refundId, int $shopId): void
-    {
-        $row = $this->conn->fetchAssociative('SELECT voucher_code, voucher_amount, voucher_requested_at, error_message FROM refund WHERE id = ?', [$refundId]);
-        if ($row === false) {
-            throw RefundException::conflict(sprintf('Refund #%d does not exist', $refundId));
-        }
-        if ($row['voucher_code'] !== null) {
-            return;
-        }
-        if ($this->couponCreationService === null) {
-            throw RefundException::psUnavailable('The voucher service is not configured');
-        }
-
-        $claimed = $this->conn->executeStatement(
-            "UPDATE refund SET voucher_requested_at = ? WHERE id = ? AND status = 'pending' AND voucher_requested_at IS NULL AND voucher_code IS NULL",
-            [(new \DateTimeImmutable())->format('Y-m-d H:i:s'), $refundId]
-        );
-        if ($claimed === 0) {
-            throw RefundException::conflict(sprintf(
-                'The voucher of refund #%d may already exist in PrestaShop%s. Check it there; a voucher is never created twice automatically',
-                $refundId,
-                $row['error_message'] !== null ? ' (' . $row['error_message'] . ')' : ''
-            ));
-        }
-
-        try {
-            $coupon = $this->couponCreationService->create([
-                'discount_type' => 'amount',
-                'value' => round((float) $row['voucher_amount'], 2),
-                'quantity' => 1,
-                'quantity_per_user' => 1,
-                'expires_at' => (new \DateTimeImmutable(self::VOUCHER_VALIDITY))->format('Y-m-d'),
-                'partial_use' => true,
-            ], $shopId);
-        } catch (CouponCreationException $e) {
-            if ($e->getCode() !== 409) {
-                // Validation and an unavailable schema fail before the cart rule is
-                // posted, so the voucher may be requested again on a retry.
-                $this->conn->update('refund', ['voucher_requested_at' => null, 'error_message' => mb_substr($e->getMessage(), 0, 1000)], ['id' => $refundId]);
-
-                throw RefundException::psUnavailable($e->getMessage(), $e);
-            }
-            $this->conn->update('refund', ['error_message' => mb_substr($e->getMessage(), 0, 1000)], ['id' => $refundId]);
-
-            throw RefundException::conflict($e->getMessage());
-        } catch (\Throwable $e) {
-            $this->conn->update('refund', ['error_message' => mb_substr('Voucher outcome unknown: ' . $e->getMessage(), 0, 1000)], ['id' => $refundId]);
-
-            throw RefundException::conflict('Voucher outcome unknown: ' . $e->getMessage());
-        }
-
-        // Stored before completing: a failed completion retries without a new voucher.
-        $this->conn->update('refund', [
-            'voucher_code' => $coupon['code'],
-            'voucher_cart_rule_id' => $coupon['id'],
-            'error_message' => null,
-        ], ['id' => $refundId]);
     }
 
     /**
@@ -805,24 +769,47 @@ class RefundService
     }
 
     /**
+     * Proportional to how the sale was paid. The exchange-credit share (a sale of
+     * an exchange) is returned as a voucher; without one the split is cash/card
+     * exactly as before, the card taking the rounding remainder.
+     *
      * @param array<string, mixed> $order
      *
-     * @return array{0: float, 1: float} cash and card amounts
+     * @return array{0: float, 1: float, 2: float} cash, card and voucher amounts
      */
     private function splitByTender(array $order, float $total): array
     {
         $tender = $order['tender'] ?? null;
-        $cash = \is_array($tender) ? (float) ($tender['cash'] ?? 0) : 0.0;
-        $card = \is_array($tender) ? (float) ($tender['card'] ?? 0) : 0.0;
+        $cash = \is_array($tender) ? max(0.0, (float) ($tender['cash'] ?? 0)) : 0.0;
+        $card = \is_array($tender) ? max(0.0, (float) ($tender['card'] ?? 0)) : 0.0;
+        $credit = \is_array($tender) ? max(0.0, (float) ($tender['exchange_credit'] ?? 0)) : 0.0;
 
-        if ($cash + $card <= 0) {
-            $cash = ($order['payment_method'] ?? '') === 'card' ? 0.0 : 1.0;
-            $card = 1.0 - $cash;
+        if ($credit <= 0) {
+            if ($cash + $card <= 0) {
+                $cash = ($order['payment_method'] ?? '') === 'card' ? 0.0 : 1.0;
+                $card = 1.0 - $cash;
+            }
+            $cashAmount = round($total * $cash / ($cash + $card), 2);
+
+            return [$cashAmount, round($total - $cashAmount, 2), 0.0];
         }
 
-        $cashAmount = round($total * $cash / ($cash + $card), 2);
+        $sum = $cash + $card + $credit;
+        $cashAmount = round($total * $cash / $sum, 2);
+        $cardAmount = round($total * $card / $sum, 2);
+        // The voucher takes the remainder, so the three parts add up to the cent.
+        $voucherAmount = round($total - $cashAmount - $cardAmount, 2);
+        if ($voucherAmount < 0) {
+            // A credit share too small to round to a cent: the larger money part gives it back.
+            if ($cardAmount >= $cashAmount) {
+                $cardAmount = round($cardAmount + $voucherAmount, 2);
+            } else {
+                $cashAmount = round($cashAmount + $voucherAmount, 2);
+            }
+            $voucherAmount = 0.0;
+        }
 
-        return [$cashAmount, round($total - $cashAmount, 2)];
+        return [$cashAmount, $cardAmount, $voucherAmount];
     }
 
     private function logRefundOrphan(int $psOrderId, int $orderSlipId, int $refundId, \Throwable $error): void

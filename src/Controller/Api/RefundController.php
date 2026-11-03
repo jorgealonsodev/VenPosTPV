@@ -67,7 +67,7 @@ class RefundController
 
         try {
             $this->cashSessionService->requireOpenSession($userId);
-            $result = $this->refundService->processRefund($userId, $psOrderId, $lines, $reasonCode, $reasonText, $cardConfirmed);
+            $result = $this->refundService->processRefund($userId, $psOrderId, $lines, $reasonCode, $reasonText, $cardConfirmed, (int) $session->get('shop_id', 0));
             $result['print_status'] = $this->printCreditNote($result, $request);
             $this->openDrawerForCash($result, $request);
 

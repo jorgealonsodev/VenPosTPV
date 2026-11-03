@@ -108,6 +108,54 @@ final class ExchangeControllerTest extends TestCase
         }
     }
 
+    public function testCloseWithVoucherRequiresASession(): void
+    {
+        $service = $this->createMock(ExchangeService::class);
+        $service->expects($this->never())->method('closeWithVoucher');
+
+        $this->assertSame(Response::HTTP_UNAUTHORIZED, $this->controller($service)->closeWithVoucher(SessionRequest::json([]), 3)->getStatusCode());
+    }
+
+    public function testCloseWithVoucherPassesTheShopAndReturnsTheCodeWithoutPrintingOrOpeningTheDrawer(): void
+    {
+        $service = $this->createMock(ExchangeService::class);
+        $service->expects($this->once())->method('closeWithVoucher')->with(1, 3, 5)
+            ->willReturn(['exchange_id' => 3, 'status' => 'closed_voucher', 'voucher_code' => 'CAMB1XYZ', 'voucher_amount' => 40.0]);
+        $printer = $this->createMock(PrinterService::class);
+        $printer->expects($this->never())->method('printRefundTicket');
+        $printer->expects($this->never())->method('openDrawer');
+
+        $response = $this->controller($service, $printer)->closeWithVoucher(SessionRequest::json([], ['user_id' => 1, 'shop_id' => 5, 'terminal_id' => 4]), 3);
+
+        $this->assertSame(Response::HTTP_OK, $response->getStatusCode());
+        $this->assertSame(['exchange_id' => 3, 'status' => 'closed_voucher', 'voucher_code' => 'CAMB1XYZ', 'voucher_amount' => 40], json_decode((string) $response->getContent(), true)['data']);
+    }
+
+    public function testCloseWithVoucherErrorsMapLikeRefunds(): void
+    {
+        foreach ([[new NoOpenCashSessionException(), 409, false], [RefundException::validationFailed('x'), 422, false], [RefundException::conflict('never created twice automatically'), 409, false], [RefundException::psUnavailable('down'), 502, true], [new \RuntimeException('boom'), 500, true]] as [$error, $status, $retry]) {
+            $service = $this->createMock(ExchangeService::class);
+            $service->method('closeWithVoucher')->willThrowException($error);
+
+            $response = $this->controller($service)->closeWithVoucher(SessionRequest::json([], ['user_id' => 1]), 3);
+
+            $this->assertSame($status, $response->getStatusCode(), $error->getMessage());
+            $this->assertSame($retry, json_decode((string) $response->getContent(), true)['retry']);
+        }
+    }
+
+    public function testExchangePassesTheShop(): void
+    {
+        $service = $this->createMock(ExchangeService::class);
+        $service->expects($this->once())->method('processExchange')
+            ->with(1, 42, [], '', '', [], '', 0.0, false, 6)
+            ->willReturn($this->exchangeResult(['refund_id' => 8, 'cash_amount' => 0.0, 'saga_error' => false], ['ps_order_id' => 99, 'reference' => 'NEW99']));
+
+        $response = $this->controller($service)->exchange(SessionRequest::json(['ps_order_id' => 42], ['user_id' => 1, 'shop_id' => 6]));
+
+        $this->assertSame(Response::HTTP_OK, $response->getStatusCode());
+    }
+
     public function testMissingOrderIs422WithoutCallingTheService(): void
     {
         $service = $this->createMock(ExchangeService::class);

@@ -262,20 +262,27 @@ class CashSessionService
 
         // Exchanges: the part of the returned goods that paid new items. It is money
         // neither in nor out (sales and refunds above only count what was collected
-        // or paid back), so it is shown apart and never touches the drawer.
+        // or paid back), so it is shown apart and never touches the drawer. An
+        // exchange closed with a voucher spent no credit on new items: its credit is
+        // counted once, as the voucher, in the session that issued it.
         $exchangeCredit = 0.0;
         $counts['exchanges'] = 0;
         try {
-            $exchangeCredit = (float) $this->connection->fetchOne(
-                "SELECT COALESCE(SUM(exchange_credit), 0) FROM refund WHERE session_id = ? AND status = 'done' AND exchange_credit IS NOT NULL",
-                [$sessionId]
-            );
-            $counts['exchanges'] = (int) $this->connection->fetchOne(
-                "SELECT COUNT(*) FROM refund WHERE session_id = ? AND status = 'done' AND exchange_credit IS NOT NULL",
+            $spent = "FROM refund r LEFT JOIN exchange e ON e.refund_id = r.id
+                 WHERE r.session_id = ? AND r.status = 'done' AND r.exchange_credit IS NOT NULL
+                   AND (e.status IS NULL OR e.status <> 'closed_voucher')";
+            $exchangeCredit = (float) $this->connection->fetchOne('SELECT COALESCE(SUM(r.exchange_credit), 0) ' . $spent, [$sessionId]);
+            $counts['exchanges'] = (int) $this->connection->fetchOne('SELECT COUNT(*) ' . $spent, [$sessionId]);
+        } catch (\Throwable) {
+            // Database not migrated to exchanges yet: there are none.
+        }
+        try {
+            $refundsVoucher += (float) $this->connection->fetchOne(
+                "SELECT COALESCE(SUM(voucher_amount), 0) FROM exchange WHERE voucher_session_id = ? AND status = 'closed_voucher'",
                 [$sessionId]
             );
         } catch (\Throwable) {
-            // Database not migrated to exchanges yet: there are none.
+            // Database not migrated to exchange vouchers yet: there are none.
         }
 
         $salesTotal = round($sales + $salesCard, 2);

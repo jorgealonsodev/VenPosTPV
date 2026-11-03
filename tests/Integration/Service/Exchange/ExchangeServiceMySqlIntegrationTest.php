@@ -16,6 +16,8 @@ use VenPosTPV\Service\Checkout\CheckoutService;
 use VenPosTPV\Service\Checkout\Exception\CheckoutException;
 use VenPosTPV\Service\Checkout\PsOrderClient;
 use VenPosTPV\Service\Exchange\ExchangeService;
+use VenPosTPV\Service\PrestaShop\CouponCreationService;
+use VenPosTPV\Service\PrestaShop\Exception\CouponCreationException;
 use VenPosTPV\Service\Print\PrinterService;
 use VenPosTPV\Service\Print\TicketDataResolver;
 use VenPosTPV\Service\Print\TicketVerificationService;
@@ -51,6 +53,12 @@ final class ExchangeServiceMySqlIntegrationTest extends TestCase
 
     /** @var array<int, \Throwable|null> */
     private array $orderFailures = [];
+
+    /** @var array<int, array{input: array<string, mixed>, shop: int}> */
+    private array $coupons = [];
+
+    /** @var array<int, \Throwable|null> */
+    private array $couponFailures = [];
 
     private int $drawerOpens = 0;
 
@@ -181,10 +189,22 @@ final class ExchangeServiceMySqlIntegrationTest extends TestCase
         $bus = $this->createMock(MessageBusInterface::class);
         $bus->method('dispatch')->willReturnCallback(static fn (object $m): Envelope => new Envelope($m));
 
-        $refunds = new RefundService(new OrderSearchService($c), $refundClient, $c, $cash);
+        $coupons = $this->createMock(CouponCreationService::class);
+        $coupons->method('create')->willReturnCallback(function (array $input, int $shop): array {
+            $this->coupons[] = ['input' => $input, 'shop' => $shop];
+            $failure = array_shift($this->couponFailures);
+            if ($failure !== null) {
+                throw $failure;
+            }
+
+            return ['id' => 670 + \count($this->coupons), 'code' => 'CAMB' . \count($this->coupons) . 'XYZ', 'type' => 'amount', 'value' => $input['value'],
+                'expires_at' => $input['expires_at'], 'quantity' => 1, 'quantity_per_user' => 1];
+        });
+
+        $refunds = new RefundService(new OrderSearchService($c), $refundClient, $c, $cash, null, null, $coupons);
         $checkout = new CheckoutService($cart, $orderClient, $c, $cash, $bus, $printer);
 
-        return new ExchangeService($refunds, $checkout, $c);
+        return new ExchangeService($refunds, $checkout, $c, $coupons, $cash);
     }
 
     /** @return array<int, array{type: string, amount: string}> */
@@ -463,6 +483,108 @@ final class ExchangeServiceMySqlIntegrationTest extends TestCase
         $this->assertEquals(['cash' => 0.0, 'card' => 0.0, 'exchange_credit' => 40.0], $this->tender(990002));
         $this->expectRefundError(409, fn () => $service->retry(1, $result['exchange_id']));
         $this->assertCount(2, $this->orderPayloads);
+    }
+
+    /** An exchange whose new sale definitely failed: credit note done, 15 paid out, 40 of credit open. */
+    private function openCredit(ExchangeService $service): int
+    {
+        $this->seedSale(930006, ['cash' => 55.0, 'card' => 0.0]);
+        $this->orderFailures = [CheckoutException::psValidationFailed('Product not found')];
+        $result = $service->processExchange(1, self::ORDER_ID, $this->returnFirstLine(), 'size', '', $this->cart(930005), 'cash', 0.0, false);
+        $this->assertSame('credit_open', $result['status']);
+
+        return (int) $result['exchange_id'];
+    }
+
+    public function testOpenCreditIsClosedWithOneVoucherAndTheExchangeCannotRunAgain(): void
+    {
+        $service = $this->service();
+        $exchangeId = $this->openCredit($service);
+
+        $closed = $service->closeWithVoucher(1, $exchangeId, 3);
+
+        $this->assertSame($exchangeId, $closed['exchange_id']);
+        $this->assertSame('closed_voucher', $closed['status']);
+        $this->assertSame('CAMB1XYZ', $closed['voucher_code']);
+        $this->assertSame(40.0, $closed['voucher_amount']);
+        $this->assertCount(1, $this->coupons);
+        $this->assertSame(3, $this->coupons[0]['shop']);
+        $this->assertSame(40.0, $this->coupons[0]['input']['value']);
+        $this->assertTrue($this->coupons[0]['input']['partial_use']);
+        $this->assertSame(1, $this->coupons[0]['input']['quantity']);
+        $this->assertSame((new \DateTimeImmutable('+1 year'))->format('Y-m-d'), $this->coupons[0]['input']['expires_at']);
+
+        $row = $this->connection->fetchAssociative('SELECT * FROM exchange WHERE id = ?', [$exchangeId]);
+        $this->assertSame('closed_voucher', $row['status']);
+        $this->assertSame('CAMB1XYZ', $row['voucher_code']);
+        $this->assertSame('40.00', (string) $row['voucher_amount']);
+        $this->assertSame(671, (int) $row['voucher_cart_rule_id']);
+        $this->assertSame(self::SESSION_ID, (int) $row['voucher_session_id']);
+        $this->assertNotNull($row['completed_at']);
+        $this->assertNull((new OrderSearchService($this->connection))->getOrder(self::ORDER_ID)['open_exchange']);
+
+        $this->expectRefundError(409, fn () => $service->retry(1, $exchangeId));
+        $this->expectRefundError(409, fn () => $service->closeWithVoucher(1, $exchangeId, 3));
+        $this->assertCount(1, $this->coupons, 'never a second voucher');
+        $this->assertCount(1, $this->orderPayloads, 'no new sale after closing');
+        $this->assertCount(1, $this->refundPayloads);
+        $this->assertEquals([['type' => 'refund', 'amount' => '15.00']], $this->movements(), 'the voucher moves no cash');
+    }
+
+    public function testCashReportCountsTheClosingVoucherOnceAndNoLongerAsExchangeCredit(): void
+    {
+        $service = $this->service();
+        $exchangeId = $this->openCredit($service);
+        $cash = new CashSessionService($this->connection, $this->createMock(TerminalService::class), new RequestStack());
+        $before = $cash->getXReport(1)['totals'];
+        $this->assertSame(40.0, $before['exchange_credit']);
+        $this->assertSame(0.0, $before['refunds_voucher']);
+
+        $service->closeWithVoucher(1, $exchangeId, 3);
+        $totals = $cash->getXReport(1)['totals'];
+
+        $this->assertSame(15.0, $totals['refunds_cash']);
+        $this->assertSame(40.0, $totals['refunds_voucher']);
+        $this->assertSame(55.0, $totals['refunds_total']);
+        $this->assertSame(0.0, $totals['exchange_credit'], 'the credit was not spent on an exchange');
+        $this->assertSame(0, $totals['counts']['exchanges']);
+        $this->assertSame(85.0, $totals['expected_cash'], 'drawer: 100 - 15');
+    }
+
+    public function testVoucherWithUnknownOutcomeKeepsTheCreditOpenAndBlocksRetryAndASecondVoucher(): void
+    {
+        $service = $this->service();
+        $exchangeId = $this->openCredit($service);
+        $this->couponFailures = [CouponCreationException::reconcile('ABCD2345')];
+
+        $this->expectRefundError(409, fn () => $service->closeWithVoucher(1, $exchangeId, 3));
+
+        $row = $this->connection->fetchAssociative('SELECT status, voucher_requested_at, voucher_code, error_message FROM exchange WHERE id = ?', [$exchangeId]);
+        $this->assertSame('credit_open', $row['status']);
+        $this->assertNotNull($row['voucher_requested_at']);
+        $this->assertNull($row['voucher_code']);
+        $this->assertStringContainsString('ABCD2345', (string) $row['error_message']);
+
+        $this->expectRefundError(409, fn () => $service->closeWithVoucher(1, $exchangeId, 3));
+        $this->expectRefundError(409, fn () => $service->retry(1, $exchangeId));
+        $this->assertCount(1, $this->coupons, 'never a second voucher automatically');
+        $this->assertCount(1, $this->orderPayloads, 'no new sale while a voucher may exist');
+        $this->assertSame(0.0, (new CashSessionService($this->connection, $this->createMock(TerminalService::class), new RequestStack()))->getXReport(1)['totals']['refunds_voucher']);
+    }
+
+    public function testOnlyAnOpenCreditCanBeClosedWithAVoucherAndOnlyForAKnownShop(): void
+    {
+        $this->seedSale(930005, ['cash' => 40.0, 'card' => 0.0]);
+        $service = $this->service();
+        $this->refundFailures = [RefundException::psUnavailable('Connection refused')];
+        $this->expectRefundError(0, fn () => $service->processExchange(1, self::ORDER_ID, $this->returnFirstLine(), 'size', '', $this->cart(930006), 'cash', 20.0, false));
+        $pendingId = (int) $this->connection->fetchOne('SELECT id FROM exchange');
+
+        $this->expectRefundError(409, fn () => $service->closeWithVoucher(1, $pendingId, 3));
+        $this->expectRefundError(409, fn () => $service->closeWithVoucher(1, 999999, 3));
+        $this->expectRefundError(422, fn () => $service->closeWithVoucher(1, $pendingId, 0));
+        $this->assertSame([], $this->coupons);
+        $this->assertSame('pending', $this->connection->fetchOne('SELECT status FROM exchange WHERE id = ?', [$pendingId]));
     }
 
     public function testRejectedNewSaleIsReportedAsDefinitelyNotCreated(): void

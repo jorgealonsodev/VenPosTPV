@@ -64,6 +64,9 @@ const RefundScreen = {
         const exchangeTendered = Vue.ref('');
         const exchangeCash = Vue.ref('');
         const lastExchange = Vue.ref(null);
+        // Voucher that closed an exchange whose new sale could not be completed.
+        const exchangeVoucher = Vue.ref(null);
+        const exchangeVoucherConfirm = Vue.ref(false);
 
         // Same half-up rounding as PHP round(): 10.075 must give 10.08, not 10.07.
         const round2 = (n) => Math.round(Number(((Number(n) || 0) * 100).toPrecision(12))) / 100;
@@ -152,6 +155,8 @@ const RefundScreen = {
 
         function selectOrder(order) {
             selectedOrder.value = order;
+            exchangeVoucher.value = null;
+            exchangeVoucherConfirm.value = false;
             reasonCode.value = '';
             reasonText.value = '';
             cardConfirmed.value = false;
@@ -334,12 +339,25 @@ const RefundScreen = {
             return splitByTender(estimatedTotal());
         }
 
-        // Same proportional rule as the server's RefundService::splitByTender.
+        // Same proportional rule as the server's RefundService::splitByTender: the
+        // exchange-credit share of a sale goes back as a voucher.
         function splitByTender(total) {
             const order = selectedOrder.value || {};
             const tender = order.tender || {};
-            let cash = Number(tender.cash || 0);
-            let card = Number(tender.card || 0);
+            let cash = Math.max(0, Number(tender.cash || 0));
+            let card = Math.max(0, Number(tender.card || 0));
+            const credit = Math.max(0, Number(tender.exchange_credit || 0));
+            if (credit > 0) {
+                const sum = cash + card + credit;
+                let cashPart = round2(total * cash / sum);
+                let cardPart = round2(total * card / sum);
+                let voucher = round2(total - cashPart - cardPart);
+                if (voucher < 0) {
+                    if (cardPart >= cashPart) cardPart = round2(cardPart + voucher); else cashPart = round2(cashPart + voucher);
+                    voucher = 0;
+                }
+                return { cash: cashPart, card: cardPart, voucher };
+            }
             if (cash + card <= 0) {
                 cash = order.payment_method === 'card' ? 0 : 1;
                 card = 1 - cash;
@@ -558,6 +576,30 @@ const RefundScreen = {
             }
         }
 
+        function closeExchangeWithVoucher() {
+            const open = selectedOrder.value && selectedOrder.value.open_exchange;
+            if (!open || open.status !== 'credit_open' || loading.value) return;
+            exchangeVoucherConfirm.value = true;
+        }
+
+        async function confirmExchangeVoucher() {
+            const open = selectedOrder.value && selectedOrder.value.open_exchange;
+            exchangeVoucherConfirm.value = false;
+            if (!open || open.status !== 'credit_open' || loading.value) return;
+            loading.value = true;
+            try {
+                const result = await ApiClient.exchangeVoucher(open.id);
+                const data = (result && result.data) || {};
+                exchangeVoucher.value = { code: data.voucher_code, amount: Number(data.voucher_amount || 0) };
+                selectedOrder.value = { ...selectedOrder.value, open_exchange: null };
+                emit('notify', 'Cambio #' + open.id + ' cerrado con vale ' + data.voucher_code + ' de ' + Number(data.voucher_amount || 0).toFixed(2) + ' €', 'var(--green)');
+            } catch (err) {
+                emit('notify', errorMessage(err), 'var(--red)');
+            } finally {
+                loading.value = false;
+            }
+        }
+
         function openConfirm() {
             const error = validationError();
             if (error) {
@@ -756,6 +798,10 @@ const RefundScreen = {
             cardRefundAmount,
             buildExchangeRequest,
             retryExchange,
+            exchangeVoucher,
+            exchangeVoucherConfirm,
+            closeExchangeWithVoucher,
+            confirmExchangeVoucher,
             ticketPdf: (orderId) => ApiClient.ticketPdf(orderId),
             paymentMethods: [{ code: 'cash', label: 'Efectivo' }, { code: 'card', label: 'Tarjeta' }, { code: 'mixed', label: 'Mixto' }],
         };
@@ -906,6 +952,17 @@ const RefundScreen = {
                         <div v-if="selectedOrder.open_exchange.error" style="font-size:12px; margin-top:4px;">{{ selectedOrder.open_exchange.error }}</div>
                     </div>
                     <button @click="retryExchange" :disabled="loading" style="padding:8px 14px; border-radius:8px; border:none; background:var(--red); color:#fff; cursor:pointer; font-family:inherit; font-size:13px; font-weight:600;">Reintentar cambio</button>
+                    <button v-if="selectedOrder.open_exchange.status === 'credit_open'" @click="closeExchangeWithVoucher" :disabled="loading" style="padding:8px 14px; border-radius:8px; border:1px solid var(--red); background:transparent; color:var(--red); cursor:pointer; font-family:inherit; font-size:13px; font-weight:600;">Cerrar con vale</button>
+                </div>
+
+                <div v-if="exchangeVoucherConfirm && selectedOrder.open_exchange" style="background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px; display:flex; align-items:center; gap:12px; color:var(--text); font-size:13px;">
+                    <div style="flex:1;">Se emitirá un vale de {{ Number(selectedOrder.open_exchange.credit_applied).toFixed(2) }} € (1 año, uso parcial) y el cambio no se podrá reintentar. Comprueba antes en PrestaShop que el pedido nuevo no se creó.</div>
+                    <button @click="exchangeVoucherConfirm = false" :disabled="loading" style="padding:8px 14px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:13px;">Cancelar</button>
+                    <button @click="confirmExchangeVoucher" :disabled="loading" style="padding:8px 14px; border-radius:8px; border:none; background:var(--primary); color:#fff; cursor:pointer; font-family:inherit; font-size:13px; font-weight:600;">Emitir vale</button>
+                </div>
+
+                <div v-if="exchangeVoucher" style="background:var(--surface); border:2px solid var(--green); border-radius:10px; padding:12px; color:var(--text); font-size:14px;">
+                    Vale para el cliente: <strong style="font-family:'IBM Plex Mono';">{{ exchangeVoucher.code }}</strong> · {{ exchangeVoucher.amount.toFixed(2) }} € · válido 1 año, admite uso parcial
                 </div>
 
                 <div v-if="selectedOrder.pending_refund && !selectedOrder.open_exchange" style="background:var(--red-bg); border:1px solid var(--red); border-radius:10px; padding:12px; display:flex; align-items:center; gap:12px; color:var(--text); font-size:13px;">
@@ -979,6 +1036,7 @@ const RefundScreen = {
                     <div v-if="exchangeBalance() < 0" style="color:var(--text2); font-size:13px;">
                         <div v-if="exchangePayoutSplit().cash > 0">Efectivo de caja: {{ exchangePayoutSplit().cash.toFixed(2) }} €</div>
                         <div v-if="exchangePayoutSplit().card > 0">A tarjeta (datáfono): {{ exchangePayoutSplit().card.toFixed(2) }} €</div>
+                        <div v-if="exchangePayoutSplit().voucher > 0">En vale (PrestaShop): {{ exchangePayoutSplit().voucher.toFixed(2) }} €</div>
                     </div>
                     <template v-if="exchangeBalance() > 0">
                         <div style="color:var(--text2); font-size:12px; font-weight:600;">Cómo paga la diferencia</div>
@@ -995,6 +1053,7 @@ const RefundScreen = {
                     <div style="color:var(--text2); font-size:13px;">
                         <div v-if="estimatedSplit().cash > 0">Efectivo de caja: {{ estimatedSplit().cash.toFixed(2) }} €</div>
                         <div v-if="estimatedSplit().card > 0">A tarjeta (datáfono): {{ estimatedSplit().card.toFixed(2) }} €</div>
+                        <div v-if="estimatedSplit().voucher > 0">En vale (PrestaShop): {{ estimatedSplit().voucher.toFixed(2) }} €</div>
                     </div>
                     <div style="font-weight:700; color:var(--text); font-size:16px;">Total devolución: {{ estimatedTotal().toFixed(2) }} €</div>
                 </div>

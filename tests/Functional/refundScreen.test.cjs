@@ -579,13 +579,67 @@ async function testExchangeApiCallsAreNeverQueuedOffline() {
 
     await context.__api.exchangeOrder(42, { return_lines: [] });
     await context.__api.exchangeRetry(5);
-    assert.deepEqual(requests.map((r) => [r[0], r[1]]), [['/api/exchange', 'POST'], ['/api/exchange/5/retry', 'POST']]);
+    await context.__api.exchangeVoucher(5);
+    assert.deepEqual(requests.map((r) => [r[0], r[1]]), [['/api/exchange', 'POST'], ['/api/exchange/5/retry', 'POST'], ['/api/exchange/5/voucher', 'POST']]);
     assert.deepEqual(JSON.parse(requests[0][2]), { return_lines: [], ps_order_id: 42 });
 
     const offline = { ...context, navigator: { onLine: false }, fetch: async () => { throw new Error('must not be sent'); } };
     offline.globalThis = offline;
     vm.runInNewContext(`${source}\nglobalThis.__api = ApiClient;`, offline, { filename: 'api.js' });
     await assert.rejects(() => offline.__api.exchangeOrder(42, {}), /not sent or queued/);
+    await assert.rejects(() => offline.__api.exchangeVoucher(5), /not sent or queued/);
+}
+
+async function testRefundOfASalePaidWithExchangeCreditShowsTheVoucherPart() {
+    const { state } = load(async () => ({ data: {} }));
+    state.selectOrder({ ...PANTALON_ORDER, payment_method: 'exchange', tender: { cash: 15, card: 0, exchange_credit: 40 },
+        lines: [{ name: 'Chaqueta', product_id: 6, id_product_attribute: 0, qty: 1, paid_total: 55, refundable_qty: 1 }] });
+    state.toggleLine(0);
+    // Same three-way rule as the server: 55 x 15/55 in cash, the credit share as a voucher.
+    assert.deepEqual(JSON.parse(JSON.stringify(state.estimatedSplit())), { cash: 15, card: 0, voucher: 40 });
+    const source = fs.readFileSync(path.resolve(__dirname, '../../public/assets/js/components/RefundScreen.js'), 'utf8');
+    assert.match(source, /En vale \(PrestaShop\): \{\{ estimatedSplit\(\)\.voucher\.toFixed\(2\) \}\} €/);
+}
+
+async function testCreditOpenExchangeCanBeClosedWithAVoucherAfterConfirming() {
+    const closed = [];
+    const t = loadExchange({ ...PANTALON_ORDER, open_exchange: { id: 6, status: 'credit_open', credit_applied: 40, new_total: 55, balance: 15, error: 'Product not found' } }, async () => { throw new Error('no new exchange'); }, {
+        exchangeVoucher: async (id) => { closed.push(id); return { data: { exchange_id: id, status: 'closed_voucher', voucher_code: 'CAMB1XYZ', voucher_amount: 40 } }; },
+    });
+
+    t.state.closeExchangeWithVoucher();
+    assert.deepEqual(closed, [], 'asks before issuing the voucher');
+    assert.equal(t.state.exchangeVoucherConfirm.value, true);
+
+    await t.state.confirmExchangeVoucher();
+    assert.deepEqual(closed, [6]);
+    assert.match(t.emitted.at(-1)[1], /Cambio #6 cerrado con vale CAMB1XYZ de 40\.00 €/);
+    assert.equal(t.emitted.at(-1)[2], 'var(--green)');
+    assert.deepEqual(JSON.parse(JSON.stringify(t.state.exchangeVoucher.value)), { code: 'CAMB1XYZ', amount: 40 });
+    assert.equal(t.state.selectedOrder.value.open_exchange, null);
+    assert.equal(t.state.exchangeVoucherConfirm.value, false);
+
+    const source = fs.readFileSync(path.resolve(__dirname, '../../public/assets/js/components/RefundScreen.js'), 'utf8');
+    assert.match(source, /v-if="selectedOrder\.open_exchange\.status === 'credit_open'" @click="closeExchangeWithVoucher"[^>]*>Cerrar con vale</);
+}
+
+async function testVoucherCloseErrorsKeepTheOpenCreditAndPendingExchangesCannotBeClosed() {
+    const closed = [];
+    const t = loadExchange({ ...PANTALON_ORDER, open_exchange: { id: 6, status: 'credit_open', credit_applied: 40, new_total: 55, balance: 15, error: null } }, async () => { throw new Error('no new exchange'); }, {
+        exchangeVoucher: async (id) => { closed.push(id); throw new Error('HTTP 409: {"error":"a voucher is never created twice automatically"}'); },
+    });
+    t.state.closeExchangeWithVoucher();
+    await t.state.confirmExchangeVoucher();
+    assert.deepEqual(closed, [6]);
+    assert.match(t.emitted.at(-1)[1], /never created twice automatically/);
+    assert.equal(t.state.selectedOrder.value.open_exchange.id, 6, 'the banner stays');
+    assert.equal(t.state.exchangeVoucher.value, null);
+
+    const pending = loadExchange({ ...PANTALON_ORDER, open_exchange: { id: 7, status: 'pending', credit_applied: 40, new_total: 55, balance: 15, error: null } }, async () => { throw new Error('no new exchange'); }, {
+        exchangeVoucher: async () => { throw new Error('must not close a pending exchange'); },
+    });
+    pending.state.closeExchangeWithVoucher();
+    assert.equal(pending.state.exchangeVoucherConfirm.value, false);
 }
 
 (async () => {
@@ -595,6 +649,9 @@ async function testExchangeApiCallsAreNeverQueuedOffline() {
     await testMixedBalanceSendsTheCashPart();
     await testFailedNewSaleKeepsTheCreditOpenAndTheExchangeCanBeRetried();
     await testOrderWithAnOpenExchangeOffersOnlyItsRetry();
+    await testRefundOfASalePaidWithExchangeCreditShowsTheVoucherPart();
+    await testCreditOpenExchangeCanBeClosedWithAVoucherAfterConfirming();
+    await testVoucherCloseErrorsKeepTheOpenCreditAndPendingExchangesCannotBeClosed();
     await testNoTicketApiCallsTheNewEndpoints();
     await testNoTicketPicksProductsAndCombinationsAndSendsOnlyIdsQuantitiesRestockAndMethod();
     await testNoTicketCardNeedsConfirmationAndVoucherShowsTheCode();

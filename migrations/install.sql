@@ -288,6 +288,12 @@ CREATE TABLE IF NOT EXISTS exchange (
     cart_data JSON NOT NULL,
     new_ps_order_id INT UNSIGNED NULL,
     new_reference VARCHAR(32) NULL,
+    -- Version00000026: voucher issued for an open credit that closes the exchange (closed_voucher)
+    voucher_code VARCHAR(32) NULL,
+    voucher_amount DECIMAL(10,2) NULL,
+    voucher_cart_rule_id INT UNSIGNED NULL,
+    voucher_requested_at DATETIME NULL,
+    voucher_session_id INT UNSIGNED NULL,
     error_message VARCHAR(1000) NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     completed_at DATETIME NULL,

@@ -101,6 +101,8 @@ const ApiClient = (function () {
         // Exchanges move money and goods: never queued offline either.
         exchangeOrder: (psOrderId, exchange) => request('/api/exchange', { method: 'POST', body: JSON.stringify({ ...exchange, ps_order_id: psOrderId }), queueOnNetworkFailure: false }),
         exchangeRetry: (exchangeId) => request('/api/exchange/' + encodeURIComponent(exchangeId) + '/retry', { method: 'POST', body: JSON.stringify({}), queueOnNetworkFailure: false }),
+        // Gives an open exchange credit back as a PrestaShop voucher; never replayed.
+        exchangeVoucher: (exchangeId) => request('/api/exchange/' + encodeURIComponent(exchangeId) + '/voucher', { method: 'POST', body: JSON.stringify({}), queueOnNetworkFailure: false }),
         // Same catalog endpoints the sale screen uses (useCatalog / CatalogPanel).
         searchCatalog: (query) => {
             const qs = new URLSearchParams();
