@@ -534,7 +534,10 @@ const PaymentModal = {
                             <div style="flex:1; display:flex; flex-direction:column; gap:14px;">
                                 <div>
                                     <div class="tpv-label" style="margin-bottom:8px;">Efectivo</div>
-                                    <input v-model="card2" placeholder="0,00" inputmode="decimal" class="tpv-input pay-display pay-num" />
+                                    <div style="position:relative;">
+                                        <input v-model="card2" placeholder="0,00" inputmode="decimal" class="tpv-input pay-display pay-num" style="padding-right:56px;" aria-label="Importe en efectivo en euros" />
+                                        <span class="pay-num" aria-hidden="true" style="position:absolute; right:20px; top:50%; transform:translateY(-50%); font-size:30px; color:var(--text2); pointer-events:none;">€</span>
+                                    </div>
                                 </div>
                                 <div>
                                     <div class="tpv-label" style="margin-bottom:8px;">Tarjeta</div>

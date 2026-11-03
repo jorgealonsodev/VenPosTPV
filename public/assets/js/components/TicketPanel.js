@@ -18,7 +18,10 @@ const TicketPanel = {
             return (line.qty || 1) > Number(stock);
         }
 
-        return { totalLines, outOfStock };
+        // Spanish money format: 68,78 €
+        const eur = (n) => (Number(n) || 0).toFixed(2).replace('.', ',') + ' €';
+
+        return { totalLines, outOfStock, eur };
     },
     template: `
         <div style="display:flex; flex-direction:column; height:100%; overflow:hidden;">
@@ -49,7 +52,7 @@ const TicketPanel = {
                             <span v-if="outOfStock(line)" class="tpv-tag" style="margin-top:4px; font-size:12px;" title="Se puede vender igualmente; revisa el inventario">Sin stock en el TPV</span>
                         </div>
                         <div style="font-family:'IBM Plex Mono'; font-size:13px; font-weight:600; color:var(--text); flex-shrink:0;">
-                            €{{ (line.price * (line.qty || 1) * (1 - (line.discount || 0)/100)).toFixed(2) }}
+                            {{ eur((line.price * (line.qty || 1) * (1 - (line.discount || 0)/100))) }}
                         </div>
                     </div>
                     <div style="display:flex; align-items:center; gap:6px;">
@@ -62,7 +65,7 @@ const TicketPanel = {
                             style="width:26px; height:26px; border-radius:6px; border:1px solid var(--border); background:var(--surface); cursor:pointer; color:var(--text2); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
                             <icon name="plus" :size="12" />
                         </button>
-                        <span style="color:var(--text3); font-size:11px; font-family:'IBM Plex Mono';">× €{{ Number(line.price).toFixed(2) }}</span>
+                        <span style="color:var(--text3); font-size:11px; font-family:'IBM Plex Mono';">× {{ eur(Number(line.price)) }}</span>
                         <span v-if="line.discount > 0" style="font-size:10px; background:var(--amber-bg); color:var(--amber); padding:2px 5px; border-radius:4px;">-{{ line.discount }}%</span>
                         <button @click="$emit('remove', line.id)"
                             style="margin-left:auto; width:26px; height:26px; border-radius:6px; border:none; background:transparent; cursor:pointer; color:var(--text3); display:flex; align-items:center; justify-content:center;">
@@ -76,15 +79,15 @@ const TicketPanel = {
             <div v-if="cart.lines.length > 0" style="border-top:1px solid var(--border); padding:10px 14px 8px; display:flex; flex-direction:column; gap:5px;">
                 <div style="display:flex; justify-content:space-between; font-size:12px; color:var(--text3);">
                     <span>{{ totalLines }} artículo{{ totalLines !== 1 ? 's' : '' }}</span>
-                    <span style="font-family:'IBM Plex Mono';">€{{ Number(cart.subtotal).toFixed(2) }}</span>
+                    <span style="font-family:'IBM Plex Mono';">{{ eur(Number(cart.subtotal)) }}</span>
                 </div>
                 <div v-if="cart.discount_amount > 0" style="display:flex; justify-content:space-between; font-size:12px; color:var(--amber);">
                     <span>Descuento {{ cart.discount && cart.discount.type === 'pct' ? cart.discount.value + '%' : '' }}</span>
-                    <span style="font-family:'IBM Plex Mono';">-€{{ Number(cart.discount_amount).toFixed(2) }}</span>
+                    <span style="font-family:'IBM Plex Mono';">-{{ eur(Number(cart.discount_amount)) }}</span>
                 </div>
                 <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--text3);">
                     <span>IVA incluido</span>
-                    <span style="font-family:'IBM Plex Mono';">€{{ Number(cart.iva).toFixed(2) }}</span>
+                    <span style="font-family:'IBM Plex Mono';">{{ eur(Number(cart.iva)) }}</span>
                 </div>
             </div>
 
@@ -110,9 +113,9 @@ const TicketPanel = {
 
                 <button @click="$emit('showPayment')" :disabled="cart.lines.length === 0"
                     style="padding:0 20px; height:62px; border-radius:14px; border:none; font-family:inherit; font-size:18px; font-weight:800; display:flex; align-items:center; justify-content:space-between; transition:all .15s; letter-spacing:0.01em;"
-                    :style="{ background: cart.lines.length ? 'var(--green)' : 'var(--surface3)', color: cart.lines.length ? '#000' : 'var(--text3)', cursor: cart.lines.length ? 'pointer' : 'default' }">
-                    <span>COBRAR</span>
-                    <span style="font-family:'IBM Plex Mono'; font-size:22px; font-weight:700;">€{{ Number(cart.total).toFixed(2) }}</span>
+                    :style="{ background: cart.lines.length ? 'var(--primary)' : 'var(--surface2)', color: cart.lines.length ? 'var(--on-primary)' : 'var(--text2)', cursor: cart.lines.length ? 'pointer' : 'default' }">
+                    <span>Cobrar</span>
+                    <span style="font-family:'IBM Plex Mono'; font-size:22px; font-weight:700;">{{ eur(Number(cart.total)) }}</span>
                 </button>
             </div>
         </div>
