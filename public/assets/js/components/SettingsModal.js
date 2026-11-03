@@ -86,6 +86,9 @@ const SettingsModal = {
                     ticket_logo: terminal.value.ticket_logo,
                     ticket_width_px: terminal.value.ticket_width_px,
                 };
+                if (terminal.value.refund_window_days != null && terminal.value.refund_window_days !== '') {
+                    payload.refund_window_days = Number(terminal.value.refund_window_days);
+                }
                 if (terminal.value.name != null) payload.name = terminal.value.name;
                 if (terminal.value.printer_ip != null) payload.printer_ip = terminal.value.printer_ip;
                 if (terminal.value.printer_port != null) payload.printer_port = terminal.value.printer_port;
@@ -508,6 +511,13 @@ const SettingsModal = {
                                     <input v-model.number="terminal.ticket_width_px" type="number" min="100" max="600" placeholder="302 (80mm)"
                                         style="width:100%; max-width:200px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box;">
                                     <div style="font-size:12px; color:var(--text3); margin-top:4px;">Deja vacío para usar 80mm por defecto</div>
+                                </div>
+
+                                <div>
+                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Plazo de devolución (días)</label>
+                                    <input v-model.number="terminal.refund_window_days" type="number" min="1" max="3650" placeholder="30"
+                                        style="width:100%; max-width:200px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box;">
+                                    <div style="font-size:12px; color:var(--text3); margin-top:4px;">Pasado este plazo desde la venta no se admiten devoluciones</div>
                                 </div>
 
                                 <div>

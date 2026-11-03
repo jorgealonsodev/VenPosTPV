@@ -26,7 +26,7 @@ final class TerminalController
         }
 
         $row = $this->connection->fetchAssociative(
-            'SELECT id, ps_shop_id, name, printer_config, scanner_config, hotkeys, dataphone_mode, printer_type, store_address, ticket_header, ticket_footer, ticket_logo, ticket_width_px, stock_sync_interval_seconds, stock_push_interval_seconds, active, created_at, updated_at FROM terminal WHERE id = ?',
+            'SELECT id, ps_shop_id, name, printer_config, scanner_config, hotkeys, dataphone_mode, printer_type, store_address, ticket_header, ticket_footer, ticket_logo, ticket_width_px, stock_sync_interval_seconds, stock_push_interval_seconds, refund_window_days, active, created_at, updated_at FROM terminal WHERE id = ?',
             [$id]
         );
 
@@ -115,6 +115,14 @@ final class TerminalController
                 return new JsonResponse(['error' => 'Intervalo de push no válido (0-3600)'], Response::HTTP_UNPROCESSABLE_ENTITY);
             }
             $fields['stock_push_interval_seconds'] = $seconds;
+        }
+
+        if (isset($body['refund_window_days'])) {
+            $days = (int) $body['refund_window_days'];
+            if ($days < 1 || $days > 3650) {
+                return new JsonResponse(['error' => 'Plazo de devolución no válido (1-3650 días)'], Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
+            $fields['refund_window_days'] = $days;
         }
 
         if (isset($body['active'])) {

@@ -92,6 +92,8 @@ class RefundService
                 throw RefundException::orderNotFound($psOrderId);
             }
 
+            $this->assertWithinRefundWindow($order, (int) ($cashContext['terminal_id'] ?? 0));
+
             $planned = $this->planLines($order, $lines);
             $total = round(array_sum(array_column($planned, 'amount')), 2);
             if ($total <= 0) {
@@ -307,6 +309,31 @@ class RefundService
             'saga_error' => $sagaError,
             'already_completed' => $alreadyCompleted,
         ];
+    }
+
+    private const DEFAULT_REFUND_WINDOW_DAYS = 30;
+
+    /**
+     * Refunds are blocked once the terminal's window (30 days by default) has passed
+     * since the sale.
+     *
+     * @param array<string, mixed> $order
+     */
+    private function assertWithinRefundWindow(array $order, int $terminalId): void
+    {
+        $days = $terminalId > 0
+            ? $this->conn->fetchOne('SELECT refund_window_days FROM terminal WHERE id = ?', [$terminalId])
+            : false;
+        $days = $days !== false && $days !== null && (int) $days > 0 ? (int) $days : self::DEFAULT_REFUND_WINDOW_DAYS;
+
+        $soldAt = new \DateTimeImmutable((string) $order['created_at']);
+        if ($soldAt->modify(sprintf('+%d days', $days)) < new \DateTimeImmutable()) {
+            throw RefundException::validationFailed(sprintf(
+                'This sale is outside the %d-day refund window (sold on %s)',
+                $days,
+                $soldAt->format('d/m/Y')
+            ));
+        }
     }
 
     /**

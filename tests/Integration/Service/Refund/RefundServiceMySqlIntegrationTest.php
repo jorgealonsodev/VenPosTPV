@@ -24,6 +24,8 @@ final class RefundServiceMySqlIntegrationTest extends TestCase
 
     private int $nextSessionId = self::SESSION_ID;
 
+    private int $nextTerminalId = 1;
+
     /** @var (callable(): void)|null runs inside the next PrestaShop call, to model a concurrent request */
     private $duringPsCall = null;
 
@@ -68,11 +70,12 @@ final class RefundServiceMySqlIntegrationTest extends TestCase
         $this->connection->executeStatement('DELETE FROM movement WHERE session_id = ?', [self::SESSION_ID]);
         $this->connection->executeStatement('DELETE FROM order_meta WHERE ps_order_id >= 880000');
         $this->connection->executeStatement('DELETE FROM session WHERE id = ?', [self::SESSION_ID]);
+        $this->connection->executeStatement('DELETE FROM terminal WHERE id = 9101');
         $this->connection->executeStatement('DELETE FROM catalog_stock WHERE id_product IN (3, 4)');
     }
 
     /** @param array{cash: float, card: float} $tender */
-    private function seedOrder(array $tender, bool $withProductIds = true, int $orderId = self::ORDER_ID): void
+    private function seedOrder(array $tender, bool $withProductIds = true, int $orderId = self::ORDER_ID, ?string $createdAt = null): void
     {
         $lines = [
             ['name' => 'Camisa M', 'product_id' => 3, 'id_product_attribute' => 7, 'qty' => 1, 'price' => 30.0, 'line_total' => 30.0, 'paid_total' => 24.18],
@@ -88,7 +91,7 @@ final class RefundServiceMySqlIntegrationTest extends TestCase
                 'payment_method' => $tender['card'] > 0 && $tender['cash'] > 0 ? 'mixed' : ($tender['card'] > 0 ? 'card' : 'cash'),
                 'amount_tendered' => 60.0, 'change_due' => 0, 'lines' => $lines, 'tender' => $tender,
             ], JSON_THROW_ON_ERROR),
-            'created_at' => '2026-11-03 10:00:00',
+            'created_at' => $createdAt ?? (new \DateTimeImmutable('-1 day'))->format('Y-m-d H:i:s'),
         ]);
     }
 
@@ -116,7 +119,7 @@ final class RefundServiceMySqlIntegrationTest extends TestCase
             ];
         });
         $cash = $this->createMock(CashSessionService::class);
-        $cash->method('requireOpenSession')->willReturnCallback(fn (): array => ['session_id' => $this->nextSessionId, 'terminal_id' => 1, 'user_id' => 1]);
+        $cash->method('requireOpenSession')->willReturnCallback(fn (): array => ['session_id' => $this->nextSessionId, 'terminal_id' => $this->nextTerminalId, 'user_id' => 1]);
 
         return new RefundService(new OrderSearchService($this->connection), $client, $this->connection, $cash);
     }
@@ -373,6 +376,35 @@ final class RefundServiceMySqlIntegrationTest extends TestCase
         $this->assertSame(1, $ticket->lines[0]->quantity);
         $this->assertSame(17.91, $ticket->lines[0]->lineTotal);
         $this->assertSame($refund['credit_note_number'], $ticket->reference);
+    }
+
+    public function testRefundsOutsideTheTerminalWindowAreBlocked(): void
+    {
+        $this->connection->executeStatement('SET FOREIGN_KEY_CHECKS = 0');
+        $this->connection->insert('terminal', ['id' => 9101, 'ps_shop_id' => 1, 'name' => 'Test', 'refund_window_days' => 10]);
+        $this->connection->executeStatement('SET FOREIGN_KEY_CHECKS = 1');
+        $this->nextTerminalId = 9101;
+        $line = [['line_index' => 0, 'quantity' => 1, 'restock' => true]];
+
+        $this->seedOrder(['cash' => 60.0, 'card' => 0.0], true, self::ORDER_ID, (new \DateTimeImmutable('-11 days'))->format('Y-m-d H:i:s'));
+        $this->expectRefundError(422, fn () => $this->service()->processRefund(1, self::ORDER_ID, $line, 'size'));
+        $this->assertSame([], $this->psPayloads);
+        $this->assertSame(0, (int) $this->connection->fetchOne('SELECT COUNT(*) FROM refund'));
+
+        $this->seedOrder(['cash' => 60.0, 'card' => 0.0], true, self::ORDER_ID + 1, (new \DateTimeImmutable('-9 days'))->format('Y-m-d H:i:s'));
+        $result = $this->service()->processRefund(1, self::ORDER_ID + 1, $line, 'size');
+        $this->assertSame(24.18, $result['refunded_amount']);
+    }
+
+    public function testDefaultWindowIsThirtyDaysWhenTheTerminalHasNoSetting(): void
+    {
+        $line = [['line_index' => 0, 'quantity' => 1, 'restock' => true]];
+        $this->seedOrder(['cash' => 60.0, 'card' => 0.0], true, self::ORDER_ID, (new \DateTimeImmutable('-31 days'))->format('Y-m-d H:i:s'));
+
+        $this->expectRefundError(422, fn () => $this->service()->processRefund(1, self::ORDER_ID, $line, 'size'));
+
+        $order = (new OrderSearchService($this->connection))->getOrder(self::ORDER_ID);
+        $this->assertArrayHasKey('created_at', $order);
     }
 
     public function testUnknownOrderIs404(): void
