@@ -7,7 +7,7 @@ const CombinationsModal = {
         product: { type: Object, default: null },
         visible: { type: Boolean, default: false }
     },
-    emits: ['close', 'select'],
+    emits: ['close', 'select', 'printLabels'],
     methods: {
         formatAttributes(attributes) {
             if (!attributes || attributes.length === 0) return '—';
@@ -22,6 +22,9 @@ const CombinationsModal = {
             <div class="combinations-modal">
                 <div class="combinations-modal-header">
                     <h3 style="margin:0; font-size:16px; color:var(--text); font-weight:600;">{{ product.name }}</h3>
+                    <button class="tpv-btn" style="margin-left:auto; margin-right:8px;" @click="$emit('printLabels', product)" title="Imprimir etiquetas de este producto">
+                        <icon name="tag" :size="16" /> Imprimir etiquetas
+                    </button>
                     <button @click="$emit('close')" style="background:none; border:none; color:var(--text); font-size:20px; cursor:pointer; line-height:1; padding:4px 8px;">✕</button>
                 </div>
                 <div class="combinations-modal-list">

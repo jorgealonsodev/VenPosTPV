@@ -154,6 +154,30 @@ const ApiClient = (function () {
         terminalGet: (id) => request('/api/terminal/' + encodeURIComponent(id), { method: 'GET' }),
         terminalUpdate: (id, body) => request('/api/terminal/' + encodeURIComponent(id), { method: 'PUT', body: JSON.stringify(body) }),
         openDrawer: () => request('/api/drawer/open', { method: 'POST' }),
+        // Print agent (docs/prd/agente-impresion.md): job status and history, and the
+        // till's agent in Ajustes → Cajas. Writes are never queued offline.
+        printJob: (id) => request('/api/print-jobs/' + encodeURIComponent(id), { method: 'GET' }),
+        printJobs: (params = {}) => {
+            const qs = new URLSearchParams();
+            Object.entries(params).forEach(([k, v]) => { if (v !== null && v !== undefined && v !== '') qs.set(k, v); });
+            const query = qs.toString();
+            return request('/api/print-jobs' + (query ? '?' + query : ''), { method: 'GET' });
+        },
+        printAgentStatus: (terminalId) => request('/api/terminals/' + encodeURIComponent(terminalId) + '/print-agent', { method: 'GET' }),
+        printAgentPairingCode: (terminalId) => request('/api/terminals/' + encodeURIComponent(terminalId) + '/print-agent/pairing-code', { method: 'POST', body: JSON.stringify({}), queueOnNetworkFailure: false }),
+        // 204 without a body: an OK response that is not JSON is a success.
+        printAgentRevoke: (terminalId) => request('/api/terminals/' + encodeURIComponent(terminalId) + '/print-agent', { method: 'DELETE', queueOnNetworkFailure: false })
+            .catch((e) => { if (e instanceof SyntaxError) return {}; throw e; }),
+        printAgentTestPrint: (terminalId) => request('/api/terminals/' + encodeURIComponent(terminalId) + '/print-agent/test-print', { method: 'POST', body: JSON.stringify({}), queueOnNetworkFailure: false }),
+        // PRD L1-L9: labels. Printing is never queued offline: a replay would print them twice.
+        labelPreview: (items) => request('/api/labels/preview', { method: 'POST', body: JSON.stringify({ items }), queueOnNetworkFailure: false }),
+        labelPrint: (items) => request('/api/labels/print', { method: 'POST', body: JSON.stringify({ items }), queueOnNetworkFailure: false }),
+        labelLookup: (code) => request('/api/labels/lookup?code=' + encodeURIComponent(code), { method: 'GET' }),
+        labelPending: () => request('/api/labels/pending', { method: 'GET' }),
+        labelPendingPrint: () => request('/api/labels/pending/print', { method: 'POST', body: JSON.stringify({}), queueOnNetworkFailure: false }),
+        labelPendingDiscard: () => request('/api/labels/pending/discard', { method: 'POST', body: JSON.stringify({}), queueOnNetworkFailure: false }),
+        // Ajustes → Cajas: "Imprimir etiqueta de prueba" (administrators).
+        labelTest: (terminalId) => request('/api/terminals/' + encodeURIComponent(terminalId) + '/labels/test', { method: 'POST', body: JSON.stringify({}), queueOnNetworkFailure: false }),
         parkedTicketsList: () => request('/api/parked-tickets', { method: 'GET' }),
         parkedTicketCreate: (payload) => request('/api/parked-tickets', { method: 'POST', body: JSON.stringify(payload) }),
         parkedTicketDelete: (identifier) => request('/api/parked-tickets/' + encodeURIComponent(identifier), { method: 'DELETE' }),

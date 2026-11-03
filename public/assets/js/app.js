@@ -66,5 +66,11 @@ app.component('sync-status-indicator', SyncStatusIndicator);
 app.component('sync-status-panel', SyncStatusPanel);
 app.component('ticket-list-panel', TicketListPanel);
 app.component('order-detail-view', OrderDetailView);
+app.component('print-status-notice', PrintStatusNotice);
+app.component('print-agent-panel', PrintAgentPanel);
+app.component('print-history-panel', PrintHistoryPanel);
+app.component('label-print-modal', LabelPrintModal);
+app.component('labels-screen', LabelsScreen);
+app.component('label-pending-prompt', LabelPendingPrompt);
 
 app.mount('#app');

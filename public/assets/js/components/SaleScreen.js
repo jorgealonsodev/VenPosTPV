@@ -27,6 +27,8 @@ const SaleScreen = {
         const showSyncPanel = Vue.ref(false);
         const showTickets = Vue.ref(false);
         const showIncidents = Vue.ref(false);
+        // PRD L2: the "Etiquetas" screen.
+        const showLabels = Vue.ref(false);
         // Local stock of each added product/combination ("<product>:<combination>"), so
         // the ticket marks lines the TPV has no stock for (PRD V4: warn, never block).
         const stockByKey = Vue.reactive({});
@@ -118,7 +120,11 @@ const SaleScreen = {
             }
             try {
                 const result = saleId ? await ApiClient.ticketReprintSale(saleId) : await ApiClient.ticketReprint(psOrderId);
-                if (result && result.data && result.data.printed) {
+                if (result && result.data && result.data.print_status === 'queued' && typeof usePrintJobs !== 'undefined') {
+                    // Print agent: followed until sent; a problem stays on this screen (C1, C2).
+                    usePrintJobs.trackResponse(result.data, { kind: 'reprint', saleId, orderId: psOrderId });
+                    notify('Imprimiendo ticket…', 'var(--blue)');
+                } else if (result && result.data && result.data.printed) {
                     notify('Ticket reimpreso', 'var(--green)');
                 } else if (result && result.data && result.data.fallback === 'pdf') {
                     if (saleId) {
@@ -286,6 +292,10 @@ const SaleScreen = {
             }
         }
 
+        // docs/prd/agente-impresion.md C4: permanent notice while the till's agent is offline.
+        const printAgentNotice = Vue.computed(() => (typeof useSession.printAgentNotice === 'function' ? useSession.printAgentNotice() : ''));
+        const hasPrintNotice = typeof usePrintJobs !== 'undefined';
+
         const hasOpenSession = Vue.computed(() => {
             // session is a reactive object (not a ref): read its sessionId directly.
             return !!(session && session.sessionId);
@@ -295,10 +305,10 @@ const SaleScreen = {
             session, cart, catalog,
             showPayment, showDiscount, showCustomer, showCouponCreation, showCashClose, showRefund, showSettings,
             showLogoutConfirm, showSyncPanel, showTickets, showParkModal, parkNote, showVoidConfirm,
-            showIncidents, openIncidents, refreshOutbox, stockByKey, stockNotice,
+            showIncidents, openIncidents, refreshOutbox, stockByKey, stockNotice, showLabels,
             parkedCount,
             notification, listView, lastAdded, ticketCount, timeStr, lastCompletedOrder,
-            hasOpenSession,
+            hasOpenSession, printAgentNotice, hasPrintNotice,
             toggleTheme,
             setSearch, setCategory,
             addProduct, remove, updateQty,
@@ -324,6 +334,9 @@ const SaleScreen = {
         </div>
         <div v-else-if="showIncidents && session.role === 'admin'" style="width:100%; height:100%;">
             <incidents-screen @back="showIncidents = false" @changed="refreshOutbox" />
+        </div>
+        <div v-else-if="showLabels" style="width:100%; height:100%;">
+            <labels-screen @back="showLabels = false" @notify="handleRefundNotify" />
         </div>
         <div v-else-if="showRefund" style="width:100%; height:100%;">
             <refund-screen :cashier-name="cashierName" @back="handleRefundBack" @notify="handleRefundNotify" />
@@ -381,6 +394,10 @@ const SaleScreen = {
                         style="min-height:44px; display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;">
                         <icon name="receipt" :size="13" /> Reimprimir
                     </button>
+                    <button @click="showLabels = true" title="Imprimir etiquetas de precio"
+                        style="min-height:44px; display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;">
+                        <icon name="tag" :size="13" /> Etiquetas
+                    </button>
                     <button @click="handleRefund" :disabled="!hasOpenSession"
                         style="min-height:44px; display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;"
                         :style="!hasOpenSession ? 'opacity:0.5; cursor:not-allowed;' : ''">
@@ -395,6 +412,12 @@ const SaleScreen = {
                     </button>
                 </div>
             </header>
+            <label-pending-prompt :terminal-id="session.terminalId" @notify="handleRefundNotify" />
+
+            <div v-if="printAgentNotice" class="tpv-banner tpv-banner-error print-agent-offline" role="alert">
+                <icon name="print" :size="18" />
+                <span class="print-notice-error">{{ printAgentNotice }}</span>
+            </div>
 
             <!-- Main -->
             <div style="flex:1; display:flex; overflow:hidden;">
@@ -406,6 +429,7 @@ const SaleScreen = {
                         @set-search="setSearch"
                         @set-category="setCategory"
                         @add-product="addProduct"
+                        @notify="handleRefundNotify"
                         @toggle-view="listView = !listView"
                         :last-added="lastAdded"
                     />
@@ -532,5 +556,7 @@ const SaleScreen = {
                 </div>
             </div>
         </div>
+        <!-- docs/prd/agente-impresion.md C2, C3: print agent problems, also over the refund screen -->
+        <print-status-notice v-if="hasPrintNotice" placement="sale" />
     `
 };

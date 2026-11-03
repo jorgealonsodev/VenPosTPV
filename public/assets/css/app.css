@@ -656,3 +656,59 @@ html, body, #app {
     .pay-body { flex-direction: column; min-height: 0; }
     .pay-left { flex: none; border-right: none; border-bottom: 1px solid var(--border); padding-right: 24px; }
 }
+
+/* Print agent (docs/prd/agente-impresion.md C1-C4, E1, S3, S4). Text pairs are the
+   guarded ones: red on --red-bg, amber on --amber-bg, green/red/text3 on --surface. */
+.print-btn-lg { min-height: 48px; font-size: 16px; padding: 0 20px; text-decoration: none; }
+.print-drawer-warning {
+    background: var(--amber-bg); border: 1px solid var(--amber); color: var(--amber);
+    border-radius: 10px; padding: 10px 14px; font-size: 15px; font-weight: 700; line-height: 1.4;
+}
+.print-notice-stack { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+.print-notice-stack.is-sale {
+    position: fixed; top: 72px; left: 16px; width: calc(100% - 32px); max-width: 600px; z-index: 90;
+}
+.print-notice-stack.is-sale .print-notice { box-shadow: 0 8px 24px rgba(0,0,0,0.3); }
+.print-notice-line { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; font-weight: 600; }
+.print-notice-error { color: var(--red); font-weight: 600; }
+.print-notice-warn { color: var(--amber); font-weight: 700; }
+.print-notice-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.print-agent-offline { border-radius: 0; border-left: none; border-right: none; padding: 10px 16px; }
+.print-agent-panel {
+    display: flex; flex-direction: column; gap: 12px; padding: 14px; border: 1px solid var(--border2);
+    border-radius: 12px; background: var(--surface); color: var(--text); font-size: 14px;
+}
+.print-agent-title { font-size: 14px; font-weight: 700; color: var(--text); }
+.print-agent-status { display: flex; flex-direction: column; gap: 4px; }
+.print-agent-ok { color: var(--green); font-weight: 600; }
+.print-agent-bad { color: var(--red); font-weight: 600; }
+.print-agent-hint { color: var(--text3); font-size: 13px; }
+.print-agent-error { color: var(--red); font-size: 13px; }
+.print-agent-link { color: var(--text); text-decoration: underline; font-weight: 600; }
+.print-agent-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.print-agent-code-box { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 12px; border: 1px solid var(--border2); border-radius: 10px; }
+.pairing-code {
+    font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; font-size: 44px;
+    font-weight: 700; letter-spacing: 0.08em; color: var(--text); line-height: 1.1;
+}
+.print-history { display: flex; flex-direction: column; gap: 12px; }
+.print-history-filters { display: flex; flex-wrap: wrap; gap: 12px; }
+.print-history-filter { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text3); min-width: 160px; }
+.print-history-filter select { min-height: 44px; }
+.print-history-scroll { overflow-x: auto; }
+.print-history-table { width: 100%; border-collapse: collapse; font-size: 13px; color: var(--text); }
+.print-history-table th { text-align: left; font-weight: 600; color: var(--text3); padding: 6px 8px; border-bottom: 1px solid var(--border2); }
+.print-history-table td { padding: 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+
+/* ── Labels (docs/prd/agente-impresion.md L1, L2) ──────────────────
+   Rows reuse the touch controls above (48px steps); the preview is the
+   576-dot label scaled to the panel, on white like the paper. */
+.label-modal { max-width: 640px; }
+.label-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 12px; border-radius: 12px;
+    border: 1px solid var(--border); background: var(--surface);
+}
+.label-qty { width: 72px; min-width: 72px; text-align: center; padding: 0 6px; font-family: 'IBM Plex Mono', monospace; font-weight: 600; }
+.label-previews { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-top: 14px; }
+.label-preview-img { display: block; width: 100%; height: auto; background: #fff; border: 1px solid var(--border2); border-radius: 6px; image-rendering: pixelated; }

@@ -12,6 +12,8 @@ use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Attribute\AsController;
 use Symfony\Component\Routing\Attribute\Route;
 use VenPosTPV\Service\Fiscal\SpanishTaxId;
+use VenPosTPV\Service\Label\LabelSettings;
+use VenPosTPV\Service\Label\LabelSettingsStore;
 use VenPosTPV\Service\Print\PrinterConfig;
 use VenPosTPV\Service\Print\SystemPrintQueue;
 
@@ -30,11 +32,15 @@ final class TerminalController
         'ticket_header', 'ticket_footer', 'ticket_logo', 'refund_window_days', 'ticket_code',
     ];
 
+    private readonly LabelSettingsStore $labelSettings;
+
     public function __construct(
         private readonly Connection $connection,
         private readonly SystemPrintQueue $systemPrintQueue,
+        ?LabelSettingsStore $labelSettings = null,
     )
     {
+        $this->labelSettings = $labelSettings ?? new LabelSettingsStore($connection);
     }
 
     #[Route('/terminal/{id}', methods: ['GET'])]
@@ -58,6 +64,10 @@ final class TerminalController
         $row['printer_ip'] = $printer->type === 'network' ? $printer->host : '';
         $row['printer_port'] = $printer->type === 'network' ? $printer->port : 9100;
         $row['printer_queue'] = $printer->type === 'system' ? $printer->queue : '';
+        // Labels of this till (L5, L6); the defaults until migration V38 runs.
+        $labels = $this->labelSettings->forTerminal($id);
+        $row['label_height_mm'] = $labels->heightMm;
+        $row['label_cut_each'] = $labels->cutEach;
 
         return new JsonResponse(['data' => $row]);
     }
@@ -222,6 +232,23 @@ final class TerminalController
                 return new JsonResponse(['error' => 'Plazo de devolución no válido (1-3650 días)'], Response::HTTP_UNPROCESSABLE_ENTITY);
             }
             $fields['refund_window_days'] = $days;
+        }
+
+        // Labels of this till (docs/prd/agente-impresion.md L5, L6).
+        if (isset($body['label_height_mm']) || isset($body['label_cut_each'])) {
+            if (!$this->labelSettings->isAvailable()) {
+                return new JsonResponse(['error' => 'Falta aplicar la migración de etiquetas (Version00000038)'], Response::HTTP_CONFLICT);
+            }
+            if (isset($body['label_height_mm'])) {
+                try {
+                    $fields['label_height_mm'] = LabelSettings::validated(is_numeric($body['label_height_mm']) ? (int) $body['label_height_mm'] : 0, false)->heightMm;
+                } catch (\InvalidArgumentException $e) {
+                    return new JsonResponse(['error' => $e->getMessage()], Response::HTTP_UNPROCESSABLE_ENTITY);
+                }
+            }
+            if (isset($body['label_cut_each'])) {
+                $fields['label_cut_each'] = $body['label_cut_each'] === true || $body['label_cut_each'] === 1 || $body['label_cut_each'] === '1' ? 1 : 0;
+            }
         }
 
         if (isset($body['active'])) {

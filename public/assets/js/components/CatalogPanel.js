@@ -3,12 +3,13 @@
  */
 const CatalogPanel = {
     props: ['catalog', 'listView', 'lastAdded'],
-    emits: ['setSearch', 'setCategory', 'addProduct', 'toggleView'],
-    components: { CombinationsModal },
+    emits: ['setSearch', 'setCategory', 'addProduct', 'toggleView', 'notify'],
+    components: { CombinationsModal, LabelPrintModal },
     data() {
         return {
             combinationsProduct: null,
             showCombinationsModal: false,
+            labelProduct: null,
         };
     },
     setup(props, { emit }) {
@@ -46,6 +47,15 @@ const CatalogPanel = {
             this.showCombinationsModal = false;
             this.combinationsProduct = null;
         },
+        // PRD L1: labels from the product sheet (its sizes/colours).
+        onPrintLabels(product) {
+            this.labelProduct = product;
+            this.showCombinationsModal = false;
+            this.combinationsProduct = null;
+        },
+        onLabelNotify(text, color) {
+            this.$emit('notify', text, color);
+        },
         formatAttributes(attributes) {
             if (!attributes || attributes.length === 0) return '';
             return attributes.map(a => a.group_name + ': ' + a.attribute_name).join(' / ');
@@ -60,6 +70,13 @@ const CatalogPanel = {
                 :visible="showCombinationsModal"
                 @close="showCombinationsModal = false; combinationsProduct = null;"
                 @select="onCombinationSelect"
+                @print-labels="onPrintLabels"
+            />
+            <label-print-modal
+                v-if="labelProduct"
+                :product="labelProduct"
+                @close="labelProduct = null"
+                @notify="onLabelNotify"
             />
 
             <!-- Search bar -->

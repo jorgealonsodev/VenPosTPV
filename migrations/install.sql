@@ -35,6 +35,9 @@ CREATE TABLE IF NOT EXISTS terminal (
     stock_sync_interval_seconds INT UNSIGNED NOT NULL DEFAULT 60,
     stock_push_interval_seconds INT UNSIGNED NOT NULL DEFAULT 0,
     refund_window_days INT UNSIGNED NOT NULL DEFAULT 30,
+    -- Version00000038: label height (25-60 mm) and one cut per label (L5, L6).
+    label_height_mm TINYINT UNSIGNED NOT NULL DEFAULT 30,
+    label_cut_each TINYINT(1) NOT NULL DEFAULT 0,
     active TINYINT(1) NOT NULL DEFAULT 1,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
