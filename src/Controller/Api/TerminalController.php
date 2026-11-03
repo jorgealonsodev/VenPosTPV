@@ -32,7 +32,7 @@ final class TerminalController
         }
 
         $row = $this->connection->fetchAssociative(
-            'SELECT id, ps_shop_id, name, printer_config, scanner_config, hotkeys, dataphone_mode, printer_type, store_address, legal_name, tax_id, ticket_header, ticket_footer, ticket_logo, ticket_width_px, stock_sync_interval_seconds, stock_push_interval_seconds, refund_window_days, ticket_code, active, created_at, updated_at FROM terminal WHERE id = ?',
+            'SELECT id, ps_shop_id, name, printer_config, scanner_config, hotkeys, dataphone_mode, printer_type, store_name, store_address, legal_name, tax_id, ticket_header, ticket_footer, ticket_logo, ticket_width_px, stock_sync_interval_seconds, stock_push_interval_seconds, refund_window_days, ticket_code, active, created_at, updated_at FROM terminal WHERE id = ?',
             [$id]
         );
 
@@ -121,6 +121,10 @@ final class TerminalController
 
         if (array_key_exists('store_address', $body)) {
             $fields['store_address'] = trim((string) $body['store_address']);
+        }
+
+        if (array_key_exists('store_name', $body)) {
+            $fields['store_name'] = $this->normalizeNullableText($body['store_name']);
         }
 
         if (array_key_exists('legal_name', $body)) {

@@ -67,9 +67,10 @@ final class TicketDataResolverTest extends TestCase
                     ['name' => 'Juan'],
                 ],
                 [
-                    'SELECT store_address, legal_name, tax_id, ticket_header, ticket_footer, ticket_logo, ticket_width_px FROM terminal WHERE id = ?',
+                    'SELECT store_name, store_address, legal_name, tax_id, ticket_header, ticket_footer, ticket_logo, ticket_width_px FROM terminal WHERE id = ?',
                     [7],
                     [
+                        'store_name' => 'Moda Centro',
                         'store_address' => 'Avenida Real 42',
                         'legal_name' => 'Mi Tienda Moda SL',
                         'tax_id' => 'B12345674',
@@ -91,7 +92,7 @@ final class TicketDataResolverTest extends TestCase
         self::assertNotNull($result);
         self::assertSame(42, $result->orderId);
         self::assertSame('ORD-042', $result->reference);
-        self::assertSame('Mi Tienda', $result->storeName);
+        self::assertSame('Moda Centro', $result->storeName, 'the store name set in Settings replaces the .env default');
         self::assertSame('Avenida Real 42', $result->storeAddress);
         self::assertSame('Mi Tienda Moda SL', $result->legalName);
         self::assertSame('B12345674', $result->taxId);
@@ -139,7 +140,7 @@ final class TicketDataResolverTest extends TestCase
                     false,
                 ],
                 [
-                    'SELECT store_address, legal_name, tax_id, ticket_header, ticket_footer, ticket_logo, ticket_width_px FROM terminal WHERE id = ?',
+                    'SELECT store_name, store_address, legal_name, tax_id, ticket_header, ticket_footer, ticket_logo, ticket_width_px FROM terminal WHERE id = ?',
                     [7],
                     false,
                 ],
@@ -169,6 +170,22 @@ final class TicketDataResolverTest extends TestCase
             $ticket = (new TicketDataResolver($conn, $verification, 'Tienda', ''))->resolve(42);
 
             $this->assertSame($expected, $ticket->ticketCode);
+        }
+    }
+    public function testStoreNameFallsBackToTheLegalNameThenToTheEnvironmentDefault(): void
+    {
+        foreach ([[['store_name' => '', 'legal_name' => 'Moda Centro SL'], 'Moda Centro SL'], [['store_name' => null, 'legal_name' => null], 'Mi Tienda']] as [$terminal, $expected]) {
+            $conn = $this->createMock(Connection::class);
+            $conn->method('fetchAssociative')->willReturnMap([
+                ['SELECT ps_order_id, terminal_id, user_id, payment_breakdown, created_at FROM order_meta WHERE ps_order_id = ?', [42], ['ps_order_id' => 42, 'terminal_id' => 7, 'user_id' => 5, 'payment_breakdown' => json_encode(['reference' => 'R', 'total' => 1.0, 'lines' => []]), 'created_at' => '2024-01-15 14:30:00']],
+                ['SELECT name FROM user WHERE id = ?', [5], ['name' => 'Juan']],
+                ['SELECT store_name, store_address, legal_name, tax_id, ticket_header, ticket_footer, ticket_logo, ticket_width_px FROM terminal WHERE id = ?', [7], $terminal + ['store_address' => '', 'tax_id' => null, 'ticket_header' => null, 'ticket_footer' => null, 'ticket_logo' => null, 'ticket_width_px' => null]],
+            ]);
+            $verification = $this->createMock(TicketVerificationService::class);
+            $verification->method('generateToken')->willReturn('t');
+            $verification->method('buildVerificationUrl')->willReturn('https://example.com/v');
+
+            self::assertSame($expected, $this->createService(conn: $conn, verificationService: $verification)->resolve(42)?->storeName);
         }
     }
 }

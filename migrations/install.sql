@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS terminal (
     hotkeys JSON,
     dataphone_mode ENUM('integrated','independent') NOT NULL DEFAULT 'integrated',
     printer_type ENUM('none','pdf','escpos','system') NOT NULL DEFAULT 'pdf',
+    store_name VARCHAR(120) NULL,
     store_address VARCHAR(255) NOT NULL DEFAULT '',
     legal_name VARCHAR(120) NULL,
     tax_id VARCHAR(16) NULL,

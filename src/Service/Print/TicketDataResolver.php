@@ -61,12 +61,12 @@ class TicketDataResolver
         ]);
 
         $cashierName = $this->cashierName((int) $row['user_id']);
-        [$storeAddress, $ticketHeader, $ticketFooter, $ticketLogo, $ticketWidthPx, $legalName, $taxId] = $this->terminalPresentation((int) $row['terminal_id']);
+        [$storeAddress, $ticketHeader, $ticketFooter, $ticketLogo, $ticketWidthPx, $legalName, $taxId, $storeName] = $this->terminalPresentation((int) $row['terminal_id']);
 
         return new TicketData(
             orderId: $orderId,
             reference: $reference,
-            storeName: $this->storeName,
+            storeName: $storeName,
             storeAddress: $storeAddress,
             ticketHeader: $ticketHeader,
             ticketFooter: $ticketFooter,
@@ -186,12 +186,12 @@ class TicketDataResolver
             'reference' => $withoutTicket ? $number : $reference,
             'total' => $saleTotal,
         ]);
-        [$storeAddress, $ticketHeader, $ticketFooter, $ticketLogo, $ticketWidthPx, $legalName, $taxId] = $this->terminalPresentation((int) $refund['terminal_id']);
+        [$storeAddress, $ticketHeader, $ticketFooter, $ticketLogo, $ticketWidthPx, $legalName, $taxId, $storeName] = $this->terminalPresentation((int) $refund['terminal_id']);
 
         return new TicketData(
             orderId: (int) $refund['ps_order_id'],
             reference: $number,
-            storeName: $this->storeName,
+            storeName: $storeName,
             storeAddress: $storeAddress,
             ticketHeader: $ticketHeader,
             ticketFooter: $ticketFooter,
@@ -285,12 +285,12 @@ class TicketDataResolver
     }
 
     /**
-     * @return array{0: string, 1: string, 2: string, 3: ?string, 4: ?int, 5: ?string, 6: ?string} address, header, footer, logo, width, legal name, NIF
+     * @return array{0: string, 1: string, 2: string, 3: ?string, 4: ?int, 5: ?string, 6: ?string, 7: string} address, header, footer, logo, width, legal name, NIF, store name
      */
     private function terminalPresentation(int $terminalId): array
     {
         $terminalRow = $this->connection->fetchAssociative(
-            'SELECT store_address, legal_name, tax_id, ticket_header, ticket_footer, ticket_logo, ticket_width_px FROM terminal WHERE id = ?',
+            'SELECT store_name, store_address, legal_name, tax_id, ticket_header, ticket_footer, ticket_logo, ticket_width_px FROM terminal WHERE id = ?',
             [$terminalId]
         );
 
@@ -319,6 +319,9 @@ class TicketDataResolver
             ? trim($terminalRow[$key])
             : null;
 
-        return [$storeAddress, $ticketHeader, $ticketFooter, $ticketLogo, $ticketWidthPx, $text('legal_name'), $text('tax_id')];
+        // Settings name first, then the legal name; the .env default is the last resort.
+        $storeName = $text('store_name') ?? $text('legal_name') ?? $this->storeName;
+
+        return [$storeAddress, $ticketHeader, $ticketFooter, $ticketLogo, $ticketWidthPx, $text('legal_name'), $text('tax_id'), $storeName];
     }
 }

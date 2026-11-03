@@ -91,6 +91,7 @@ const SettingsModal = {
                     dataphone_mode: terminal.value.dataphone_mode,
                     printer_type: terminal.value.printer_type,
                     store_address: terminal.value.store_address,
+                    store_name: terminal.value.store_name ?? '',
                     legal_name: terminal.value.legal_name ?? '',
                     tax_id: terminal.value.tax_id ?? '',
                     ticket_header: terminal.value.ticket_header,
@@ -603,6 +604,12 @@ const SettingsModal = {
                                     <div style="font-size:12px; color:var(--text3); margin-top:4px;">Pasado este plazo desde la venta no se admiten devoluciones</div>
                                 </div>
 
+                                <div>
+                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Nombre de la tienda</label>
+                                    <input v-model="terminal.store_name" type="text" maxlength="120" placeholder="Moda Centro"
+                                        style="width:100%; max-width:420px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box;">
+                                    <div style="font-size:12px; color:var(--text3); margin-top:4px;">Nombre en grande arriba del ticket. Vacío: se usa la razón social.</div>
+                                </div>
                                 <div>
                                     <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Razón social</label>
                                     <input v-model="terminal.legal_name" type="text" maxlength="120" placeholder="Mi Tienda Moda SL"

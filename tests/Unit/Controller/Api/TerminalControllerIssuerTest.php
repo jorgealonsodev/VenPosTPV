@@ -61,4 +61,15 @@ final class TerminalControllerIssuerTest extends TestCase
         $this->assertNull($updates[0]['tax_id']);
         $this->assertNull($updates[0]['legal_name']);
     }
+
+    public function testStoreNameIsSavedTrimmedAndClearedWhenEmpty(): void
+    {
+        [$controller, $updates] = $this->controller();
+
+        $controller->update(1, SessionRequest::json(['store_name' => ' Moda Centro '], self::ADMIN));
+        $controller->update(1, SessionRequest::json(['store_name' => ''], self::ADMIN));
+
+        $this->assertSame('Moda Centro', $updates[0]['store_name']);
+        $this->assertNull($updates[1]['store_name']);
+    }
 }
