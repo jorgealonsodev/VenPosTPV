@@ -280,6 +280,9 @@ const SaleScreen = {
                     <icon name="receipt" :size="13" />
                     <span>Ticket #{{ ticketCount + 1 }}</span>
                 </div>
+                <div style="display:flex; align-items:center; gap:6px; color:var(--text3); font-size:13px; font-family:'IBM Plex Mono';">
+                    {{ timeStr }}
+                </div>
                 <div style="margin-left:auto; display:flex; align-items:center; gap:10px;">
                     <sync-status-indicator
                         :state="session.syncState"
@@ -299,7 +302,6 @@ const SaleScreen = {
                         style="min-height:44px; display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;">
                         <span aria-hidden="true" style="font-size:15px; line-height:1;">⚙</span> Ajustes
                     </button>
-                    <div style="color:var(--text3); font-size:13px; font-family:'IBM Plex Mono';">{{ timeStr }}</div>
                     <button @click="toggleTickets"
                         style="min-height:44px; display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;"
                         :style="showTickets ? 'background:var(--surface2); border-color:var(--green); color:var(--green);' : ''">
