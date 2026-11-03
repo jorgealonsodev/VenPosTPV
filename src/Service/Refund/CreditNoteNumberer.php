@@ -19,6 +19,20 @@ class CreditNoteNumberer
     {
     }
 
+    /**
+     * Creates the year's counter row (if missing) in its own autocommit statement,
+     * before the refund transaction. Inside the transaction next() then only ever
+     * updates an existing row, avoiding the insert race that can deadlock
+     * concurrent first refunds of a year.
+     */
+    public function prepareYear(\DateTimeImmutable $date): void
+    {
+        $this->connection->executeStatement(
+            'INSERT IGNORE INTO credit_note_sequence (year, last_number) VALUES (?, 0)',
+            [(int) $date->format('Y')]
+        );
+    }
+
     public function next(\DateTimeImmutable $date): string
     {
         if (!$this->connection->isTransactionActive()) {

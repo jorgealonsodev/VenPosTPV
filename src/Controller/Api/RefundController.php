@@ -154,14 +154,23 @@ class RefundController
     }
 
     /**
-     * The credit note is always handed over: printed on the network printer, or
-     * 'pdf' so the screen opens it. A print failure never undoes the refund.
+     * The credit note is always handed over: 'printed' on the network printer, or
+     * 'pdf' so the screen opens it; 'none' when no credit note exists yet. A print
+     * failure never undoes the refund.
      *
      * @param array<string, mixed> $result
      */
     private function printCreditNote(array $result, Request $request): string
     {
-        if (!empty($result['already_completed']) || !isset($result['refund_id'])) {
+        if (!isset($result['refund_id'])) {
+            return 'none';
+        }
+        if (!empty($result['saga_error'])) {
+            // The shop refunded it but the local completion failed: no credit note
+            // exists yet, so there is nothing to print until the refund is retried.
+            return 'none';
+        }
+        if (!empty($result['already_completed'])) {
             return 'pdf';
         }
 

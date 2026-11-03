@@ -118,6 +118,18 @@ final class RefundControllerTest extends TestCase
         $this->assertSame('R2026-000007', $data['credit_note_number']);
     }
 
+    public function testNoCreditNoteIsOfferedWhileTheRefundIsIncomplete(): void
+    {
+        $refundService = $this->createMock(RefundService::class);
+        $refundService->method('processRefund')->willReturn(['refund_id' => 7, 'saga_error' => true]);
+        $printer = $this->createMock(PrinterService::class);
+        $printer->expects($this->never())->method('printRefundTicket');
+
+        $response = $this->createController($refundService, printer: $printer)->refund(SessionRequest::json(['ps_order_id' => 42, 'reason_code' => 'size'], ['user_id' => 1]));
+
+        $this->assertSame('none', json_decode((string) $response->getContent(), true)['data']['print_status']);
+    }
+
     public function testPrinterFailureNeverFailsTheRefund(): void
     {
         $refundService = $this->createMock(RefundService::class);

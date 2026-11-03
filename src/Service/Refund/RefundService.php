@@ -232,8 +232,11 @@ class RefundService
         $sagaError = false;
         $alreadyCompleted = false;
 
+        $numberer = $this->creditNoteNumberer ?? new CreditNoteNumberer($this->conn);
+        $numberer->prepareYear(new \DateTimeImmutable());
+
         try {
-            $this->conn->transactional(function () use ($sessionId, $refundId, $slipId, $cashAmount, $total, $psOrderId, $lines, $restocked, &$alreadyCompleted): void {
+            $this->conn->transactional(function () use ($numberer, $sessionId, $refundId, $slipId, $cashAmount, $total, $psOrderId, $lines, $restocked, &$alreadyCompleted): void {
                 // Only the request that moves the row out of pending applies the local
                 // effects; a concurrent retry that got the same slip replayed does nothing.
                 $claimed = $this->conn->update('refund', [
@@ -249,7 +252,6 @@ class RefundService
                 }
 
                 // Numbered only once the refund really happened, in the same transaction.
-                $numberer = $this->creditNoteNumberer ?? new CreditNoteNumberer($this->conn);
                 $this->conn->update('refund', [
                     'credit_note_number' => $numberer->next(new \DateTimeImmutable()),
                 ], ['id' => $refundId]);
