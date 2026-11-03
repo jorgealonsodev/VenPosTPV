@@ -28,3 +28,7 @@ Thumbs.db
 /composer-setup.php
 /tpvconnect.zip
 /.phpunit.cache/
+
+###> playwright-mcp ###
+/.playwright-mcp/
+###< playwright-mcp ###
