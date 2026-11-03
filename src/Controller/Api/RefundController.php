@@ -64,6 +64,7 @@ class RefundController
             $this->cashSessionService->requireOpenSession($userId);
             $result = $this->refundService->processRefund($userId, $psOrderId, $lines, $reasonCode, $reasonText, $cardConfirmed);
             $result['print_status'] = $this->printCreditNote($result, $request);
+            $this->openDrawerForCash($result, $request);
 
             return new JsonResponse(['data' => $result], Response::HTTP_OK);
         } catch (RefundException $e) {
@@ -137,6 +138,7 @@ class RefundController
                 $cardConfirmed,
             );
             $result['print_status'] = $this->printCreditNote($result, $request);
+            $this->openDrawerForCash($result, $request);
 
             return new JsonResponse(['data' => $result], Response::HTTP_OK);
         } catch (RefundException $e) {
@@ -181,6 +183,7 @@ class RefundController
         try {
             $result = $this->refundService->retryPending((int) $session->get('user_id'), $id);
             $result['print_status'] = $this->printCreditNote($result, $request);
+            $this->openDrawerForCash($result, $request);
 
             return new JsonResponse(['data' => $result], Response::HTTP_OK);
         } catch (RefundException $e) {
@@ -221,6 +224,26 @@ class RefundController
                 'Content-Disposition' => sprintf('inline; filename="abono-%s.pdf"', $ticketData->reference),
             ]
         );
+    }
+
+    /**
+     * Cash goes back through the drawer wired to the printer. Never for card or
+     * voucher refunds, replays or incomplete refunds; a drawer failure never fails
+     * the refund.
+     *
+     * @param array<string, mixed> $result
+     */
+    private function openDrawerForCash(array $result, Request $request): void
+    {
+        if ((float) ($result['cash_amount'] ?? 0) <= 0 || !empty($result['already_completed']) || !empty($result['saga_error'])) {
+            return;
+        }
+
+        try {
+            $this->printerService->openDrawer((int) ($request->getSession()->get('terminal_id') ?? 1));
+        } catch (\Throwable) {
+            // The cashier can still open the drawer manually.
+        }
     }
 
     /**

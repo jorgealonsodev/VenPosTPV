@@ -194,6 +194,22 @@ final class RefundControllerTest extends TestCase
         $this->assertSame('none', json_decode((string) $response->getContent(), true)['data']['print_status']);
     }
 
+    public function testCashRefundOpensTheDrawerAndCardOnlyDoesNot(): void
+    {
+        foreach ([[12.5, 1], [0.0, 0]] as [$cash, $expectedOpens]) {
+            $refundService = $this->createMock(RefundService::class);
+            $refundService->method('processRefund')->willReturn(['refund_id' => 7, 'cash_amount' => $cash, 'card_amount' => 3.0]);
+            $printer = $this->createMock(PrinterService::class);
+            $printer->method('printRefundTicket')->willReturn('printed');
+            $printer->expects($this->exactly($expectedOpens))->method('openDrawer')->with(4);
+
+            $response = $this->createController($refundService, printer: $printer)
+                ->refund(SessionRequest::json(['ps_order_id' => 42, 'reason_code' => 'size'], ['user_id' => 1, 'terminal_id' => 4]));
+
+            $this->assertSame(Response::HTTP_OK, $response->getStatusCode());
+        }
+    }
+
     public function testPrinterFailureNeverFailsTheRefund(): void
     {
         $refundService = $this->createMock(RefundService::class);
