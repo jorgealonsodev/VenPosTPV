@@ -128,7 +128,7 @@ final class OutboxIncidentsMySqlIntegrationTest extends TestCase
         $this->assertSame([
             'id' => $saleRow, 'type' => 'sale', 'order_id' => $sale, 'sequence' => 1, 'reference' => 'Z26000010', 'ps_reference' => 'XKQWERTYU',
             'refund_id' => null, 'credit_note_number' => null, 'attempts' => 2, 'last_error' => 'HTTP 422: Product 77 does not exist',
-            'created_at' => '2026-11-03 09:00:00', 'updated_at' => '2026-11-03 09:30:00', 'waiting_behind' => 2,
+            'created_at' => '2026-11-03 09:00:00', 'updated_at' => '2026-11-03 09:30:00', 'waiting_behind' => 2, 'dependants' => 2,
         ], $mine[0]);
         $this->assertSame('refund', $mine[1]['type']);
         $this->assertSame('R2026-T70321', $mine[1]['credit_note_number']);

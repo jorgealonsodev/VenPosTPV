@@ -9,13 +9,14 @@ use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Attribute\AsController;
 use Symfony\Component\Routing\Attribute\Route;
+use VenPosTPV\Service\Incident\DiscardNotReady;
 use VenPosTPV\Service\Incident\OutboxIncidents;
 
 /**
  * Uploads to PrestaShop still to do and the incidents (PRD I1-I3). The counts are
  * for everyone logged in (sync indicator, cash close); the incident list and its
- * retries are for administrators only. The POSTs only accept a JSON body, which a
- * cross-site form cannot send (same reasoning as DeviceController).
+ * retries and discards are for administrators only. The POSTs only accept a JSON body,
+ * which a cross-site form cannot send (same reasoning as DeviceController).
  */
 #[AsController]
 final class IncidentController
@@ -69,6 +70,56 @@ final class IncidentController
         }
 
         return new JsonResponse(['data' => ['retried' => $retried]]);
+    }
+
+    /**
+     * Gives up uploading an incident PrestaShop will never accept, with what could
+     * never upload behind it. Body: {"reason": "..."} (optional, up to 255 characters).
+     * The local sale, its ticket and the cash do not change.
+     */
+    #[Route('/incidents/{id}/discard', requirements: ['id' => '\d+'], methods: ['POST'])]
+    public function discard(int $id, Request $request): JsonResponse
+    {
+        if (($denied = $this->denied($request) ?? $this->notJson($request)) !== null) {
+            return $denied;
+        }
+        try {
+            $body = json_decode($request->getContent() ?: '{}', true, 16, JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            $body = null;
+        }
+        $reason = \is_array($body) ? ($body['reason'] ?? null) : false;
+        if ($reason !== null && !\is_string($reason)) {
+            return new JsonResponse(['error' => 'El motivo debe ser un texto', 'code' => 'invalid_reason'], Response::HTTP_BAD_REQUEST);
+        }
+        $reason = $reason !== null && trim($reason) !== '' ? trim($reason) : null;
+
+        try {
+            $discarded = $this->incidents->discard($id, (int) $request->getSession()->get('user_id'), $reason);
+        } catch (DiscardNotReady) {
+            return new JsonResponse(
+                ['error' => 'Falta aplicar la migración de la base de datos para descartar incidencias', 'code' => 'discard_not_ready'],
+                Response::HTTP_SERVICE_UNAVAILABLE
+            );
+        }
+        if ($discarded === null) {
+            return new JsonResponse(
+                ['error' => 'Ya no hay ninguna incidencia que descartar: se reintentó, se subió o se descartó mientras tanto', 'code' => 'not_incident'],
+                Response::HTTP_CONFLICT
+            );
+        }
+
+        return new JsonResponse(['data' => ['discarded' => $discarded]]);
+    }
+
+    #[Route('/incidents/discarded', methods: ['GET'])]
+    public function discardedList(Request $request): JsonResponse
+    {
+        if (($denied = $this->denied($request)) !== null) {
+            return $denied;
+        }
+
+        return new JsonResponse(['data' => $this->incidents->discarded()]);
     }
 
     private function isLoggedIn(Request $request): bool
