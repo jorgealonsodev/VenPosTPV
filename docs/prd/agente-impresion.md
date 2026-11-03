@@ -1,8 +1,9 @@
 # PRD — Agente de impresión de la tienda
 
-- **Estado:** borrador para revisión
+- **Estado:** revisado (v2), pendiente de visto bueno
 - **Fecha:** 2026-11-03
 - **Relación:** necesario para desplegar el TPV en un subdominio de Plesk (ver `docs/prd/venta-local-primero.md`)
+- **Revisión:** v1 analizada por cinco revisiones independientes (seguridad, programa en Rust, servidor y Plesk, etiquetas, uso en tienda); sus propuestas aceptadas están incorporadas.
 
 ## 1. Objetivo
 
@@ -12,9 +13,11 @@ Para ello, un programa pequeño (el **agente**) se instala en el ordenador de ca
 
 ## 2. Situación actual
 
-- El servidor del TPV imprime él mismo: por CUPS (impresora USB enchufada al servidor) o por IP (impresora de red). El cajón se abre enviando `ESC p` a la impresora de tickets.
-- En Plesk el servidor no ve las impresoras de la tienda. Sin agente, solo quedaría el PDF.
-- No existe impresión de etiquetas.
+- El servidor del TPV imprime él mismo: por CUPS (impresora USB enchufada al servidor) o por IP. El cajón se abre enviando `ESC p` a la impresora de tickets.
+- El ticket de venta se encola en Messenger (`CheckoutService.php:246`); en Plesk esa cola solo se vacía con un cron cada minuto, así que no sirve para el agente.
+- Algunas rutas toman la caja 1 si la sesión no tiene caja (`TicketController.php:98`, `RefundController.php:255`).
+- El catálogo local ya tiene `ean13` y `reference` por producto y combinación, los valores de talla/color y `price_ttc` (precio con IVA y oferta vigente). No hay nombre corto ni precio anterior a la oferta.
+- No existe impresión de etiquetas ni limitador de intentos en el servidor.
 
 ## 3. Decisiones del usuario
 
@@ -22,122 +25,211 @@ Para ello, un programa pequeño (el **agente**) se instala en el ordenador de ca
 |---|---|
 | Alcance | **Tickets, cajón y etiquetas.** |
 | Cajas por agente | **Un agente por caja.** |
-| Conexión | **Escucha larga HTTPS**: el agente pregunta y el servidor responde en cuanto hay trabajo, o a los 25 s. |
+| Conexión | **Escucha larga HTTPS** (hasta 20 s; el servidor mira cada segundo). |
 | Sin agente al cobrar | **Cobra y ofrece el PDF.** La venta nunca se bloquea. |
-| Etiquetas | **Precio + código de barras**: nombre, talla/color, precio con IVA, código y su texto. |
-| Impresora de etiquetas | Hoy **la misma Epson TM-T20** (papel adhesivo). «Hazlo lo máximo compatible posible»: ESC/POS, ZPL (Zebra), TSPL (TSC y similares) e imagen para cualquier impresora con driver (Brother, Dymo…). |
-| Origen de las etiquetas | **Desde la ficha del producto y desde una lista** (escanear o buscar varios productos e imprimirlos de golpe). |
-| Tamaño | **Configurable con plantillas** (50×30, 40×25, ancho de ticket 80 mm) y medidas a mano. |
-| Código de barras | **EAN13 si existe; si no, la referencia en Code128.** |
-| Emparejar | **Código de 6 cifras** válido 10 minutos, generado en Ajustes → Cajas. |
-| Instalación Windows | **Instalador con asistente** (setup.exe). |
-| Instalación Linux | **Paquete .deb + script** para otras distribuciones. |
-| Firma del instalador | **Sin firma de momento**; la guía explica el aviso de Windows. |
-| Actualizaciones | **Automáticas desde el TPV**, con firma, **solo con la caja cerrada** y sin trabajos pendientes. |
-| Interfaz | **Icono en la bandeja en Windows y en Linux.** |
-| Trabajos pendientes al reconectar | **Caducan según tipo**: cajón 60 s, ticket 10 min, etiquetas no caducan. |
+| Ticket pendiente tras dar el PDF | **Se imprime si el agente vuelve a tiempo** (antes de caducar). |
+| Caducidad | **Cajón 15 s, ticket 2 min, etiquetas 24 h** (al reconectar pregunta si imprimirlas). |
+| Etiquetas | **Precio + código de barras**: nombre, talla/color, precio actual con IVA (sin tachado), código y su texto. |
+| Tamaño en la TM-T20 | **Ancho fijo (72 mm), alto ajustable** (25–60 mm, 30 mm por defecto). Plantillas 50×30/40×25 y medidas a mano solo para impresoras de etiquetas. |
+| Varias etiquetas en la TM-T20 | **Una tira con línea de corte y un solo corte al final.** |
+| Compatibilidad | «Hazlo lo máximo compatible posible»: ESC/POS (TM-T20) en fase 1; ZPL (Zebra) y TSPL (TSC, Xprinter) en fase 2; impresoras con driver (Brother QL, Dymo) en fase 2. |
+| Origen de las etiquetas | **Ficha del producto y lista.** |
+| Código de barras | **EAN si existe y es válido; si no, la referencia en Code128.** |
+| Emparejar | **Código de 6 cifras**, 10 minutos, un solo uso. |
+| Clave del agente | **No caduca; se vigila** (última fecha e IP de uso). |
+| Instalación Windows | **Instalador con asistente.** |
+| Instalación Linux | **Paquete .deb + script** (fase 2; en fase 1 binario y comando). |
+| Firma del instalador | **Sin firma de momento.** |
+| Actualizaciones | **Automáticas y firmadas, con la caja cerrada** (fase 2). Si la nueva no arranca, **vuelve a la anterior**. En fase 1, aviso y descarga manual. |
+| Interfaz | **Icono en la bandeja en Windows y en Linux** (Linux en fase 2). |
 | Historial | **30 días**, visible en Ajustes. |
-| Errores de impresora | **Avisar de «sin papel», «tapa abierta»… cuando la impresora lo permita**; si no, cuando falla un trabajo. |
-| Cajón desde el icono | **No.** Solo desde el TPV, que deja constancia. |
+| Errores de impresora | **Avisar cuando la impresora lo permita.** |
+| Cajón desde el icono | **No.** |
 | Reimpresión | **Sale por la caja que la pide.** |
-| Cobrar sin internet en la tienda | **Fuera de este PRD**; irá en uno aparte. |
-| Lenguaje del agente | **Rust**: un binario por sistema operativo. |
+| Cobrar sin internet en la tienda | **Fuera de este PRD.** |
+| Lenguaje | **Rust.** |
+| Entrega | **Dos fases.** |
+| Pruebas de Windows | **GitHub Actions con una máquina Windows**; el icono lo revisa el usuario. |
 
-## 4. Reglas
+## 4. Alcance
 
-### 4.1 Emparejar y seguridad
-- **E1.** En Ajustes → Cajas, un administrador pulsa «Conectar agente de impresión» y el TPV muestra un código de 6 cifras válido 10 minutos y de un solo uso.
-- **E2.** El agente envía el código; el servidor responde con una clave larga (256 bits) que el agente guarda protegida. El servidor solo guarda su huella (sha256).
-- **E3.** Cada clave vale para una sola caja. Con ella el agente solo ve y confirma trabajos de su caja.
-- **E4.** El administrador puede desconectar el agente desde Ajustes; la clave deja de valer al momento. Volver a emparejar revoca la anterior.
-- **E5.** La clave nunca aparece en direcciones, registros ni pantallas. Fallos de autenticación repetidos se frenan.
+**Fase 1 (impresión funcionando en Plesk con la TM-T20):**
+- emparejar, desconectar y vigilar la clave;
+- tickets, cajón, reimpresión, abonos, prueba;
+- avisos en caja y PDF de reserva;
+- instalador de Windows con servicio e icono, elección de impresoras;
+- binario de Linux con comandos (para desarrollo y la prueba real aquí);
+- etiquetas en ESC/POS en la TM-T20, desde la ficha y desde la lista, con vista previa;
+- estado del agente y de la cola, avisos por trabajo fallido;
+- historial de 30 días con filtros;
+- aviso de versión nueva y descarga manual;
+- pruebas de Windows en GitHub Actions.
 
-### 4.2 Trabajos de impresión
-- **T1.** Cuando una caja usa la impresora tipo **«Agente»**, todo lo que hoy se imprime o abre el cajón se convierte en un trabajo en la cola de esa caja: ticket de venta, ticket regalo, reimpresión, abono, prueba y apertura de cajón. El contenido es el mismo ESC/POS de hoy.
-- **T2.** Tipos de trabajo: `ticket`, `drawer`, `label`. Cada trabajo va dirigido a un **destino** del agente: impresora de tickets o impresora de etiquetas.
-- **T3.** El agente recoge hasta 10 trabajos por petición, los imprime en orden y confirma cada uno (hecho o fallido con el motivo). Un trabajo recogido y no confirmado en 60 s vuelve a la cola. Un fallido se reintenta hasta 3 veces.
-- **T4.** Caducidad: apertura de cajón a los 60 s, ticket a los 10 min, etiquetas nunca. Un trabajo caducado no se imprime.
-- **T5.** El agente nunca imprime dos veces el mismo trabajo, aunque se reconecte.
-- **T6.** La reimpresión sale por la impresora de la caja que la pide.
-- **T7.** El cajón solo se abre desde el TPV (venta con efectivo o mixto, o el botón «Abrir cajón»), que registra quién y cuándo. El icono del agente no abre el cajón.
+**Fase 2:**
+- etiquetas ZPL y TSPL (cuando haya impresora de etiquetas) e impresoras con driver;
+- leer «sin papel», «tapa abierta» directamente de la impresora;
+- actualización automática firmada con vuelta atrás;
+- paquete `.deb`, script para otras distribuciones e icono en Linux.
 
-### 4.3 Cobro sin agente
-- **C1.** Si nadie recoge el ticket en 15 s, la pantalla de cobro dice «La impresora no está conectada» y ofrece el PDF. La venta queda hecha.
-- **C2.** Si el agente lleva más de 2 minutos sin conectar, la pantalla de venta muestra un aviso permanente hasta que vuelva.
+**Fuera de alcance:** macOS; dos cajas con una sola impresora USB; etiquetas desde el back office de PrestaShop o pedidos a proveedor; cobrar sin internet; imprimir desde móvil o tableta.
 
-### 4.4 Etiquetas
-- **L1.** Desde la ficha de un producto: «Imprimir etiquetas», eligiendo talla/color y cantidad.
-- **L2.** Pantalla «Etiquetas»: añadir productos escaneando o buscando, con cantidad por línea, e imprimir todo.
-- **L3.** Contenido: nombre corto, combinación («M · Azul»), precio con IVA en grande («23,14 €»), código de barras y su texto.
-- **L4.** Código: EAN13 del producto o de la combinación si existe y es válido; si no, la referencia en Code128.
-- **L5.** Plantillas de tamaño: 50×30 mm, 40×25 mm y ancho de ticket (80 mm); medidas a mano en Ajustes.
-- **L6.** El servidor genera la etiqueta según el lenguaje de la impresora de etiquetas de esa caja: ESC/POS, ZPL, TSPL o imagen (PNG a la resolución de la impresora, que el agente envía por el driver). Si la impresora de etiquetas es la misma de tickets, se usa ESC/POS.
+## 5. Reglas
 
-### 4.5 Estado y errores
-- **S1.** El agente informa en cada petición: versión, nombre del equipo, impresoras configuradas y su estado.
-- **S2.** Cuando la impresora lo permite (Epson por USB, estado ESC/POS), el agente informa «sin papel», «poco papel», «tapa abierta» o «impresora desconectada». Si no se puede leer, solo informa de los trabajos fallidos.
-- **S3.** Ajustes → Cajas muestra por caja: «Conectado · TM-T20 · v1.2» o «Sin conexión desde 17:05», el estado de cada impresora y los últimos errores.
-- **S4.** Historial de trabajos de 30 días en Ajustes (fecha, caja, tipo, estado, error), con filtro por caja y estado. Lo más antiguo se borra solo.
+### 5.1 Emparejar y seguridad
+- **E1. Paso a paso:**
+  1. En Ajustes → Cajas → la caja: «Descargar programa de impresión (Windows / Linux)».
+  2. «Conectar agente»: código grande de 6 cifras con cuenta atrás de 10 minutos y «Generar otro código».
+  3. Al emparejar, la pantalla cambia sola a «Conectado: PC-CAJA1».
+  4. Si la caja ya tenía agente: «Esto desconectará el agente de PC-CAJA1. ¿Continuar?».
+- **E2.** El código queda ligado a la caja y al administrador que lo generó. Solo hay un código vivo por caja; generar otro anula el anterior.
+- **E3.** El agente envía el código y recibe una clave de 256 bits. El código se marca usado en la misma transacción que crea la clave. La respuesta lleva `Cache-Control: no-store`. El servidor solo guarda la huella (sha256) de la clave.
+- **E4.** Cada clave vale para una sola caja: solo ve y confirma trabajos de su caja.
+- **E5.** Desconectar el agente en Ajustes invalida la clave al momento. Volver a emparejar revoca la anterior.
+- **E6.** La clave no caduca. Ajustes muestra la última fecha e IP de uso para detectar copias.
+- **E7.** Límites: emparejar admite 5 intentos por minuto y por IP; 5 fallos anulan el código. Una clave inválida recibe 429 tras 10 fallos por minuto y por IP.
+- **E8.** La clave, el código y la cabecera `Authorization` nunca aparecen en direcciones, registros ni pantallas. El texto de error de un trabajo se recorta a 500 caracteres.
+- **E9.** `/api/agent/v1/*` no usa sesión ni cookies (fuera del vínculo de equipo); solo acepta `Authorization: Bearer`.
+- **E10.** Clave guardada en Windows cifrada con DPAPI de ámbito de máquina en `%ProgramData%\VenPos Agent\`, con permisos solo para el servicio y Administradores; en Linux en `/etc/venpos-agent/key`, propietario el usuario de servicio `venpos-agent`, permisos 0600. El icono nunca lee la clave.
+- **E11.** Solo HTTPS con validación completa del certificado del sistema, sin opción de desactivarla. Se respeta el proxy del sistema. Cambiar la dirección del TPV exige volver a emparejar.
 
-### 4.6 Agente (programa)
-- **A1.** Escrito en Rust. Un binario por sistema: Windows x64 y Linux x64.
-- **A2.** Funciona como servicio: servicio de Windows y servicio systemd en Linux. Arranca solo con el ordenador.
-- **A3.** Icono en la bandeja en Windows y en Linux (escritorios con bandeja). Colores: verde conectado, ámbar sin conexión, rojo impresora con error. Menú: «Imprimir prueba», «Ver registro», «Abrir Ajustes del TPV», «Acerca de». Cerrar el icono no para el servicio.
-- **A4.** Impresión: en Windows a través del administrador de impresión en modo RAW; en Linux a través de CUPS en modo raw o directo al dispositivo USB.
-- **A5.** Comandos: `pair <código>`, `status`, `list-printers`, `test-print`, `install`, `uninstall`, `run`, `version`.
-- **A6.** Registro en fichero con rotación (5 MB × 3), sin datos sensibles.
-- **A7.** Reconexión con espera creciente (1, 2, 5, 10, 30 s). Ante clave rechazada: «Vuelve a conectar el agente desde Ajustes → Cajas».
+### 5.2 Trabajos de impresión
+- **T0.** Con impresora «Agente», el trabajo se crea en `print_job` dentro de la misma petición (cobro, reimpresión, abono, cajón), sin pasar por Messenger.
+- **T1.** Todo lo que hoy se imprime o abre el cajón se convierte en un trabajo de la caja que lo pide: ticket de venta, regalo, reimpresión, abono, prueba, cajón y etiquetas. El contenido de tickets es el mismo ESC/POS de hoy.
+- **T2.** Tipos: `ticket`, `drawer`, `label`. Destinos del agente: impresora de tickets e impresora de etiquetas (pueden ser la misma).
+- **T3.** «Hecho» significa entregado a la cola del sistema o al dispositivo. Si la impresora no informa de su estado, el TPV dice «Enviado», no «Impreso».
+- **T4.** Entrega al menos una vez: cada recogida lleva un `claim_token`; si no se confirma en 60 s, el trabajo vuelve a la cola (el agente puede pedir más tiempo para lotes largos). El agente guarda en disco los trabajos impresos de las últimas 24 h y nunca los repite. Confirmar es idempotente.
+- **T5.** Un fallido se reintenta a los 2, 5 y 15 s, sin pasar su caducidad.
+- **T6.** Caducidad: cajón 15 s, ticket 2 min, etiquetas 24 h. Lo caducado no se imprime. Si un trabajo de cajón sigue en la cola del sistema pasados sus 15 s, el agente lo cancela.
+- **T7.** Prioridad: ticket y cajón pasan por delante de las etiquetas. Un lote de etiquetas se puede interrumpir entre etiqueta y etiqueta.
+- **T8.** El agente solo escribe en sus destinos configurados en el propio equipo; el servidor no puede elegir impresora, ruta ni dispositivo. El trabajo `drawer` no lleva datos: el pulso ESC p lo genera el agente. Límites: 1 MB por trabajo, 500 etiquetas por trabajo, una apertura de cajón cada 5 s.
+- **T9.** Sin caja resuelta en la sesión no se crea el trabajo (400 `terminal_not_resolved`); nunca se usa la caja 1 por defecto.
+- **T10.** La reimpresión sale por la caja que la pide.
+- **T11.** El cajón solo se abre desde el TPV (venta en efectivo o mixto, o «Abrir cajón»). Cada apertura guarda usuario, caja, motivo (venta nº o botón) y resultado. Este registro no se borra con el historial.
 
-### 4.7 Instalación
-- **I1.** Windows: setup.exe con asistente que pide la dirección del TPV y el código de 6 cifras, deja elegir la impresora de tickets y la de etiquetas de la lista de impresoras de Windows, hace una prueba e instala el servicio y el icono.
-- **I2.** Linux: paquete `.deb` (Debian, Ubuntu, Mint) que instala el servicio, y script de instalación para otras distribuciones. La configuración se hace con `pair` y `list-printers` o desde el icono.
-- **I3.** El instalador de Windows no va firmado de momento; la guía explica «Más información → Ejecutar de todas formas».
+### 5.3 En la caja
+- **C1.** La pantalla de cobro muestra «Imprimiendo ticket…» y después:
+  - «Ticket impreso» o «Ticket enviado», según T3;
+  - «La impresora no está conectada», si el agente no lo recoge en 15 s;
+  - «La impresora tiene un problema: sin papel» u otro motivo, si el trabajo falla.
+- **C2.** En los dos últimos casos hay dos botones grandes (mínimo 48 px): «Reintentar» y «Descargar PDF». Si se cierra el cobro antes, el aviso queda en la pantalla de venta con «Reimprimir último ticket».
+- **C3.** Si la apertura del cajón no se confirma en 5 s: «El cajón no se ha abierto. Ábrelo con la llave.» en ámbar, junto al cambio.
+- **C4.** Si el agente lleva más de 2 minutos sin conectar, la pantalla de venta muestra un aviso permanente hasta que vuelva.
+- **C5.** Dar el PDF no cancela el ticket pendiente: si el agente vuelve antes de 2 minutos, el ticket se imprime.
 
-### 4.8 Actualizaciones
-- **U1.** El TPV publica la última versión del agente para cada sistema en el propio subdominio, con su firma (Ed25519).
-- **U2.** El agente la descarga, comprueba la firma con la clave pública que lleva dentro y solo instala si es válida.
-- **U3.** Solo se actualiza con la caja de su agente cerrada y sin trabajos pendientes. Si falla, vuelve a la versión anterior.
-- **U4.** Ajustes → Cajas muestra la versión de cada agente y si está pendiente de actualizar.
+### 5.4 Etiquetas
+- **L1.** Desde la ficha: tabla de tallas/colores con una cantidad por fila, botón «Cantidad = stock», vista previa y «Imprimir N etiquetas».
+- **L2.** Pantalla «Etiquetas»: añadir productos escaneando o buscando, cantidad por línea, vista previa e imprimir todo. La lista se conserva hasta imprimir y se vacía al terminar.
+- **L3.** Contenido: nombre del producto en un máximo de 2 líneas; combinación («M · Azul»); precio actual con IVA en grande («23,14 €»), ya con la oferta vigente y sin precio tachado; código de barras y su texto. Refleja el precio de la última sincronización.
+- **L4.** Código: el `ean13` de la combinación y, si no hay, el del producto. Se valida el dígito de control: 13 cifras EAN-13, 8 EAN-8, 12 UPC-A. Si no es válido o no existe, la referencia en Code128. Si el código no cabe con un módulo mínimo de 0,25 mm, o no hay ni EAN ni referencia, no se imprime y se avisa con el motivo.
+- **L5.** En la TM-T20: ancho completo (72 mm, 576 puntos a 203 ppp), alto configurable de 25 a 60 mm (30 mm por defecto).
+- **L6.** En la TM-T20 las etiquetas de un trabajo salen en una tira, separadas por una línea de puntos, con un solo corte al final. Opción «cortar cada etiqueta» desactivada por defecto.
+- **L7.** ESC/POS: códigos con los comandos de la impresora y tabla de caracteres 16 (WPC1252) para «€», como el ticket.
+- **L8.** Límites: 100 por línea y 500 por trabajo; más se reparte en varios trabajos. Ajustes → Cajas: «Imprimir etiqueta de prueba».
+- **L9.** Al reconectar con etiquetas pendientes, el TPV pregunta «Hay N etiquetas pendientes. ¿Imprimirlas?».
+- **L10 (fase 2).** ZPL (`^CI28`, `^BE`, `^BC`) y TSPL (`CODEPAGE 1252`, `BARCODE "EAN13"`/`"128"`, `SIZE`, `GAP`/`BLINE`, `DENSITY`), resolución 203 o 300 ppp, plantillas 50×30 y 40×25 y medidas a mano, con calibración inicial. Impresoras con driver (Brother QL, Dymo) mediante el driver del sistema.
 
-## 5. Cambios técnicos previstos
+### 5.5 Estado, errores e historial
+- **S1.** Cada petición del agente actualiza su última conexión. El estado de las impresoras se envía aparte solo cuando cambia.
+- **S2.** Fase 1: estado de la cola del sistema (desconectada, en pausa, error) y trabajos fallidos. Fase 2: «sin papel», «poco papel», «tapa abierta» leídos directamente de la impresora cuando habla con ella sin cola (en Linux `/dev/usb/lp*`, o por red puerto 9100).
+- **S3.** Ajustes → Cajas por caja: «Agente: Conectado» o «Sin conexión desde las 17:05»; impresora «Lista», «Poco papel», «Sin papel», «Tapa abierta», «Desconectada» o «No encontrada»; versión y si hay versión nueva. En la lista de cajas el tipo se llama «Agente de impresión».
+- **S4.** Historial de 30 días con fecha, caja, tipo, estado y error, filtrable por caja y estado. El contenido de cada trabajo (puede llevar datos del cliente) se borra a las 24 h; los datos del trabajo, a los 30 días. La limpieza se hace en la tarea de cron de cada minuto que ya existe.
+- **S5.** La impresora de tickets, la de etiquetas y su lenguaje se eligen en el agente (asistente o icono → «Elegir impresoras»). Ajustes los muestra. Si una impresora se renombra o desaparece: «Impresora no encontrada: elígela de nuevo desde el icono».
+
+### 5.6 El programa
+- **A1.** Rust. Dos programas por sistema: un **servicio** sin ventana que se conecta, imprime y registra, y un **icono de bandeja** por usuario que solo muestra el estado y pide al servicio la prueba de impresión. Cerrar el icono no para el servicio.
+- **A2.** Windows: servicio con cuenta virtual `NT SERVICE\VenPosAgent` (no LocalSystem). Linux: servicio systemd con usuario `venpos-agent` del grupo `lp`.
+- **A3.** El icono habla con el servicio por tubería con nombre (Windows) o socket Unix 0660 (Linux), solo con órdenes fijas (estado, prueba, elegir impresoras, ver registro). No abre ningún puerto TCP.
+- **A4.** Icono: verde conectado, ámbar sin conexión, rojo impresora con error. Menú: «Imprimir prueba», «Elegir impresoras», «Ver registro», «Abrir Ajustes del TPV», «Acerca de». No abre el cajón.
+- **A5.** Impresión por destino, un modo por impresora: cola del sistema (Windows RAW por el administrador de impresión; Linux CUPS `lp -o raw`) o directo (`/dev/usb/lp*` o IP:9100). En Windows el driver debe ser v3 o «Generic / Text Only» (los v4 pueden rechazar RAW).
+- **A6.** Comandos: `pair <código>`, `status`, `list-printers`, `test-print`, `install`, `uninstall`, `run`, `version`.
+- **A7.** Conexión: espera del servidor hasta 20 s, tiempo de lectura del cliente 40 s; si una petición tarda más de 30 s (proxy), baja a esperas de 5 s. Reconexión con espera creciente (1, 2, 5, 10, 30 s). Clave rechazada: «Vuelve a conectar el agente desde Ajustes → Cajas».
+- **A8.** Registro en fichero con rotación (5 MB × 3), sin datos sensibles (E8).
+- **A9.** Los datos de un trabajo son bytes opacos hacia la impresora: nunca se ejecutan ni se interpretan como órdenes del sistema.
+- **A10.** Tamaño orientativo: 4–6 MB el servicio, 2–3 MB el icono. Sin OpenSSL (TLS con rustls).
+
+### 5.7 Instalación
+- **I1.** Windows (fase 1): instalador con asistente, generado con NSIS. Pide la dirección del TPV y el código (se puede saltar y emparejar después desde el icono). Deja elegir impresora de tickets y de etiquetas entre las instaladas para todo el equipo, hace una prueba e instala el servicio y el icono al iniciar sesión.
+- **I2.** El instalador no va firmado de momento; la guía explica «Más información → Ejecutar de todas formas» y el posible aviso del antivirus.
+- **I3.** Linux: fase 1, binario y comandos; fase 2, paquete `.deb` sin dependencias gráficas obligatorias (`cups-client` recomendado), binario estático (musl) con script para otras distribuciones, e icono para escritorios con StatusNotifierItem (KDE, XFCE, Cinnamon, MATE; GNOME con la extensión AppIndicator).
+
+### 5.8 Actualizaciones
+- **U1 (fase 1).** Ajustes → Cajas muestra «Hay una versión nueva» y el enlace de descarga.
+- **U2 (fase 2).** El TPV publica un manifiesto firmado (sistema, versión, sha256, tamaño) con Ed25519. Los binarios se guardan en el subdominio, fuera de git.
+- **U3.** La clave privada nunca está en Plesk ni en el repositorio: se guarda fuera de línea en el equipo del desarrollador y se firma al publicar. Si se pierde o compromete, se publica a mano un agente con otra clave pública.
+- **U4.** El agente comprueba la firma y rechaza versiones iguales o anteriores a la instalada. El servidor responde 426 si el agente está por debajo de la mínima admitida.
+- **U5.** Solo se actualiza con la caja cerrada y sin trabajos pendientes. Windows: un actualizador aparte sustituye los programas y, si en 60 s no hay conexión correcta, restaura la versión anterior. Linux: el agente descarga y verifica; una unidad systemd de root aplica el cambio.
+
+## 6. Cambios técnicos previstos
 
 - **TPV (PHP):**
-  - tipo de impresora `agent`;
-  - tablas `print_job`, `print_agent` y `agent_pairing` (migración V37);
-  - API del agente `/api/agent/*` con clave Bearer (fuera de la sesión y del vínculo de equipo);
-  - generación de etiquetas en ESC/POS, ZPL, TSPL e imagen;
-  - pantalla «Etiquetas» y botón en la ficha de producto;
-  - Ajustes → Cajas con emparejar, estado, impresoras, historial y versión;
-  - publicación de versiones firmadas.
-- **Agente (Rust, carpeta `agent/`):**
-  - servicio, cliente HTTPS, impresión RAW en Windows y raw en Linux, lectura de estado USB, icono de bandeja, actualización firmada y registro;
-  - instalador Windows (Inno Setup o WiX) y paquete `.deb`.
-- **API del agente (resumen):**
-  - `POST /api/agent/pair {code}` devuelve la clave;
-  - `GET /api/agent/jobs?wait=25` devuelve los trabajos y registra el latido; la cabecera incluye versión, equipo, impresoras y su estado;
-  - `POST /api/agent/jobs/{id}/done` y `POST /api/agent/jobs/{id}/failed {error}`;
-  - `GET /api/agent/update?os=…&version=…` devuelve la versión disponible con su firma.
+  - tipo de impresora `agent` y rutas de impresión sin Messenger (T0) ni caja por defecto (T9);
+  - migración V37: `print_job`, `print_agent`, `agent_pairing` y registro de aperturas de cajón;
+  - `print_job`: id, terminal_id, type, target, status (pending, claimed, done, failed, expired, cancelled), attempts, claim_token, lease_until, next_attempt_at, expires_at, payload MEDIUMBLOB (1 MB), sha256, error_code, error, fechas; índices (terminal_id, status, id) y (created_at); recogida con UPDATE condicional por caja en orden de id, como la cola de salida;
+  - limitador de intentos para emparejar y claves inválidas;
+  - generación de etiquetas ESC/POS y vista previa (imagen);
+  - pantalla «Etiquetas» y botón en la ficha; Ajustes → Cajas con emparejar, estado, impresoras, historial y versión.
+- **Agente (Rust, `agent/`):**
+  - crates previstos: `windows-service`, `windows` (impresión), `tray-icon` (Windows), `ksni` (Linux, fase 2), `interprocess`, `ureq` con `rustls`, `ed25519-dalek`, `sha2`, `tracing` y `tracing-appender`, `clap`, `winresource`;
+  - compilación cruzada a Windows (`x86_64-pc-windows-gnu`) desde Linux, sin DLL externas;
+  - instalador NSIS (`makensis`); `.deb` con `cargo-deb` (fase 2).
+- **Pruebas:** el sistema operativo detrás de interfaces (impresora, reloj, red) para probar en Linux; GitHub Actions `windows-latest`: instalación silenciosa, `sc query`, y bytes exactos sobre una impresora «Generic / Text Only» con salida a fichero.
 
-## 6. Criterios de aceptación
+### API del agente (v1, Bearer, sin sesión)
 
-- **AC1.** Con el agente de Linux en esta máquina y el TPV apuntando a él: una venta en efectivo imprime el ticket en la TM-T20 y abre el cajón en menos de 2 s.
-- **AC2.** Con el agente parado: la venta se cobra; a los 15 s se ofrece el PDF; al arrancar el agente pasados 10 min, el ticket no se imprime y el cajón no se abre.
-- **AC3.** Emparejar con un código caducado o ya usado falla; con uno válido funciona una sola vez. Revocar en Ajustes corta el agente en la siguiente petición.
-- **AC4.** Un agente con la clave de la caja A no puede ver ni confirmar trabajos de la caja B.
-- **AC5.** Imprimir 10 etiquetas de una camiseta M azul desde la ficha: salen 10 etiquetas con su EAN (o la referencia en Code128 si no tiene) y el precio con IVA; el lector de códigos las lee.
-- **AC6.** La misma etiqueta generada en ZPL y TSPL se ve correcta en un visor de esos lenguajes; en imagen, a la resolución pedida.
-- **AC7.** Sin papel en la TM-T20: Ajustes muestra «Impresora sin papel» y el icono se pone rojo.
-- **AC8.** Una actualización con firma inválida se rechaza. Una válida se instala solo con la caja cerrada.
-- **AC9.** El instalador de Windows deja el servicio en marcha y el icono visible (comprobación en un Windows real, a cargo del usuario).
+| Método | Ruta | Petición | Respuesta | Códigos |
+|---|---|---|---|---|
+| POST | `/api/agent/v1/pair` | `{code, hostname, os, version}` | `{key, terminal_id, terminal_name}` | 201; 422 `pairing_code_invalid`; 429 |
+| GET | `/api/agent/v1/jobs?wait=0..20` | — | `{jobs:[{id, type, target, payload_b64, sha256, claim_token, expires_at}], poll_after_ms}` | 200; 401 `agent_key_invalid`; 426 `agent_update_required`; 429 |
+| POST | `/api/agent/v1/jobs/{id}/result` | `{claim_token, status: done\|failed, error_code?, error?}` | `{status}` | 200 (también repetido); 404; 409 `claim_stale`; 410 `job_expired` |
+| POST | `/api/agent/v1/jobs/{id}/extend` | `{claim_token}` | `{lease_until}` | 200; 409 |
+| PUT | `/api/agent/v1/status` | `{version, hostname, printers:[{target, name, state, detail}]}` | — | 204; 401 |
+| GET | `/api/agent/v1/update?os=&arch=&version=` | — | `{manifest, signature}` | 200; 204 sin novedad |
 
-## 7. Riesgos
+### API del TPV (sesión; las marcadas solo administrador)
 
-- **Seguridad (alto):** claves del agente, emparejamiento y actualizaciones firmadas. Requiere verificación independiente.
-- **Windows sin máquina de pruebas:** el binario se compila y se prueba en Linux; el comportamiento real en Windows (servicio, bandeja, instalador, cola RAW) lo verifica el usuario.
-- **Estado de la impresora por USB:** depende del modelo y del driver; en Windows con el driver de Epson puede no ser legible y quedará en «solo errores de trabajo».
-- **Tiempo de respuesta en Plesk:** la escucha larga mantiene un proceso PHP ocupado por agente conectado. Con pocas cajas no importa; con muchas, revisar el límite de procesos de PHP-FPM.
+| Método | Ruta | Respuesta | Códigos |
+|---|---|---|---|
+| GET | `/api/print-jobs/{id}` | `{status, error}` | 200; 404 |
+| GET | `/api/print-jobs?terminal_id&status&cursor&limit≤50` | `{items, next_cursor}` | 200 |
+| GET | `/api/terminals/{id}/print-agent` | `{connected, last_seen, last_ip, version, printers, update_available}` | 200 |
+| POST | `/api/terminals/{id}/print-agent/pairing-code` (admin) | `{code, expires_at}` | 201; 403 |
+| DELETE | `/api/terminals/{id}/print-agent` (admin) | — | 204; 403 |
 
-## 8. Puntos abiertos
+## 7. Puesta en marcha
+
+1. Instalar el agente en el ordenador de la caja A con el TPV todavía en local y probarlo.
+2. Cambiar el tipo de impresora de la caja A a «Agente de impresión», manteniendo CUPS como alternativa una semana.
+3. Desplegar en Plesk (requiere acceso y permiso) con `pm.max_children` ≥ número de cajas + 6 y `max_execution_time` ≥ 35 s.
+4. Guía para la dueña: instalación (aviso de Windows y antivirus) y una hoja «No imprime: qué hago».
+
+## 8. Criterios de aceptación
+
+- **AC1.** Con el agente de Linux en esta máquina en modo directo USB: una venta en efectivo imprime el ticket en la TM-T20 y abre el cajón en menos de 2 s.
+- **AC2.** Con el agente parado: la venta se cobra, a los 15 s se ofrece el PDF y el aviso del cajón aparece a los 5 s. Si el agente arranca al minuto, el ticket se imprime y el cajón no se abre; si arranca a los 3 minutos, no se imprime nada.
+- **AC3.** Emparejar con un código caducado, usado o tras 5 fallos falla; con uno válido funciona una sola vez. Desconectar en Ajustes corta el agente en la siguiente petición.
+- **AC4.** Un agente de la caja A no puede ver ni confirmar trabajos de la caja B.
+- **AC5.** Imprimir 10 etiquetas de una camiseta M azul desde la ficha: salen en una tira con un solo corte, con su EAN (o la referencia en Code128) y el precio con IVA; la pistola de la tienda las lee.
+- **AC6.** Etiquetas ESC/POS comprobadas con ficheros de referencia exactos en las pruebas. (Fase 2: ZPL y TSPL igual, y ZPL en un visor.)
+- **AC7.** Fase 1: con la cola de Windows o CUPS en pausa o sin impresora, Ajustes muestra el problema. Fase 2: sin papel en la TM-T20 en modo directo USB, Ajustes dice «Impresora sin papel» y el icono se pone rojo.
+- **AC8.** Fase 2: una actualización con firma inválida o versión anterior se rechaza; una válida se instala solo con la caja cerrada; si no arranca, vuelve a la anterior.
+- **AC9.** El instalador de Windows deja el servicio en marcha y el icono visible (en GitHub Actions el servicio; el icono lo comprueba el usuario).
+- **AC10.** Cortar la red en mitad de una venta y reconectar: un solo ticket.
+- **AC11.** Reiniciar Windows: el agente vuelve a conectar solo y no repite nada.
+- **AC12.** Emparejar: la cuenta atrás corre, la confirmación aparece al reemparejar y el estado pasa a «Conectado» sin recargar.
+- **AC13.** El historial muestra fecha, caja, tipo y estado, filtra por caja y estado, y borra lo de más de 30 días.
+- **AC14.** Un lote de 200 etiquetas se interrumpe por una venta: el ticket sale primero.
+- **AC15.** Pantalla Etiquetas: escanear 3 productos, cambiar cantidades, imprimir; la lista se vacía.
+- **AC16.** Renombrar la impresora en Windows: Ajustes muestra «No encontrada».
+
+## 9. Riesgos
+
+- **Seguridad (alto):** clave del agente, emparejamiento, límites de intentos y, en fase 2, actualizaciones firmadas. Requiere verificación independiente.
+- **Windows sin máquina propia:** se cubre con GitHub Actions; servicio en sesión 0 e icono por usuario se prueban por separado; el icono lo revisa el usuario.
+- **Estado de la impresora:** a través de la cola de Windows o CUPS no se puede leer «sin papel»; solo en modo directo (fase 2).
+- **Plesk:** cada agente conectado ocupa un proceso PHP mientras espera; revisar `pm.max_children` y los tiempos del proxy al desplegar.
+- **Papel adhesivo en la TM-T20:** Epson no lo lista para este modelo; comprobar el grosor admitido y que el pegamento no ensucie la cuchilla.
+
+## 10. Puntos abiertos
 
 - Dirección final del subdominio y despliegue en Plesk (requiere acceso y permiso).
-- Comprar papel adhesivo de 80 mm para la TM-T20, o una impresora de etiquetas dedicada más adelante.
+- Comprar papel térmico adhesivo continuo de 80 mm compatible con la TM-T20, o una impresora de etiquetas de 203 ppp con ZPL o TSPL y detección de separación.
