@@ -169,4 +169,60 @@ final class EscPosTicketBuilderTest extends TestCase
         $this->assertStringContainsString('Tarjeta: 14.10', $out);
         $this->assertStringNotContainsString('Entrega', $out);
     }
+
+    public function testSaleTicketPrintsCode128OfTheReferenceWithTextBelow(): void
+    {
+        $out = $this->createBuilder()->build($this->createTicketData());
+
+        // GS k 73 (CODE128, function B) <len> "{B" + data
+        self::assertStringContainsString("\x1dk\x49\x09{BORD-042", $out);
+        self::assertStringContainsString("\x1dH\x02", $out, 'human readable reference below the bars');
+    }
+
+    public function testGiftTicketKeepsTheCode128(): void
+    {
+        $out = $this->createBuilder()->build($this->createTicketData(), true);
+
+        self::assertStringContainsString("\x1dk\x49\x09{BORD-042", $out);
+    }
+
+    public function testLiteralBraceInReferenceIsEscapedForCode128(): void
+    {
+        $sale = $this->createTicketData();
+        $ticket = new TicketData(
+            orderId: 1, reference: 'A{B', storeName: 'T', storeAddress: '', ticketHeader: '', ticketFooter: '', ticketLogo: null,
+            ticketWidthPx: null, date: $sale->date, cashierName: 'Ana', lines: $sale->lines, subtotal: 1.0, tax: 0.0, total: 1.0,
+            paymentMethod: 'cash', amountTendered: 1.0, changeDue: 0.0, verificationUrl: 'http://tpv/v',
+        );
+
+        self::assertStringContainsString("\x1dk\x49\x06{BA{{B", $this->createBuilder()->build($ticket));
+    }
+
+    public function testReferenceThatCode128CannotEncodeSkipsTheBarcode(): void
+    {
+        $sale = $this->createTicketData();
+        $ticket = new TicketData(
+            orderId: 1, reference: 'Ñ-1', storeName: 'T', storeAddress: '', ticketHeader: '', ticketFooter: '', ticketLogo: null,
+            ticketWidthPx: null, date: $sale->date, cashierName: 'Ana', lines: $sale->lines, subtotal: 1.0, tax: 0.0, total: 1.0,
+            paymentMethod: 'cash', amountTendered: 1.0, changeDue: 0.0, verificationUrl: 'http://tpv/v',
+        );
+
+        $out = $this->createBuilder()->build($ticket);
+
+        self::assertStringNotContainsString("\x1dk\x49", $out);
+        self::assertStringContainsString("\x1d(k", $out, 'QR is still printed');
+    }
+
+    public function testCreditNoteHasNoCode128(): void
+    {
+        $sale = $this->createTicketData();
+        $ticket = new TicketData(
+            orderId: 42, reference: 'R2026-000007', storeName: 'T', storeAddress: '', ticketHeader: '', ticketFooter: '', ticketLogo: null,
+            ticketWidthPx: null, date: $sale->date, cashierName: 'Ana', lines: $sale->lines, subtotal: 1.0, tax: 0.0, total: 1.0,
+            paymentMethod: 'cash', amountTendered: 0.0, changeDue: 0.0, verificationUrl: 'http://tpv/v',
+            creditNote: new CreditNoteInfo('R2026-000007', 'ORD-042', null, 'Defectuoso', 1.0, 0.0),
+        );
+
+        self::assertStringNotContainsString("\x1dk\x49", $this->createBuilder()->build($ticket));
+    }
 }

@@ -98,7 +98,7 @@ final class TicketPdfGeneratorTest extends TestCase
 
             exec('pdfimages -list ' . escapeshellarg($pdfPath), $pdfImages, $exitCode);
             self::assertSame(0, $exitCode, implode("\n", $pdfImages));
-            self::assertGreaterThanOrEqual(2, $this->embeddedImageCount($pdfImages));
+            self::assertGreaterThanOrEqual(3, $this->embeddedImageCount($pdfImages), 'logo, QR and Code128 are embedded');
             self::assertSame($assetsBefore, $this->temporaryAssetPaths());
         } finally {
             if (is_file($pdfPath)) {
@@ -108,12 +108,42 @@ final class TicketPdfGeneratorTest extends TestCase
         }
     }
 
+    public function testImagesAreEmbeddedEvenWhenTheAssetDirectoryIsNotWritable(): void
+    {
+        // The web server user may not be allowed to write var/ticket-assets.
+        $assets = $this->projectDir() . '/var/ticket-assets';
+        if (!is_dir($assets)) {
+            mkdir($assets, 0775, true);
+        }
+        $mode = fileperms($assets) & 0777;
+        $pdfPath = tempnam(sys_get_temp_dir(), 'tpv_pdf_');
+        chmod($assets, 0555);
+
+        try {
+            $ticket = new TicketData(
+                orderId: 86, reference: 'RO-ASSETS', storeName: 'Mi Tienda', storeAddress: '', ticketHeader: '', ticketFooter: '',
+                ticketLogo: $this->createLogoDataUri(), ticketWidthPx: 302, date: new \DateTimeImmutable('2024-01-15 14:30:00'),
+                cashierName: 'Juan', lines: [new TicketLine('Café', 1, 1.5, 1.5)], subtotal: 1.24, tax: 0.26, total: 1.5,
+                paymentMethod: 'cash', amountTendered: 2.0, changeDue: 0.5, verificationUrl: 'https://example.com/v?token=t',
+            );
+            file_put_contents($pdfPath, $this->createGenerator()->generate($ticket));
+
+            exec('pdfimages -list ' . escapeshellarg($pdfPath), $pdfImages, $exitCode);
+            self::assertSame(0, $exitCode);
+            self::assertGreaterThanOrEqual(3, $this->embeddedImageCount($pdfImages), 'logo, QR and Code128 without writing files');
+        } finally {
+            chmod($assets, $mode);
+            @unlink($pdfPath);
+        }
+    }
+
     /** @return string[] */
     private function temporaryAssetPaths(): array
     {
         $assets = array_merge(
             glob($this->projectDir() . '/var/ticket-assets/tpv_logo_*') ?: [],
             glob($this->projectDir() . '/var/ticket-assets/tpv_qr_*') ?: [],
+            glob($this->projectDir() . '/var/ticket-assets/tpv_barcode_*') ?: [],
         );
         sort($assets);
 
@@ -184,5 +214,51 @@ final class TicketPdfGeneratorTest extends TestCase
         $generator->generate($this->createTicketData());
 
         self::assertFalse($capturedContext['giftMode'] ?? true);
+    }
+
+    public function testSaleTicketGetsACode128ImageOfTheReference(): void
+    {
+        $twig = $this->createMock(\Twig\Environment::class);
+        $barcode = null;
+        $twig->expects($this->once())
+            ->method('render')
+            ->willReturnCallback(function (string $template, array $context) use (&$barcode): string {
+                $path = (string) ($context['barcodePath'] ?? '');
+                $png = base64_decode((string) preg_replace('#^data:image/png;base64,#', '', $path), true);
+                $barcode = ['path' => $path, 'size' => \is_string($png) && $png !== '' ? getimagesizefromstring($png) : false];
+
+                return '<html></html>';
+            });
+
+        (new TicketPdfGenerator($twig))->generate($this->createTicketData(), true);
+
+        self::assertMatchesRegularExpression('#^data:image/png;base64,[A-Za-z0-9+/=]+$#', $barcode['path'] ?? '');
+        self::assertIsArray($barcode['size'], 'the barcode is an embedded PNG');
+        self::assertSame(IMAGETYPE_PNG, $barcode['size'][2]);
+    }
+
+    public function testCreditNoteGetsNoCode128Image(): void
+    {
+        $twig = $this->createMock(\Twig\Environment::class);
+        $capturedContext = null;
+        $twig->expects($this->once())
+            ->method('render')
+            ->willReturnCallback(function (string $template, array $context) use (&$capturedContext): string {
+                $capturedContext = $context;
+
+                return '<html></html>';
+            });
+        $sale = $this->createTicketData();
+        $note = new TicketData(
+            orderId: 42, reference: 'R2026-000007', storeName: 'Mi Tienda', storeAddress: '', ticketHeader: '', ticketFooter: '',
+            ticketLogo: null, ticketWidthPx: null, date: $sale->date, cashierName: 'Ana', lines: $sale->lines,
+            subtotal: 3.0, tax: 0.21, total: 3.21, paymentMethod: 'cash', amountTendered: 0.0, changeDue: 0.0,
+            verificationUrl: 'http://tpv/v',
+            creditNote: new \VenPosTPV\Service\Print\CreditNoteInfo('R2026-000007', 'ORD-042', null, 'Defectuoso', 3.21, 0.0),
+        );
+
+        (new TicketPdfGenerator($twig))->generate($note);
+
+        self::assertSame('', $capturedContext['barcodePath'] ?? null);
     }
 }

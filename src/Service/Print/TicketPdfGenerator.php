@@ -19,21 +19,24 @@ class TicketPdfGenerator
 
     public function generate(TicketData $ticketData, bool $giftMode = false): string
     {
-        $tmpFiles = [];
+        // Images are embedded as data: URIs, never written to disk: the web server
+        // user may not be allowed to write in the project, and then the QR, the
+        // barcode and the logo silently disappeared from the PDF.
+        $qrPath = $this->qrDataUri($ticketData->verificationUrl);
 
-        // QR — generate locally as temp file
-        $qrPath = $this->generateQrTempFile($ticketData->verificationUrl, $tmpFiles);
+        // Code128 of the sale reference (sale and gift tickets only, not credit notes)
+        $barcodePath = $ticketData->creditNote === null ? $this->barcodeDataUri($ticketData->reference) : '';
 
-        // Logo — write base64 to temp file; return relative path for Dompdf chroot
         $logoPath = '';
-        if ($ticketData->ticketLogo !== null && $ticketData->ticketLogo !== '') {
-            $logoPath = $this->base64ToTempFile($ticketData->ticketLogo, $tmpFiles);
+        if ($ticketData->ticketLogo !== null && preg_match('/^data:image\/(png|jpe?g|gif);base64,[A-Za-z0-9+\/=\s]+$/', $ticketData->ticketLogo)) {
+            $logoPath = $ticketData->ticketLogo;
         }
 
         $html = $this->twig->render('ticket/print.html.twig', [
             'ticket'   => $ticketData,
             'giftMode' => $giftMode,
             'qrPath'   => $qrPath,
+            'barcodePath' => $barcodePath,
             'logoPath' => $logoPath,
         ]);
 
@@ -45,78 +48,31 @@ class TicketPdfGenerator
         $dompdf->setPaper([0, 0, 226.77, 841.89]); // 80mm width in points
         $dompdf->render();
 
-        $output = (string) $dompdf->output();
-
-        // Clean up temp files
-        foreach ($tmpFiles as $f) {
-            if (file_exists($f)) {
-                @unlink($f);
-            }
-        }
-
-        return $output;
+        return (string) $dompdf->output();
     }
 
-    /** @param string[] $tmpFiles */
-    private function generateQrTempFile(string $url, array &$tmpFiles): string
+    private function qrDataUri(string $url): string
     {
         try {
             $qrCode = QrCode::create($url)->setSize(150)->setMargin(4);
-            $result = (new PngWriter())->write($qrCode);
 
-            $path = $this->tempImagePath('tpv_qr_', 'png');
-            if ($path === '') {
-                return '';
-            }
-            if (@file_put_contents($path, $result->getString()) === false) {
-                return '';
-            }
-            $tmpFiles[] = $path;
-
-            // Return path relative to chroot (project dir) for Dompdf
-            return 'var/ticket-assets/' . basename($path);
+            return 'data:image/png;base64,' . base64_encode((new PngWriter())->write($qrCode)->getString());
         } catch (\Throwable) {
             return '';
         }
     }
 
-    /** @param string[] $tmpFiles */
-    private function base64ToTempFile(string $dataUri, array &$tmpFiles): string
+    private function barcodeDataUri(string $reference): string
     {
-        // Strip "data:image/png;base64," prefix
-        if (preg_match('/^data:image\/(\w+);base64,(.+)$/s', $dataUri, $m)) {
-            $ext  = $m[1];
-            $data = base64_decode($m[2], true);
-            if ($data !== false) {
-                $path = $this->tempImagePath('tpv_logo_', $ext);
-                if ($path === '') {
-                    return '';
-                }
-                if (@file_put_contents($path, $data) === false) {
-                    return '';
-                }
-                $tmpFiles[] = $path;
-                // Return path relative to chroot (project dir) for Dompdf
-                return 'var/ticket-assets/' . basename($path);
-            }
-        }
-        return '';
-    }
-
-    private function tempImagePath(string $prefix, string $extension): string
-    {
-        $dir = $this->projectDir() . '/var/ticket-assets';
-        if (!is_dir($dir) && !@mkdir($dir, 0775, true) && !is_dir($dir)) {
+        if (!Code128Encoder::canEncode($reference) || !\function_exists('imagecreatetruecolor')) {
             return '';
         }
 
-        if (!is_writable($dir)) {
+        try {
+            return 'data:image/png;base64,' . base64_encode((new Code128Encoder())->png($reference));
+        } catch (\Throwable) {
             return '';
         }
-
-        $safeExtension = preg_replace('/[^a-zA-Z0-9]/', '', $extension) ?: 'png';
-
-        return $dir . '/' . $prefix . bin2hex(random_bytes(8)) . '.' . $safeExtension;
     }
 
     private function projectDir(): string

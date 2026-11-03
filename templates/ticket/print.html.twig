@@ -29,6 +29,7 @@
         .item-name { font-weight: bold; }
         .qr { text-align: center; margin: 10px 0; }
         .qr img { width: 120pt; height: 120pt; }
+        .barcode { text-align: center; margin: 10px 0 4px; }
         .footer { text-align: center; margin-top: 10px; font-size: 11px; }
     </style>
 </head>
@@ -91,6 +92,13 @@
         {% if ticket.changeDue > 0 %}
             <div>Cambio: {{ ticket.changeDue|number_format(2, ',', '.') }} €</div>
         {% endif %}
+    {% endif %}
+
+    {% if not ticket.creditNote and barcodePath|default('') %}
+    <div class="barcode">
+        <img src="{{ barcodePath }}" alt="Código de barras" style="width:100%;height:36pt;">
+        <div>{{ ticket.reference }}</div>
+    </div>
     {% endif %}
 
     <div class="qr">

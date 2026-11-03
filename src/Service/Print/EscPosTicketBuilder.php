@@ -147,8 +147,19 @@ class EscPosTicketBuilder
             $printer->text("\n");
         }
 
-        // QR code
         $printer->setJustification(Printer::JUSTIFY_CENTER);
+
+        // Code128 of the sale reference, so the refund screen can scan it (credit notes have none)
+        if ($creditNote === null && Code128Encoder::canEncode($ticketData->reference)) {
+            $printer->setBarcodeHeight(60);
+            $printer->setBarcodeWidth(2);
+            $printer->setBarcodeTextPosition(Printer::BARCODE_TEXT_BELOW);
+            // "{B" selects code set B; a literal "{" must be sent as "{{"
+            $printer->barcode('{B' . str_replace('{', '{{', $ticketData->reference), Printer::BARCODE_CODE128);
+            $printer->text("\n");
+        }
+
+        // QR code
         $printer->qrCode($ticketData->verificationUrl, Printer::QR_ECLEVEL_M, 6);
         $printer->text("\n");
         $this->printMultilineCentered($printer, $ticketData->ticketFooter !== '' ? $ticketData->ticketFooter : 'Gracias por su compra');

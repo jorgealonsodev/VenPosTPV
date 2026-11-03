@@ -13,7 +13,7 @@ use VenPosTPV\Service\Print\TicketLine;
 
 final class CreditNoteTemplateTest extends TestCase
 {
-    private function render(?CreditNoteInfo $note): string
+    private function render(?CreditNoteInfo $note, string $barcodePath = '', bool $giftMode = false): string
     {
         $twig = new Environment(new FilesystemLoader(\dirname(__DIR__, 4) . '/templates'));
 
@@ -24,8 +24,9 @@ final class CreditNoteTemplateTest extends TestCase
                 lines: [new TicketLine('Camisa M', 1, 24.18, 24.18)], subtotal: 19.98, tax: 4.2, total: 24.18,
                 paymentMethod: 'cash', amountTendered: 30.0, changeDue: 5.82, verificationUrl: 'http://tpv/v', creditNote: $note,
             ),
-            'giftMode' => false,
+            'giftMode' => $giftMode,
             'qrPath' => '',
+            'barcodePath' => $barcodePath,
             'logoPath' => '',
         ]);
     }
@@ -50,5 +51,28 @@ final class CreditNoteTemplateTest extends TestCase
         $this->assertStringContainsString('TOTAL: 24,18', $html);
         $this->assertStringContainsString('Entrega: 30,00', $html);
         $this->assertStringNotContainsString('ABONO', $html);
+    }
+
+    public function testSaleTicketShowsTheCode128WithItsReferenceUnderIt(): void
+    {
+        $html = $this->render(null, 'var/ticket-assets/tpv_barcode_abc.png');
+
+        $this->assertMatchesRegularExpression('#<div class="barcode">\s*<img src="var/ticket-assets/tpv_barcode_abc.png"[^>]*>\s*<div>REF42</div>#', $html);
+    }
+
+    public function testGiftTicketKeepsTheCode128ForExchanges(): void
+    {
+        $html = $this->render(null, 'var/ticket-assets/tpv_barcode_abc.png', true);
+
+        $this->assertStringContainsString('tpv_barcode_abc.png', $html);
+        $this->assertStringNotContainsString('TOTAL:', $html);
+    }
+
+    public function testCreditNoteHasNoCode128(): void
+    {
+        $html = $this->render(new CreditNoteInfo('R2026-000007', 'REF42', null, 'Defectuoso', 24.18, 0.0), 'var/ticket-assets/tpv_barcode_abc.png');
+
+        $this->assertStringNotContainsString('tpv_barcode_abc.png', $html);
+        $this->assertStringNotContainsString('class="barcode"', $html);
     }
 }

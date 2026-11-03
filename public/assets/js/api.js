@@ -43,7 +43,9 @@ const ApiClient = (function () {
         if (response.status === 401) {
             const isAuthFlow = path === '/api/auth/login'
                 || path === '/api/auth/employee-lookup'
-                || path === '/api/auth/employees-public';
+                || path === '/api/auth/employees-public'
+                // an expired or forged ticket token is not a lost session
+                || path.indexOf('/api/ticket/verify?') === 0;
 
             if (!isAuthFlow) {
                 window.location.href = (window.TPV_BASE || '') + '/app/login';

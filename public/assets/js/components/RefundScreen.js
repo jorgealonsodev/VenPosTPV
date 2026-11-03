@@ -35,21 +35,86 @@ const RefundScreen = {
         // Same half-up rounding as PHP round(): 10.075 must give 10.08, not 10.07.
         const round2 = (n) => Math.round(Number(((Number(n) || 0) * 100).toPrecision(12))) / 100;
 
+        // The ticket QR encodes `<APP_URL>/api/ticket/verify?token=<JWT>`.
+        function ticketToken(code) {
+            const match = /[?&]token=([^&#\s]+)/.exec(code);
+            if (!match) return '';
+            try { return decodeURIComponent(match[1]); } catch (e) { return match[1]; }
+        }
+
+        // The verify token expires long before the refund window ends, so an expired
+        // token still identifies the ticket: the claims only feed the order search.
+        function unverifiedClaims(token) {
+            try {
+                const part = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+                const claims = JSON.parse(atob(part + '='.repeat((4 - (part.length % 4)) % 4)));
+                return claims && (claims.order_id || claims.reference) ? claims : null;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        async function ticketClaims(token) {
+            try {
+                const result = await ApiClient.ticketVerify(token);
+                if (result && result.data && (result.data.order_id || result.data.reference)) return result.data;
+            } catch (e) {
+                // expired or unverifiable: fall back to the token's own claims
+            }
+            return unverifiedClaims(token);
+        }
+
+        // Searches by order id, reference or a scanned QR payload; a single match opens directly.
         async function handleSearch() {
-            if (!searchQuery.value || searchQuery.value.length < 2) {
+            const code = String(searchQuery.value || '').trim();
+            if (code.length < 2) {
                 emit('notify', 'Introduce al menos 2 caracteres', 'var(--red)');
                 return;
             }
             loading.value = true;
             try {
-                const result = await ApiClient.searchOrders(searchQuery.value);
+                let query = code;
+                const token = ticketToken(code);
+                if (token) {
+                    const claims = await ticketClaims(token);
+                    if (!claims) {
+                        searchResults.value = [];
+                        emit('notify', 'No se reconoce el código del ticket', 'var(--red)');
+                        return;
+                    }
+                    query = claims.order_id ? String(claims.order_id) : String(claims.reference);
+                    searchQuery.value = claims.reference ? String(claims.reference) : query;
+                }
+                const result = await ApiClient.searchOrders(query);
                 searchResults.value = result && Array.isArray(result.data) ? result.data : [];
+                if (searchResults.value.length === 1) {
+                    selectOrder(searchResults.value[0]);
+                }
             } catch (err) {
                 emit('notify', 'Error en búsqueda: ' + (err.message || 'Error'), 'var(--red)');
                 searchResults.value = [];
             } finally {
                 loading.value = false;
             }
+        }
+
+        // USB/HID scanner typing outside any field. Inside a field the keystrokes land in
+        // it and that field's Enter handles them (the search box runs handleSearch).
+        function handleScan(code) {
+            const active = typeof document !== 'undefined' ? document.activeElement : null;
+            const tag = active && active.tagName ? String(active.tagName).toUpperCase() : '';
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return undefined;
+            if (loading.value || confirmModal.value) return undefined;
+            searchQuery.value = String(code || '').trim();
+            return handleSearch();
+        }
+
+        const scanner = typeof useBarcode !== 'undefined' ? useBarcode : null;
+        if (scanner && typeof Vue.onMounted === 'function') {
+            Vue.onMounted(() => scanner.onScan(handleScan));
+        }
+        if (scanner && typeof Vue.onUnmounted === 'function') {
+            Vue.onUnmounted(() => scanner.offScan());
         }
 
         function selectOrder(order) {
@@ -181,7 +246,7 @@ const RefundScreen = {
 
         function handOverCreditNote(data) {
             // The abono is always handed over: when no printer took it, open the PDF.
-            if (data.refund_id && data.print_status !== 'printed') {
+            if (data.refund_id && data.print_status === 'pdf') {
                 ApiClient.refundPdf(data.refund_id);
             }
         }
@@ -280,7 +345,7 @@ const RefundScreen = {
 
             <div v-if="!selectedOrder" style="flex:1; display:flex; flex-direction:column; padding:16px; gap:12px; overflow:auto;">
                 <div style="display:flex; gap:8px;">
-                    <input v-model="searchQuery" @keyup.enter="handleSearch" placeholder="Buscar por nº de pedido o referencia..." style="flex:1; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px;" />
+                    <input v-model="searchQuery" @keyup.enter="handleSearch" placeholder="Buscar o escanear: nº de pedido o referencia..." style="flex:1; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px;" />
                     <button @click="handleSearch" :disabled="loading" style="padding:8px 16px; border-radius:8px; border:none; background:var(--primary); color:#fff; cursor:pointer; font-family:inherit; font-size:13px; font-weight:600;">
                         <span v-if="loading">...</span>
                         <span v-else>Buscar</span>
