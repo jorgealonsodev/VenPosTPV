@@ -287,6 +287,12 @@ class RefundController
             $results = $this->orderSearchService->search($query);
 
             return new JsonResponse(['data' => $results], Response::HTTP_OK);
+        } catch (RefundException $e) {
+            // No TPV sale matched and the shop could not be asked for an online order.
+            return new JsonResponse(
+                ['error' => 'Online orders cannot be searched right now: ' . $e->getMessage(), 'retry' => true],
+                Response::HTTP_BAD_GATEWAY
+            );
         } catch (\Throwable $e) {
             return new JsonResponse(
                 ['error' => 'Search failed', 'retry' => false],

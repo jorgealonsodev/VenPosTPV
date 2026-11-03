@@ -119,17 +119,17 @@ class TicketDataResolver
      */
     public function resolveRefund(int $refundId): ?TicketData
     {
-        $refund = $this->connection->fetchAssociative(
-            "SELECT id, ps_order_id, terminal_id, user_id, credit_note_number, reason_code, reason_text, total, cash_amount, card_amount, voucher_code, voucher_amount, exchange_credit, created_at, completed_at
-             FROM refund WHERE id = ? AND status = 'done'",
-            [$refundId]
-        );
+        // SELECT *: the online-order columns (V27) may not exist on an older database.
+        $refund = $this->connection->fetchAssociative("SELECT * FROM refund WHERE id = ? AND status = 'done'", [$refundId]);
         if ($refund === false) {
             return null;
         }
 
         $withoutTicket = $refund['ps_order_id'] === null;
-        $order = $withoutTicket ? false : $this->connection->fetchAssociative(
+        // An online order has no order_meta: its reference, date and line names were
+        // stored with the refund, and the VAT comes from the catalog like without ticket.
+        $online = !empty($refund['online']);
+        $order = $withoutTicket || $online ? false : $this->connection->fetchAssociative(
             'SELECT payment_breakdown, created_at FROM order_meta WHERE ps_order_id = ?',
             [(int) $refund['ps_order_id']]
         );
@@ -139,12 +139,15 @@ class TicketDataResolver
 
         $lines = [];
         $catalogTax = 0.0;
-        foreach ($this->connection->fetchAllAssociative('SELECT line_index, product_id, id_product_attribute, quantity, amount FROM refund_line WHERE refund_id = ? ORDER BY id', [$refundId]) as $line) {
+        foreach ($this->connection->fetchAllAssociative('SELECT * FROM refund_line WHERE refund_id = ? ORDER BY id', [$refundId]) as $line) {
             $quantity = max(1, (int) $line['quantity']);
             $amount = round((float) $line['amount'], 2);
-            if ($withoutTicket) {
+            if ($withoutTicket || $online) {
                 [$name, $taxShare] = $this->catalogLine((int) $line['product_id'], (int) $line['id_product_attribute']);
                 $catalogTax += $amount * $taxShare;
+                if ($online && isset($line['name']) && \is_string($line['name']) && $line['name'] !== '') {
+                    $name = $line['name'];
+                }
             } else {
                 $saleLine = $line['line_index'] !== null ? ($saleLines[(int) $line['line_index']] ?? []) : [];
                 $name = isset($saleLine['name']) && \is_string($saleLine['name']) ? $saleLine['name'] : 'Producto';
@@ -160,10 +163,13 @@ class TicketDataResolver
         $total = round((float) $refund['total'], 2);
         $saleTotal = (float) ($breakdown['total'] ?? 0);
         $saleTax = (float) ($breakdown['tax'] ?? 0);
-        $tax = $withoutTicket
+        $tax = $withoutTicket || $online
             ? round($catalogTax, 2)
             : ($saleTotal > 0 ? round($total * $saleTax / $saleTotal, 2) : 0.0);
         $reference = isset($breakdown['reference']) && \is_string($breakdown['reference']) ? $breakdown['reference'] : '';
+        if ($online) {
+            $reference = (string) ($refund['source_reference'] ?? '');
+        }
         $number = (string) $refund['credit_note_number'];
 
         $reasonCode = (string) $refund['reason_code'];
@@ -195,21 +201,24 @@ class TicketDataResolver
             subtotal: round($total - $tax, 2),
             tax: $tax,
             total: $total,
-            paymentMethod: $withoutTicket ? $this->noTicketMethod($refund) : (string) ($breakdown['payment_method'] ?? ''),
+            paymentMethod: $withoutTicket ? $this->noTicketMethod($refund) : ($online ? 'online' : (string) ($breakdown['payment_method'] ?? '')),
             amountTendered: 0.0,
             changeDue: 0.0,
             verificationUrl: $this->verificationService->buildVerificationUrl($token),
             ticketCode: $this->ticketCode((int) $refund['terminal_id']),
             creditNote: new CreditNoteInfo(
                 number: $number,
-                rectifiesReference: $withoutTicket ? 'Sin ticket' : $reference,
-                rectifiesDate: $order !== false ? new \DateTimeImmutable((string) $order['created_at']) : null,
+                rectifiesReference: $withoutTicket ? 'Sin ticket' : ($online ? trim('Pedido online ' . $reference) : $reference),
+                rectifiesDate: $order !== false
+                    ? new \DateTimeImmutable((string) $order['created_at'])
+                    : ($online && !empty($refund['source_date']) ? new \DateTimeImmutable((string) $refund['source_date']) : null),
                 reason: $reason,
                 cashAmount: round((float) $refund['cash_amount'], 2),
                 cardAmount: round((float) $refund['card_amount'], 2),
                 voucherCode: isset($refund['voucher_code']) && $refund['voucher_code'] !== '' ? (string) $refund['voucher_code'] : null,
                 voucherAmount: $refund['voucher_amount'] !== null ? round((float) $refund['voucher_amount'], 2) : null,
                 exchangeCredit: $refund['exchange_credit'] !== null ? round((float) $refund['exchange_credit'], 2) : null,
+                webRefundAmount: $online && isset($refund['web_refund_amount']) ? round((float) $refund['web_refund_amount'], 2) : null,
             ),
         );
     }

@@ -296,4 +296,46 @@ final class RefundControllerTest extends TestCase
 
         $this->createController(orderSearch: $orderSearch)->searchOrders(SessionRequest::create(['q' => 'ABC'], ['user_id' => 1]));
     }
+
+    public function testSearchOrdersMapsAShopThatCannotBeAskedTo502WithAClearMessage(): void
+    {
+        $orderSearch = $this->createMock(OrderSearchService::class);
+        $orderSearch->method('search')->willThrowException(RefundException::psUnavailable('Connection refused'));
+
+        $response = $this->createController(orderSearch: $orderSearch)->searchOrders(SessionRequest::create(['q' => 'XKBKNABJK'], ['user_id' => 1]));
+
+        $this->assertSame(Response::HTTP_BAD_GATEWAY, $response->getStatusCode());
+        $data = json_decode((string) $response->getContent(), true);
+        $this->assertSame('Online orders cannot be searched right now: PrestaShop refund service unavailable: Connection refused', $data['error']);
+        $this->assertTrue($data['retry']);
+    }
+
+    public function testSearchOrdersStillMapsOtherFailuresTo500(): void
+    {
+        $orderSearch = $this->createMock(OrderSearchService::class);
+        $orderSearch->method('search')->willThrowException(new \RuntimeException('db down'));
+
+        $response = $this->createController(orderSearch: $orderSearch)->searchOrders(SessionRequest::create(['q' => 'ABC'], ['user_id' => 1]));
+
+        $this->assertSame(Response::HTTP_INTERNAL_SERVER_ERROR, $response->getStatusCode());
+        $this->assertSame('Search failed', json_decode((string) $response->getContent(), true)['error']);
+    }
+
+    public function testOnlineRefundResultIsReturnedAndOpensNoDrawer(): void
+    {
+        $refundService = $this->createMock(RefundService::class);
+        $refundService->expects($this->once())->method('processRefund')->with(1, 77)->willReturn([
+            'refund_id' => 5, 'credit_note_number' => 'R2026-000005', 'order_slip_id' => 900, 'refunded_amount' => 27.0, 'cash_amount' => 0.0, 'card_amount' => 0.0,
+            'voucher_code' => null, 'online' => true, 'web_refund_amount' => 27.0, 'lines' => [], 'restock_failed' => [], 'saga_error' => false, 'already_completed' => false,
+        ]);
+        $printer = $this->createMock(PrinterService::class);
+        $printer->expects($this->never())->method('openDrawer');
+
+        $response = $this->createController($refundService, printer: $printer)->refund(SessionRequest::create([], ['user_id' => 1], json_encode(['ps_order_id' => 77, 'lines' => [['line_index' => 0, 'quantity' => 1]], 'reason_code' => 'size'])));
+
+        $this->assertSame(Response::HTTP_OK, $response->getStatusCode());
+        $data = json_decode((string) $response->getContent(), true)['data'];
+        $this->assertTrue($data['online']);
+        $this->assertSame(27, $data['web_refund_amount']);
+    }
 }

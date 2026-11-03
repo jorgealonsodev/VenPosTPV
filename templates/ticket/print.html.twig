@@ -81,7 +81,8 @@
         {% if ticket.creditNote.exchangeCredit is not null %}<div>Aplicado a cambio: {{ ticket.creditNote.exchangeCredit|number_format(2, ',', '.') }} €</div>
         {% endif %}{% if ticket.creditNote.cashAmount > 0 %}<div>Efectivo: {{ ticket.creditNote.cashAmount|number_format(2, ',', '.') }} €</div>{% endif %}
         {% if ticket.creditNote.cardAmount > 0 %}<div>Tarjeta: {{ ticket.creditNote.cardAmount|number_format(2, ',', '.') }} €</div>{% endif %}
-        {% if ticket.creditNote.voucherCode %}<div class="bold">Vale: {{ ticket.creditNote.voucherCode }}  {{ ticket.creditNote.voucherAmount|number_format(2, ',', '.') }} €</div>{% endif %}
+        {% if ticket.creditNote.webRefundAmount > 0 %}<div class="bold">Reembolso pendiente en la web: {{ ticket.creditNote.webRefundAmount|number_format(2, ',', '.') }} €</div>
+        {% endif %}{% if ticket.creditNote.voucherCode %}<div class="bold">Vale: {{ ticket.creditNote.voucherCode }}  {{ ticket.creditNote.voucherAmount|number_format(2, ',', '.') }} €</div>{% endif %}
     {% elseif not giftMode %}
         <div class="right">Subtotal: {{ ticket.subtotal|number_format(2, ',', '.') }} €</div>
         <div class="right">IVA: {{ ticket.tax|number_format(2, ',', '.') }} €</div>

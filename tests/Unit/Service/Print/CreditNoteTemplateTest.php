@@ -138,4 +138,15 @@ final class CreditNoteTemplateTest extends TestCase
         $this->assertStringNotContainsString('Abono: ', $html);
         $this->assertStringNotContainsString('Entrega', $html);
     }
+
+    public function testOnlineOrderCreditNoteShowsThePendingWebRefundInsteadOfCashOrCard(): void
+    {
+        $note = new CreditNoteInfo('R2026-000011', 'Pedido online XKBKNABJK', new \DateTimeImmutable('2026-10-20 10:00'), 'Talla o color', 0.0, 0.0, webRefundAmount: 24.18);
+        $html = $this->render($note, method: 'online', tendered: 0.0, change: 0.0);
+
+        $this->assertStringContainsString('Rectifica: Pedido online XKBKNABJK (20/10/2026)', $html);
+        $this->assertStringContainsString('<div class="bold">Reembolso pendiente en la web: 24,18 €</div>', $html);
+        $this->assertStringNotContainsString('Efectivo:', $html);
+        $this->assertStringNotContainsString('Tarjeta:', $html);
+    }
 }

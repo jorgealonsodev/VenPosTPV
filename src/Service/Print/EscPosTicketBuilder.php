@@ -135,6 +135,11 @@ class EscPosTicketBuilder
             if ($creditNote->cardAmount > 0) {
                 $printer->text('Tarjeta: ' . number_format($creditNote->cardAmount, 2) . " €\n");
             }
+            if ($creditNote->webRefundAmount !== null && $creditNote->webRefundAmount > 0) {
+                $printer->selectPrintMode(Printer::MODE_EMPHASIZED);
+                $printer->text('Reembolso pendiente en la web: ' . number_format($creditNote->webRefundAmount, 2) . " €\n");
+                $printer->selectPrintMode();
+            }
             if ($creditNote->voucherCode !== null) {
                 $printer->text('Vale: ' . $this->sanitize($creditNote->voucherCode) . '  ' . number_format((float) $creditNote->voucherAmount, 2) . " €\n");
             }

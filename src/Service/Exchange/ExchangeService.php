@@ -36,9 +36,11 @@ use VenPosTPV\Service\Refund\VoucherIssuer;
  * A retry holds a named lock on the exchange, so two terminals cannot create the
  * sale twice, and never sends or pays the returned part again.
  *
- * Online orders (R14 second half, task T4) are not TPV sales: their returned part
- * follows R10 (no money back at the till) and plugs in where startReturn() calls
- * RefundService.
+ * Online orders (R14 second half) go through the same RefundService call: their
+ * returned part follows R10, so a difference in the customer's favour is never paid
+ * at the till but left as a pending web refund (refund.web_refund_amount, order
+ * state "Devuelto en tienda – reembolso pendiente"), and one in the shop's favour is
+ * collected normally by the new sale.
  */
 class ExchangeService
 {

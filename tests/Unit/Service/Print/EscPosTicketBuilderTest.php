@@ -417,4 +417,28 @@ final class EscPosTicketBuilderTest extends TestCase
         $this->assertStringNotContainsString('Abono: ', $out, 'no credit note number known');
         $this->assertStringNotContainsString('Entrega', $out);
     }
+
+    public function testOnlineOrderCreditNotePrintsThePendingWebRefundInsteadOfCashOrCard(): void
+    {
+        $note = new CreditNoteInfo('R2026-000011', 'Pedido online XKBKNABJK', new \DateTimeImmutable('2026-10-20 10:00'), 'Talla o color', 0.0, 0.0, webRefundAmount: 24.18);
+        $out = $this->createBuilder()->build($this->documentTicket($note, 'online', 0.0, 0.0));
+
+        $this->assertStringContainsString('Rectifica: Pedido online XKBKNABJK (20/10/2026)', $out);
+        $this->assertStringContainsString('TOTAL DEVUELTO: 24.18', $out);
+        $this->assertStringContainsString('Reembolso pendiente en la web: 24.18', $out);
+        $this->assertStringNotContainsString('Efectivo:', $out);
+        $this->assertStringNotContainsString('Tarjeta:', $out);
+    }
+
+    public function testOnlineExchangeCreditNoteShowsTheAppliedCreditAndOnlyTheWebRefundOwed(): void
+    {
+        $note = new CreditNoteInfo('R2026-000012', 'Pedido online XKBKNABJK', null, 'Talla o color', 0.0, 0.0, exchangeCredit: 40.0, webRefundAmount: 15.0);
+        $out = $this->createBuilder()->build($this->documentTicket($note, 'online', 0.0, 0.0));
+
+        $this->assertStringContainsString('Aplicado a cambio: 40.00', $out);
+        $this->assertStringContainsString('Reembolso pendiente en la web: 15.00', $out);
+
+        $nothingOwed = new CreditNoteInfo('R2026-000013', 'Pedido online XKBKNABJK', null, 'Talla o color', 0.0, 0.0, exchangeCredit: 24.18, webRefundAmount: 0.0);
+        $this->assertStringNotContainsString('Reembolso pendiente', $this->createBuilder()->build($this->documentTicket($nothingOwed, 'online', 0.0, 0.0)));
+    }
 }

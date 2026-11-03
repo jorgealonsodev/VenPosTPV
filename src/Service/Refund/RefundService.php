@@ -28,6 +28,12 @@ use VenPosTPV\Service\Refund\Exception\RefundException;
  * A sale paid (partly) with exchange credit is refunded by its whole tender
  * {cash, card, exchange_credit}: the credit share becomes a PrestaShop voucher
  * instead of cash that never entered the drawer for that sale.
+ *
+ * Online orders (a PrestaShop order with no order_meta row, R3/R10) go through the
+ * same lifecycle with amounts and refundable quantities read from the shop: only
+ * once delivered and within the window counted from the delivery, the TPV pays
+ * nothing (no cash, card or voucher) and the slip leaves the order in "Devuelto en
+ * tienda – reembolso pendiente" with the amount the office refunds from the web.
  */
 class RefundService
 {
@@ -150,12 +156,67 @@ class RefundService
 
         $requestId = bin2hex(random_bytes(16));
 
-        // Planning and reserving happen under a lock on the sale row, so two
-        // terminals refunding the same sale cannot both take the same units.
-        [$refundId, $payload] = $this->conn->transactional(function () use ($psOrderId, $lines, $cardConfirmed, $requestId, $cashContext, $userId, $reasonCode, $reasonText, $exchangeTotal, $reserved, $shopId): array {
-            $locked = $this->conn->fetchOne('SELECT ps_order_id FROM order_meta WHERE ps_order_id = ? FOR UPDATE', [$psOrderId]);
-            if ($locked === false) {
-                throw RefundException::orderNotFound($psOrderId);
+        // Not a TPV sale: an online order, read from the shop under a named lock
+        // (there is no sale row to lock) before any local write.
+        $online = $this->conn->fetchOne('SELECT 1 FROM order_meta WHERE ps_order_id = ?', [$psOrderId]) === false;
+        $lockName = 'venpostpv_online_refund_' . $psOrderId;
+        $onlineOrder = null;
+        if ($online) {
+            if ((int) $this->conn->fetchOne('SELECT GET_LOCK(?, 5)', [$lockName]) !== 1) {
+                throw RefundException::conflict(sprintf('Another refund of order %d is being prepared on another terminal', $psOrderId));
+            }
+        }
+
+        try {
+            if ($online) {
+                $onlineOrder = $this->orderSearchService->getOnlineOrder($psOrderId);
+                if ($onlineOrder === null) {
+                    throw RefundException::orderNotFound($psOrderId);
+                }
+            }
+
+            [$refundId, $payload] = $this->planOrderRefund($psOrderId, $onlineOrder, $lines, $cardConfirmed, $requestId, $cashContext, $userId, $reasonCode, $reasonText, $exchangeTotal, $reserved, $shopId);
+        } finally {
+            if ($online) {
+                $this->conn->fetchOne('SELECT RELEASE_LOCK(?)', [$lockName]);
+            }
+        }
+
+        return $this->send($refundId, $payload, (int) $cashContext['session_id']);
+    }
+
+    /**
+     * @param array<string, mixed>|null $onlineOrder the online order, null for a TPV sale
+     * @param array<int, array<string, mixed>>|null $lines
+     * @param array<string, mixed> $cashContext
+     *
+     * @return array{0: int, 1: array<string, mixed>} refund id and stored payload
+     */
+    private function planOrderRefund(
+        int $psOrderId,
+        ?array $onlineOrder,
+        ?array $lines,
+        bool $cardConfirmed,
+        string $requestId,
+        array $cashContext,
+        int $userId,
+        string $reasonCode,
+        string $reasonText,
+        ?float $exchangeTotal,
+        ?callable $reserved,
+        int $shopId,
+    ): array {
+        $online = $onlineOrder !== null;
+
+        // Planning and reserving happen under a lock on the sale row (or, for an
+        // online order, the named lock held by the caller), so two terminals
+        // refunding the same order cannot both take the same units.
+        return $this->conn->transactional(function () use ($psOrderId, $onlineOrder, $online, $lines, $cardConfirmed, $requestId, $cashContext, $userId, $reasonCode, $reasonText, $exchangeTotal, $reserved, $shopId): array {
+            if (!$online) {
+                $locked = $this->conn->fetchOne('SELECT ps_order_id FROM order_meta WHERE ps_order_id = ? FOR UPDATE', [$psOrderId]);
+                if ($locked === false) {
+                    throw RefundException::orderNotFound($psOrderId);
+                }
             }
 
             // An earlier call with an unknown outcome must be settled explicitly first.
@@ -171,12 +232,17 @@ class RefundService
                 ));
             }
 
-            $order = $this->orderSearchService->getOrder($psOrderId);
+            $order = $onlineOrder ?? $this->orderSearchService->getOrder($psOrderId);
             if ($order === null) {
                 throw RefundException::orderNotFound($psOrderId);
             }
 
-            $this->assertWithinRefundWindow($order, (int) ($cashContext['terminal_id'] ?? 0));
+            $terminalId = (int) ($cashContext['terminal_id'] ?? 0);
+            if ($online) {
+                $this->assertOnlineOrderRefundable($order, $terminalId);
+            } else {
+                $this->assertWithinRefundWindow(new \DateTimeImmutable((string) $order['created_at']), $terminalId, 'This sale', 'sold');
+            }
 
             $planned = $this->planLines($order, $lines);
             $total = round(array_sum(array_column($planned, 'amount')), 2);
@@ -187,7 +253,9 @@ class RefundService
             // In an exchange only what the new items do not absorb leaves the shop.
             $exchangeCredit = $exchangeTotal !== null ? round(min($total, $exchangeTotal), 2) : null;
             $payout = $exchangeCredit !== null ? round($total - $exchangeCredit, 2) : $total;
-            [$cashAmount, $cardAmount, $voucherAmount] = $payout > 0 ? $this->splitByTender($order, $payout) : [0.0, 0.0, 0.0];
+            // Online orders move no money at the till: the payout is refunded from the web.
+            $webRefund = $online ? max(0.0, $payout) : null;
+            [$cashAmount, $cardAmount, $voucherAmount] = !$online && $payout > 0 ? $this->splitByTender($order, $payout) : [0.0, 0.0, 0.0];
             $this->assertCardConfirmed($cardAmount, $cardConfirmed);
             if ($voucherAmount > 0) {
                 if ($shopId <= 0) {
@@ -211,6 +279,11 @@ class RefundService
                     'restock' => $line['restock'],
                 ], $planned),
             ];
+            if ($webRefund !== null) {
+                // Nothing owed (an exchange the new items absorb) is an ordinary refund state.
+                $payload['target_state'] = $webRefund > 0 ? 'web_refund_pending' : 'refund';
+                $payload['web_refund_amount'] = $webRefund;
+            }
             // Stored with the row only (never sent to the refund module): where the
             // voucher for the exchange-credit share is issued, also on a retry.
             $stored = $voucherAmount > 0 ? $payload + ['voucher_shop_id' => $shopId] : $payload;
@@ -227,10 +300,16 @@ class RefundService
                 'total' => $total,
                 'cash_amount' => $cashAmount,
                 'card_amount' => $cardAmount,
-                'card_confirmed' => $cardConfirmed ? 1 : 0,
+                'card_confirmed' => $cardConfirmed && $cardAmount > 0 ? 1 : 0,
                 'ps_payload' => json_encode($stored, JSON_THROW_ON_ERROR),
                 'created_at' => (new \DateTimeImmutable())->format('Y-m-d H:i:s'),
             ];
+            if ($webRefund !== null) {
+                $row['online'] = 1;
+                $row['web_refund_amount'] = $webRefund;
+                $row['source_reference'] = mb_substr((string) $order['reference'], 0, 32);
+                $row['source_date'] = $order['created_at'] !== '' ? (new \DateTimeImmutable((string) $order['created_at']))->format('Y-m-d H:i:s') : null;
+            }
             if ($voucherAmount > 0) {
                 $row['voucher_amount'] = $voucherAmount;
             }
@@ -241,7 +320,7 @@ class RefundService
             $refundId = (int) $this->conn->lastInsertId();
 
             foreach ($planned as $line) {
-                $this->conn->insert('refund_line', [
+                $refundLine = [
                     'refund_id' => $refundId,
                     'line_index' => $line['line_index'],
                     'product_id' => $line['product_id'],
@@ -249,7 +328,12 @@ class RefundService
                     'quantity' => $line['quantity'],
                     'amount' => $line['amount'],
                     'restock' => $line['restock'] ? 1 : 0,
-                ]);
+                ];
+                if ($online) {
+                    // No order_meta to read the name from when printing the credit note.
+                    $refundLine['name'] = mb_substr((string) ($order['lines'][$line['line_index']]['name'] ?? ''), 0, 255);
+                }
+                $this->conn->insert('refund_line', $refundLine);
             }
 
             if ($reserved !== null) {
@@ -264,8 +348,6 @@ class RefundService
 
             return [$refundId, $stored];
         });
-
-        return $this->send($refundId, $payload, (int) $cashContext['session_id']);
     }
 
     /**
@@ -657,6 +739,8 @@ class RefundService
             'cash_amount' => $cashAmount,
             'card_amount' => round((float) $refund['card_amount'], 2),
             'voucher_code' => isset($refund['voucher_code']) && $refund['voucher_code'] !== '' ? (string) $refund['voucher_code'] : null,
+            'online' => !empty($refund['online']),
+            'web_refund_amount' => !empty($refund['online']) && isset($refund['web_refund_amount']) ? round((float) $refund['web_refund_amount'], 2) : null,
             'lines' => array_map(static fn (array $l): array => [
                 'line_index' => $l['line_index'] !== null ? (int) $l['line_index'] : null,
                 'product_id' => (int) $l['product_id'],
@@ -674,25 +758,49 @@ class RefundService
 
     /**
      * Refunds are blocked once the terminal's window (30 days by default) has passed
-     * since the sale.
-     *
-     * @param array<string, mixed> $order
+     * since $from: the sale for a TPV sale, the delivery for an online order.
      */
-    private function assertWithinRefundWindow(array $order, int $terminalId): void
+    private function assertWithinRefundWindow(\DateTimeImmutable $from, int $terminalId, string $subject, string $verb): void
     {
         $days = $terminalId > 0
             ? $this->conn->fetchOne('SELECT refund_window_days FROM terminal WHERE id = ?', [$terminalId])
             : false;
         $days = $days !== false && $days !== null && (int) $days > 0 ? (int) $days : self::DEFAULT_REFUND_WINDOW_DAYS;
 
-        $soldAt = new \DateTimeImmutable((string) $order['created_at']);
-        if ($soldAt->modify(sprintf('+%d days', $days)) < new \DateTimeImmutable()) {
+        if ($from->modify(sprintf('+%d days', $days)) < new \DateTimeImmutable()) {
             throw RefundException::validationFailed(sprintf(
-                'This sale is outside the %d-day refund window (sold on %s)',
+                '%s is outside the %d-day refund window (%s on %s)',
+                $subject,
                 $days,
-                $soldAt->format('d/m/Y')
+                $verb,
+                $from->format('d/m/Y')
             ));
         }
+    }
+
+    /**
+     * R3: only delivered online orders, within the window counted from the delivery.
+     * An order the TPV module created but this TPV has no record of is not an online
+     * order: its money was taken at some till, so it is refunded from the back office.
+     *
+     * @param array<string, mixed> $order
+     */
+    private function assertOnlineOrderRefundable(array $order, int $terminalId): void
+    {
+        if (!empty($order['created_by_tpv'])) {
+            throw RefundException::validationFailed(sprintf(
+                'Order %d was paid at a TPV but is not recorded in this one; refund it from the PrestaShop back office',
+                (int) $order['ps_order_id']
+            ));
+        }
+        if (!\is_string($order['delivered_at'] ?? null) || $order['delivered_at'] === '') {
+            throw RefundException::validationFailed(sprintf(
+                'Only delivered online orders can be refunded at the shop (current state: %s)',
+                (string) ($order['state'] ?? '') !== '' ? $order['state'] : 'unknown'
+            ));
+        }
+
+        $this->assertWithinRefundWindow(new \DateTimeImmutable($order['delivered_at']), $terminalId, 'This online order', 'delivered');
     }
 
     /**

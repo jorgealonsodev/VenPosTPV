@@ -5,11 +5,23 @@ declare(strict_types=1);
 namespace VenPosTPV\Service\Refund;
 
 use Doctrine\DBAL\Connection;
+use VenPosTPV\Service\Refund\Exception\RefundException;
 
+/**
+ * Finds the orders a refund starts from: TPV sales (order_meta) and, when no TPV
+ * sale matches a web reference (9 letters) or an order number, online orders read
+ * from PrestaShop through the module. Both come back in the same shape (lines with
+ * paid_total, refunded_qty, refundable_qty...); online ones carry online=true, the
+ * delivery date and no tender, because the TPV never took their money.
+ */
 class OrderSearchService
 {
+    /** PrestaShop's default order references: 9 letters. */
+    private const WEB_REFERENCE = '/^[A-Za-z]{9}$/';
+
     public function __construct(
         private readonly Connection $connection,
+        private readonly ?PsOrderLookupClient $lookupClient = null,
     ) {
     }
 
@@ -50,8 +62,123 @@ class OrderSearchService
         $sql = 'SELECT ps_order_id, terminal_id, session_id, user_id, payment_breakdown, refunded_amount, created_at FROM order_meta WHERE ' . implode(' AND ', $where) . ' ORDER BY created_at DESC LIMIT 50';
 
         $rows = $this->connection->fetchAllAssociative($sql, $params);
+        if ($rows !== []) {
+            return array_map([$this, 'hydrateOrder'], $rows);
+        }
 
-        return array_map([$this, 'hydrateOrder'], $rows);
+        return $this->searchOnline($query);
+    }
+
+    /**
+     * An online order as the refund needs it, or null when the shop has no such
+     * order. Never a TPV sale: those are read with getOrder().
+     *
+     * @return array<string, mixed>|null
+     *
+     * @throws RefundException when the shop cannot be asked
+     */
+    public function getOnlineOrder(int $psOrderId): ?array
+    {
+        if ($this->lookupClient === null) {
+            return null;
+        }
+        foreach ($this->lookupClient->lookup(['id_order' => $psOrderId]) as $order) {
+            if ((int) ($order['id_order'] ?? 0) === $psOrderId) {
+                return $this->hydrateOnlineOrder($order);
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<string, mixed> $query
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function searchOnline(array $query): array
+    {
+        if ($this->lookupClient === null || !empty($query['date_from']) || !empty($query['date_to']) || !empty($query['has_refund'])) {
+            return [];
+        }
+        if (isset($query['ps_order_id']) && is_numeric($query['ps_order_id']) && (int) $query['ps_order_id'] > 0) {
+            $lookup = ['id_order' => (int) $query['ps_order_id']];
+        } elseif (\is_string($query['reference'] ?? null) && preg_match(self::WEB_REFERENCE, $query['reference']) === 1) {
+            $lookup = ['reference' => strtoupper($query['reference'])];
+        } else {
+            return [];
+        }
+
+        $orders = [];
+        foreach ($this->lookupClient->lookup($lookup) as $order) {
+            $id = (int) ($order['id_order'] ?? 0);
+            // A TPV sale is always answered from order_meta, never as an online order.
+            if ($id > 0 && $this->connection->fetchOne('SELECT 1 FROM order_meta WHERE ps_order_id = ?', [$id]) === false) {
+                $orders[] = $this->hydrateOnlineOrder($order);
+            }
+        }
+
+        return $orders;
+    }
+
+    /**
+     * Refunded quantities are the larger of what the shop's credit slips say and
+     * what this TPV refunded (or reserved with a pending refund); the amount already
+     * refunded is exact for this TPV's refunds and prorated for slips made elsewhere,
+     * so the last units take the remainder of the paid total.
+     *
+     * @param array<string, mixed> $order as the module's order lookup returns it
+     *
+     * @return array<string, mixed>
+     */
+    private function hydrateOnlineOrder(array $order): array
+    {
+        $psOrderId = (int) $order['id_order'];
+        $local = $this->refundedByLine($psOrderId);
+
+        $lines = [];
+        foreach (array_values(\is_array($order['lines'] ?? null) ? $order['lines'] : []) as $index => $line) {
+            $qty = max(0, (int) ($line['quantity'] ?? 0));
+            $paid = round((float) ($line['paid_total'] ?? 0), 2);
+            $slipped = max(0, $qty - (int) ($line['refundable_quantity'] ?? 0));
+            $localQty = $local[$index]['quantity'] ?? 0;
+            $refundedQty = min($qty, max($slipped, $localQty));
+            $elsewhere = max(0, $slipped - $localQty);
+            $refundedAmount = round(($local[$index]['amount'] ?? 0.0) + ($qty > 0 ? round($paid * $elsewhere / $qty, 2) : 0.0), 2);
+
+            $lines[] = [
+                'name' => (string) ($line['name'] ?? 'Producto'),
+                'product_id' => (int) ($line['product_id'] ?? 0),
+                'id_product_attribute' => (int) ($line['product_attribute_id'] ?? 0),
+                'id_order_detail' => (int) ($line['id_order_detail'] ?? 0),
+                'qty' => $qty,
+                'price' => round((float) ($line['unit_price_tax_incl'] ?? 0), 2),
+                'paid_total' => $paid,
+                'refunded_qty' => $refundedQty,
+                'refunded_line_amount' => $refundedAmount,
+                'refundable_qty' => max(0, $qty - $refundedQty),
+            ];
+        }
+
+        $state = \is_array($order['current_state'] ?? null) ? $order['current_state'] : [];
+
+        return [
+            'ps_order_id' => $psOrderId,
+            'online' => true,
+            'reference' => (string) ($order['reference'] ?? ''),
+            'customer_name' => (string) ($order['customer_name'] ?? ''),
+            'created_by_tpv' => !empty($order['created_by_tpv']),
+            'state' => (string) ($state['name'] ?? ''),
+            'delivered_at' => isset($order['delivered_at']) && \is_string($order['delivered_at']) && $order['delivered_at'] !== '' ? $order['delivered_at'] : null,
+            'total' => round(array_sum(array_column($lines, 'paid_total')), 2),
+            'payment_method' => 'online',
+            'lines' => $lines,
+            'tender' => null,
+            'pending_refund' => $this->pendingRefund($psOrderId),
+            'open_exchange' => $this->openExchange($psOrderId),
+            'refunded_amount' => round((float) $this->connection->fetchOne("SELECT COALESCE(SUM(total), 0) FROM refund WHERE ps_order_id = ? AND status = 'done'", [$psOrderId]), 2),
+            'created_at' => (string) ($order['date_add'] ?? ''),
+        ];
     }
 
     /**

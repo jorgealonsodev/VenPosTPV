@@ -288,6 +288,18 @@ class CashSessionService
         $salesTotal = round($sales + $salesCard, 2);
         $refundsTotal = round($refunds + $refundsCard + $refundsVoucher, 2);
 
+        // Online orders returned at the shop (R10): no money moved here, the office
+        // refunds them from the web. Informative only; no money key includes it.
+        try {
+            $refundsWebPending = (float) $this->connection->fetchOne(
+                "SELECT COALESCE(SUM(web_refund_amount), 0) FROM refund WHERE session_id = ? AND status = 'done' AND online = 1",
+                [$sessionId]
+            );
+        } catch (\Throwable) {
+            // Database not migrated to online refunds yet: there are none.
+            $refundsWebPending = 0.0;
+        }
+
         return [
             'opening_cash' => round($openingCash, 2),
             'sales_cash' => round($sales, 2),
@@ -297,6 +309,7 @@ class CashSessionService
             'refunds_card' => round($refundsCard, 2),
             'refunds_voucher' => round($refundsVoucher, 2),
             'refunds_total' => $refundsTotal,
+            'refunds_web_pending' => round($refundsWebPending, 2),
             'net_total' => round($salesTotal - $refundsTotal, 2),
             'exchange_credit' => round($exchangeCredit, 2),
             'cash_in_total' => round($cashIn, 2),

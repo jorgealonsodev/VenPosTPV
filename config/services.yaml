@@ -158,6 +158,17 @@ services:
             $shopUrl: '%ps.api.url%'
             $sharedSecret: '%sso.shared_secret%'
 
+    # Online orders (not TPV sales) read through the module for refunds/exchanges
+    VenPosTPV\Service\Refund\PsOrderLookupClient:
+        arguments:
+            $shopUrl: '%ps.api.url%'
+            $sharedSecret: '%sso.shared_secret%'
+
+    VenPosTPV\Service\Refund\OrderSearchService:
+        arguments:
+            $connection: '@doctrine.dbal.tpv_connection'
+            $lookupClient: '@VenPosTPV\Service\Refund\PsOrderLookupClient'
+
     VenPosTPV\Service\Refund\RefundService:
         arguments:
             $orderSearchService: '@VenPosTPV\Service\Refund\OrderSearchService'

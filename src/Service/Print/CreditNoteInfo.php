@@ -9,7 +9,8 @@ namespace VenPosTPV\Service\Print;
  * rectifiesReference is "Sin ticket" for a refund without a ticket; the voucher
  * fields are set when the refund was paid with a PrestaShop voucher. exchangeCredit
  * is the part applied to an exchange's new items (R13); cash and card then hold
- * only what went back to the customer.
+ * only what went back to the customer. webRefundAmount is set for an online order
+ * (R10): the TPV paid nothing and the office refunds that amount from the web.
  */
 final class CreditNoteInfo
 {
@@ -23,6 +24,7 @@ final class CreditNoteInfo
         public readonly ?string $voucherCode = null,
         public readonly ?float $voucherAmount = null,
         public readonly ?float $exchangeCredit = null,
+        public readonly ?float $webRefundAmount = null,
     ) {
     }
 }
