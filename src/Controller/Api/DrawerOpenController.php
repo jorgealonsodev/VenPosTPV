@@ -33,6 +33,13 @@ final class DrawerOpenController
 
         $this->printerService->openDrawer($terminalId);
 
-        return new JsonResponse(['success' => true], Response::HTTP_OK);
+        // C3: on a print agent till the screen follows the queued drawer job.
+        $result = ['success' => true];
+        $drawerJobId = $this->printerService->queuedJobId('drawer');
+        if ($drawerJobId !== null) {
+            $result['drawer_job_id'] = $drawerJobId;
+        }
+
+        return new JsonResponse($result, Response::HTTP_OK);
     }
 }

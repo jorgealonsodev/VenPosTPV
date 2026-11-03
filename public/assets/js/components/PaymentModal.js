@@ -84,6 +84,47 @@ const PaymentModal = {
         const doneChange = Vue.computed(() => completedChange.value === null ? change.value : completedChange.value);
         let activeVoucherSnapshot = null;
 
+        // Print agent (docs/prd/agente-impresion.md C1-C3): the checkout queued the
+        // ticket and the drawer; usePrintJobs follows them. The done screen stays until
+        // the ticket is sent or the cashier moves on with "Nueva venta".
+        const printJobs = typeof usePrintJobs !== 'undefined' ? usePrintJobs : null;
+        const drawerWarning = Vue.computed(() => (printJobs && printerType.value === 'agent' ? printJobs.drawerWarning() : ''));
+        let completedSale = null;
+        let completeEmitted = false;
+        let followsTicket = false;
+        let followsDrawer = false;
+
+        function finish() {
+            if (completeEmitted || !completedSale) return;
+            completeEmitted = true;
+            emit('complete', completedSale);
+        }
+
+        function agentSettled() {
+            const ticket = printJobs.ticket.job;
+            const drawer = printJobs.drawer.job;
+            return (!followsTicket || (ticket && ticket.phase === 'sent'))
+                && (!followsDrawer || (drawer && drawer.phase === 'opened'));
+        }
+
+        function closeWhenPrinted() {
+            if (completeEmitted) return;
+            if (agentSettled()) {
+                setTimeout(finish, 2000);
+                return;
+            }
+            setTimeout(closeWhenPrinted, 250);
+        }
+
+        function onBackdrop() {
+            // A charged sale on an agent till is completed, never just closed.
+            if (step.value === 'done' && completedSale && printerType.value === 'agent') {
+                finish();
+                return;
+            }
+            emit('close');
+        }
+
         function voucherSnapshot(code = voucherCode.value.trim()) {
             return JSON.stringify({
                 code,
@@ -237,6 +278,19 @@ const PaymentModal = {
                         ? Number(response.data.change_due)
                         : null;
                     const pt = printerType.value;
+                    if (pt === 'agent' && printJobs) {
+                        completedSale = { ...response.data, payment_method: paymentMethod };
+                        followsTicket = printJobs.trackResponse(response.data, {
+                            kind: 'sale',
+                            saleId: lastSaleId.value,
+                            orderId: lastOrderId.value,
+                            change: doneChange.value,
+                        });
+                        followsDrawer = !!response.data.drawer_job_id;
+                        step.value = 'done';
+                        closeWhenPrinted();
+                        return;
+                    }
                     if (pt === 'pdf') {
                         downloadTicket();
                     } else if (pt === 'escpos' || pt === 'system') {
@@ -372,10 +426,10 @@ const PaymentModal = {
             cashInput.value = props.total.toFixed(2).replace('.', ',');
         }
 
-        return { method, cashInput, card1, card2, step, errorMsg, errorRetry, lastOrderId, lastSaleId, methods, cashParsed, change, cardParsed, card2Parsed, dataphoneMode, printerType, voucherCode, voucherPreview, voucherBusy, voucherError, voucherTender, voucherCashInput, voucherPayable, voucherDiscount, voucherGross, voucherCashParsed, voucherChange, voucherReconciliationRequired, couponOffline, chargeWithoutCoupon, completedTotal, completedChange, doneTotal, doneChange, isSubmitting, canConfirm, handleConfirm, retryCheckout, returnToSelection, appendNum, exacto, downloadTicket, applyVoucher, invalidateVoucher, keypadKeys, quickAmounts, eur };
+        return { method, cashInput, card1, card2, step, errorMsg, errorRetry, lastOrderId, lastSaleId, methods, cashParsed, change, cardParsed, card2Parsed, dataphoneMode, printerType, voucherCode, voucherPreview, voucherBusy, voucherError, voucherTender, voucherCashInput, voucherPayable, voucherDiscount, voucherGross, voucherCashParsed, voucherChange, voucherReconciliationRequired, couponOffline, chargeWithoutCoupon, completedTotal, completedChange, doneTotal, doneChange, isSubmitting, canConfirm, handleConfirm, retryCheckout, returnToSelection, appendNum, exacto, downloadTicket, applyVoucher, invalidateVoucher, keypadKeys, quickAmounts, eur, drawerWarning, finish, onBackdrop };
     },
     template: `
-        <div class="modal-backdrop" @click.self="$emit('close')">
+        <div class="modal-backdrop" @click.self="onBackdrop">
             <!-- Done state -->
             <div v-if="step === 'done'" class="pay-result">
                 <div class="pay-result-badge pay-result-badge-ok">
@@ -386,7 +440,12 @@ const PaymentModal = {
                 <div v-if="(method === 'cash' || (method === 'voucher' && voucherTender === 'cash')) && doneChange > 0" class="pay-result-change">
                     Cambio: <span class="pay-num" style="color:var(--amber); font-weight:700;">{{ eur(doneChange) }}</span>
                 </div>
-                <div v-if="printerType !== 'none'" style="color:var(--text3); font-size:13px;">
+                <div v-if="drawerWarning" class="print-drawer-warning" role="alert">{{ drawerWarning }}</div>
+                <template v-if="printerType === 'agent'">
+                    <print-status-notice placement="payment" />
+                    <button @click="finish" class="tpv-btn tpv-btn-primary print-btn-lg" style="margin-top:4px;">Nueva venta</button>
+                </template>
+                <div v-else-if="printerType !== 'none'" style="color:var(--text3); font-size:13px;">
                     {{ printerType === 'escpos' ? 'Ticket enviado a impresora' : 'Abriendo ticket PDF...' }}
                 </div>
                 <button v-if="(lastSaleId || lastOrderId) && printerType === 'pdf'" @click="downloadTicket" class="tpv-btn" style="margin-top:8px;">

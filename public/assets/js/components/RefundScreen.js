@@ -715,6 +715,11 @@ const RefundScreen = {
             if (data.refund_id && data.print_status === 'pdf') {
                 ApiClient.refundPdf(data.refund_id);
             }
+            // Print agent: the queued credit note (and drawer) are followed; on a problem
+            // the sale screen offers its PDF (docs/prd/agente-impresion.md C1-C3).
+            if (data.print_status === 'queued' && typeof usePrintJobs !== 'undefined') {
+                usePrintJobs.trackResponse(data, { kind: 'credit_note', refundId: data.refund_id || null });
+            }
         }
 
         function refundDoneMessage(data) {

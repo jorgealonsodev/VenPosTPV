@@ -29,6 +29,8 @@ const useSession = (function () {
         outbox: null,
         dataphoneMode: 'integrated',
         printerType: 'pdf',
+        // PRD agente-impresion C4: { paired, connected, lastSeen, offline } of this till's print agent.
+        printAgent: null,
         stockSyncIntervalSeconds: 60,
         stockPushIntervalSeconds: 0,
     });
@@ -235,8 +237,44 @@ const useSession = (function () {
         return session.outbox;
     }
 
+    // C4: more than 2 minutes without the agent connecting (server time of its last request).
+    const PRINT_AGENT_OFFLINE_MS = 120000;
+
+    /** The print agent of this till, only when its printer is the agent; a failed read keeps the last state. */
+    async function refreshPrintAgent() {
+        if (session.printerType !== 'agent' || !session.terminalId || typeof ApiClient.printAgentStatus !== 'function') {
+            session.printAgent = null;
+            return null;
+        }
+        try {
+            const data = await ApiClient.printAgentStatus(session.terminalId);
+            if (data && typeof data === 'object') {
+                const seen = data.last_seen ? Date.parse(data.last_seen) : NaN;
+                session.printAgent = {
+                    paired: !!data.paired,
+                    connected: !!data.connected,
+                    lastSeen: data.last_seen || null,
+                    offline: !data.connected && (Number.isNaN(seen) || Date.now() - seen > PRINT_AGENT_OFFLINE_MS),
+                };
+            }
+        } catch (e) {
+            // Keep the last known state.
+        }
+        return session.printAgent;
+    }
+
+    /** The permanent notice of the sale screen (C4), or '' while the agent is connected. */
+    function printAgentNotice() {
+        const agent = session.printAgent;
+        if (session.printerType !== 'agent' || !agent || !agent.offline) return '';
+        if (!agent.lastSeen) return 'La impresora no está conectada. Conéctala desde Ajustes → Cajas.';
+        const since = new Date(agent.lastSeen).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+        return 'La impresora no está conectada desde las ' + since + '. Puedes seguir cobrando: el ticket se ofrece en PDF.';
+    }
+
     async function doPoll() {
         refreshOutbox();
+        refreshPrintAgent();
         try {
             const response = await ApiClient.syncStatus();
             if (response && response.state) {
@@ -359,6 +397,7 @@ const useSession = (function () {
         session.syncState = 'unknown';
         session.syncData = null;
         session.outbox = null;
+        session.printAgent = null;
         // Remove screen from localStorage so it does not rehydrate
         try {
             const raw = localStorage.getItem(STORAGE_KEY);
@@ -387,6 +426,8 @@ const useSession = (function () {
         hydrateCashSession,
         refreshCashTotals,
         refreshOutbox,
+        refreshPrintAgent,
+        printAgentNotice,
         rememberDeviceToken,
         restoreDeviceCookie,
         toggleTheme,

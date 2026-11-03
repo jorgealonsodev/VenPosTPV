@@ -20,7 +20,11 @@ const OrderDetailView = {
             if (!saleId && !psOrderId) return;
             try {
                 const result = saleId ? await ApiClient.ticketReprintSale(saleId) : await ApiClient.ticketReprint(psOrderId);
-                if (result && result.data && result.data.fallback === 'pdf') {
+                if (result && result.data && result.data.print_status === 'queued' && typeof usePrintJobs !== 'undefined') {
+                    // Print agent: followed until sent; a problem stays on the sale screen (C1, C2).
+                    usePrintJobs.trackResponse(result.data, { kind: 'reprint', saleId, orderId: psOrderId });
+                    emit('notify', 'Imprimiendo ticket…', 'var(--blue)');
+                } else if (result && result.data && result.data.fallback === 'pdf') {
                     pdf();
                     emit('notify', 'Descargando ticket PDF', 'var(--blue)');
                 } else {

@@ -34,21 +34,41 @@ const CashOpenScreen = {
             logout();
         }
 
-        const drawerStatus = Vue.ref('');
+        const drawerNote = Vue.ref('');
+        // Print agent: the queued drawer job (C3), followed by usePrintJobs.
+        const drawerJobId = Vue.ref(null);
+        const agentDrawer = () => {
+            const jobs = typeof usePrintJobs !== 'undefined' ? usePrintJobs : null;
+            return jobs && drawerJobId.value && jobs.drawer.job && jobs.drawer.job.jobId === drawerJobId.value ? jobs.drawer.job : null;
+        };
+        const drawerWarn = Vue.computed(() => { const job = agentDrawer(); return !!job && job.phase === 'not_opened'; });
+        const drawerStatus = Vue.computed(() => {
+            const job = agentDrawer();
+            if (!job) return drawerNote.value;
+            if (job.phase === 'opened') return '✓ Cajón abierto';
+            if (job.phase === 'not_opened') return usePrintJobs.DRAWER_WARNING;
+            return 'Abriendo cajón…';
+        });
 
         async function openDrawer() {
-            drawerStatus.value = 'Enviando...';
+            drawerJobId.value = null;
+            drawerNote.value = 'Enviando...';
             try {
-                await ApiClient.openDrawer();
-                drawerStatus.value = '✓ Cajón abierto';
-                setTimeout(() => { drawerStatus.value = ''; }, 2500);
+                const response = await ApiClient.openDrawer();
+                if (response && response.drawer_job_id && typeof usePrintJobs !== 'undefined') {
+                    drawerJobId.value = response.drawer_job_id;
+                    usePrintJobs.trackDrawer(response.drawer_job_id);
+                    return;
+                }
+                drawerNote.value = '✓ Cajón abierto';
+                setTimeout(() => { drawerNote.value = ''; }, 2500);
             } catch (e) {
-                drawerStatus.value = '✗ Error al abrir';
-                setTimeout(() => { drawerStatus.value = ''; }, 2500);
+                drawerNote.value = '✗ Error al abrir';
+                setTimeout(() => { drawerNote.value = ''; }, 2500);
             }
         }
 
-        return { session, amount, quick, setAmount, confirm, showSettings, handleLogout, handleThemeToggle, openDrawer, drawerStatus };
+        return { session, amount, quick, setAmount, confirm, showSettings, handleLogout, handleThemeToggle, openDrawer, drawerStatus, drawerWarn };
     },
     template: `
         <div style="width:100%; height:100%; background:var(--bg); display:flex; align-items:center; justify-content:center;">
@@ -107,7 +127,8 @@ const CashOpenScreen = {
                         onmouseout="this.style.borderColor='var(--border)'; this.style.color='var(--text2)'">
                         🗂 Abrir cajón
                     </button>
-                    <div v-if="drawerStatus" style="font-size:12px; color:var(--text3);">{{ drawerStatus }}</div>
+                    <div v-if="drawerStatus && drawerWarn" class="print-drawer-warning" role="alert">{{ drawerStatus }}</div>
+                    <div v-else-if="drawerStatus" style="font-size:12px; color:var(--text3);">{{ drawerStatus }}</div>
                 </div>
             </div>
         </div>

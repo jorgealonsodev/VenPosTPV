@@ -150,6 +150,8 @@ const SettingsModal = {
                 if (terminal.value.id === useSession.session.terminalId) {
                     useSession.session.dataphoneMode = terminal.value.dataphone_mode;
                     useSession.session.printerType = terminal.value.printer_type;
+                    // C4: the sale screen notice follows the new printer at once.
+                    if (typeof useSession.refreshPrintAgent === 'function') useSession.refreshPrintAgent();
                 }
                 await loadTills();
             } catch (e) {
@@ -229,6 +231,11 @@ const SettingsModal = {
             } finally {
                 creatingTill.value = false;
             }
+        }
+
+        // docs/prd/agente-impresion.md S3: in the till list the agent has its own name.
+        function printerTypeLabel(type) {
+            return type === 'agent' ? 'Agente de impresión' : type;
         }
 
         function tillSeen(till) {
@@ -436,7 +443,7 @@ const SettingsModal = {
             editingId, editForm, editError, saving, startEdit, cancelEdit, handleSave,
             handleDeactivate, handleUnlock,
             terminal, terminalLoading, terminalSaving, terminalError, saveShop, saveTill,
-            tills, tillsError, confirmMoveId, newTill, creatingTill, loadTills, editTill, moveTillHere, createTill, tillSeen,
+            tills, tillsError, confirmMoveId, newTill, creatingTill, loadTills, editTill, moveTillHere, createTill, tillSeen, printerTypeLabel,
             handleLogoUpload, handleLogoDrop, handleLogoPaste, logoError, logoDragOver, removeLogo,
             syncInterval, syncPushInterval, syncSaving, syncPushSaving, syncError,
             syncNowRunning, syncLastResult,
@@ -487,6 +494,12 @@ const SettingsModal = {
                             :style="activeSection === 'sincronizacion' ? 'background:var(--surface2); border-left-color:var(--green); color:var(--text); font-weight:600;' : ''"
                             onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=activeSection === 'sincronizacion' ? 'var(--surface2)' : 'transparent'">
                             <icon name="sync" :size="18"></icon> Sincronización
+                        </button>
+                        <button @click="activeSection = 'impresion'"
+                            style="min-height:48px; padding:0 16px; background:transparent; border:none; border-left:3px solid transparent; color:var(--text2); font-family:inherit; font-size:14px; text-align:left; cursor:pointer; display:flex; align-items:center; gap:10px; transition:background .15s;"
+                            :style="activeSection === 'impresion' ? 'background:var(--surface2); border-left-color:var(--green); color:var(--text); font-weight:600;' : ''"
+                            onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=activeSection === 'impresion' ? 'var(--surface2)' : 'transparent'">
+                            <icon name="print" :size="18"></icon> Historial de impresión
                         </button>
                     </div>
 
@@ -697,7 +710,7 @@ const SettingsModal = {
                         <!-- ==================== CAJAS ==================== -->
                         <div v-if="activeSection === 'cajas'">
                             <div style="font-size:13px; font-weight:600; color:var(--text); margin-bottom:6px;">🖥 Cajas</div>
-                            <div style="font-size:12px; color:var(--text3); margin-bottom:12px;">Cada ordenador trabaja con una caja: su cajón, su impresora, su datáfono y su letra de ticket. La impresión la hace el servidor: una segunda caja necesita una impresora de red o compartida con el servidor.</div>
+                            <div style="font-size:12px; color:var(--text3); margin-bottom:12px;">Cada ordenador trabaja con una caja: su cajón, su impresora, su datáfono y su letra de ticket. Con «Agente de impresión» imprime el ordenador de la caja, con su programa de impresión. Con las demás impresoras imprime el servidor: una segunda caja necesita una impresora de red o compartida con el servidor.</div>
                             <div v-if="tillsError" style="color:var(--red); font-size:12px; margin-bottom:8px;">{{ tillsError }}</div>
                             <div style="display:flex; flex-direction:column; gap:8px; margin-bottom:16px;">
                                 <div v-for="till in tills" :key="till.id"
@@ -707,7 +720,7 @@ const SettingsModal = {
                                         <div style="min-width:0;">
                                             <div style="font-size:14px; font-weight:600; color:var(--text);">{{ till.name }} <span style="font-family:'IBM Plex Mono'; color:var(--text3);">({{ till.ticket_letter || '—' }})</span></div>
                                             <div style="font-size:12px; color:var(--text3);">
-                                                Impresora: {{ till.printer_type }} · Datáfono: {{ till.dataphone_mode === 'independent' ? 'independiente' : 'integrado' }} ·
+                                                Impresora: {{ printerTypeLabel(till.printer_type) }} · Datáfono: {{ till.dataphone_mode === 'independent' ? 'independiente' : 'integrado' }} ·
                                                 {{ till.this_device ? 'Este equipo' : (till.device ? 'Otro equipo, visto ' + tillSeen(till) : 'Sin equipo') }}
                                             </div>
                                         </div>
@@ -769,7 +782,9 @@ const SettingsModal = {
                                         <option value="pdf">PDF</option>
                                         <option value="escpos">ESC/POS (red)</option>
                                         <option value="system">Impresora del sistema (USB)</option>
+                                        <option value="agent">Agente de impresión</option>
                                     </select>
+                                    <div v-if="terminal.printer_type === 'agent'" style="font-size:12px; color:var(--text3); margin-top:4px;">Imprime el ordenador de esta caja con el programa de impresión: tickets, cajón y etiquetas. Guarda la caja y conecta el agente.</div>
                                 </div>
                                 <div v-if="terminal.printer_type === 'system'">
                                     <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Impresora instalada en el servidor del TPV</label>
@@ -794,6 +809,8 @@ const SettingsModal = {
                                 </div>
                                 </template>
 
+                                <print-agent-panel v-if="terminal.printer_type === 'agent'" :key="'print-agent-' + terminal.id" :terminal-id="terminal.id" :terminal-name="terminal.name" />
+
                                 <div>
                                     <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Ancho del ticket (px)</label>
                                     <input v-model.number="terminal.ticket_width_px" type="number" min="100" max="600" placeholder="302 (80mm)"
@@ -810,6 +827,13 @@ const SettingsModal = {
                                 </div>
                                 <div v-if="terminalError" style="color:var(--red); font-size:12px;">{{ terminalError }}</div>
                             </div>
+                        </div>
+
+                        <!-- ==================== HISTORIAL DE IMPRESIÓN ==================== -->
+                        <div v-if="activeSection === 'impresion'">
+                            <div style="font-size:13px; font-weight:600; color:var(--text); margin-bottom:6px;">Historial de impresión</div>
+                            <div style="font-size:12px; color:var(--text3); margin-bottom:12px;">Trabajos del agente de impresión de los últimos 30 días: tickets, cajón y etiquetas.</div>
+                            <print-history-panel :tills="tills" />
                         </div>
 
                         <!-- ==================== SINCRONIZACIÓN ==================== -->
