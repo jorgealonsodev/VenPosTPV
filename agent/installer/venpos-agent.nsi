@@ -7,9 +7,9 @@
 ; Silent install (CI, mass deployment):
 ;   VenPosAgent-setup.exe /S [/SERVER=https://tpv.example] [/CODE=123456]
 ;                            [/PRINTER=Ticket queue] [/LABELPRINTER=Label queue] [/TESTPRINT]
-;   Without /CODE the agent is installed unpaired (pair later
-;   by running the installer again or with `venpos-agent pair`; the tray has
-;   no pairing action in phase 1). Printer names must not contain " /".
+;   Without /CODE the agent is installed unpaired (pair later from the
+;   tray, "Conectar con el TPV…", by running the installer again or with
+;   `venpos-agent pair`). Printer names must not contain " /".
 ;   Exit codes: 0 ok, 1 cancelled/other, 2 aborted by NSIS, 3 code rejected,
 ;   4 key rejected, 5 server unreachable, 6 printer error, 7 needs administrator
 ;   (the agent CLI codes, see venpos-agent/src/main.rs).
@@ -239,7 +239,7 @@ Function PairPageCreate
   ${NSD_CreateNumber} 0 71u 60u 12u "$Code"
   Pop $hCode
   SendMessage $hCode ${EM_LIMITTEXT} 6 0
-  ${NSD_CreateCheckbox} 0 92u 100% 12u "Emparejar más tarde (volviendo a abrir este instalador o con «venpos-agent pair»)"
+  ${NSD_CreateCheckbox} 0 92u 100% 12u "Emparejar más tarde (desde el icono → «Conectar con el TPV…»)"
   Pop $hLater
   ${NSD_SetState} $hLater $PairLater
   ${NSD_OnClick} $hLater PairLaterClicked

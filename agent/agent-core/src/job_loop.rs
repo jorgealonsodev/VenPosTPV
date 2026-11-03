@@ -70,11 +70,25 @@ pub struct PollSummary {
     pub poll_after: Option<Duration>,
 }
 
-/// Stop signal shared with the service control handler.
+/// Stop signal shared with the service control handler. A restart (after
+/// IPC `pair`) also ends the current run; the caller then starts again with
+/// the new server and key, while a real stop always wins.
 #[derive(Debug, Default)]
 pub struct Shutdown {
-    stopped: Mutex<bool>,
+    stopped: Mutex<Flags>,
     cv: Condvar,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct Flags {
+    stop: bool,
+    restart: bool,
+}
+
+impl Flags {
+    fn any(self) -> bool {
+        self.stop || self.restart
+    }
 }
 
 impl Shutdown {
@@ -82,23 +96,42 @@ impl Shutdown {
         Arc::new(Self::default())
     }
 
+    fn flags(&self) -> std::sync::MutexGuard<'_, Flags> {
+        self.stopped.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     pub fn stop(&self) {
-        *self.stopped.lock().unwrap_or_else(|e| e.into_inner()) = true;
+        self.flags().stop = true;
         self.cv.notify_all();
     }
 
-    pub fn is_stopped(&self) -> bool {
-        *self.stopped.lock().unwrap_or_else(|e| e.into_inner())
+    /// Ends the current run so the caller starts it again.
+    pub fn restart(&self) {
+        self.flags().restart = true;
+        self.cv.notify_all();
     }
 
-    /// Sleeps up to `d`; returns true if stopped.
+    /// True once if a restart was asked and no stop came; clears it.
+    pub fn take_restart(&self) -> bool {
+        let mut f = self.flags();
+        let restart = f.restart && !f.stop;
+        f.restart = false;
+        restart
+    }
+
+    /// Stopped or restarting: the current run must end.
+    pub fn is_stopped(&self) -> bool {
+        self.flags().any()
+    }
+
+    /// Sleeps up to `d`; returns true if stopped or restarting.
     pub fn wait(&self, d: Duration) -> bool {
-        let g = self.stopped.lock().unwrap_or_else(|e| e.into_inner());
+        let g = self.flags();
         let (g, _) = self
             .cv
-            .wait_timeout_while(g, d, |s| !*s)
+            .wait_timeout_while(g, d, |f| !f.any())
             .unwrap_or_else(|e| e.into_inner());
-        *g
+        g.any()
     }
 }
 

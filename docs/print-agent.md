@@ -7,7 +7,7 @@ El agente es un programa pequeño que se instala en el ordenador de cada caja. S
 El agente tiene dos partes:
 
 - **El servicio «VenPos Agent»**: trabaja solo, sin ventana, desde que se enciende el ordenador. Es el que imprime.
-- **El icono de la bandeja** (junto al reloj): solo enseña cómo va. Verde: conectado. Ámbar: sin conexión con el TPV. Rojo: la impresora tiene un problema. Si cierras el icono, el servicio sigue imprimiendo.
+- **El icono de la bandeja** (junto al reloj): enseña cómo va y sirve para emparejar la caja más tarde. Verde: conectado. Ámbar: sin conexión con el TPV. Rojo: la impresora tiene un problema. Si cierras el icono, el servicio sigue imprimiendo.
 
 El agente nunca abre el cajón por su cuenta: solo cuando el TPV lo pide al cobrar.
 
@@ -34,13 +34,15 @@ El agente se instala en `C:\Program Files\VenPos Agent`. Su configuración y su 
 2. Escríbelo en el instalador antes de 10 minutos. Cada código sirve una sola vez.
 3. En Ajustes → Cajas la caja pasa a «Conectado».
 
-Si elegiste «Emparejar más tarde», vuelve a abrir el instalador (no borra nada) y escribe el código, o en una ventana de «Símbolo del sistema» abierta como administrador:
+Si elegiste «Emparejar más tarde», haz clic con el botón derecho en el icono → **Conectar con el TPV…**, escribe la dirección del TPV y el código de 6 cifras y pulsa **Conectar**. Si va bien, el icono dice «Conectado a la caja <nombre>». Si sale «Código caducado o incorrecto», genera otro; si sale «No se puede conectar con el TPV», revisa la dirección y la conexión a Internet. No hace falta ser administrador: el código es el permiso.
+
+También puedes volver a abrir el instalador (no borra nada) y escribir el código, o, en una ventana de «Símbolo del sistema» abierta como administrador:
 
 ```
 "C:\Program Files\VenPos Agent\venpos-agent.exe" pair 123456 --server https://tu-tpv
 ```
 
-Para pasar el agente a otra caja o si en el icono pone «Vuelve a conectar el agente», genera un código nuevo y empareja otra vez.
+Para pasar el agente a otra caja o si en el icono pone «Vuelve a conectar el agente», genera un código nuevo y empareja otra vez desde el icono → **Conectar con el TPV…**.
 
 ## Elegir o cambiar las impresoras
 
@@ -61,7 +63,7 @@ Ve paso a paso y para en cuanto vuelva a imprimir:
 3. **¿El icono está ámbar?** No hay conexión con el TPV: comprueba Internet abriendo el TPV en el navegador. El agente vuelve a conectar solo en cuanto hay red.
 4. **¿No ves el icono?** Puede estar escondido en la flechita «^». Si no está, reinicia el ordenador; el servicio y el icono arrancan solos.
 5. **Botón derecho en el icono → Imprimir prueba.** Si la prueba sale pero los tickets no, revisa en Ajustes → Cajas que la caja usa «Agente de impresión».
-6. **Si en el icono pone «Vuelve a conectar el agente»**: genera un código nuevo en Ajustes → Cajas y empareja otra vez.
+6. **Si en el icono pone «Vuelve a conectar el agente»**: genera un código nuevo en Ajustes → Cajas y empareja otra vez desde el icono → **Conectar con el TPV…**.
 7. **Si cambiaste el nombre de la impresora en Windows**, elígela de nuevo desde el icono (Ajustes mostrará «No encontrada»).
 8. **Mientras tanto, cobra igual**: el TPV ofrece el ticket en PDF si no se imprime.
 9. Si nada funciona: botón derecho en el icono → **Ver registro**, y envía ese fichero a quien te da soporte.

@@ -106,7 +106,8 @@ fn icacls(path: &std::path::Path, args: &[&str]) -> std::io::Result<()> {
 
 /// E10: base folder readable by users (config, log), writable only by the
 /// service and administrators; `secret\` only for SYSTEM, Administrators
-/// and the service account (read).
+/// and the service account (modify: it stores its own key when paired from
+/// the tray, I1). Users never get access to `secret\`.
 pub fn secure_dirs(paths: &Paths) -> std::io::Result<()> {
     if !paths.system {
         return Ok(());
@@ -139,7 +140,7 @@ pub fn secure_dirs(paths: &Paths) -> std::io::Result<()> {
     )?;
     // The virtual account exists only once the service is created.
     if icacls(base, &["/grant", &format!("{SERVICE_ACCOUNT}:(OI)(CI)M")]).is_ok() {
-        icacls(secret, &["/grant", &format!("{SERVICE_ACCOUNT}:(OI)(CI)RX")])?;
+        icacls(secret, &["/grant", &format!("{SERVICE_ACCOUNT}:(OI)(CI)M")])?;
     }
     Ok(())
 }

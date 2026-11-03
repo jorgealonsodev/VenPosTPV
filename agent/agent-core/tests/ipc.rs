@@ -1,8 +1,11 @@
 //! Local control channel (A3, A4, S5).
 mod support;
 
+use agent_core::api::ProxyMode;
 use agent_core::config::{Config, Destination, Destinations, Target};
-use agent_core::ipc::{self, Handler, Request};
+use agent_core::ipc::{self, Handler, Pairing, Request};
+use agent_core::job_loop::Shutdown;
+use agent_core::secret::KeyStore;
 use agent_core::state::{AgentStatus, Connection};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -10,6 +13,11 @@ use support::*;
 
 fn handler(dir: &std::path::Path, printer: Arc<MockPrinter>) -> Handler {
     Handler {
+        pairing: Some(Pairing {
+            key_store: KeyStore::new(dir.join("key")),
+            proxy: ProxyMode::None,
+            restart: Some(Shutdown::new()),
+        }),
         printer,
         config: Arc::new(RwLock::new(Config {
             destinations: Destinations {
@@ -122,4 +130,150 @@ fn unix_socket_is_0660_and_answers_status() {
     assert_eq!(mode, 0o660);
     let log = ipc::request(&name, &Request::OpenLog).unwrap();
     assert!(log.log_path.unwrap().ends_with("agent.log"));
+}
+
+const CODE_REJECTED: &str = "Código caducado o incorrecto. Genera uno nuevo en Ajustes → Cajas.";
+
+fn pair_line(server: &str, code: &str) -> String {
+    serde_json::json!({"cmd": "pair", "server": server, "code": code}).to_string()
+}
+
+fn restart_of(h: &Handler) -> Arc<Shutdown> {
+    Arc::clone(h.pairing.as_ref().unwrap().restart.as_ref().unwrap())
+}
+
+#[test]
+fn pair_command_parses_strictly() {
+    assert_eq!(
+        ipc::parse_request(&pair_line("https://tpv.example", "482913")),
+        Some(Request::Pair {
+            server: "https://tpv.example".into(),
+            code: "482913".into()
+        })
+    );
+    for line in [
+        r#"{"cmd":"pair","server":"https://tpv.example","code":"482913","key":"x"}"#,
+        r#"{"cmd":"pair","server":"https://tpv.example"}"#,
+        r#"{"cmd":"pair","code":"482913"}"#,
+        r#"{"cmd":"pair","server":"https://tpv.example","code":482913}"#,
+    ] {
+        assert_eq!(ipc::parse_request(line), None, "{line}");
+    }
+    let dir = temp_dir("ipc-pair-unknown");
+    let h = handler(&dir, MockPrinter::new());
+    let r = h.handle_line(r#"{"cmd":"pair","server":"https://tpv.example","code":"482913","key":"x"}"#);
+    assert_eq!(r.error.as_deref(), Some("orden no admitida"));
+}
+
+#[test]
+fn pair_rejects_bad_codes_and_urls_before_calling_the_server() {
+    let server = FakeServer::start();
+    server.st().pair_code = Some("482913".into());
+    let dir = temp_dir("ipc-pair-bad");
+    let h = handler(&dir, MockPrinter::new());
+
+    for code in ["48291", "4829134", "48 913", " 482913", "48291a"] {
+        let r = h.handle_line(&pair_line(&server.url, code));
+        assert!(!r.ok, "{code:?}");
+        assert_eq!(r.error.as_deref(), Some("El código tiene 6 cifras."), "{code:?}");
+    }
+    for url in [
+        "http://evil.example.com",
+        "file:///C:/x",
+        "https://user@tpv.example",
+        "tpv.example",
+    ] {
+        let r = h.handle_line(&pair_line(url, "482913"));
+        assert!(!r.ok, "{url}");
+        assert!(r.error.as_deref().unwrap().contains("https://"), "{url}: {r:?}");
+    }
+
+    assert!(server.requests("POST", "/api/agent/v1/pair").is_empty());
+    assert!(!dir.join("key").exists());
+    assert!(!dir.join("config.json").exists());
+    assert!(!restart_of(&h).take_restart());
+}
+
+#[test]
+fn pair_stores_the_key_and_server_keeps_the_printers_and_restarts_the_loop() {
+    let server = FakeServer::start();
+    server.st().pair_code = Some("482913".into());
+    let dir = temp_dir("ipc-pair-ok");
+    let h = handler(&dir, MockPrinter::new());
+
+    let r = h.handle_line(&pair_line(&format!("{}/", server.url), "482913"));
+
+    assert!(r.ok, "{r:?}");
+    assert_eq!(r.terminal_name.as_deref(), Some("Caja 3"));
+    let key = KeyStore::new(dir.join("key")).load().unwrap().unwrap();
+    assert_eq!(key.expose(), KEY);
+    let saved = Config::load(&dir.join("config.json")).unwrap();
+    assert_eq!(saved.server_url.as_deref(), Some(server.url.as_str()));
+    assert_eq!(saved.terminal_id, Some(3));
+    assert_eq!(saved.terminal_name.as_deref(), Some("Caja 3"));
+    assert_eq!(
+        saved.destinations.ticket,
+        Some(Destination::Cups {
+            queue: "TICKETS".into()
+        }),
+        "chosen printer kept"
+    );
+    assert_eq!(*h.config.read().unwrap(), saved, "running config updated");
+    assert_eq!(h.state.lock().unwrap().terminal_name.as_deref(), Some("Caja 3"));
+    let restart = restart_of(&h);
+    assert!(restart.is_stopped(), "the job loop is asked to start again");
+    assert!(restart.take_restart());
+    assert!(!restart.is_stopped());
+    let body = &server.requests("POST", "/api/agent/v1/pair")[0].body;
+    assert_eq!(body["code"], "482913");
+    assert_eq!(body["hostname"], "PC-CAJA3");
+}
+
+#[test]
+fn pair_reports_a_rejected_code_or_an_unreachable_server_in_spanish() {
+    let server = FakeServer::start();
+    server.st().pair_code = Some("482913".into());
+    let dir = temp_dir("ipc-pair-fail");
+    let h = handler(&dir, MockPrinter::new());
+
+    let r = h.handle_line(&pair_line(&server.url, "000000"));
+    assert!(!r.ok);
+    assert_eq!(r.error.as_deref(), Some(CODE_REJECTED));
+
+    // A port nothing listens on.
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://127.0.0.1:{}", closed.local_addr().unwrap().port());
+    drop(closed);
+    let r = h.handle_line(&pair_line(&url, "482913"));
+    assert!(!r.ok);
+    assert_eq!(
+        r.error.as_deref(),
+        Some("No se puede conectar con el TPV. Revisa la dirección y la conexión a Internet.")
+    );
+
+    assert!(!dir.join("key").exists());
+    assert!(!dir.join("config.json").exists());
+    assert!(!restart_of(&h).take_restart());
+}
+
+#[test]
+fn pair_is_refused_when_the_instance_cannot_store_a_key() {
+    let dir = temp_dir("ipc-pair-off");
+    let mut h = handler(&dir, MockPrinter::new());
+    h.pairing = None;
+    let r = h.handle_line(&pair_line("https://tpv.example", "482913"));
+    assert!(!r.ok);
+}
+
+#[test]
+fn a_real_stop_wins_over_a_restart() {
+    let s = Shutdown::new();
+    s.restart();
+    assert!(
+        s.wait(std::time::Duration::from_secs(5)),
+        "restart wakes a waiting loop"
+    );
+    s.stop();
+    assert!(!s.take_restart());
+    assert!(s.is_stopped());
 }

@@ -20,6 +20,7 @@ use windows::core::HSTRING;
 
 enum Action {
     TestPrint,
+    Pair,
     Choose(Target, Destination),
     OpenLog,
     OpenSettings,
@@ -102,6 +103,7 @@ fn build_menu(paths: &Paths, status: Option<&AgentStatus>) -> Ui {
     let _ = menu.append(&choose);
 
     for (text, action) in [
+        ("Conectar con el TPV…", Action::Pair),
         ("Ver registro", Action::OpenLog),
         ("Abrir Ajustes del TPV", Action::OpenSettings),
         ("Acerca de", Action::About),
@@ -121,12 +123,20 @@ fn build_menu(paths: &Paths, status: Option<&AgentStatus>) -> Ui {
     }
 }
 
-fn handle(paths: &Paths, action: &Action) -> bool {
+fn handle(paths: &Paths, action: &Action, refresh: &mpsc::Sender<()>) -> bool {
     match action {
+        Action::Pair => {
+            let cfg = Config::load(&paths.config_file).unwrap_or_default();
+            let prefill = model::pair_server_prefill(cfg.server_url.as_deref());
+            if let Some(msg) = crate::pair_dialog::run(&paths.ipc_name, &prefill) {
+                let _ = refresh.send(());
+                message(&msg, false);
+            }
+        }
         Action::TestPrint => match ipc::request(&paths.ipc_name, &Request::TestPrint { target: Target::Ticket }) {
             Ok(r) if r.ok => message("Prueba enviada a la impresora de tickets.", false),
             Ok(r) => message(&r.error.unwrap_or_else(|| "No se pudo imprimir".into()), true),
-            Err(_) => message("El servicio VenPos Agent no está en marcha.", true),
+            Err(_) => message(model::MSG_SERVICE_DOWN, true),
         },
         Action::Choose(target, dest) => {
             let req = match target {
@@ -142,7 +152,7 @@ fn handle(paths: &Paths, action: &Action) -> bool {
             match ipc::request(&paths.ipc_name, &req) {
                 Ok(r) if r.ok => {}
                 Ok(r) => message(&r.error.unwrap_or_default(), true),
-                Err(_) => message("El servicio VenPos Agent no está en marcha.", true),
+                Err(_) => message(model::MSG_SERVICE_DOWN, true),
             }
         }
         Action::OpenLog => match ipc::request(&paths.ipc_name, &Request::OpenLog) {
@@ -174,6 +184,8 @@ fn handle(paths: &Paths, action: &Action) -> bool {
 pub fn run() {
     let paths = Paths::resolve(config_dir_arg().as_deref());
     let (tx, rx) = mpsc::channel::<Option<AgentStatus>>();
+    // Wakes the poller early (after pairing) instead of waiting 5 s.
+    let (refresh, wake) = mpsc::channel::<()>();
     let pipe = paths.ipc_name.clone();
     std::thread::spawn(move || {
         loop {
@@ -181,7 +193,9 @@ pub fn run() {
             if tx.send(s).is_err() {
                 return;
             }
-            std::thread::sleep(Duration::from_secs(5));
+            if let Err(mpsc::RecvTimeoutError::Disconnected) = wake.recv_timeout(Duration::from_secs(5)) {
+                return;
+            }
         }
     });
 
@@ -213,7 +227,7 @@ pub fn run() {
         }
         while let Ok(ev) = MenuEvent::receiver().try_recv() {
             if let Some(action) = ui.actions.get(&ev.id) {
-                if !handle(&paths, action) {
+                if !handle(&paths, action, &refresh) {
                     return;
                 }
                 if matches!(action, Action::Choose(..)) {

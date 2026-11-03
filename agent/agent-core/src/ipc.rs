@@ -1,9 +1,12 @@
 //! Local control channel between the tray/CLI and the service (A3): a named
 //! pipe on Windows, a 0660 Unix socket on Linux. No TCP. Fixed commands
-//! only; one JSON line in, one JSON line out. The drawer cannot be opened
-//! from here (A4).
+//! only, `pair` included (I1: pair later from the tray); one JSON line in,
+//! one JSON line out. The drawer cannot be opened from here (A4).
+use crate::api::ProxyMode;
 use crate::config::{Config, Destination, SharedConfig, Target};
+use crate::job_loop::Shutdown;
 use crate::printer::PrinterBackend;
+use crate::secret::KeyStore;
 use crate::state::{self, AgentStatus, SharedState};
 use serde::{Deserialize, Serialize};
 use std::io::{self, BufRead, BufReader, Read, Write};
@@ -28,6 +31,11 @@ pub enum Request {
         label: Option<Destination>,
     },
     OpenLog,
+    /// Pairs with the 6-digit code from Ajustes → Cajas; the service stores its own key.
+    Pair {
+        server: String,
+        code: String,
+    },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,6 +47,8 @@ pub struct Response {
     pub status: Option<AgentStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub log_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_name: Option<String>,
 }
 
 impl Response {
@@ -70,7 +80,17 @@ pub fn parse_request(line: &str) -> Option<Request> {
     keys.iter().all(|k| canon.contains_key(k)).then_some(req)
 }
 
+/// What the service needs to pair from the local channel.
+pub struct Pairing {
+    pub key_store: KeyStore,
+    pub proxy: ProxyMode,
+    /// Restarted after a successful pairing so the job loop uses the new server and key.
+    pub restart: Option<Arc<Shutdown>>,
+}
+
 pub struct Handler {
+    /// `None`: the `pair` command is refused (e.g. a dev instance without a key store).
+    pub pairing: Option<Pairing>,
     pub printer: Arc<dyn PrinterBackend>,
     pub config: SharedConfig,
     pub config_path: PathBuf,
@@ -165,6 +185,50 @@ impl Handler {
                 log_path: Some(self.log_path.to_string_lossy().into_owned()),
                 ..Default::default()
             },
+            Request::Pair { server, code } => self.pair(&server, &code),
+        }
+    }
+
+    /// Any local user who can open the channel may pair: the single-use
+    /// code from a TPV administrator is the authorization. Logged without
+    /// the code.
+    fn pair(&self, server: &str, code: &str) -> Response {
+        let Some(p) = &self.pairing else {
+            return Response::err("este agente no puede emparejarse desde el canal local");
+        };
+        tracing::info!("emparejado pedido desde el canal local");
+        let result = crate::pairing::strict_code(code)
+            .and_then(|code| crate::pairing::pair(server, &code, &self.hostname, p.proxy, &p.key_store));
+        let paired = match result {
+            Ok(paired) => paired,
+            Err(e) => {
+                tracing::warn!(error = %e, "emparejado desde el canal local fallido");
+                return Response::err(e.to_string());
+            }
+        };
+        let snapshot: Config = {
+            let mut cfg = self.config.write().unwrap_or_else(|e| e.into_inner());
+            paired.apply(&mut cfg);
+            cfg.clone()
+        };
+        if let Err(e) = snapshot.save(&self.config_path) {
+            tracing::error!(error = %e, "clave guardada pero no la configuración del emparejado");
+            return Response::err(e.to_string());
+        }
+        {
+            let mut s = state::lock(&self.state);
+            s.server_url = Some(paired.server_url.clone());
+            s.terminal_name = Some(paired.terminal_name.clone());
+        }
+        tracing::info!(terminal = %paired.terminal_name, server = %paired.server_url, "agente emparejado desde el canal local");
+        self.status_dirty.store(true, Ordering::SeqCst);
+        if let Some(r) = &p.restart {
+            r.restart();
+        }
+        Response {
+            ok: true,
+            terminal_name: Some(paired.terminal_name),
+            ..Default::default()
         }
     }
 

@@ -10,12 +10,13 @@ mod linux_svc;
 #[cfg(windows)]
 mod windows_svc;
 
-use agent_core::api::{ApiClient, ApiError, HttpTiming, ProxyMode};
+use agent_core::api::{ApiError, ProxyMode};
 use agent_core::config::{Config, Destination, Target};
 use agent_core::ipc::{self, Request};
+use agent_core::pairing::PairError;
 use agent_core::paths::Paths;
 use agent_core::printer::{PrinterBackend, SystemPrinter};
-use agent_core::secret::{AgentKey, KeyStore, PairingCode};
+use agent_core::secret::{KeyStore, PairingCode};
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
@@ -257,23 +258,32 @@ fn utf16_lines(lines: &[&str]) -> Vec<u8> {
 }
 
 fn pair(paths: &Paths, code: &str, server: &str) -> Result<(), Failure> {
-    let server = agent_core::config::validate_server_url(server)?;
+    agent_core::config::validate_server_url(server)?;
     let code = PairingCode::parse(code)?;
-    let api = ApiClient::new(&server, None, &HttpTiming::default(), ProxyMode::System).map_err(api_failure)?;
-    let hostname = agent_core::hostname();
-    let resp = api.pair(&code, &hostname).map_err(api_failure)?;
-    let key = AgentKey::parse(&resp.key)?;
+    // ACLs first: without administrator rights fail before spending the code.
     prepare_secret_storage(paths)?;
-    KeyStore::new(paths.key_file.clone()).save(&key).map_err(admin_hint)?;
+    let key_store = KeyStore::new(paths.key_file.clone());
+    let paired = agent_core::pairing::pair(server, &code, &agent_core::hostname(), ProxyMode::System, &key_store)
+        .map_err(pair_failure)?;
     let mut cfg = Config::load(&paths.config_file)?;
-    cfg.server_url = Some(server);
-    cfg.terminal_id = Some(resp.terminal_id);
-    cfg.terminal_name = Some(resp.terminal_name.clone());
+    paired.apply(&mut cfg);
     cfg.save(&paths.config_file).map_err(admin_hint)?;
     finish_secret_storage(paths);
     restart_service_if_installed(paths);
-    println!("Conectado: {}", resp.terminal_name);
+    println!("Conectado: {}", paired.terminal_name);
     Ok(())
+}
+
+/// Same messages and exit codes as before the shared pairing code existed.
+fn pair_failure(e: PairError) -> Failure {
+    match e {
+        PairError::InvalidUrl(c) => Failure::from(c),
+        PairError::InvalidCode => Failure::from(agent_core::secret::SecretError::InvalidCode),
+        PairError::CodeRejected => api_failure(ApiError::PairingCodeInvalid),
+        PairError::TooManyAttempts => api_failure(ApiError::RateLimited { retry_after: None }),
+        PairError::Unreachable(api) | PairError::Api(api) => api_failure(api),
+        PairError::Key(k) => admin_hint(k),
+    }
 }
 
 fn admin_hint<E: std::fmt::Display>(e: E) -> Failure {

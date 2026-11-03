@@ -14,6 +14,7 @@ pub mod ipc;
 pub mod job_loop;
 pub mod linux_install;
 pub mod logging;
+pub mod pairing;
 pub mod paths;
 pub mod printer;
 pub mod secret;

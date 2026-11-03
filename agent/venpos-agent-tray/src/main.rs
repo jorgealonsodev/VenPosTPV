@@ -1,9 +1,13 @@
-//! Tray icon (A1, A4). Windows only in phase 1; it shows the service state
-//! and asks the service for a test print. It never reads the key (E10) and
-//! never opens the drawer (A4). Closing it does not stop the service.
+//! Tray icon (A1, A4). Windows only in phase 1; it shows the service state,
+//! asks the service for a test print and lets the user pair later (I1: the
+//! service redeems the code and stores its own key). It never reads or
+//! writes the key (E10) and never opens the drawer (A4). Closing it does not
+//! stop the service.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod model;
+#[cfg(windows)]
+mod pair_dialog;
 #[cfg(windows)]
 mod win;
 
