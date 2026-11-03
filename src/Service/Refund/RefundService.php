@@ -35,13 +35,14 @@ class RefundService
         private readonly PsRefundClient $client,
         private readonly Connection $conn,
         private readonly CashSessionService $cashSessionService,
+        private readonly ?CreditNoteNumberer $creditNoteNumberer = null,
     ) {
     }
 
     /**
      * @param array<int, array{line_index?: mixed, quantity?: mixed, restock?: mixed}>|null $lines null refunds everything still refundable
      *
-     * @return array{refund_id: int, order_slip_id: int, refunded_amount: float, cash_amount: float, card_amount: float, lines: array<int, array<string, mixed>>, restock_failed: array<int, mixed>, saga_error: bool, already_completed: bool}
+     * @return array{refund_id: int, credit_note_number: ?string, order_slip_id: int, refunded_amount: float, cash_amount: float, card_amount: float, lines: array<int, array<string, mixed>>, restock_failed: array<int, mixed>, saga_error: bool, already_completed: bool}
      *
      * @throws RefundException
      */
@@ -157,7 +158,7 @@ class RefundService
      * request_id so the shop replays it instead of refunding twice. Cash is paid
      * out now, so the movement goes to the current open session.
      *
-     * @return array{refund_id: int, order_slip_id: int, refunded_amount: float, cash_amount: float, card_amount: float, lines: array<int, array<string, mixed>>, restock_failed: array<int, mixed>, saga_error: bool, already_completed: bool}
+     * @return array{refund_id: int, credit_note_number: ?string, order_slip_id: int, refunded_amount: float, cash_amount: float, card_amount: float, lines: array<int, array<string, mixed>>, restock_failed: array<int, mixed>, saga_error: bool, already_completed: bool}
      *
      * @throws RefundException
      */
@@ -184,7 +185,7 @@ class RefundService
      *
      * @param array<string, mixed> $payload
      *
-     * @return array{refund_id: int, order_slip_id: int, refunded_amount: float, cash_amount: float, card_amount: float, lines: array<int, array<string, mixed>>, restock_failed: array<int, mixed>, saga_error: bool, already_completed: bool}
+     * @return array{refund_id: int, credit_note_number: ?string, order_slip_id: int, refunded_amount: float, cash_amount: float, card_amount: float, lines: array<int, array<string, mixed>>, restock_failed: array<int, mixed>, saga_error: bool, already_completed: bool}
      */
     private function send(int $refundId, array $payload, int $sessionId): array
     {
@@ -210,7 +211,7 @@ class RefundService
     /**
      * @param array{order_slip_id: int, refunded_amount: float, refunded_lines: array<int, array<string, mixed>>, restock_failed?: array<int, mixed>} $psResponse
      *
-     * @return array{refund_id: int, order_slip_id: int, refunded_amount: float, cash_amount: float, card_amount: float, lines: array<int, array<string, mixed>>, restock_failed: array<int, mixed>, saga_error: bool, already_completed: bool}
+     * @return array{refund_id: int, credit_note_number: ?string, order_slip_id: int, refunded_amount: float, cash_amount: float, card_amount: float, lines: array<int, array<string, mixed>>, restock_failed: array<int, mixed>, saga_error: bool, already_completed: bool}
      */
     private function complete(int $refundId, array $psResponse, int $sessionId): array
     {
@@ -244,6 +245,12 @@ class RefundService
 
                     return;
                 }
+
+                // Numbered only once the refund really happened, in the same transaction.
+                $numberer = $this->creditNoteNumberer ?? new CreditNoteNumberer($this->conn);
+                $this->conn->update('refund', [
+                    'credit_note_number' => $numberer->next(new \DateTimeImmutable()),
+                ], ['id' => $refundId]);
 
                 if ($cashAmount > 0) {
                     // Positive: the cash report subtracts the refund total from the drawer.
@@ -284,6 +291,7 @@ class RefundService
 
         return [
             'refund_id' => $refundId,
+            'credit_note_number' => $this->conn->fetchOne('SELECT credit_note_number FROM refund WHERE id = ?', [$refundId]) ?: null,
             'order_slip_id' => $slipId,
             'refunded_amount' => $total,
             'cash_amount' => $cashAmount,

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace VenPosTPV\Tests\Unit\Service\Print;
 
 use PHPUnit\Framework\TestCase;
+use VenPosTPV\Service\Print\CreditNoteInfo;
 use VenPosTPV\Service\Print\EscPosTicketBuilder;
 use VenPosTPV\Service\Print\TicketData;
 use VenPosTPV\Service\Print\TicketLine;
@@ -144,5 +145,28 @@ final class EscPosTicketBuilderTest extends TestCase
         $bytesExplicit = $builder->build($this->createTicketData(), false);
 
         self::assertSame($bytesDefault, $bytesExplicit);
+    }
+
+    public function testCreditNoteShowsNumberRectifiedTicketRefundSplitAndNoTenderedCash(): void
+    {
+        $sale = $this->createTicketData();
+        $ticket = new TicketData(
+            orderId: $sale->orderId, reference: 'R2026-000007', storeName: $sale->storeName, storeAddress: $sale->storeAddress,
+            ticketHeader: '', ticketFooter: '', ticketLogo: null, ticketWidthPx: null, date: new \DateTimeImmutable('2026-11-03 12:00'),
+            cashierName: 'Ana', lines: [new TicketLine('Camisa M', 1, 24.18, 24.18)], subtotal: 19.98, tax: 4.2, total: 24.18,
+            paymentMethod: 'mixed', amountTendered: 0.0, changeDue: 0.0, verificationUrl: 'http://tpv/v',
+            creditNote: new CreditNoteInfo('R2026-000007', 'REF42', new \DateTimeImmutable('2026-10-30 10:00'), 'Talla o color', 10.08, 14.1),
+        );
+
+        $out = $this->createBuilder()->build($ticket);
+
+        $this->assertStringContainsString('ABONO', $out);
+        $this->assertStringContainsString('R2026-000007', $out);
+        $this->assertStringContainsString('Rectifica: REF42 (30/10/2026)', $out);
+        $this->assertStringContainsString('Motivo: Talla o color', $out);
+        $this->assertStringContainsString('TOTAL DEVUELTO: 24.18', $out);
+        $this->assertStringContainsString('Efectivo: 10.08', $out);
+        $this->assertStringContainsString('Tarjeta: 14.10', $out);
+        $this->assertStringNotContainsString('Entrega', $out);
     }
 }

@@ -7,6 +7,8 @@ namespace VenPosTPV\Tests\Integration\Service\Refund;
 use Doctrine\DBAL\Connection;
 use PHPUnit\Framework\TestCase;
 use VenPosTPV\Service\Cash\CashSessionService;
+use VenPosTPV\Service\Print\TicketDataResolver;
+use VenPosTPV\Service\Print\TicketVerificationService;
 use VenPosTPV\Service\Refund\Exception\RefundException;
 use VenPosTPV\Service\Refund\OrderSearchService;
 use VenPosTPV\Service\Refund\PsRefundClient;
@@ -60,6 +62,7 @@ final class RefundServiceMySqlIntegrationTest extends TestCase
 
     private function cleanTables(): void
     {
+        $this->connection->executeStatement('DELETE FROM credit_note_sequence');
         $this->connection->executeStatement('DELETE FROM refund_line');
         $this->connection->executeStatement('DELETE FROM refund');
         $this->connection->executeStatement('DELETE FROM movement WHERE session_id = ?', [self::SESSION_ID]);
@@ -327,6 +330,49 @@ final class RefundServiceMySqlIntegrationTest extends TestCase
         );
         $this->connection->executeStatement('DELETE FROM movement WHERE session_id = ?', [self::SESSION_ID + 1]);
         $this->connection->executeStatement('DELETE FROM session WHERE id = ?', [self::SESSION_ID + 1]);
+    }
+
+    public function testCompletedRefundsGetConsecutiveCreditNoteNumbersAndRejectedOnesNone(): void
+    {
+        $this->seedOrder(['cash' => 60.0, 'card' => 0.0]);
+        $service = $this->service();
+        $year = (new \DateTimeImmutable())->format('Y');
+
+        $this->psFailures = [RefundException::validationFailed('PS validation failed')];
+        $this->expectRefundError(422, fn () => $service->processRefund(1, self::ORDER_ID, [['line_index' => 1, 'quantity' => 1, 'restock' => true]], 'size'));
+
+        $first = $service->processRefund(1, self::ORDER_ID, [['line_index' => 1, 'quantity' => 1, 'restock' => true]], 'size');
+        $second = $service->processRefund(1, self::ORDER_ID, [['line_index' => 0, 'quantity' => 1, 'restock' => true]], 'size');
+
+        $this->assertSame('R' . $year . '-000001', $first['credit_note_number']);
+        $this->assertSame('R' . $year . '-000002', $second['credit_note_number']);
+        $this->assertNull($this->connection->fetchOne("SELECT credit_note_number FROM refund WHERE status = 'failed'"));
+    }
+
+    public function testCreditNoteTicketDataRectifiesTheSaleWithRefundedLinesSplitAndProportionalTax(): void
+    {
+        $this->seedOrder(['cash' => 25.0, 'card' => 35.0]);
+        $refund = $this->service()->processRefund(1, self::ORDER_ID, [['line_index' => 1, 'quantity' => 1, 'restock' => true]], 'other', 'Llegó descosido', true);
+        $verification = $this->createMock(TicketVerificationService::class);
+        $verification->method('generateToken')->willReturn('tok');
+        $verification->method('buildVerificationUrl')->willReturn('http://tpv/verify?token=tok');
+
+        $ticket = (new TicketDataResolver($this->connection, $verification, 'Tienda Test', 'Calle 1'))->resolveRefund($refund['refund_id']);
+
+        $this->assertNotNull($ticket);
+        $note = $ticket->creditNote;
+        $this->assertNotNull($note);
+        $this->assertSame($refund['credit_note_number'], $note->number);
+        $this->assertSame('REF' . self::ORDER_ID, $note->rectifiesReference);
+        $this->assertSame('Otro: Llegó descosido', $note->reason);
+        $this->assertSame(17.91, $ticket->total);
+        $this->assertSame(7.46, $note->cashAmount);
+        $this->assertSame(10.45, $note->cardAmount);
+        $this->assertCount(1, $ticket->lines);
+        $this->assertSame('Calcetines', $ticket->lines[0]->name);
+        $this->assertSame(1, $ticket->lines[0]->quantity);
+        $this->assertSame(17.91, $ticket->lines[0]->lineTotal);
+        $this->assertSame($refund['credit_note_number'], $ticket->reference);
     }
 
     public function testUnknownOrderIs404(): void

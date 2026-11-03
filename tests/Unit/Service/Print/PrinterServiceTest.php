@@ -315,4 +315,33 @@ final class PrinterServiceTest extends TestCase
         $service = $this->createService(conn: $conn);
         $service->openDrawer(1);
     }
+
+    public function testRefundTicketGoesToTheNetworkPrinterAndOtherwiseAsksForPdf(): void
+    {
+        $ticketData = $this->createTicketData();
+        $resolver = $this->createMock(TicketDataResolver::class);
+        $resolver->expects($this->exactly(2))->method('resolveRefund')->with(7)->willReturn($ticketData);
+
+        $disabled = $this->createMock(Connection::class);
+        $disabled->method('fetchOne')->willReturn(json_encode(['enabled' => false]));
+        $this->assertSame('pdf', $this->createService(conn: $disabled, resolver: $resolver)->printRefundTicket(7, 1));
+
+        $network = $this->createMock(Connection::class);
+        $network->method('fetchOne')->willReturn(json_encode(['enabled' => true, 'type' => 'network', 'host' => '10.0.0.9', 'port' => 9100]));
+        $service = $this->getMockBuilder(PrinterService::class)
+            ->setConstructorArgs([$network, $resolver, $this->createMock(EscPosTicketBuilder::class), $this->createMock(TicketPdfGenerator::class)])
+            ->onlyMethods(['sendEscPos'])
+            ->getMock();
+        $service->expects($this->once())->method('sendEscPos')->with($ticketData);
+        $this->assertSame('printed', $service->printRefundTicket(7, 1));
+    }
+
+    public function testRefundTicketOfUnknownRefundFails(): void
+    {
+        $resolver = $this->createMock(TicketDataResolver::class);
+        $resolver->method('resolveRefund')->willReturn(null);
+
+        $this->expectException(\RuntimeException::class);
+        $this->createService(resolver: $resolver)->printRefundTicket(99, 1);
+    }
 }

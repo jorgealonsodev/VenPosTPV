@@ -230,6 +230,7 @@ CREATE TABLE IF NOT EXISTS refund (
     status ENUM('pending','done','failed') NOT NULL DEFAULT 'pending',
     ps_order_id INT UNSIGNED NULL,
     ps_order_slip_id INT UNSIGNED NULL,
+    credit_note_number VARCHAR(20) NULL,
     terminal_id INT UNSIGNED NOT NULL,
     session_id INT UNSIGNED NOT NULL,
     user_id INT UNSIGNED NOT NULL,
@@ -244,6 +245,7 @@ CREATE TABLE IF NOT EXISTS refund (
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     completed_at DATETIME NULL,
     UNIQUE KEY uk_refund_request (request_id),
+    UNIQUE KEY uk_refund_credit_note (credit_note_number),
     INDEX idx_refund_order_status (ps_order_id, status),
     INDEX idx_refund_session (session_id)
 ) ENGINE=InnoDB;
@@ -261,4 +263,10 @@ CREATE TABLE IF NOT EXISTS refund_line (
     restocked TINYINT(1) NOT NULL DEFAULT 0,
     CONSTRAINT fk_refund_line_refund FOREIGN KEY (refund_id) REFERENCES refund (id) ON DELETE CASCADE,
     INDEX idx_refund_line_refund (refund_id)
+) ENGINE=InnoDB;
+
+-- credit_note_sequence (Version00000020): consecutive credit-note numbers per year
+CREATE TABLE IF NOT EXISTS credit_note_sequence (
+    year SMALLINT UNSIGNED NOT NULL PRIMARY KEY,
+    last_number INT UNSIGNED NOT NULL
 ) ENGINE=InnoDB;

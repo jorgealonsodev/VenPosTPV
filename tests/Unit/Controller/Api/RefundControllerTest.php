@@ -8,6 +8,9 @@ use PHPUnit\Framework\TestCase;
 use Symfony\Component\HttpFoundation\Response;
 use VenPosTPV\Controller\Api\RefundController;
 use VenPosTPV\Service\Cash\CashSessionService;
+use VenPosTPV\Service\Print\PrinterService;
+use VenPosTPV\Service\Print\TicketDataResolver;
+use VenPosTPV\Service\Print\TicketPdfGenerator;
 use VenPosTPV\Service\Refund\Exception\RefundException;
 use VenPosTPV\Service\Refund\OrderSearchService;
 use VenPosTPV\Service\Refund\RefundService;
@@ -15,12 +18,15 @@ use VenPosTPV\Tests\Support\SessionRequest;
 
 final class RefundControllerTest extends TestCase
 {
-    private function createController(?RefundService $refundService = null, ?OrderSearchService $orderSearch = null, ?CashSessionService $cashService = null): RefundController
+    private function createController(?RefundService $refundService = null, ?OrderSearchService $orderSearch = null, ?CashSessionService $cashService = null, ?PrinterService $printer = null): RefundController
     {
         return new RefundController(
             $refundService ?? $this->createMock(RefundService::class),
             $orderSearch ?? $this->createMock(OrderSearchService::class),
             $cashService ?? $this->createMock(CashSessionService::class),
+            $printer ?? $this->createMock(PrinterService::class),
+            $this->createMock(TicketDataResolver::class),
+            $this->createMock(TicketPdfGenerator::class),
         );
     }
 
@@ -96,6 +102,33 @@ final class RefundControllerTest extends TestCase
         $response = $this->createController($refundService)->retry(SessionRequest::json([], ['user_id' => 1]), 5);
 
         $this->assertSame(Response::HTTP_BAD_GATEWAY, $response->getStatusCode());
+    }
+
+    public function testSuccessfulRefundPrintsTheCreditNoteAndReportsHow(): void
+    {
+        $refundService = $this->createMock(RefundService::class);
+        $refundService->method('processRefund')->willReturn(['refund_id' => 7, 'credit_note_number' => 'R2026-000007', 'refunded_amount' => 10.0]);
+        $printer = $this->createMock(PrinterService::class);
+        $printer->expects($this->once())->method('printRefundTicket')->with(7)->willReturn('pdf');
+
+        $response = $this->createController($refundService, printer: $printer)->refund(SessionRequest::json(['ps_order_id' => 42, 'reason_code' => 'size'], ['user_id' => 1]));
+
+        $data = json_decode((string) $response->getContent(), true, 512, JSON_THROW_ON_ERROR)['data'];
+        $this->assertSame('pdf', $data['print_status']);
+        $this->assertSame('R2026-000007', $data['credit_note_number']);
+    }
+
+    public function testPrinterFailureNeverFailsTheRefund(): void
+    {
+        $refundService = $this->createMock(RefundService::class);
+        $refundService->method('processRefund')->willReturn(['refund_id' => 7]);
+        $printer = $this->createMock(PrinterService::class);
+        $printer->method('printRefundTicket')->willThrowException(new \RuntimeException('paper out'));
+
+        $response = $this->createController($refundService, printer: $printer)->refund(SessionRequest::json(['ps_order_id' => 42, 'reason_code' => 'size'], ['user_id' => 1]));
+
+        $this->assertSame(Response::HTTP_OK, $response->getStatusCode());
+        $this->assertSame('pdf', json_decode((string) $response->getContent(), true)['data']['print_status']);
     }
 
     public function testSearchOrdersReturns401WithoutSession(): void

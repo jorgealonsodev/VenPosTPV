@@ -7,9 +7,13 @@ namespace VenPosTPV\Controller\Api;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 use Symfony\Component\HttpKernel\Attribute\AsController;
 use Symfony\Component\Routing\Attribute\Route;
 use VenPosTPV\Service\Cash\CashSessionService;
+use VenPosTPV\Service\Print\PrinterService;
+use VenPosTPV\Service\Print\TicketDataResolver;
+use VenPosTPV\Service\Print\TicketPdfGenerator;
 use VenPosTPV\Service\Refund\Exception\RefundException;
 use VenPosTPV\Service\Refund\OrderSearchService;
 use VenPosTPV\Service\Refund\RefundService;
@@ -21,6 +25,9 @@ class RefundController
         private readonly RefundService $refundService,
         private readonly OrderSearchService $orderSearchService,
         private readonly CashSessionService $cashSessionService,
+        private readonly PrinterService $printerService,
+        private readonly TicketDataResolver $ticketDataResolver,
+        private readonly TicketPdfGenerator $pdfGenerator,
     ) {
     }
 
@@ -55,6 +62,7 @@ class RefundController
         try {
             $this->cashSessionService->requireOpenSession($userId);
             $result = $this->refundService->processRefund($userId, $psOrderId, $lines, $reasonCode, $reasonText, $cardConfirmed);
+            $result['print_status'] = $this->printCreditNote($result, $request);
 
             return new JsonResponse(['data' => $result], Response::HTTP_OK);
         } catch (RefundException $e) {
@@ -102,6 +110,7 @@ class RefundController
 
         try {
             $result = $this->refundService->retryPending((int) $session->get('user_id'), $id);
+            $result['print_status'] = $this->printCreditNote($result, $request);
 
             return new JsonResponse(['data' => $result], Response::HTTP_OK);
         } catch (RefundException $e) {
@@ -115,6 +124,51 @@ class RefundController
             return new JsonResponse(['error' => $e->getMessage(), 'retry' => $status === Response::HTTP_BAD_GATEWAY], $status);
         } catch (\Throwable $e) {
             return new JsonResponse(['error' => 'Internal server error', 'retry' => true], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    #[Route('/refund/{id}/pdf', methods: ['GET'], requirements: ['id' => '\\d+'])]
+    public function creditNotePdf(Request $request, int $id): Response
+    {
+        if ($request->getSession()->get('user_id') === null) {
+            return new JsonResponse(['error' => 'Unauthorized'], Response::HTTP_UNAUTHORIZED);
+        }
+
+        $ticketData = $this->ticketDataResolver->resolveRefund($id);
+        if ($ticketData === null) {
+            return new JsonResponse(['error' => 'Refund not found'], Response::HTTP_NOT_FOUND);
+        }
+
+        $pdf = $this->pdfGenerator->generate($ticketData);
+
+        return new StreamedResponse(
+            static function () use ($pdf): void {
+                echo $pdf;
+            },
+            Response::HTTP_OK,
+            [
+                'Content-Type' => 'application/pdf',
+                'Content-Disposition' => sprintf('inline; filename="abono-%s.pdf"', $ticketData->reference),
+            ]
+        );
+    }
+
+    /**
+     * The credit note is always handed over: printed on the network printer, or
+     * 'pdf' so the screen opens it. A print failure never undoes the refund.
+     *
+     * @param array<string, mixed> $result
+     */
+    private function printCreditNote(array $result, Request $request): string
+    {
+        if (!empty($result['already_completed']) || !isset($result['refund_id'])) {
+            return 'pdf';
+        }
+
+        try {
+            return $this->printerService->printRefundTicket((int) $result['refund_id'], (int) ($request->getSession()->get('terminal_id') ?? 1));
+        } catch (\Throwable) {
+            return 'pdf';
         }
     }
 

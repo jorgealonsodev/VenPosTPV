@@ -96,6 +96,35 @@ class PrinterService
         return ['printed' => false, 'fallback' => 'pdf', 'pdf' => base64_encode($pdf)];
     }
 
+    /**
+     * Prints the credit note of a completed refund on the terminal's network
+     * printer. Returns 'printed', or 'pdf' when there is no usable printer and the
+     * screen must show the PDF instead (the abono is always handed over).
+     */
+    public function printRefundTicket(int $refundId, int $terminalId): string
+    {
+        $ticketData = $this->ticketDataResolver->resolveRefund($refundId);
+        if ($ticketData === null) {
+            throw new \RuntimeException(sprintf('Refund %d not found', $refundId));
+        }
+
+        $configRow = $this->connection->fetchOne('SELECT printer_config FROM terminal WHERE id = ?', [$terminalId]);
+        $config = PrinterConfig::fromJson($configRow !== false && \is_string($configRow) ? $configRow : null);
+
+        if ($config->enabled && $config->type === 'network' && $config->host !== '') {
+            try {
+                $this->sendEscPos($ticketData, $config);
+                $this->logAudit($terminalId, 'credit_note_printed', (string) $refundId, ['number' => $ticketData->reference]);
+
+                return 'printed';
+            } catch (\Throwable $e) {
+                $this->logAudit($terminalId, 'credit_note_escpos_failed', (string) $refundId, ['error' => $e->getMessage()]);
+            }
+        }
+
+        return 'pdf';
+    }
+
     public function openDrawer(int $terminalId): void
     {
         $configRow = $this->connection->fetchOne(

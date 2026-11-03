@@ -5,10 +5,10 @@ const vm = require('node:vm');
 
 function ref(value) { return { value }; }
 
-function load(refundOrder, refundRetry = async () => ({ data: {} })) {
+function load(refundOrder, refundRetry = async () => ({ data: {} }), opened = []) {
     const source = fs.readFileSync(path.resolve(__dirname, '../../public/assets/js/components/RefundScreen.js'), 'utf8');
     const context = {
-        Vue: { ref }, ApiClient: { refundOrder, refundRetry, searchOrders: async () => ({ data: [] }) },
+        Vue: { ref }, ApiClient: { refundOrder, refundRetry, refundPdf: (id) => opened.push(id), searchOrders: async () => ({ data: [] }) },
         useSession: { session: { online: true } }, Number, Math, JSON, parseInt, Boolean, Promise, Error, Array, console,
     };
     context.globalThis = context;
@@ -93,7 +93,27 @@ async function testPendingRefundBlocksNewOnesAndCanBeRetried() {
     assert.equal(state.selectedOrder.value, null);
 }
 
+async function testCreditNotePdfOpensWhenNotPrinted() {
+    const opened = [];
+    const { state, emitted } = load(async () => ({ data: { refund_id: 9, credit_note_number: 'R2026-000009', refunded_amount: 24.18, cash_amount: 24.18, print_status: 'pdf' } }), undefined, opened);
+    state.selectOrder({ ...ORDER, tender: { cash: 60, card: 0 } });
+    state.toggleLine(0);
+    state.setReason('size');
+    await state.confirmRefund();
+    assert.deepEqual(opened, [9]);
+    assert.match(emitted.at(-1)[1], /^Abono R2026-000009: 24\.18 €/);
+
+    const printed = [];
+    const second = load(async () => ({ data: { refund_id: 10, print_status: 'printed' } }), undefined, printed);
+    second.state.selectOrder({ ...ORDER, tender: { cash: 60, card: 0 } });
+    second.state.toggleLine(0);
+    second.state.setReason('size');
+    await second.state.confirmRefund();
+    assert.deepEqual(printed, [], 'no PDF when the printer printed it');
+}
+
 (async () => {
+    await testCreditNotePdfOpensWhenNotPrinted();
     await testPendingRefundBlocksNewOnesAndCanBeRetried();
     await testRequestCarriesOnlyIndexesQuantitiesRestockReasonAndConfirmation();
     await testOtherReasonNeedsTextAndQuantityIsCappedAtRefundable();

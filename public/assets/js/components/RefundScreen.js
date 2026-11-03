@@ -179,8 +179,15 @@ const RefundScreen = {
             return 'Error en devolución: ' + detail;
         }
 
+        function handOverCreditNote(data) {
+            // The abono is always handed over: when no printer took it, open the PDF.
+            if (data.refund_id && data.print_status !== 'printed') {
+                ApiClient.refundPdf(data.refund_id);
+            }
+        }
+
         function refundDoneMessage(data) {
-            const parts = ['Devolución de ' + Number(data.refunded_amount || 0).toFixed(2) + ' €'];
+            const parts = [(data.credit_note_number ? 'Abono ' + data.credit_note_number + ': ' : 'Devolución de ') + Number(data.refunded_amount || 0).toFixed(2) + ' €'];
             if (Number(data.cash_amount) > 0) parts.push(Number(data.cash_amount).toFixed(2) + ' € en efectivo');
             if (Number(data.card_amount) > 0) parts.push(Number(data.card_amount).toFixed(2) + ' € a tarjeta');
             const warn = data.saga_error || (Array.isArray(data.restock_failed) && data.restock_failed.length > 0);
@@ -193,7 +200,9 @@ const RefundScreen = {
             loading.value = true;
             try {
                 const result = await ApiClient.refundRetry(pending.id);
-                const done = refundDoneMessage((result && result.data) || {});
+                const data = (result && result.data) || {};
+                handOverCreditNote(data);
+                const done = refundDoneMessage(data);
                 emit('notify', done.text, done.color);
                 backToSearch();
             } catch (err) {
@@ -211,7 +220,9 @@ const RefundScreen = {
             loading.value = true;
             try {
                 const result = await ApiClient.refundOrder(selectedOrder.value.ps_order_id, request);
-                const done = refundDoneMessage((result && result.data) || {});
+                const data = (result && result.data) || {};
+                handOverCreditNote(data);
+                const done = refundDoneMessage(data);
                 emit('notify', done.text, done.color);
                 backToSearch();
             } catch (err) {

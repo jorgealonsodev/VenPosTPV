@@ -75,8 +75,23 @@ class EscPosTicketBuilder
         $this->printMultilineCentered($printer, $ticketData->ticketHeader);
         $printer->selectPrintMode();
         $printer->text("\n");
+        $creditNote = $ticketData->creditNote;
+        if ($creditNote !== null) {
+            $printer->selectPrintMode(Printer::MODE_DOUBLE_HEIGHT | Printer::MODE_EMPHASIZED);
+            $printer->text('ABONO ' . $creditNote->number . "\n");
+            $printer->selectPrintMode();
+        }
         $printer->text($ticketData->date->format('d/m/Y H:i') . "\n");
-        $printer->text('Ref: ' . $ticketData->reference . "\n");
+        if ($creditNote !== null) {
+            $rectifies = 'Rectifica: ' . $creditNote->rectifiesReference;
+            if ($creditNote->rectifiesDate !== null) {
+                $rectifies .= ' (' . $creditNote->rectifiesDate->format('d/m/Y') . ')';
+            }
+            $printer->text($rectifies . "\n");
+            $printer->text('Motivo: ' . $this->sanitize($creditNote->reason) . "\n");
+        } else {
+            $printer->text('Ref: ' . $ticketData->reference . "\n");
+        }
         $printer->text('Cajero: ' . $this->sanitize($ticketData->cashierName) . "\n");
         $printer->text(str_repeat('-', 32) . "\n");
 
@@ -98,7 +113,22 @@ class EscPosTicketBuilder
 
         $printer->text(str_repeat('-', 32) . "\n");
 
-        if (!$giftMode) {
+        if ($creditNote !== null) {
+            $printer->setJustification(Printer::JUSTIFY_RIGHT);
+            $printer->text('Base: ' . number_format($ticketData->subtotal, 2) . " €\n");
+            $printer->text('IVA: ' . number_format($ticketData->tax, 2) . " €\n");
+            $printer->selectPrintMode(Printer::MODE_DOUBLE_HEIGHT | Printer::MODE_EMPHASIZED);
+            $printer->text('TOTAL DEVUELTO: ' . number_format($ticketData->total, 2) . " €\n");
+            $printer->selectPrintMode();
+            $printer->text("\n");
+            if ($creditNote->cashAmount > 0) {
+                $printer->text('Efectivo: ' . number_format($creditNote->cashAmount, 2) . " €\n");
+            }
+            if ($creditNote->cardAmount > 0) {
+                $printer->text('Tarjeta: ' . number_format($creditNote->cardAmount, 2) . " €\n");
+            }
+            $printer->text("\n");
+        } elseif (!$giftMode) {
             // Totals
             $printer->setJustification(Printer::JUSTIFY_RIGHT);
             $printer->text('Subtotal: ' . number_format($ticketData->subtotal, 2) . " €\n");

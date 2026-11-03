@@ -142,6 +142,7 @@ final class TestDatabase
         }
 
         self::runMigration($connection, 'Version00000019CreateRefundTables');
+        self::runMigration($connection, 'Version00000020CreateCreditNoteNumbering');
     }
 
     private static function applyInstallSchema(Connection $connection): void

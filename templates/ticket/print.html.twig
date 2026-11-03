@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>Ticket {{ ticket.reference }}</title>
+    <title>{{ ticket.creditNote ? 'Abono' : 'Ticket' }} {{ ticket.reference }}</title>
     <style>
         @page { margin: 0; }
         body {
@@ -45,8 +45,16 @@
     {% if ticket.ticketHeader %}
         <div class="center">{{ ticket.ticketHeader|nl2br }}</div>
     {% endif %}
+    {% if ticket.creditNote %}
+        <div class="center bold large">ABONO {{ ticket.creditNote.number }}</div>
+    {% endif %}
     <div class="center">{{ ticket.date|date('d/m/Y H:i') }}</div>
-    <div class="center">Ref: {{ ticket.reference }}</div>
+    {% if ticket.creditNote %}
+        <div class="center">Rectifica: {{ ticket.creditNote.rectifiesReference }}{% if ticket.creditNote.rectifiesDate %} ({{ ticket.creditNote.rectifiesDate|date('d/m/Y') }}){% endif %}</div>
+        <div class="center">Motivo: {{ ticket.creditNote.reason }}</div>
+    {% else %}
+        <div class="center">Ref: {{ ticket.reference }}</div>
+    {% endif %}
     <div class="center">Cajero: {{ ticket.cashierName }}</div>
 
     <div class="line"></div>
@@ -64,7 +72,14 @@
 
     <div class="line"></div>
 
-    {% if not giftMode %}
+    {% if ticket.creditNote %}
+        <div class="right">Base: {{ ticket.subtotal|number_format(2, ',', '.') }} €</div>
+        <div class="right">IVA: {{ ticket.tax|number_format(2, ',', '.') }} €</div>
+        <div class="right bold large">TOTAL DEVUELTO: {{ ticket.total|number_format(2, ',', '.') }} €</div>
+        <div class="line"></div>
+        {% if ticket.creditNote.cashAmount > 0 %}<div>Efectivo: {{ ticket.creditNote.cashAmount|number_format(2, ',', '.') }} €</div>{% endif %}
+        {% if ticket.creditNote.cardAmount > 0 %}<div>Tarjeta: {{ ticket.creditNote.cardAmount|number_format(2, ',', '.') }} €</div>{% endif %}
+    {% elseif not giftMode %}
         <div class="right">Subtotal: {{ ticket.subtotal|number_format(2, ',', '.') }} €</div>
         <div class="right">IVA: {{ ticket.tax|number_format(2, ',', '.') }} €</div>
         <div class="right bold large">TOTAL: {{ ticket.total|number_format(2, ',', '.') }} €</div>

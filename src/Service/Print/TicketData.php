@@ -28,6 +28,7 @@ final class TicketData
         public readonly float $amountTendered,
         public readonly float $changeDue,
         public readonly string $verificationUrl,
+        public readonly ?CreditNoteInfo $creditNote = null,
     ) {
     }
 }
