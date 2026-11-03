@@ -8,6 +8,7 @@ use Closure;
 use Doctrine\DBAL\Connection;
 use VenPosTPV\Service\Catalog\Exception\CatalogSyncException;
 use VenPosTPV\Service\PrestaShop\PrestaShopApiClient;
+use VenPosTPV\Service\Stock\PendingUploadStock;
 use VenPosTPV\Service\Sync\SyncLogRepository;
 
 class CatalogSyncService
@@ -171,17 +172,14 @@ class CatalogSyncService
                 }
             }
 
+            // Read after catalog_stock is locked by the DELETE above, in the same
+            // transaction, so a checkout either committed before (its sale is counted
+            // here) or waits and decrements the new rows afterwards.
+            $owed = (new PendingUploadStock($this->connection))->owedByPendingUploads();
             $stockCount = $this->batchInsert(
                 'catalog_stock',
                 $stockAvailables,
-                static function (array $stock): array {
-                    return [
-                        'id_product' => (int) ($stock['id_product'] ?? 0),
-                        'id_product_attribute' => (int) ($stock['id_product_attribute'] ?? 0),
-                        'quantity' => (int) ($stock['quantity'] ?? 0),
-                        'ps_stock_id' => (int) ($stock['id'] ?? 0) ?: null,
-                    ];
-                }
+                self::stockRowMapper($owed)
             );
 
             $this->connection->commit();
@@ -284,17 +282,14 @@ class CatalogSyncService
             $this->truncateTable('catalog_stock');
 
             $stockAvailables = $this->apiClient->getStockAvailables();
+            // Read after catalog_stock is locked by the DELETE above, in the same
+            // transaction, so a checkout either committed before (its sale is counted
+            // here) or waits and decrements the new rows afterwards.
+            $owed = (new PendingUploadStock($this->connection))->owedByPendingUploads();
             $stockCount = $this->batchInsert(
                 'catalog_stock',
                 $stockAvailables,
-                static function (array $stock): array {
-                    return [
-                        'id_product' => (int) ($stock['id_product'] ?? 0),
-                        'id_product_attribute' => (int) ($stock['id_product_attribute'] ?? 0),
-                        'quantity' => (int) ($stock['quantity'] ?? 0),
-                        'ps_stock_id' => (int) ($stock['id'] ?? 0) ?: null,
-                    ];
-                }
+                self::stockRowMapper($owed)
             );
 
             $this->connection->commit();
@@ -313,6 +308,31 @@ class CatalogSyncService
             }
             throw CatalogSyncException::fromPrevious($e);
         }
+    }
+
+    /**
+     * Maps a PrestaShop stock_available to a catalog_stock row. The local quantity is
+     * PrestaShop's minus what the operations still in the outbox will take off it (a
+     * pending sale) plus what they will put back (a pending restock): the local copy
+     * already counts them, and they reach PrestaShop only when uploaded (T8).
+     *
+     * @param array<string, int> $owed PendingUploadStock::owedByPendingUploads()
+     *
+     * @return Closure(array<string, mixed>): array<string, mixed>
+     */
+    private static function stockRowMapper(array $owed): Closure
+    {
+        return static function (array $stock) use ($owed): array {
+            $productId = (int) ($stock['id_product'] ?? 0);
+            $attributeId = (int) ($stock['id_product_attribute'] ?? 0);
+
+            return [
+                'id_product' => $productId,
+                'id_product_attribute' => $attributeId,
+                'quantity' => (int) ($stock['quantity'] ?? 0) - ($owed[PendingUploadStock::key($productId, $attributeId)] ?? 0),
+                'ps_stock_id' => (int) ($stock['id'] ?? 0) ?: null,
+            ];
+        };
     }
 
     private function truncateTable(string $table): void

@@ -269,6 +269,50 @@ final class OutboxSyncMySqlIntegrationTest extends TestCase
         $this->assertSame(['ps_order_id' => 7107] + $refundPayload, $this->refunds[0]);
     }
 
+    /**
+     * A row queued after its sale (or its till-created customer) was discarded can never
+     * upload: it becomes an incident the administrator sees, instead of waiting forever.
+     */
+    public function testARowBehindADiscardedSaleBecomesAnIncidentInsteadOfWaitingForever(): void
+    {
+        $id = $this->seedSale('Q26000120');
+        $this->connection->executeStatement("UPDATE outbox SET status = 'discarded', last_error = 'Product not found' WHERE order_id = ? AND sequence = 1", [$id]);
+        $refundPayload = ['request_id' => 'r1-refund-of-q120', 'refund_type' => 'partial', 'reason' => '',
+            'lines' => [['id_product' => self::PRODUCT, 'id_product_attribute' => 0, 'quantity' => 1, 'amount' => 10.0, 'restock' => true]]];
+        $this->connection->transactional(fn (): string => (new Outbox($this->connection))->enqueueAfter(Outbox::TYPE_REFUND, $id, $refundPayload, 'r1-refund-of-q120'));
+
+        $counts = $this->sync()->run();
+
+        $this->assertSame([], $this->sent);
+        $this->assertSame([], $this->refunds, 'nothing is sent for a sale PrestaShop never got');
+        $this->assertSame(1, $counts['incidents']);
+        $refund = $this->outbox($id, 2);
+        $this->assertSame('incident', $refund['status']);
+        $this->assertSame('Depende de una operación descartada', $refund['last_error']);
+        $this->assertSame('discarded', $this->outbox($id)['status'], 'the discarded row is left as it is');
+        $this->assertSame(0, $this->sync()->run()['incidents'], 'counted once');
+    }
+
+    public function testASaleThatDependsOnADiscardedCustomerBecomesAnIncident(): void
+    {
+        $customerRow = $this->connection->transactional(fn (): int => (new Outbox($this->connection))->enqueueCustomer(0, ['firstname' => 'Ana', 'lastname' => 'Ruiz', 'email' => 'ana-q121@example.com']));
+        $this->connection->executeStatement("UPDATE outbox SET status = 'discarded' WHERE id = ?", [$customerRow]);
+        $id = $this->seedSale('Q26000121');
+        $this->connection->executeStatement('UPDATE outbox SET depends_on = ? WHERE order_id = ? AND sequence = 1', [$customerRow, $id]);
+        $other = $this->seedSale('Q26000122');
+
+        try {
+            $this->sync()->run();
+
+            $this->assertSame('incident', $this->outbox($id)['status']);
+            $this->assertSame('Depende de una operación descartada', $this->outbox($id)['last_error']);
+            $this->assertSame('done', $this->outbox($other)['status'], 'other sales upload as before');
+            $this->assertSame(['Q26000122'], array_column($this->sent, 'reference'));
+        } finally {
+            $this->connection->executeStatement('DELETE FROM outbox WHERE id = ?', [$customerRow]);
+        }
+    }
+
     public function testARefundRejectedByPrestaShopBecomesAnIncidentAndABusyOrderIsRetried(): void
     {
         $id = $this->seedSale('Q26000109');

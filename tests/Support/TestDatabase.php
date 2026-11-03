@@ -157,6 +157,7 @@ final class TestDatabase
         self::runMigration($connection, 'Version00000033TillDevices');
         self::runMigration($connection, 'Version00000034LocalCustomers');
         self::runMigration($connection, 'Version00000035CustomerEmailRace');
+        self::runMigration($connection, 'Version00000036OutboxDiscard');
     }
 
     private static function applyInstallSchema(Connection $connection): void

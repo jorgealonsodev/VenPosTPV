@@ -259,7 +259,7 @@ const SaleScreen = {
             if (syncingNow.value) return;
             syncingNow.value = true;
             try {
-                const response = await ApiClient.syncNow();
+                const response = await ApiClient.syncNow(true);
                 const data = (response && response.data) || {};
                 const uploaded = data.outbox ? data.outbox.uploaded : 0;
                 if (data.catalog_error) {

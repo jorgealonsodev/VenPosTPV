@@ -101,7 +101,39 @@ Rows of one sale upload in `sequence` order: a refund or exchange row waits unti
 its sale is `done`. A row is claimed by one process with a conditional UPDATE
 (`pending` → `processing` with a claim token); a claim older than 5 minutes is taken
 back (the module replays an order that already exists, so no duplicate is created).
-Stock is never pushed: PrestaShop lowers it when it creates the order.
+Stock is never pushed for an upload: PrestaShop lowers it when it creates the order.
+
+A `pending` row behind a `discarded` one (an earlier row of its sale, or the row in
+its `depends_on`) can never upload. Each run moves it to `incident` with
+`last_error` "Depende de una operación descartada", so the administrator sees it and
+can discard it too, instead of it waiting forever.
+
+### Manual sync and the POS timer
+
+`POST /api/sync/now` uploads the due rows and then refreshes the catalog. The POS
+calls it every minute without a body flag: only rows whose `next_attempt_at` has
+come are sent, so the growing wait above applies while a POS is open. The header's
+sync button sends `{"manual": true}`, which first makes every `pending` row due
+(`OutboxSync::makePendingDue`) and so retries them all now.
+
+### Stock of operations not uploaded yet
+
+The local `catalog_stock` already counts every sale, refund and restock; PrestaShop
+counts them only once their row is uploaded. For each product and combination,
+`PendingUploadStock` adds the quantities of the `sale` rows still pending,
+processing or in incident and subtracts the restocked lines of the `refund` and
+`restock` rows in those statuses (`done` and `discarded` rows never count: one has
+moved PrestaShop's stock already, the other never will):
+
+- the absolute stock push (`POST /api/sync/push-stock`, every 30 s from the POS)
+  sends `local + owed`, what PrestaShop should show before those uploads apply; the
+  upload then moves PrestaShop's stock itself, so nothing is counted twice;
+- the stock and catalog sync from PrestaShop store `PrestaShop − owed`, so a sale or
+  restock not uploaded yet is not lost from the local copy.
+
+Both read the outbox in the same transaction as `catalog_stock`. Between an upload
+reaching PrestaShop and its row becoming `done`, one push or pull can be off by that
+quantity; the next one (30 s / 1 min) corrects it.
 
 ## Pending uploads and incidents (PRD I1-I3)
 
@@ -120,9 +152,40 @@ Stock is never pushed: PrestaShop lowers it when it creates the order.
   - `POST /api/incidents/order/{order_id}/retry` — every incident of one sale; they
     still upload in `sequence` order.
 
-  Both POSTs take a JSON body only (415 otherwise), answer 401 without a session, 403
+  - `POST /api/incidents/{id}/discard` with an optional `{"reason": "..."}` (up to 255
+    characters; anything but text → 400 `invalid_reason`) — gives up uploading a row
+    PrestaShop will never accept (a deleted product). A conditional UPDATE on
+    `status = 'incident'` makes it `discarded` and stores `discarded_by_user_id` (the
+    session's administrator), `discarded_at` and `discard_reason`; `last_error` and
+    `attempts` stay. Answers `{"data": {"discarded": [id, ...]}}`, this row first.
+    The local sale, its ticket and the cash do not change.
+  - `GET /api/incidents/discarded` — the last 20 discarded rows, newest first, with
+    who (`discarded_by`, the user's name), when and why; the screen shows them
+    read-only under "Descartadas recientes".
+
+  The POSTs take a JSON body only (415 otherwise), answer 401 without a session, 403
   to anyone but an administrator, and 409 `{"code": "not_incident"}` when there is
-  nothing left to retry (retried or uploaded meanwhile).
+  nothing left to retry or discard (retried, uploaded or discarded meanwhile). Before
+  migration Version00000036 is applied a discard answers 503 `discard_not_ready`.
+
+- **Dependants of a discard.** OutboxSync only claims a `pending` row whose earlier
+  rows of the same sale are `done` and whose `depends_on` row is `done`, so a row
+  behind a discarded one could never upload. A discard therefore also discards, with
+  the same who/when/why, every `pending` or `incident` row that waits behind it: the
+  later rows of the same sale (higher `sequence`: its refunds and exchanges), the rows
+  whose `depends_on` is it (the sales of a customer created at the till), and in turn
+  what waits behind those. Each incident in `GET /api/incidents` carries `dependants`,
+  that count, and the confirmation says it: "¿Descartar esta incidencia? La venta
+  queda en el TPV (caja y ticket no cambian) pero no se subirá a PrestaShop, y N
+  operaciones que dependen de ella."
+- Discarded rows are terminal: never claimed (only `pending` is), never retried (the
+  retry is conditional on `incident`), and left out of `pending`, `incidents`,
+  `blocked`, the incident list and its `waiting_behind`.
+- The screen shows a plain Spanish headline for each error (for example "Product not
+  found" → "El producto ya no existe en PrestaShop", HTTP 401/403 → "La clave de
+  conexión con PrestaShop no tiene permiso", "Failed N times in a row." → "El TPV no
+  pudo guardar la respuesta de PrestaShop", otherwise "PrestaShop rechazó la
+  operación"), with the raw `last_error` below it.
 
 ## Schema (Version00000031LocalFirstOrders)
 
@@ -132,6 +195,8 @@ Stock is never pushed: PrestaShop lowers it when it creates the order.
   `reference` when it is unique and at most 9 characters.
 - `movement.order_id` (local sale of a sale movement).
 - `outbox`: `type`, `order_id`, `sequence`, `request_id` (unique), `payload`, `status`
-  (`pending`, `processing`, `done`, `incident`), `attempts`, `next_attempt_at`,
+  (`pending`, `processing`, `done`, `incident`, `discarded`), `attempts`, `next_attempt_at`,
   `claim_token`, `claimed_at`, `last_error`, timestamps. The old, unused
   `offline_queue` table is left as it was.
+- Version00000036OutboxDiscard adds `outbox.discarded_at`, `discarded_by_user_id` and
+  `discard_reason` (all NULL; nothing existing is rewritten).

@@ -101,6 +101,7 @@ class OutboxSync
     public function run(int $limit = 100): array
     {
         $counts = ['uploaded' => 0, 'retried' => 0, 'incidents' => 0, 'recovered' => $this->recoverStuck()];
+        $counts['incidents'] += $this->blockBehindDiscarded();
 
         for ($i = 0; $i < $limit; ++$i) {
             $row = $this->claimNext();
@@ -138,6 +139,43 @@ class OutboxSync
      *
      * @return array<string, mixed>|null the claimed row, with its claim_token
      */
+    public const BEHIND_DISCARDED_ERROR = 'Depende de una operación descartada';
+
+    /**
+     * A pending row behind a discarded one (an earlier row of its sale, or the row it
+     * depends_on) can never upload: PrestaShop never got what it builds on. Instead of
+     * waiting forever it becomes an incident, which the administrator can discard too.
+     * Rows queued after a discard (a new refund of that sale, a new sale for that
+     * customer) reach this; the discard itself already takes the rows waiting then.
+     *
+     * @return int rows moved to incident
+     */
+    private function blockBehindDiscarded(): int
+    {
+        $ids = $this->connection->fetchFirstColumn(
+            "SELECT o.id FROM outbox o
+             WHERE o.status = 'pending'
+               AND (EXISTS (SELECT 1 FROM outbox p WHERE p.order_id = o.order_id AND p.sequence < o.sequence AND p.status = ?)
+                    OR EXISTS (SELECT 1 FROM outbox d WHERE d.id = o.depends_on AND d.status = ?))",
+            [Outbox::STATUS_DISCARDED, Outbox::STATUS_DISCARDED]
+        );
+
+        $moved = 0;
+        foreach ($ids as $id) {
+            // Conditional: a row another worker already claimed or changed is left alone.
+            $changed = $this->connection->executeStatement(
+                "UPDATE outbox SET status = 'incident', last_error = ?, updated_at = ? WHERE id = ? AND status = 'pending'",
+                [self::BEHIND_DISCARDED_ERROR, $this->now(), (int) $id]
+            );
+            if ($changed === 1) {
+                $this->logger?->warning('Outbox row {id} waits for a discarded row', ['id' => $id]);
+                ++$moved;
+            }
+        }
+
+        return $moved;
+    }
+
     private function claimNext(): ?array
     {
         $now = $this->now();

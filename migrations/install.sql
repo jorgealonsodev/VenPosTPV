@@ -353,6 +353,7 @@ CREATE TABLE IF NOT EXISTS ticket_sequence (
 -- (sequence 1 = the sale, then its refunds/exchanges); status pending, processing,
 -- done or incident (definitive rejection, for the administrator). Types: sale,
 -- refund (behind its sale), restock (refund without ticket, no sale: order_id NULL, V32).
+-- discarded (V36): an incident the administrator gave up uploading, with who, when and why.
 CREATE TABLE IF NOT EXISTS outbox (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     type VARCHAR(32) NOT NULL,
@@ -371,6 +372,9 @@ CREATE TABLE IF NOT EXISTS outbox (
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     done_at DATETIME NULL,
+    discarded_at DATETIME NULL,
+    discarded_by_user_id INT UNSIGNED NULL,
+    discard_reason VARCHAR(255) NULL,
     UNIQUE KEY uk_outbox_request (request_id),
     UNIQUE KEY uk_outbox_order_sequence (order_id, sequence),
     KEY idx_outbox_due (status, next_attempt_at),

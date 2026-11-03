@@ -63,9 +63,14 @@ class SyncStatusController
         }
 
         // Pending sales and refunds go first: they matter more than the catalog.
+        // Only the header button ({"manual": true}) retries every pending row now; the
+        // POS timer calls this endpoint every minute and must keep the growing wait
+        // between retries (PRD S4), so it uploads only the rows already due.
         $outbox = null;
         if ($this->outboxSync !== null) {
-            $this->outboxSync->makePendingDue();
+            if ($this->isManual($request)) {
+                $this->outboxSync->makePendingDue();
+            }
             $outbox = $this->outboxSync->run(50);
         }
 
@@ -87,6 +92,13 @@ class SyncStatusController
         }
 
         return new JsonResponse(['data' => $data]);
+    }
+
+    private function isManual(Request $request): bool
+    {
+        $body = json_decode((string) $request->getContent(), true);
+
+        return \is_array($body) && ($body['manual'] ?? null) === true;
     }
 
     #[Route('/sync/push-stock', methods: ['POST'])]

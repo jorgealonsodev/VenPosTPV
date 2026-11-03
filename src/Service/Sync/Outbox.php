@@ -35,6 +35,12 @@ class Outbox
     public const STATUS_DONE = 'done';
     public const STATUS_INCIDENT = 'incident';
 
+    /**
+     * Given up for good by an administrator (PRD I3): never uploaded, and nothing
+     * that waits for it can upload either.
+     */
+    public const STATUS_DISCARDED = 'discarded';
+
     public function __construct(private readonly Connection $connection)
     {
     }

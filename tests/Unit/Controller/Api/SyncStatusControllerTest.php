@@ -66,9 +66,12 @@ class SyncStatusControllerTest extends TestCase
         $this->assertNull($data['latency_ms']);
     }
 
-    private function requestWithUser(?int $userId): Request
+    /** @param array<string, mixed>|null $body */
+    private function requestWithUser(?int $userId, ?array $body = null): Request
     {
-        $request = new Request();
+        $request = $body === null
+            ? new Request()
+            : new Request([], [], [], [], [], ['CONTENT_TYPE' => 'application/json'], json_encode($body, JSON_THROW_ON_ERROR));
         $session = new Session(new MockArraySessionStorage());
         if ($userId !== null) {
             $session->set('user_id', $userId);
@@ -126,11 +129,67 @@ class SyncStatusControllerTest extends TestCase
             $outbox,
         );
 
-        $response = $controller->syncNow($this->requestWithUser(5));
+        $response = $controller->syncNow($this->requestWithUser(5, ['manual' => true]));
 
         $this->assertSame(Response::HTTP_OK, $response->getStatusCode());
         $data = json_decode((string) $response->getContent(), true, 512, JSON_THROW_ON_ERROR);
         $this->assertSame(2, $data['data']['outbox']['uploaded']);
         $this->assertSame('PrestaShop down', $data['data']['catalog_error']);
+    }
+
+    /**
+     * T8 bug 2: the POS timer calls /api/sync/now every minute. It must not make every
+     * pending row due, or the growing wait between retries (PRD S4) never applies.
+     *
+     * @return iterable<string, array{0: array<string, mixed>|null}>
+     */
+    public static function timerBodies(): iterable
+    {
+        yield 'no body' => [null];
+        yield 'empty body' => [[]];
+        yield 'manual false' => [['manual' => false]];
+        yield 'manual not a boolean' => [['manual' => 'yes']];
+    }
+
+    /** @param array<string, mixed>|null $body */
+    #[\PHPUnit\Framework\Attributes\DataProvider('timerBodies')]
+    public function testTimerSyncUploadsOnlyDueRowsAndStillSyncsTheCatalog(?array $body): void
+    {
+        $catalog = $this->createMock(CatalogSyncService::class);
+        $catalog->expects($this->once())->method('syncAll')
+            ->willReturn(['products' => 1, 'combinations' => 0, 'combination_attributes' => 0, 'stock' => 1, 'categories' => 1, 'ttc_prices' => 1]);
+        $outbox = $this->createMock(OutboxSync::class);
+        $outbox->expects($this->never())->method('makePendingDue');
+        $outbox->expects($this->once())->method('run')->willReturn(['uploaded' => 1, 'retried' => 0, 'incidents' => 0, 'recovered' => 0]);
+        $controller = new SyncStatusController($this->createMock(SyncStatusService::class), $catalog, $this->createMock(StockPushService::class), $outbox);
+
+        $response = $controller->syncNow($this->requestWithUser(5, $body));
+
+        $this->assertSame(Response::HTTP_OK, $response->getStatusCode());
+        $data = json_decode((string) $response->getContent(), true, 512, JSON_THROW_ON_ERROR);
+        $this->assertSame(1, $data['data']['outbox']['uploaded']);
+        $this->assertSame(1, $data['data']['counts']['products']);
+        $this->assertNull($data['data']['catalog_error']);
+    }
+
+    public function testManualSyncMakesPendingRowsDueBeforeUploading(): void
+    {
+        $calls = [];
+        $outbox = $this->createMock(OutboxSync::class);
+        $outbox->expects($this->once())->method('makePendingDue')->willReturnCallback(function () use (&$calls): int {
+            $calls[] = 'makePendingDue';
+
+            return 3;
+        });
+        $outbox->expects($this->once())->method('run')->willReturnCallback(function () use (&$calls): array {
+            $calls[] = 'run';
+
+            return ['uploaded' => 3, 'retried' => 0, 'incidents' => 0, 'recovered' => 0];
+        });
+        $controller = new SyncStatusController($this->createMock(SyncStatusService::class), $this->createMock(CatalogSyncService::class), $this->createMock(StockPushService::class), $outbox);
+
+        $controller->syncNow($this->requestWithUser(5, ['manual' => true]));
+
+        $this->assertSame(['makePendingDue', 'run'], $calls);
     }
 }

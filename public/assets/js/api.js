@@ -140,13 +140,17 @@ const ApiClient = (function () {
         },
         authLogout: () => request('/api/auth/logout', { method: 'POST', body: JSON.stringify({}) }),
         syncStatus: () => request('/api/sync/status', { method: 'GET' }),
-        // PRD I1-I3: uploads to PrestaShop still to do and incidents; retries are admin-only and never queued.
+        // PRD I1-I3: uploads to PrestaShop still to do and incidents; retries and discards are admin-only and never queued.
         outboxStatus: () => request('/api/sync/outbox-status', { method: 'GET' }),
         incidentsList: () => request('/api/incidents', { method: 'GET' }),
         incidentRetry: (id) => request('/api/incidents/' + encodeURIComponent(id) + '/retry', { method: 'POST', body: JSON.stringify({}), queueOnNetworkFailure: false }),
         incidentRetryOrder: (orderId) => request('/api/incidents/order/' + encodeURIComponent(orderId) + '/retry', { method: 'POST', body: JSON.stringify({}), queueOnNetworkFailure: false }),
+        incidentDiscard: (id, reason) => request('/api/incidents/' + encodeURIComponent(id) + '/discard', { method: 'POST', body: JSON.stringify({ reason: reason || null }), queueOnNetworkFailure: false }),
+        incidentsDiscarded: () => request('/api/incidents/discarded', { method: 'GET' }),
         syncStock: () => request('/api/sync/stock', { method: 'POST', body: JSON.stringify({}) }),
-        syncNow: () => request('/api/sync/now', { method: 'POST', body: JSON.stringify({}) }),
+        // manual (the header button) retries every pending upload now; the POS timer
+        // leaves it out so the growing wait between retries applies (PRD S4).
+        syncNow: (manual = false) => request('/api/sync/now', { method: 'POST', body: JSON.stringify(manual === true ? { manual: true } : {}) }),
         terminalGet: (id) => request('/api/terminal/' + encodeURIComponent(id), { method: 'GET' }),
         terminalUpdate: (id, body) => request('/api/terminal/' + encodeURIComponent(id), { method: 'PUT', body: JSON.stringify(body) }),
         openDrawer: () => request('/api/drawer/open', { method: 'POST' }),
