@@ -6,21 +6,26 @@
     --surface2:  oklch(20% 0.025 240);
     --surface3:  oklch(26% 0.028 240);
     --border:    oklch(30% 0.025 240);
-    --border2:   oklch(38% 0.022 240);
+    /* Borders of interactive controls (inputs, chips, steppers): >= 3:1 on bg/surface/surface2. */
+    --border2:   oklch(52% 0.022 240);
     --text:      oklch(93% 0.01 240);
-    --text2:     oklch(65% 0.015 240);
-    --text3:     oklch(45% 0.012 240);
+    /* Secondary text >= 4.5:1 on bg, surface and surface2 (guarded by tests/Functional/themeContrast.test.cjs). */
+    --text2:     oklch(72% 0.015 240);
+    --text3:     oklch(62% 0.012 240);
     --green:     oklch(65% 0.18 145);
     --green-bg:  oklch(22% 0.07 145);
     --green-dim: oklch(40% 0.12 145);
     --amber:     oklch(72% 0.17 70);
     --amber-bg:  oklch(22% 0.07 70);
-    --red:       oklch(60% 0.2 25);
+    /* --red is for text/icons on surfaces; filled red buttons use --danger with white text. */
+    --red:       oklch(64% 0.2 25);
+    --danger:    oklch(50% 0.2 25);
     --red-bg:    oklch(20% 0.08 25);
     --blue:      oklch(65% 0.18 255);
     --blue-bg:   oklch(20% 0.07 255);
     --accent:    oklch(65% 0.18 145);
-    /* Filled buttons and selected chips: the POS green, dark enough for white text (6.07:1). */
+    /* Filled buttons: the POS green, dark enough for white text (6.06:1). A fill only:
+       as text on the dark surface it reaches 3.2:1, so green text uses --green. */
     --primary:   oklch(48% 0.16 145);
     --on-primary: oklch(100% 0 0);
     --orange:    oklch(74% 0.16 55);
@@ -32,16 +37,17 @@
     --surface2:  oklch(94% 0.007 240);
     --surface3:  oklch(90% 0.009 240);
     --border:    oklch(84% 0.01 240);
-    --border2:   oklch(75% 0.012 240);
+    --border2:   oklch(60% 0.012 240);
     --text:      oklch(18% 0.018 240);
     --text2:     oklch(38% 0.015 240);
-    --text3:     oklch(55% 0.012 240);
+    --text3:     oklch(50% 0.012 240);
     --green:     oklch(48% 0.18 145);
     --green-bg:  oklch(93% 0.06 145);
     --green-dim: oklch(72% 0.12 145);
     --amber:     oklch(52% 0.17 70);
     --amber-bg:  oklch(94% 0.06 70);
     --red:       oklch(48% 0.2 25);
+    --danger:    oklch(50% 0.2 25);
     --red-bg:    oklch(94% 0.07 25);
     --blue:      oklch(48% 0.18 255);
     --blue-bg:   oklch(93% 0.06 255);
@@ -50,6 +56,10 @@
     --on-primary: oklch(100% 0 0);
     --orange:    oklch(50% 0.16 55);
 }
+
+/* Native checkboxes, radios and ranges follow the POS green, never the browser blue. */
+:root { accent-color: var(--primary); }
+input, select, textarea { accent-color: var(--primary); }
 
 html, body, #app {
     width: 100%;
@@ -239,3 +249,214 @@ html, body, #app {
 .combo-price { font-family: 'IBM Plex Mono', monospace; font-size: 14px; font-weight: 600; flex-shrink: 0; }
 .combo-stock { font-size: 12px; flex-shrink: 0; color: var(--green); }
 .combo-stock.out { color: var(--red, #e74c3c); }
+
+/* ── Touch controls (refund screens) ────────────────────────────────
+   Every target is >= 48px with >= 8px between targets. The selected
+   state is green tint + green border + green text + a check mark, so it
+   never depends on colour alone. Borders use --border2 (>= 3:1). */
+.tpv-btn {
+    min-height: 48px;
+    padding: 0 18px;
+    border-radius: 10px;
+    border: 1px solid var(--border2);
+    background: var(--surface);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 15px;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    cursor: pointer;
+    touch-action: manipulation;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    transition: background .1s, transform .05s;
+}
+.tpv-btn:hover:not(:disabled) { background: var(--surface2); }
+.tpv-btn:active:not(:disabled) { transform: scale(0.98); }
+.tpv-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.tpv-btn:focus-visible, .tpv-chip:focus-visible, .tpv-check:focus-visible,
+.tpv-step:focus-visible, .tpv-action:focus-visible, .tpv-row:focus-visible {
+    outline: 3px solid var(--green);
+    outline-offset: 2px;
+}
+.tpv-btn-primary { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
+.tpv-btn-primary:hover:not(:disabled) { background: var(--primary); filter: brightness(1.08); }
+.tpv-btn-danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.tpv-btn-danger:hover:not(:disabled) { background: var(--danger); filter: brightness(1.08); }
+.tpv-btn-warn { background: transparent; border-color: var(--amber); color: var(--amber); }
+.tpv-btn-warn:hover:not(:disabled) { background: var(--amber-bg); }
+
+.tpv-input {
+    min-height: 48px;
+    padding: 0 14px;
+    border-radius: 10px;
+    border: 1px solid var(--border2);
+    background: var(--surface);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 16px;
+    min-width: 0;
+}
+.tpv-input::placeholder { color: var(--text3); }
+.tpv-input:focus { outline: 2px solid var(--green); outline-offset: 0; border-color: var(--green); }
+
+.tpv-label { color: var(--text2); font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+
+.tpv-chip-grid { display: grid; gap: 8px; }
+.tpv-chip-grid.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.tpv-chip-grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.tpv-chip {
+    position: relative;
+    min-height: 52px;
+    padding: 6px 30px 6px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--border2);
+    background: var(--surface);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 1.2;
+    text-align: left;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    touch-action: manipulation;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+}
+.tpv-chip:hover { background: var(--surface2); }
+.tpv-chip.is-selected {
+    background: var(--green-bg);
+    border-color: var(--green);
+    box-shadow: inset 0 0 0 1px var(--green);
+    color: var(--green);
+    font-weight: 700;
+}
+.tpv-chip-mark { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); display: flex; }
+
+/* 32px custom checkbox inside a 48px+ row. */
+.tpv-check {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    border-radius: 8px;
+    border: 2px solid var(--border2);
+    background: var(--surface);
+    color: var(--on-primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+}
+.tpv-check.is-checked { background: var(--primary); border-color: var(--primary); }
+
+.tpv-row {
+    min-height: 72px;
+    padding: 12px 14px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    cursor: pointer;
+    touch-action: manipulation;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+}
+.tpv-row.is-selected { border-color: var(--green); box-shadow: inset 0 0 0 1px var(--green); background: var(--green-bg); }
+.tpv-row.is-disabled { cursor: not-allowed; opacity: 0.6; }
+
+.tpv-stepper { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.tpv-step {
+    width: 48px;
+    height: 48px;
+    border-radius: 10px;
+    border: 1px solid var(--border2);
+    background: var(--surface2);
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+}
+.tpv-step:disabled { opacity: 0.4; cursor: not-allowed; }
+.tpv-step-value { min-width: 36px; text-align: center; font-family: 'IBM Plex Mono', monospace; font-size: 18px; font-weight: 600; color: var(--text); }
+
+.tpv-toggle {
+    min-height: 48px;
+    padding: 0 14px;
+    border-radius: 10px;
+    border: 1px solid var(--border2);
+    background: var(--surface);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    flex-shrink: 0;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+}
+.tpv-toggle .tpv-check { width: 28px; height: 28px; }
+.tpv-toggle.is-on { border-color: var(--green); color: var(--green); background: var(--green-bg); }
+
+/* Big bottom action, same block as COBRAR on the sale screen. */
+.tpv-action {
+    height: 64px;
+    text-transform: uppercase;
+    padding: 0 20px;
+    border-radius: 14px;
+    border: 2px solid transparent;
+    font-family: inherit;
+    font-size: 18px;
+    font-weight: 800;
+    letter-spacing: 0.01em;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    cursor: pointer;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+}
+.tpv-action:disabled { opacity: 0.6; cursor: not-allowed; }
+.tpv-action-primary { background: var(--primary); color: var(--on-primary); }
+.tpv-action-secondary { background: transparent; border-color: var(--green); color: var(--green); justify-content: center; }
+.tpv-action-amount { font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 700; text-transform: none; }
+
+.tpv-banner {
+    border-radius: 12px;
+    padding: 14px;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.4;
+}
+.tpv-banner-error { background: var(--red-bg); border: 1px solid var(--red); }
+.tpv-banner-ok { background: var(--surface); border: 2px solid var(--green); }
+.tpv-banner-info { background: var(--surface); border: 1px solid var(--border2); }
+.tpv-banner-warn { background: var(--amber-bg); border: 1px solid var(--amber); }
+
+/* Sale-screen style split: ticket lines on the left, decisions and the action on the right. */
+.tpv-split { flex: 1; min-height: 0; display: flex; overflow: hidden; }
+.tpv-split-main { width: 62%; display: flex; flex-direction: column; gap: 12px; padding: 16px; overflow: auto; border-right: 1px solid var(--border); }
+.tpv-split-side { width: 38%; display: flex; flex-direction: column; overflow: hidden; background: var(--surface); }
+.tpv-split-side-body { flex: 1; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+.tpv-split-side-foot { border-top: 1px solid var(--border); padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 8px; }
+@media (max-width: 1023px) {
+    .tpv-split-main { width: 55%; }
+    .tpv-split-side { width: 45%; }
+}

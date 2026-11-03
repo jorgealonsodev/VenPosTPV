@@ -642,7 +642,51 @@ async function testVoucherCloseErrorsKeepTheOpenCreditAndPendingExchangesCannotB
     assert.equal(pending.state.exchangeVoucherConfirm.value, false);
 }
 
+async function testTouchSteppersMoveQuantitiesWithinTheSameLimits() {
+    const calls = [];
+    const { state } = load(async (id, request) => { calls.push(request); return { data: { refunded_amount: 0 } }; });
+    state.selectOrder({ ...ORDER, lines: [{ name: 'Camisetas', product_id: 3, id_product_attribute: 0, qty: 3, paid_total: 30, refundable_qty: 2 }] });
+    state.toggleLine(0);
+    assert.equal(state.selectedLines.value[0].refundQty, 2, 'starts at everything still refundable');
+    state.stepRefundQty(0, 1);
+    assert.equal(state.selectedLines.value[0].refundQty, 2, '+ never goes over the refundable quantity');
+    state.stepRefundQty(0, -1);
+    assert.equal(state.selectedLines.value[0].refundQty, 1);
+    state.stepRefundQty(0, -1);
+    assert.equal(state.selectedLines.value[0].refundQty, 1, '− never goes under one unit');
+    state.stepRefundQty(5, 1); // unknown line: no-op
+    state.setReason('size');
+    state.cardConfirmed.value = true;
+    await state.confirmRefund();
+    assert.deepEqual(JSON.parse(JSON.stringify(calls[0].lines)), [{ line_index: 0, quantity: 1, restock: true }], 'the stepped quantity is what is sent');
+
+    const t = await loadNoTicket(async () => ({ data: {} }));
+    await t.state.pickProduct(CALCETINES);
+    t.state.stepNoTicketQty(0, 1);
+    t.state.stepNoTicketQty(0, 1);
+    assert.equal(t.state.noTicketLines.value[0].quantity, 3);
+    t.state.stepNoTicketQty(0, -1);
+    t.state.stepNoTicketQty(0, -1);
+    t.state.stepNoTicketQty(0, -1);
+    assert.equal(t.state.noTicketLines.value[0].quantity, 1, 'no-ticket − stops at one unit');
+
+    const x = loadExchange(PANTALON_ORDER, async () => ({ data: {} }));
+    await x.state.pickProduct(CINTURON);
+    x.state.stepNoTicketQty(0, 1);
+    assert.equal(x.state.exchangeLines.value[0].quantity, 2, 'in an exchange + moves the new item');
+    assert.equal(x.state.exchangeNewTotal(), 50);
+
+    const source = fs.readFileSync(path.resolve(__dirname, '../../public/assets/js/components/RefundScreen.js'), 'utf8');
+    assert.match(source, /@click\.stop="stepRefundQty\(idx, -1\)"/, 'refund lines have a − button');
+    assert.match(source, /@click\.stop="stepRefundQty\(idx, 1\)"/, 'refund lines have a + button');
+    assert.equal((source.match(/@click="stepNoTicketQty\(idx, -1\)"/g) || []).length, 2, 'no-ticket and exchange lines have a − button');
+    assert.equal((source.match(/@click="stepNoTicketQty\(idx, 1\)"/g) || []).length, 2, 'no-ticket and exchange lines have a + button');
+    assert.doesNotMatch(source, /type="number" :value="line\./, 'quantities are no longer typed');
+    assert.doesNotMatch(source, /blue/, 'no blue in the refund screen');
+}
+
 (async () => {
+    await testTouchSteppersMoveQuantitiesWithinTheSameLimits();
     await testExchangeApiCallsAreNeverQueuedOffline();
     await testExchangeFortyForFiftyFiveCollectsTheBalanceAndShowsBothDocuments();
     await testExchangeFiftyFiveForFortyRefundsTheDifferenceByTheOriginalCard();

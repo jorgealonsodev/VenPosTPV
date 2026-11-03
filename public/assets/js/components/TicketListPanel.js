@@ -263,7 +263,7 @@ const TicketListPanel = {
                             Cancelar
                         </button>
                         <button @click="doDelete"
-                            style="padding:8px 22px; border-radius:8px; border:none; background:var(--red); color:#fff; cursor:pointer; font-family:inherit; font-size:14px; font-weight:600;">
+                            style="padding:8px 22px; border-radius:8px; border:none; background:var(--danger); color:#fff; cursor:pointer; font-family:inherit; font-size:14px; font-weight:600;">
                             Eliminar
                         </button>
                     </div>

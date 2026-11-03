@@ -265,12 +265,12 @@ const SaleScreen = {
                 @discard-parked="handleDiscardParkedOnClose"
             />
         </div>
-        <div v-else-if="showRefund">
+        <div v-else-if="showRefund" style="width:100%; height:100%;">
             <refund-screen :cashier-name="cashierName" @back="handleRefundBack" @notify="handleRefundNotify" />
         </div>
         <div v-else style="width:100%; height:100%; display:flex; flex-direction:column; overflow:hidden; background:var(--bg);">
             <!-- Header -->
-            <header style="height:52px; min-height:52px; background:var(--surface); border-bottom:1px solid var(--border); display:flex; align-items:center; padding:0 16px; gap:14px; flex-shrink:0;">
+            <header style="height:60px; min-height:60px; background:var(--surface); border-bottom:1px solid var(--border); display:flex; align-items:center; padding:0 16px; gap:14px; flex-shrink:0;">
                 <div style="font-weight:700; font-size:15px; letter-spacing:-0.01em; color:var(--text); white-space:nowrap;">{{ storeName || 'VenPosTPV' }}</div>
                 <div style="width:1px; height:22px; background:var(--border);"></div>
                 <div style="display:flex; align-items:center; gap:7px; color:var(--text2); font-size:13px;">
@@ -286,22 +286,22 @@ const SaleScreen = {
                         :data="session.syncData"
                         @click="showSyncPanel = true"
                     />
-                    <button @click="toggleTheme" style="background:transparent; border:1px solid var(--border); border-radius:8px; padding:4px 8px; color:var(--text3); font-size:11px; cursor:pointer; font-family:inherit; display:flex; align-items:center; gap:4px;">
+                    <button @click="toggleTheme" style="min-height:44px; background:transparent; border:1px solid var(--border); border-radius:8px; padding:4px 8px; color:var(--text3); font-size:11px; cursor:pointer; font-family:inherit; display:flex; align-items:center; gap:4px;">
                         <icon :name="session.theme === 'dark' ? 'sun' : 'moon'" :size="13" />
                     </button>
                     <button v-if="session.role === 'admin' || session.role === 'cashier'" @click="showCouponCreation = true"
                         title="Crear cupón"
-                        style="display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;">
+                        style="min-height:44px; display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;">
                         <icon name="coupon" :size="13" /> Crear cupón
                     </button>
                     <button v-if="session.role === 'admin'" @click="showSettings = true"
                         title="Gestión de empleados"
-                        style="background:transparent; border:1px solid var(--border); border-radius:8px; padding:4px 8px; color:var(--text3); font-size:15px; cursor:pointer; font-family:inherit; line-height:1;">
+                        style="min-height:44px; background:transparent; border:1px solid var(--border); border-radius:8px; padding:4px 8px; color:var(--text3); font-size:15px; cursor:pointer; font-family:inherit; line-height:1;">
                         ⚙
                     </button>
                     <div style="color:var(--text3); font-size:13px; font-family:'IBM Plex Mono';">{{ timeStr }}</div>
                     <button @click="toggleTickets"
-                        style="display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;"
+                        style="min-height:44px; display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;"
                         :style="showTickets ? 'background:var(--surface2); border-color:var(--green); color:var(--green);' : ''">
                         <icon name="receipt" :size="13" /> Tickets
                         <span v-if="parkedCount > 0"
@@ -310,19 +310,19 @@ const SaleScreen = {
                         </span>
                     </button>
                     <button v-if="lastCompletedOrder" @click="handleReprint"
-                        style="display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;">
+                        style="min-height:44px; display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;">
                         <icon name="receipt" :size="13" /> Reimprimir
                     </button>
                     <button @click="handleRefund" :disabled="!hasOpenSession"
-                        style="display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;"
+                        style="min-height:44px; display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;"
                         :style="!hasOpenSession ? 'opacity:0.5; cursor:not-allowed;' : ''">
                         <icon name="undo" :size="13" /> Devoluciones
                     </button>
-                    <button @click="handleCashClose" style="display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;">
+                    <button @click="handleCashClose" style="min-height:44px; display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;">
                         <icon name="cashier" :size="13" /> Cerrar caja
                     </button>
                     <button @click="handleLogout" title="Cambiar usuario / Cerrar sesión"
-                        style="display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text3); cursor:pointer; font-family:inherit; font-size:12px;">
+                        style="min-height:44px; display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text3); cursor:pointer; font-family:inherit; font-size:12px;">
                         <icon name="logout" :size="13" /> Salir
                     </button>
                 </div>
@@ -406,7 +406,7 @@ const SaleScreen = {
                             Cancelar
                         </button>
                         <button @click="confirmVoid"
-                            style="padding:9px 22px; border-radius:8px; border:none; background:var(--red); color:#fff; cursor:pointer; font-family:inherit; font-size:14px; font-weight:600;">
+                            style="padding:9px 22px; border-radius:8px; border:none; background:var(--danger); color:#fff; cursor:pointer; font-family:inherit; font-size:14px; font-weight:600;">
                             Anular ticket
                         </button>
                     </div>
@@ -449,7 +449,7 @@ const SaleScreen = {
                             Cancelar
                         </button>
                         <button @click="handleLogoutConfirmed"
-                            style="padding:8px 22px; border-radius:8px; border:none; background:var(--red); color:#fff; cursor:pointer; font-family:inherit; font-size:14px; font-weight:600;">
+                            style="padding:8px 22px; border-radius:8px; border:none; background:var(--danger); color:#fff; cursor:pointer; font-family:inherit; font-size:14px; font-weight:600;">
                             Salir igualmente
                         </button>
                     </div>

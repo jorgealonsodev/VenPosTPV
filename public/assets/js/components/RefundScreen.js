@@ -202,6 +202,12 @@ const RefundScreen = {
             }
         }
 
+        // Touch steppers: the − / + buttons move the quantity one unit within the same limits.
+        function stepRefundQty(idx, delta) {
+            const line = selectedLines.value[idx];
+            if (line) updateRefundQty(idx, line.refundQty + delta);
+        }
+
         function setReason(code) {
             reasonCode.value = code;
             // A defective item normally must not go back on sale; the cashier can still tick it.
@@ -314,6 +320,11 @@ const RefundScreen = {
             if (line) {
                 line.quantity = Math.max(1, parseInt(qty, 10) || 1);
             }
+        }
+
+        function stepNoTicketQty(idx, delta) {
+            const line = catalogLines().value[idx];
+            if (line) updateNoTicketQty(idx, line.quantity + delta);
         }
 
         function removeNoTicketLine(idx) {
@@ -752,6 +763,7 @@ const RefundScreen = {
             backToSearch,
             toggleLine,
             updateRefundQty,
+            stepRefundQty,
             setReason,
             estimatedTotal,
             estimatedSplit,
@@ -778,6 +790,7 @@ const RefundScreen = {
             pickProduct,
             pickCombination,
             updateNoTicketQty,
+            stepNoTicketQty,
             removeNoTicketLine,
             setMethod,
             noTicketTotal,
@@ -803,285 +816,342 @@ const RefundScreen = {
             closeExchangeWithVoucher,
             confirmExchangeVoucher,
             ticketPdf: (orderId) => ApiClient.ticketPdf(orderId),
+            // Money as the rest of the POS shows it: 46.28 -> "46.28 €".
+            euros: (n) => (Number(n) || 0).toFixed(2) + ' €',
             paymentMethods: [{ code: 'cash', label: 'Efectivo' }, { code: 'card', label: 'Tarjeta' }, { code: 'mixed', label: 'Mixto' }],
         };
     },
     template: `
         <div style="width:100%; height:100%; display:flex; flex-direction:column; overflow:hidden; background:var(--bg);">
-            <header style="height:52px; min-height:52px; background:var(--surface); border-bottom:1px solid var(--border); display:flex; align-items:center; padding:0 16px; gap:14px; flex-shrink:0;">
-                <button @click="$emit('back')" style="background:transparent; border:1px solid var(--border); border-radius:8px; padding:4px 10px; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px; display:flex; align-items:center; gap:4px;">
-                    <icon name="arrow_back" :size="14" /> Volver
+            <header style="height:64px; min-height:64px; background:var(--surface); border-bottom:1px solid var(--border); display:flex; align-items:center; padding:0 16px; gap:14px; flex-shrink:0;">
+                <button class="tpv-btn" @click="$emit('back')">
+                    <icon name="arrow_back" :size="18" /> Volver
                 </button>
-                <div style="font-weight:700; font-size:15px; letter-spacing:-0.01em; color:var(--text);">Devoluciones</div>
-                <div v-if="!session.online" style="margin-left:auto; display:flex; align-items:center; gap:5px; color:var(--red); font-size:12px; background:var(--red-bg); padding:4px 10px; border-radius:8px;">
-                    <icon name="wifi_off" :size="13" /> Sin conexión
+                <div style="font-weight:700; font-size:17px; letter-spacing:-0.01em; color:var(--text);">Devoluciones</div>
+                <div v-if="noTicket" style="color:var(--text2); font-size:14px;">· Sin ticket</div>
+                <div v-else-if="selectedOrder" style="color:var(--text2); font-size:14px;">· Pedido #{{ selectedOrder.ps_order_id }}<span v-if="exchangeMode"> · Cambio</span></div>
+                <div v-if="!session.online" style="margin-left:auto; display:flex; align-items:center; gap:6px; color:var(--red); font-size:14px; font-weight:600; background:var(--red-bg); border:1px solid var(--red); padding:8px 12px; border-radius:10px;">
+                    <icon name="wifi_off" :size="16" /> Sin conexión
                 </div>
             </header>
 
-            <div v-if="noTicket" style="flex:1; display:flex; flex-direction:column; padding:16px; gap:12px; overflow:auto;">
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <div>
-                        <div style="font-weight:700; color:var(--text); font-size:16px;">Devolución sin ticket</div>
-                        <div style="color:var(--text2); font-size:12px;">Se devuelve el precio actual de cada producto.</div>
+            <!-- Refund without ticket -->
+            <div v-if="noTicket" class="tpv-split">
+                <div class="tpv-split-main">
+                    <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+                        <div>
+                            <div style="font-weight:700; color:var(--text); font-size:18px;">Devolución sin ticket</div>
+                            <div style="color:var(--text2); font-size:14px;">Se devuelve el precio actual de cada producto.</div>
+                        </div>
+                        <button class="tpv-btn" @click="closeNoTicket">Volver a buscar ticket</button>
                     </div>
-                    <button @click="closeNoTicket" style="background:transparent; border:1px solid var(--border); border-radius:8px; padding:4px 10px; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;">Volver a buscar ticket</button>
-                </div>
 
-                <div v-for="p in pendingNoTicket" :key="p.id" style="background:var(--red-bg); border:1px solid var(--red); border-radius:10px; padding:12px; display:flex; align-items:center; gap:12px; color:var(--text); font-size:13px;">
-                    <div style="flex:1;">
-                        Devolución sin ticket #{{ p.id }} de {{ Number(p.total).toFixed(2) }} € sin confirmar por PrestaShop. Entrega el dinero solo cuando se confirme.
-                        <div v-if="p.voucher_unknown" style="font-size:12px; margin-top:4px;">No se sabe si el vale se creó: compruébalo en PrestaShop. No se creará otro automáticamente. {{ p.error }}</div>
+                    <div v-for="p in pendingNoTicket" :key="p.id" class="tpv-banner tpv-banner-warn">
+                        <div style="flex:1; min-width:220px;">
+                            Devolución sin ticket #{{ p.id }} de {{ euros(p.total) }} sin confirmar por PrestaShop. Entrega el dinero solo cuando se confirme.
+                            <div v-if="p.voucher_unknown" style="font-size:13px; margin-top:4px;">No se sabe si el vale se creó: compruébalo en PrestaShop. No se creará otro automáticamente. {{ p.error }}</div>
+                        </div>
+                        <button v-if="!p.voucher_unknown" class="tpv-btn tpv-btn-primary" @click="retryNoTicket(p.id)" :disabled="loading">Reintentar</button>
                     </div>
-                    <button v-if="!p.voucher_unknown" @click="retryNoTicket(p.id)" :disabled="loading" style="padding:8px 14px; border-radius:8px; border:none; background:var(--red); color:#fff; cursor:pointer; font-family:inherit; font-size:13px; font-weight:600;">Reintentar</button>
-                </div>
 
-                <div v-if="lastVoucher" style="background:var(--surface); border:2px solid var(--green); border-radius:10px; padding:12px; color:var(--text); font-size:14px;">
-                    Vale para el cliente: <strong style="font-family:'IBM Plex Mono';">{{ lastVoucher.code }}</strong> · {{ lastVoucher.amount.toFixed(2) }} € · válido 1 año, admite uso parcial
-                </div>
-
-                <div style="display:flex; gap:8px;">
-                    <input v-model="productQuery" @keyup.enter="searchProducts" placeholder="Buscar producto por nombre, referencia o EAN..." style="flex:1; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px;" />
-                    <button @click="searchProducts" :disabled="loading" style="padding:8px 16px; border-radius:8px; border:none; background:var(--primary); color:#fff; cursor:pointer; font-family:inherit; font-size:13px; font-weight:600;">Buscar</button>
-                </div>
-                <div v-if="productResults.length" style="background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:8px; display:flex; flex-direction:column; gap:4px; max-height:200px; overflow:auto;">
-                    <button v-for="p in productResults" :key="p.id" @click="pickProduct(p)" style="display:flex; justify-content:space-between; gap:8px; padding:6px 8px; border:none; border-radius:6px; background:transparent; color:var(--text); cursor:pointer; font-family:inherit; font-size:13px; text-align:left;">
-                        <span>{{ p.name }} <span v-if="p.has_combinations" style="font-size:10px; color:var(--text3);">VARS</span></span>
-                        <span style="color:var(--text2);">{{ Number(p.price).toFixed(2) }} €</span>
-                    </button>
-                </div>
-                <div v-if="combinationChoice" style="background:var(--surface); border:1px solid var(--primary); border-radius:10px; padding:8px; display:flex; flex-direction:column; gap:4px;">
-                    <div style="color:var(--text2); font-size:12px; font-weight:600;">Elige la variante de {{ combinationChoice.name }}</div>
-                    <button v-for="c in combinationChoice.combinations" :key="c.id" @click="pickCombination(c)" style="display:flex; justify-content:space-between; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:transparent; color:var(--text); cursor:pointer; font-family:inherit; font-size:13px;">
-                        <span>{{ (c.attributes || []).map(a => a.group_name + ': ' + a.attribute_name).join(' / ') || '—' }}</span>
-                        <span style="color:var(--text2);">{{ (Number(combinationChoice.price) + Number(c.price_impact || 0)).toFixed(2) }} €</span>
-                    </button>
-                    <button @click="pickCombination(null)" style="padding:4px 8px; border:none; background:transparent; color:var(--text3); cursor:pointer; font-family:inherit; font-size:12px;">Cancelar</button>
-                </div>
-
-                <div style="background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px; display:flex; flex-direction:column; gap:8px;">
-                    <div v-if="noTicketLines.length === 0" style="color:var(--text3); font-size:13px;">Añade los productos que trae el cliente.</div>
-                    <div v-for="(line, idx) in noTicketLines" :key="line.product_id + ':' + line.id_product_attribute" style="display:flex; align-items:center; gap:10px; padding:6px 0; border-bottom:1px solid var(--border);">
-                        <div style="flex:1; color:var(--text); font-size:13px;">{{ line.name }}</div>
-                        <div style="color:var(--text2); font-size:12px;">{{ line.unitPrice.toFixed(2) }} €</div>
-                        <input type="number" :value="line.quantity" @input="updateNoTicketQty(idx, $event.target.value)" min="1" style="width:60px; padding:4px 6px; border-radius:6px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:13px; text-align:center;" />
-                        <label style="display:flex; align-items:center; gap:4px; color:var(--text2); font-size:12px; cursor:pointer;">
-                            <input type="checkbox" v-model="line.restock" /> Reponer stock
-                        </label>
-                        <button @click="removeNoTicketLine(idx)" style="background:transparent; border:none; color:var(--text3); cursor:pointer; font-size:16px;">✕</button>
+                    <div v-if="lastVoucher" class="tpv-banner tpv-banner-ok" style="font-size:15px;">
+                        <icon name="check" :size="20" style="color:var(--green);" />
+                        <div style="flex:1;">Vale para el cliente: <strong style="font-family:'IBM Plex Mono';">{{ lastVoucher.code }}</strong> · {{ euros(lastVoucher.amount) }} · válido 1 año, admite uso parcial</div>
                     </div>
-                </div>
 
-                <div style="background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px; display:flex; flex-direction:column; gap:8px;">
-                    <div style="color:var(--text2); font-size:12px; font-weight:600;">Motivo</div>
-                    <div style="display:flex; flex-wrap:wrap; gap:6px;">
-                        <button v-for="r in reasons" :key="r.code" @click="setReason(r.code)" :style="{ background: reasonCode === r.code ? 'var(--primary)' : 'transparent', color: reasonCode === r.code ? '#fff' : 'var(--text2)' }" style="padding:6px 10px; border-radius:8px; border:1px solid var(--border); cursor:pointer; font-family:inherit; font-size:12px;">{{ r.label }}</button>
+                    <div style="display:flex; gap:8px;">
+                        <input class="tpv-input" style="flex:1;" v-model="productQuery" @keyup.enter="searchProducts" placeholder="Buscar producto por nombre, referencia o EAN..." />
+                        <button class="tpv-btn tpv-btn-primary" @click="searchProducts" :disabled="loading"><icon name="search" :size="18" /> Buscar</button>
                     </div>
-                    <input v-if="reasonCode === 'other'" v-model="reasonText" placeholder="Describe el motivo" maxlength="255" style="padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px;" />
-                    <div style="color:var(--text2); font-size:12px; font-weight:600;">Cómo se devuelve</div>
-                    <div style="display:flex; gap:6px;">
-                        <button v-for="m in methods" :key="m.code" @click="setMethod(m.code)" :style="{ background: refundMethod === m.code ? 'var(--primary)' : 'transparent', color: refundMethod === m.code ? '#fff' : 'var(--text2)' }" style="padding:6px 14px; border-radius:8px; border:1px solid var(--border); cursor:pointer; font-family:inherit; font-size:13px;">{{ m.label }}</button>
+                    <div v-if="productResults.length" style="display:flex; flex-direction:column; gap:8px; max-height:280px; overflow:auto;">
+                        <button v-for="p in productResults" :key="p.id" class="tpv-row" style="min-height:56px; font-family:inherit; text-align:left; color:var(--text);" @click="pickProduct(p)">
+                            <icon name="plus" :size="18" style="color:var(--green);" />
+                            <span style="flex:1; font-size:15px;">{{ p.name }} <span v-if="p.has_combinations" style="font-size:12px; color:var(--text2); border:1px solid var(--border2); border-radius:6px; padding:1px 6px; margin-left:6px;">VARIANTES</span></span>
+                            <span style="color:var(--text2); font-family:'IBM Plex Mono'; font-size:15px;">{{ euros(p.price) }}</span>
+                        </button>
+                    </div>
+                    <div v-if="combinationChoice" class="tpv-banner tpv-banner-info" style="flex-direction:column; align-items:stretch; gap:8px;">
+                        <div class="tpv-label">Elige la variante de {{ combinationChoice.name }}</div>
+                        <button v-for="c in combinationChoice.combinations" :key="c.id" class="tpv-row" style="min-height:56px; font-family:inherit; color:var(--text);" @click="pickCombination(c)">
+                            <span style="flex:1; text-align:left; font-size:15px;">{{ (c.attributes || []).map(a => a.group_name + ': ' + a.attribute_name).join(' / ') || '—' }}</span>
+                            <span style="color:var(--text2); font-family:'IBM Plex Mono'; font-size:15px;">{{ euros(Number(combinationChoice.price) + Number(c.price_impact || 0)) }}</span>
+                        </button>
+                        <button class="tpv-btn" style="align-self:flex-start;" @click="pickCombination(null)">Cancelar</button>
+                    </div>
+
+                    <div class="tpv-label">Productos que trae el cliente</div>
+                    <div v-if="noTicketLines.length === 0" style="color:var(--text2); font-size:15px; padding:16px; border:1px dashed var(--border2); border-radius:12px; text-align:center;">Busca y añade los productos que trae el cliente.</div>
+                    <div v-for="(line, idx) in noTicketLines" :key="line.product_id + ':' + line.id_product_attribute" class="tpv-row" style="cursor:default; flex-wrap:wrap;">
+                        <div style="flex:1; min-width:180px;">
+                            <div style="color:var(--text); font-size:15px; font-weight:600;">{{ line.name }}</div>
+                            <div style="color:var(--text2); font-size:13px; font-family:'IBM Plex Mono';">{{ euros(line.unitPrice) }} / ud</div>
+                        </div>
+                        <div class="tpv-stepper">
+                            <button class="tpv-step" aria-label="Quitar una unidad" :disabled="line.quantity <= 1" @click="stepNoTicketQty(idx, -1)"><icon name="minus" :size="20" /></button>
+                            <span class="tpv-step-value">{{ line.quantity }}</span>
+                            <button class="tpv-step" aria-label="Añadir una unidad" @click="stepNoTicketQty(idx, 1)"><icon name="plus" :size="20" /></button>
+                        </div>
+                        <button class="tpv-toggle" :class="{ 'is-on': line.restock }" role="switch" :aria-checked="line.restock ? 'true' : 'false'" @click="line.restock = !line.restock">
+                            <span class="tpv-check" :class="{ 'is-checked': line.restock }"><icon v-if="line.restock" name="check" :size="18" /></span>
+                            Reponer stock
+                        </button>
+                        <button class="tpv-step" aria-label="Quitar producto" style="background:transparent; color:var(--red);" @click="removeNoTicketLine(idx)"><icon name="trash" :size="20" /></button>
                     </div>
                 </div>
 
-                <div style="display:flex; justify-content:flex-end; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px;">
-                    <div style="font-weight:700; color:var(--text); font-size:16px;">Total devolución: {{ noTicketTotal().toFixed(2) }} €</div>
+                <div class="tpv-split-side">
+                    <div class="tpv-split-side-body">
+                        <div style="display:flex; flex-direction:column; gap:8px;">
+                            <div class="tpv-label">Motivo</div>
+                            <div class="tpv-chip-grid cols-2">
+                                <button v-for="r in reasons" :key="r.code" class="tpv-chip" :class="{ 'is-selected': reasonCode === r.code }" :aria-pressed="reasonCode === r.code ? 'true' : 'false'" @click="setReason(r.code)">
+                                    {{ r.label }}<span v-if="reasonCode === r.code" class="tpv-chip-mark"><icon name="check" :size="18" /></span>
+                                </button>
+                            </div>
+                            <input v-if="reasonCode === 'other'" class="tpv-input" v-model="reasonText" placeholder="Describe el motivo" maxlength="255" />
+                        </div>
+                        <div style="display:flex; flex-direction:column; gap:8px;">
+                            <div class="tpv-label">Cómo se devuelve</div>
+                            <div class="tpv-chip-grid cols-3">
+                                <button v-for="m in methods" :key="m.code" class="tpv-chip" :class="{ 'is-selected': refundMethod === m.code }" :aria-pressed="refundMethod === m.code ? 'true' : 'false'" @click="setMethod(m.code)">
+                                    {{ m.label }}<span v-if="refundMethod === m.code" class="tpv-chip-mark"><icon name="check" :size="18" /></span>
+                                </button>
+                            </div>
+                        </div>
+                        <button v-if="needsCardConfirmation()" class="tpv-toggle" :class="{ 'is-on': cardConfirmed }" role="switch" :aria-checked="cardConfirmed ? 'true' : 'false'" style="width:100%; min-height:64px; text-align:left;" @click="cardConfirmed = !cardConfirmed">
+                            <span class="tpv-check" :class="{ 'is-checked': cardConfirmed }"><icon v-if="cardConfirmed" name="check" :size="18" /></span>
+                            <span style="flex:1;">He hecho la devolución de {{ euros(noTicketTotal()) }} en el datáfono</span>
+                        </button>
+                    </div>
+                    <div class="tpv-split-side-foot">
+                        <div v-if="validationError()" style="color:var(--amber); font-size:14px; font-weight:600;">{{ validationError() }}</div>
+                        <button class="tpv-action tpv-action-primary" @click="openConfirm" :disabled="loading">
+                            <span v-if="loading">Procesando...</span>
+                            <span v-else>Devolver</span>
+                            <span class="tpv-action-amount">{{ euros(noTicketTotal()) }}</span>
+                        </button>
+                    </div>
                 </div>
-
-                <label v-if="needsCardConfirmation()" style="display:flex; align-items:center; gap:8px; color:var(--text); font-size:13px; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px; cursor:pointer;">
-                    <input type="checkbox" v-model="cardConfirmed" style="width:18px; height:18px;" />
-                    He hecho la devolución de {{ noTicketTotal().toFixed(2) }} € en el datáfono
-                </label>
-
-                <button @click="openConfirm" :disabled="loading" style="padding:10px 16px; border-radius:8px; border:none; background:var(--red); color:#fff; cursor:pointer; font-family:inherit; font-size:14px; font-weight:600;">
-                    <span v-if="loading">Procesando...</span>
-                    <span v-else>Confirmar devolución</span>
-                </button>
             </div>
 
+            <!-- Ticket search -->
             <div v-else-if="!selectedOrder" style="flex:1; display:flex; flex-direction:column; padding:16px; gap:12px; overflow:auto;">
                 <div style="display:flex; gap:8px;">
-                    <input v-model="searchQuery" @keyup.enter="handleSearch" placeholder="Buscar o escanear: nº de pedido o referencia..." style="flex:1; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px;" />
-                    <button @click="handleSearch" :disabled="loading" style="padding:8px 16px; border-radius:8px; border:none; background:var(--primary); color:#fff; cursor:pointer; font-family:inherit; font-size:13px; font-weight:600;">
+                    <input class="tpv-input" style="flex:1;" v-model="searchQuery" @keyup.enter="handleSearch" placeholder="Buscar o escanear: nº de pedido o referencia..." />
+                    <button class="tpv-btn tpv-btn-primary" @click="handleSearch" :disabled="loading">
+                        <icon name="search" :size="18" />
                         <span v-if="loading">...</span>
                         <span v-else>Buscar</span>
                     </button>
-                    <button @click="openNoTicket" :disabled="loading" style="padding:8px 16px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text); cursor:pointer; font-family:inherit; font-size:13px; font-weight:600;">Sin ticket</button>
+                    <button class="tpv-btn" @click="openNoTicket" :disabled="loading">Sin ticket</button>
                 </div>
-                <div v-if="lastExchange && lastExchange.saleReference" style="background:var(--surface); border:2px solid var(--green); border-radius:10px; padding:12px; color:var(--text); font-size:14px; display:flex; align-items:center; gap:12px;">
-                    <div style="flex:1;">
+                <div v-if="lastExchange && lastExchange.saleReference" class="tpv-banner tpv-banner-ok" style="font-size:15px;">
+                    <icon name="check" :size="20" style="color:var(--green);" />
+                    <div style="flex:1; min-width:220px;">
                         Cambio hecho · Abono <strong style="font-family:'IBM Plex Mono';">{{ lastExchange.creditNote }}</strong> · Venta nueva <strong style="font-family:'IBM Plex Mono';">{{ lastExchange.saleReference }}</strong>
-                        <div style="font-size:12px; color:var(--text2);">
-                            <span v-if="lastExchange.balance > 0">Cobrado {{ lastExchange.balance.toFixed(2) }} €<span v-if="lastExchange.changeDue > 0"> · cambio {{ lastExchange.changeDue.toFixed(2) }} €</span></span>
-                            <span v-else-if="lastExchange.balance < 0">Devuelto {{ (-lastExchange.balance).toFixed(2) }} €<span v-if="lastExchange.cashBack > 0"> · {{ lastExchange.cashBack.toFixed(2) }} € en efectivo</span><span v-if="lastExchange.cardBack > 0"> · {{ lastExchange.cardBack.toFixed(2) }} € a tarjeta</span></span>
+                        <div style="font-size:14px; color:var(--text2);">
+                            <span v-if="lastExchange.balance > 0">Cobrado {{ euros(lastExchange.balance) }}<span v-if="lastExchange.changeDue > 0"> · cambio {{ euros(lastExchange.changeDue) }}</span></span>
+                            <span v-else-if="lastExchange.balance < 0">Devuelto {{ euros(-lastExchange.balance) }}<span v-if="lastExchange.cashBack > 0"> · {{ euros(lastExchange.cashBack) }} en efectivo</span><span v-if="lastExchange.cardBack > 0"> · {{ euros(lastExchange.cardBack) }} a tarjeta</span></span>
                             <span v-else>Sin diferencia</span>
                         </div>
                     </div>
-                    <button v-if="lastExchange.saleOrderId" @click="ticketPdf(lastExchange.saleOrderId)" style="padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text); cursor:pointer; font-family:inherit; font-size:12px;">Ticket venta (PDF)</button>
+                    <button v-if="lastExchange.saleOrderId" class="tpv-btn" @click="ticketPdf(lastExchange.saleOrderId)"><icon name="receipt" :size="18" /> Ticket venta (PDF)</button>
                 </div>
-                <div v-if="searchResults.length === 0 && !loading" style="color:var(--text3); font-size:13px; text-align:center; margin-top:40px;">
+                <div v-if="searchResults.length === 0 && !loading" style="color:var(--text2); font-size:15px; text-align:center; margin-top:40px;">
                     No hay resultados. Introduce un nº de pedido o referencia y pulsa Buscar.
                 </div>
-                <div v-for="order in searchResults" :key="order.ps_order_id" @click="selectOrder(order)" style="background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px; cursor:pointer; display:flex; flex-direction:column; gap:4px;">
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <span style="font-weight:600; color:var(--text); font-size:14px;">#{{ order.ps_order_id }} — {{ order.reference }}</span>
-                        <span style="color:var(--text2); font-size:12px;">{{ Number(order.total).toFixed(2) }} €</span>
+                <button v-for="order in searchResults" :key="order.ps_order_id" class="tpv-row" style="font-family:inherit; text-align:left; flex-direction:column; align-items:stretch; gap:6px;" @click="selectOrder(order)">
+                    <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+                        <span style="font-weight:600; color:var(--text); font-size:16px;">#{{ order.ps_order_id }} — {{ order.reference }}</span>
+                        <span style="color:var(--text); font-size:16px; font-family:'IBM Plex Mono';">{{ euros(order.total) }}</span>
                     </div>
-                    <div style="color:var(--text3); font-size:12px; display:flex; gap:10px;">
+                    <div style="color:var(--text2); font-size:14px; display:flex; gap:12px; flex-wrap:wrap;">
                         <span>{{ order.payment_method }}</span>
                         <span>{{ order.created_at }}</span>
-                        <span v-if="order.refunded_amount > 0" style="color:var(--red);">Devuelto: {{ Number(order.refunded_amount).toFixed(2) }} €</span>
+                        <span v-if="order.refunded_amount > 0" style="color:var(--amber); font-weight:600;">Devuelto: {{ euros(order.refunded_amount) }}</span>
                     </div>
-                </div>
+                </button>
             </div>
 
-            <div v-else style="flex:1; display:flex; flex-direction:column; padding:16px; gap:12px; overflow:auto;">
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <div>
-                        <div style="font-weight:700; color:var(--text); font-size:16px;">Pedido #{{ selectedOrder.ps_order_id }}</div>
-                        <div style="color:var(--text2); font-size:12px;">{{ selectedOrder.reference }} — {{ selectedOrder.created_at }}</div>
-                    </div>
-                    <button @click="backToSearch" style="background:transparent; border:1px solid var(--border); border-radius:8px; padding:4px 10px; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;">
-                        Volver a resultados
-                    </button>
-                </div>
-
-                <div v-if="selectedOrder.open_exchange" style="background:var(--red-bg); border:1px solid var(--red); border-radius:10px; padding:12px; display:flex; align-items:center; gap:12px; color:var(--text); font-size:13px;">
-                    <div style="flex:1;">
-                        <span v-if="selectedOrder.open_exchange.status === 'pending'">Cambio #{{ selectedOrder.open_exchange.id }} sin confirmar por PrestaShop. No entregues dinero ni artículos hasta completarlo.</span>
-                        <span v-else>Cambio #{{ selectedOrder.open_exchange.id }}: el abono está hecho, falta crear la venta nueva de {{ Number(selectedOrder.open_exchange.new_total).toFixed(2) }} €.</span>
-                        <div v-if="selectedOrder.open_exchange.error" style="font-size:12px; margin-top:4px;">{{ selectedOrder.open_exchange.error }}</div>
-                    </div>
-                    <button @click="retryExchange" :disabled="loading" style="padding:8px 14px; border-radius:8px; border:none; background:var(--red); color:#fff; cursor:pointer; font-family:inherit; font-size:13px; font-weight:600;">Reintentar cambio</button>
-                    <button v-if="selectedOrder.open_exchange.status === 'credit_open'" @click="closeExchangeWithVoucher" :disabled="loading" style="padding:8px 14px; border-radius:8px; border:1px solid var(--red); background:transparent; color:var(--red); cursor:pointer; font-family:inherit; font-size:13px; font-weight:600;">Cerrar con vale</button>
-                </div>
-
-                <div v-if="exchangeVoucherConfirm && selectedOrder.open_exchange" style="background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px; display:flex; align-items:center; gap:12px; color:var(--text); font-size:13px;">
-                    <div style="flex:1;">Se emitirá un vale de {{ Number(selectedOrder.open_exchange.credit_applied).toFixed(2) }} € (1 año, uso parcial) y el cambio no se podrá reintentar. Comprueba antes en PrestaShop que el pedido nuevo no se creó.</div>
-                    <button @click="exchangeVoucherConfirm = false" :disabled="loading" style="padding:8px 14px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:13px;">Cancelar</button>
-                    <button @click="confirmExchangeVoucher" :disabled="loading" style="padding:8px 14px; border-radius:8px; border:none; background:var(--primary); color:#fff; cursor:pointer; font-family:inherit; font-size:13px; font-weight:600;">Emitir vale</button>
-                </div>
-
-                <div v-if="exchangeVoucher" style="background:var(--surface); border:2px solid var(--green); border-radius:10px; padding:12px; color:var(--text); font-size:14px;">
-                    Vale para el cliente: <strong style="font-family:'IBM Plex Mono';">{{ exchangeVoucher.code }}</strong> · {{ exchangeVoucher.amount.toFixed(2) }} € · válido 1 año, admite uso parcial
-                </div>
-
-                <div v-if="selectedOrder.pending_refund && !selectedOrder.open_exchange" style="background:var(--red-bg); border:1px solid var(--red); border-radius:10px; padding:12px; display:flex; align-items:center; gap:12px; color:var(--text); font-size:13px;">
-                    <div style="flex:1;">Devolución #{{ selectedOrder.pending_refund.id }} de {{ Number(selectedOrder.pending_refund.total).toFixed(2) }} € sin confirmar por PrestaShop. Reinténtala antes de hacer otra; entrega el dinero solo cuando se confirme.</div>
-                    <button @click="retryPending" :disabled="loading" style="padding:8px 14px; border-radius:8px; border:none; background:var(--red); color:#fff; cursor:pointer; font-family:inherit; font-size:13px; font-weight:600;">Reintentar</button>
-                </div>
-
-                <div style="background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px; display:flex; flex-direction:column; gap:8px;">
-                    <div v-for="(line, idx) in selectedLines" :key="idx" style="display:flex; align-items:center; gap:10px; padding:6px 0; border-bottom:1px solid var(--border);" :style="{ opacity: line.refundable_ok && line.refundable > 0 ? 1 : 0.5 }">
-                        <input type="checkbox" :checked="line.checked" :disabled="!line.refundable_ok || line.refundable === 0" @change="toggleLine(idx)" style="width:18px; height:18px; cursor:pointer;" />
-                        <div style="flex:1; color:var(--text); font-size:13px;">
-                            {{ line.name }}
-                            <div v-if="!line.refundable_ok" style="color:var(--text3); font-size:11px;">Venta anterior a las devoluciones: no se puede devolver desde el TPV</div>
-                            <div v-else-if="line.refundable === 0" style="color:var(--text3); font-size:11px;">Ya devuelto</div>
-                            <div v-else-if="line.refundable < line.sold" style="color:var(--text3); font-size:11px;">Quedan {{ line.refundable }} de {{ line.sold }}</div>
+            <!-- Selected ticket: refund or exchange -->
+            <div v-else class="tpv-split">
+                <div class="tpv-split-main">
+                    <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+                        <div>
+                            <div style="font-weight:700; color:var(--text); font-size:18px;">Pedido #{{ selectedOrder.ps_order_id }}</div>
+                            <div style="color:var(--text2); font-size:14px;">{{ selectedOrder.reference }} — {{ selectedOrder.created_at }}</div>
                         </div>
-                        <div v-if="line.unitPaid !== null" style="color:var(--text2); font-size:12px;">{{ line.sold }} uds × {{ line.unitPaid.toFixed(2) }} €</div>
+                        <button class="tpv-btn" @click="backToSearch">Volver a resultados</button>
+                    </div>
+
+                    <div v-if="selectedOrder.open_exchange" class="tpv-banner tpv-banner-warn">
+                        <div style="flex:1; min-width:220px;">
+                            <span v-if="selectedOrder.open_exchange.status === 'pending'">Cambio #{{ selectedOrder.open_exchange.id }} sin confirmar por PrestaShop. No entregues dinero ni artículos hasta completarlo.</span>
+                            <span v-else>Cambio #{{ selectedOrder.open_exchange.id }}: el abono está hecho, falta crear la venta nueva de {{ euros(selectedOrder.open_exchange.new_total) }}.</span>
+                            <div v-if="selectedOrder.open_exchange.error" style="font-size:13px; margin-top:4px;">{{ selectedOrder.open_exchange.error }}</div>
+                        </div>
+                        <button class="tpv-btn tpv-btn-primary" @click="retryExchange" :disabled="loading">Reintentar cambio</button>
+                        <button v-if="selectedOrder.open_exchange.status === 'credit_open'" @click="closeExchangeWithVoucher" :disabled="loading" class="tpv-btn">Cerrar con vale</button>
+                    </div>
+
+                    <div v-if="exchangeVoucherConfirm && selectedOrder.open_exchange" class="tpv-banner tpv-banner-info">
+                        <div style="flex:1; min-width:220px;">Se emitirá un vale de {{ euros(selectedOrder.open_exchange.credit_applied) }} (1 año, uso parcial) y el cambio no se podrá reintentar. Comprueba antes en PrestaShop que el pedido nuevo no se creó.</div>
+                        <button class="tpv-btn" @click="exchangeVoucherConfirm = false" :disabled="loading">Cancelar</button>
+                        <button class="tpv-btn tpv-btn-primary" @click="confirmExchangeVoucher" :disabled="loading">Emitir vale</button>
+                    </div>
+
+                    <div v-if="exchangeVoucher" class="tpv-banner tpv-banner-ok" style="font-size:15px;">
+                        <icon name="check" :size="20" style="color:var(--green);" />
+                        <div style="flex:1;">Vale para el cliente: <strong style="font-family:'IBM Plex Mono';">{{ exchangeVoucher.code }}</strong> · {{ euros(exchangeVoucher.amount) }} · válido 1 año, admite uso parcial</div>
+                    </div>
+
+                    <div v-if="selectedOrder.pending_refund && !selectedOrder.open_exchange" class="tpv-banner tpv-banner-warn">
+                        <div style="flex:1; min-width:220px;">Devolución #{{ selectedOrder.pending_refund.id }} de {{ euros(selectedOrder.pending_refund.total) }} sin confirmar por PrestaShop. Reinténtala antes de hacer otra; entrega el dinero solo cuando se confirme.</div>
+                        <button class="tpv-btn tpv-btn-primary" @click="retryPending" :disabled="loading">Reintentar</button>
+                    </div>
+
+                    <div class="tpv-label">{{ exchangeMode ? 'Lo que devuelve el cliente' : 'Líneas del ticket' }}</div>
+                    <div v-for="(line, idx) in selectedLines" :key="idx" class="tpv-row" style="flex-wrap:wrap;"
+                        :class="{ 'is-selected': line.checked, 'is-disabled': !line.refundable_ok || line.refundable === 0 }"
+                        role="checkbox" :aria-checked="line.checked ? 'true' : 'false'" :aria-disabled="!line.refundable_ok || line.refundable === 0 ? 'true' : 'false'"
+                        tabindex="0" @click="toggleLine(idx)" @keyup.space.prevent="toggleLine(idx)" @keyup.enter="toggleLine(idx)">
+                        <span class="tpv-check" :class="{ 'is-checked': line.checked }"><icon v-if="line.checked" name="check" :size="20" /></span>
+                        <div style="flex:1; min-width:180px;">
+                            <div style="color:var(--text); font-size:15px; font-weight:600;">{{ line.name }}</div>
+                            <div v-if="!line.refundable_ok" style="color:var(--text2); font-size:13px;">Venta anterior a las devoluciones: no se puede devolver desde el TPV</div>
+                            <div v-else-if="line.refundable === 0" style="color:var(--text2); font-size:13px;">Ya devuelto</div>
+                            <div v-else-if="line.refundable < line.sold" style="color:var(--amber); font-size:13px; font-weight:600;">Quedan {{ line.refundable }} de {{ line.sold }}</div>
+                            <div v-if="line.unitPaid !== null" style="color:var(--text2); font-size:13px; font-family:'IBM Plex Mono';">{{ line.sold }} uds × {{ euros(line.unitPaid) }}</div>
+                        </div>
                         <template v-if="line.checked">
-                            <input type="number" :value="line.refundQty" @input="updateRefundQty(idx, $event.target.value)" min="1" :max="line.refundable" style="width:60px; padding:4px 6px; border-radius:6px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:13px; text-align:center;" />
-                            <label style="display:flex; align-items:center; gap:4px; color:var(--text2); font-size:12px; cursor:pointer;">
-                                <input type="checkbox" v-model="line.restock" /> Reponer stock
-                            </label>
+                            <div class="tpv-stepper" @click.stop @keyup.stop>
+                                <button class="tpv-step" aria-label="Quitar una unidad" :disabled="line.refundQty <= 1" @click.stop="stepRefundQty(idx, -1)"><icon name="minus" :size="20" /></button>
+                                <span class="tpv-step-value">{{ line.refundQty }}</span>
+                                <button class="tpv-step" aria-label="Añadir una unidad" :disabled="line.refundQty >= line.refundable" @click.stop="stepRefundQty(idx, 1)"><icon name="plus" :size="20" /></button>
+                            </div>
+                            <button class="tpv-toggle" :class="{ 'is-on': line.restock }" role="switch" :aria-checked="line.restock ? 'true' : 'false'" @click.stop="line.restock = !line.restock" @keyup.stop>
+                                <span class="tpv-check" :class="{ 'is-checked': line.restock }"><icon v-if="line.restock" name="check" :size="18" /></span>
+                                Reponer stock
+                            </button>
                         </template>
                     </div>
-                </div>
 
-                <div style="background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px; display:flex; flex-direction:column; gap:8px;">
-                    <div style="color:var(--text2); font-size:12px; font-weight:600;">Motivo</div>
-                    <div style="display:flex; flex-wrap:wrap; gap:6px;">
-                        <button v-for="r in reasons" :key="r.code" @click="setReason(r.code)" :style="{ background: reasonCode === r.code ? 'var(--primary)' : 'transparent', color: reasonCode === r.code ? '#fff' : 'var(--text2)' }" style="padding:6px 10px; border-radius:8px; border:1px solid var(--border); cursor:pointer; font-family:inherit; font-size:12px;">{{ r.label }}</button>
-                    </div>
-                    <input v-if="reasonCode === 'other'" v-model="reasonText" placeholder="Describe el motivo" maxlength="255" style="padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px;" />
-                </div>
-
-                <div v-if="exchangeMode" style="background:var(--surface); border:1px solid var(--primary); border-radius:10px; padding:12px; display:flex; flex-direction:column; gap:8px;">
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <div style="color:var(--text); font-size:14px; font-weight:700;">Artículos nuevos</div>
-                        <button @click="cancelExchange" style="background:transparent; border:1px solid var(--border); border-radius:8px; padding:4px 10px; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;">Cancelar cambio</button>
-                    </div>
-                    <div style="display:flex; gap:8px;">
-                        <input v-model="productQuery" @keyup.enter="searchProducts" placeholder="Buscar producto por nombre, referencia o EAN..." style="flex:1; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px;" />
-                        <button @click="searchProducts" :disabled="loading" style="padding:8px 16px; border-radius:8px; border:none; background:var(--primary); color:#fff; cursor:pointer; font-family:inherit; font-size:13px; font-weight:600;">Buscar</button>
-                    </div>
-                    <div v-if="productResults.length" style="border:1px solid var(--border); border-radius:10px; padding:8px; display:flex; flex-direction:column; gap:4px; max-height:200px; overflow:auto;">
-                        <button v-for="p in productResults" :key="p.id" @click="pickProduct(p)" style="display:flex; justify-content:space-between; gap:8px; padding:6px 8px; border:none; border-radius:6px; background:transparent; color:var(--text); cursor:pointer; font-family:inherit; font-size:13px; text-align:left;">
-                            <span>{{ p.name }} <span v-if="p.has_combinations" style="font-size:10px; color:var(--text3);">VARS</span></span>
-                            <span style="color:var(--text2);">{{ Number(p.price).toFixed(2) }} €</span>
-                        </button>
-                    </div>
-                    <div v-if="combinationChoice" style="border:1px solid var(--primary); border-radius:10px; padding:8px; display:flex; flex-direction:column; gap:4px;">
-                        <div style="color:var(--text2); font-size:12px; font-weight:600;">Elige la variante de {{ combinationChoice.name }}</div>
-                        <button v-for="c in combinationChoice.combinations" :key="c.id" @click="pickCombination(c)" style="display:flex; justify-content:space-between; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:transparent; color:var(--text); cursor:pointer; font-family:inherit; font-size:13px;">
-                            <span>{{ (c.attributes || []).map(a => a.group_name + ': ' + a.attribute_name).join(' / ') || '—' }}</span>
-                            <span style="color:var(--text2);">{{ (Number(combinationChoice.price) + Number(c.price_impact || 0)).toFixed(2) }} €</span>
-                        </button>
-                        <button @click="pickCombination(null)" style="padding:4px 8px; border:none; background:transparent; color:var(--text3); cursor:pointer; font-family:inherit; font-size:12px;">Cancelar</button>
-                    </div>
-                    <div v-if="exchangeLines.length === 0" style="color:var(--text3); font-size:13px;">Añade lo que se lleva el cliente.</div>
-                    <div v-for="(line, idx) in exchangeLines" :key="line.product_id + ':' + line.id_product_attribute" style="display:flex; align-items:center; gap:10px; padding:6px 0; border-bottom:1px solid var(--border);">
-                        <div style="flex:1; color:var(--text); font-size:13px;">{{ line.name }}</div>
-                        <div style="color:var(--text2); font-size:12px;">{{ line.unitPrice.toFixed(2) }} €</div>
-                        <input type="number" :value="line.quantity" @input="updateNoTicketQty(idx, $event.target.value)" min="1" style="width:60px; padding:4px 6px; border-radius:6px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:13px; text-align:center;" />
-                        <button @click="removeNoTicketLine(idx)" style="background:transparent; border:none; color:var(--text3); cursor:pointer; font-size:16px;">✕</button>
-                    </div>
-                    <div style="display:flex; justify-content:space-between; color:var(--text2); font-size:13px;"><span>Abono de lo devuelto</span><span>{{ exchangeCredit().toFixed(2) }} €</span></div>
-                    <div style="display:flex; justify-content:space-between; color:var(--text2); font-size:13px;"><span>Total artículos nuevos</span><span>{{ exchangeNewTotal().toFixed(2) }} €</span></div>
-                    <div style="display:flex; justify-content:space-between; color:var(--text); font-size:16px; font-weight:700;">
-                        <span v-if="exchangeBalance() > 0">A cobrar</span><span v-else-if="exchangeBalance() < 0">A devolver</span><span v-else>Sin diferencia</span>
-                        <span>{{ Math.abs(exchangeBalance()).toFixed(2) }} €</span>
-                    </div>
-                    <div v-if="exchangeBalance() < 0" style="color:var(--text2); font-size:13px;">
-                        <div v-if="exchangePayoutSplit().cash > 0">Efectivo de caja: {{ exchangePayoutSplit().cash.toFixed(2) }} €</div>
-                        <div v-if="exchangePayoutSplit().card > 0">A tarjeta (datáfono): {{ exchangePayoutSplit().card.toFixed(2) }} €</div>
-                        <div v-if="exchangePayoutSplit().voucher > 0">En vale (PrestaShop): {{ exchangePayoutSplit().voucher.toFixed(2) }} €</div>
-                    </div>
-                    <template v-if="exchangeBalance() > 0">
-                        <div style="color:var(--text2); font-size:12px; font-weight:600;">Cómo paga la diferencia</div>
-                        <div style="display:flex; gap:6px;">
-                            <button v-for="m in paymentMethods" :key="m.code" @click="setExchangePayment(m.code)" :style="{ background: exchangePayment === m.code ? 'var(--primary)' : 'transparent', color: exchangePayment === m.code ? '#fff' : 'var(--text2)' }" style="padding:6px 14px; border-radius:8px; border:1px solid var(--border); cursor:pointer; font-family:inherit; font-size:13px;">{{ m.label }}</button>
+                    <template v-if="exchangeMode">
+                        <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:8px;">
+                            <div class="tpv-label">Artículos nuevos que se lleva</div>
+                            <button class="tpv-btn" @click="cancelExchange">Cancelar cambio</button>
                         </div>
-                        <input v-if="exchangePayment === 'cash'" v-model="exchangeTendered" type="number" min="0" step="0.01" placeholder="Efectivo entregado" style="padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px;" />
-                        <div v-if="exchangePayment === 'cash' && Number(exchangeTendered) > exchangeBalance()" style="color:var(--text2); font-size:13px;">Cambio: {{ (Number(exchangeTendered) - exchangeBalance()).toFixed(2) }} €</div>
-                        <input v-if="exchangePayment === 'mixed'" v-model="exchangeCash" type="number" min="0" step="0.01" placeholder="Parte en efectivo (el resto con tarjeta)" style="padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px;" />
+                        <div style="display:flex; gap:8px;">
+                            <input class="tpv-input" style="flex:1;" v-model="productQuery" @keyup.enter="searchProducts" placeholder="Buscar producto por nombre, referencia o EAN..." />
+                            <button class="tpv-btn tpv-btn-primary" @click="searchProducts" :disabled="loading"><icon name="search" :size="18" /> Buscar</button>
+                        </div>
+                        <div v-if="productResults.length" style="display:flex; flex-direction:column; gap:8px; max-height:280px; overflow:auto;">
+                            <button v-for="p in productResults" :key="p.id" class="tpv-row" style="min-height:56px; font-family:inherit; text-align:left; color:var(--text);" @click="pickProduct(p)">
+                                <icon name="plus" :size="18" style="color:var(--green);" />
+                                <span style="flex:1; font-size:15px;">{{ p.name }} <span v-if="p.has_combinations" style="font-size:12px; color:var(--text2); border:1px solid var(--border2); border-radius:6px; padding:1px 6px; margin-left:6px;">VARIANTES</span></span>
+                                <span style="color:var(--text2); font-family:'IBM Plex Mono'; font-size:15px;">{{ euros(p.price) }}</span>
+                            </button>
+                        </div>
+                        <div v-if="combinationChoice" class="tpv-banner tpv-banner-info" style="flex-direction:column; align-items:stretch; gap:8px;">
+                            <div class="tpv-label">Elige la variante de {{ combinationChoice.name }}</div>
+                            <button v-for="c in combinationChoice.combinations" :key="c.id" class="tpv-row" style="min-height:56px; font-family:inherit; color:var(--text);" @click="pickCombination(c)">
+                                <span style="flex:1; text-align:left; font-size:15px;">{{ (c.attributes || []).map(a => a.group_name + ': ' + a.attribute_name).join(' / ') || '—' }}</span>
+                                <span style="color:var(--text2); font-family:'IBM Plex Mono'; font-size:15px;">{{ euros(Number(combinationChoice.price) + Number(c.price_impact || 0)) }}</span>
+                            </button>
+                            <button class="tpv-btn" style="align-self:flex-start;" @click="pickCombination(null)">Cancelar</button>
+                        </div>
+                        <div v-if="exchangeLines.length === 0" style="color:var(--text2); font-size:15px; padding:16px; border:1px dashed var(--border2); border-radius:12px; text-align:center;">Añade lo que se lleva el cliente.</div>
+                        <div v-for="(line, idx) in exchangeLines" :key="line.product_id + ':' + line.id_product_attribute" class="tpv-row" style="cursor:default; flex-wrap:wrap;">
+                            <div style="flex:1; min-width:180px;">
+                                <div style="color:var(--text); font-size:15px; font-weight:600;">{{ line.name }}</div>
+                                <div style="color:var(--text2); font-size:13px; font-family:'IBM Plex Mono';">{{ euros(line.unitPrice) }} / ud</div>
+                            </div>
+                            <div class="tpv-stepper">
+                                <button class="tpv-step" aria-label="Quitar una unidad" :disabled="line.quantity <= 1" @click="stepNoTicketQty(idx, -1)"><icon name="minus" :size="20" /></button>
+                                <span class="tpv-step-value">{{ line.quantity }}</span>
+                                <button class="tpv-step" aria-label="Añadir una unidad" @click="stepNoTicketQty(idx, 1)"><icon name="plus" :size="20" /></button>
+                            </div>
+                            <button class="tpv-step" aria-label="Quitar artículo" style="background:transparent; color:var(--red);" @click="removeNoTicketLine(idx)"><icon name="trash" :size="20" /></button>
+                        </div>
                     </template>
                 </div>
 
-                <div v-if="!exchangeMode" style="display:flex; justify-content:space-between; align-items:center; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px; gap:12px;">
-                    <div style="color:var(--text2); font-size:13px;">
-                        <div v-if="estimatedSplit().cash > 0">Efectivo de caja: {{ estimatedSplit().cash.toFixed(2) }} €</div>
-                        <div v-if="estimatedSplit().card > 0">A tarjeta (datáfono): {{ estimatedSplit().card.toFixed(2) }} €</div>
-                        <div v-if="estimatedSplit().voucher > 0">En vale (PrestaShop): {{ estimatedSplit().voucher.toFixed(2) }} €</div>
+                <div class="tpv-split-side">
+                    <div class="tpv-split-side-body">
+                        <div style="display:flex; flex-direction:column; gap:8px;">
+                            <div class="tpv-label">Motivo</div>
+                            <div class="tpv-chip-grid cols-2">
+                                <button v-for="r in reasons" :key="r.code" class="tpv-chip" :class="{ 'is-selected': reasonCode === r.code }" :aria-pressed="reasonCode === r.code ? 'true' : 'false'" @click="setReason(r.code)">
+                                    {{ r.label }}<span v-if="reasonCode === r.code" class="tpv-chip-mark"><icon name="check" :size="18" /></span>
+                                </button>
+                            </div>
+                            <input v-if="reasonCode === 'other'" class="tpv-input" v-model="reasonText" placeholder="Describe el motivo" maxlength="255" />
+                        </div>
+
+                        <div v-if="exchangeMode" style="display:flex; flex-direction:column; gap:8px;">
+                            <div class="tpv-label">Balance del cambio</div>
+                            <div style="display:flex; justify-content:space-between; color:var(--text2); font-size:15px;"><span>Abono de lo devuelto</span><span style="font-family:'IBM Plex Mono';">{{ euros(exchangeCredit()) }}</span></div>
+                            <div style="display:flex; justify-content:space-between; color:var(--text2); font-size:15px;"><span>Total artículos nuevos</span><span style="font-family:'IBM Plex Mono';">{{ euros(exchangeNewTotal()) }}</span></div>
+                            <div style="display:flex; justify-content:space-between; color:var(--text); font-size:18px; font-weight:700;">
+                                <span v-if="exchangeBalance() > 0">A cobrar</span><span v-else-if="exchangeBalance() < 0">A devolver</span><span v-else>Sin diferencia</span>
+                                <span style="font-family:'IBM Plex Mono';">{{ euros(Math.abs(exchangeBalance())) }}</span>
+                            </div>
+                            <div v-if="exchangeBalance() < 0" style="color:var(--text2); font-size:15px; display:flex; flex-direction:column; gap:4px;">
+                                <div v-if="exchangePayoutSplit().cash > 0">Efectivo de caja: {{ euros(exchangePayoutSplit().cash) }}</div>
+                                <div v-if="exchangePayoutSplit().card > 0">A tarjeta (datáfono): {{ euros(exchangePayoutSplit().card) }}</div>
+                                <div v-if="exchangePayoutSplit().voucher > 0">En vale (PrestaShop): {{ euros(exchangePayoutSplit().voucher) }}</div>
+                            </div>
+                            <template v-if="exchangeBalance() > 0">
+                                <div class="tpv-label" style="margin-top:8px;">Cómo paga la diferencia</div>
+                                <div class="tpv-chip-grid cols-3">
+                                    <button v-for="m in paymentMethods" :key="m.code" class="tpv-chip" :class="{ 'is-selected': exchangePayment === m.code }" :aria-pressed="exchangePayment === m.code ? 'true' : 'false'" @click="setExchangePayment(m.code)">
+                                        {{ m.label }}<span v-if="exchangePayment === m.code" class="tpv-chip-mark"><icon name="check" :size="18" /></span>
+                                    </button>
+                                </div>
+                                <input v-if="exchangePayment === 'cash'" class="tpv-input" v-model="exchangeTendered" type="number" inputmode="decimal" min="0" step="0.01" placeholder="Efectivo entregado" />
+                                <div v-if="exchangePayment === 'cash' && Number(exchangeTendered) > exchangeBalance()" style="color:var(--text); font-size:16px; font-weight:600;">Cambio: {{ euros(Number(exchangeTendered) - exchangeBalance()) }}</div>
+                                <input v-if="exchangePayment === 'mixed'" class="tpv-input" v-model="exchangeCash" type="number" inputmode="decimal" min="0" step="0.01" placeholder="Parte en efectivo (el resto con tarjeta)" />
+                            </template>
+                        </div>
+
+                        <div v-else style="display:flex; flex-direction:column; gap:8px;">
+                            <div class="tpv-label">Cómo se devuelve</div>
+                            <div v-if="estimatedTotal() === 0" style="color:var(--text2); font-size:15px;">Marca las líneas que devuelve el cliente.</div>
+                            <div v-if="estimatedSplit().cash > 0" style="color:var(--text); font-size:15px;">Efectivo de caja: {{ estimatedSplit().cash.toFixed(2) }} €</div>
+                            <div v-if="estimatedSplit().card > 0" style="color:var(--text); font-size:15px;">A tarjeta (datáfono): {{ estimatedSplit().card.toFixed(2) }} €</div>
+                            <div v-if="estimatedSplit().voucher > 0" style="color:var(--text); font-size:15px;">En vale (PrestaShop): {{ estimatedSplit().voucher.toFixed(2) }} €</div>
+                        </div>
+
+                        <button v-if="needsCardConfirmation()" class="tpv-toggle" :class="{ 'is-on': cardConfirmed }" role="switch" :aria-checked="cardConfirmed ? 'true' : 'false'" style="width:100%; min-height:64px; text-align:left;" @click="cardConfirmed = !cardConfirmed">
+                            <span class="tpv-check" :class="{ 'is-checked': cardConfirmed }"><icon v-if="cardConfirmed" name="check" :size="18" /></span>
+                            <span style="flex:1;">He hecho la devolución de {{ euros(cardRefundAmount()) }} en el datáfono</span>
+                        </button>
                     </div>
-                    <div style="font-weight:700; color:var(--text); font-size:16px;">Total devolución: {{ estimatedTotal().toFixed(2) }} €</div>
-                </div>
 
-                <label v-if="needsCardConfirmation()" style="display:flex; align-items:center; gap:8px; color:var(--text); font-size:13px; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px; cursor:pointer;">
-                    <input type="checkbox" v-model="cardConfirmed" style="width:18px; height:18px;" />
-                    He hecho la devolución de {{ cardRefundAmount().toFixed(2) }} € en el datáfono
-                </label>
-
-                <div style="display:flex; gap:8px;">
-                    <button v-if="!exchangeMode" @click="startExchange" :disabled="loading || Boolean(selectedOrder.open_exchange)" style="flex:1; padding:10px 16px; border-radius:8px; border:1px solid var(--primary); background:transparent; color:var(--primary); cursor:pointer; font-family:inherit; font-size:14px; font-weight:600;">Cambiar</button>
-                    <button @click="openConfirm" :disabled="loading" style="flex:2; padding:10px 16px; border-radius:8px; border:none; background:var(--red); color:#fff; cursor:pointer; font-family:inherit; font-size:14px; font-weight:600;">
-                        <span v-if="loading">Procesando...</span>
-                        <span v-else-if="exchangeMode">Confirmar cambio</span>
-                        <span v-else>Confirmar devolución</span>
-                    </button>
+                    <div class="tpv-split-side-foot">
+                        <div v-if="validationError()" style="color:var(--amber); font-size:14px; font-weight:600;">{{ validationError() }}</div>
+                        <div style="display:flex; gap:8px;">
+                            <button v-if="!exchangeMode" class="tpv-action tpv-action-secondary" style="flex:1;" @click="startExchange" :disabled="loading || Boolean(selectedOrder.open_exchange)">Cambiar</button>
+                            <button class="tpv-action tpv-action-primary" style="flex:2;" @click="openConfirm" :disabled="loading">
+                                <span v-if="loading">Procesando...</span>
+                                <span v-else-if="exchangeMode">Confirmar cambio</span>
+                                <span v-else>Devolver</span>
+                                <span class="tpv-action-amount">{{ exchangeMode ? euros(Math.abs(exchangeBalance())) : euros(estimatedTotal()) }}</span>
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </div>
 
-            <div v-if="confirmModal" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.4); display:flex; align-items:center; justify-content:center; z-index:1000;">
-                <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:20px; max-width:360px; width:90%; display:flex; flex-direction:column; gap:14px;">
-                    <div style="font-weight:700; color:var(--text); font-size:16px;">{{ exchangeMode ? 'Confirmar cambio' : 'Confirmar devolución' }}</div>
-                    <div v-if="exchangeMode" style="color:var(--text2); font-size:13px;">Se devuelven artículos del pedido <strong>#{{ selectedOrder.ps_order_id }}</strong> por unos {{ exchangeCredit().toFixed(2) }} € y se venden artículos nuevos por {{ exchangeNewTotal().toFixed(2) }} €: <strong>{{ exchangeBalance() > 0 ? 'a cobrar ' + exchangeBalance().toFixed(2) + ' €' : (exchangeBalance() < 0 ? 'a devolver ' + (-exchangeBalance()).toFixed(2) + ' €' : 'sin diferencia') }}</strong>. Los importes exactos los calcula el sistema.</div>
-                    <div v-else-if="noTicket" style="color:var(--text2); font-size:13px;">Se va a devolver aproximadamente <strong>{{ noTicketTotal().toFixed(2) }} €</strong> sin ticket ({{ (methods.find(m => m.code === refundMethod) || {}).label }}). El importe exacto es el precio actual del catálogo.</div>
-                    <div v-else style="color:var(--text2); font-size:13px;">Se va a devolver aproximadamente <strong>{{ estimatedTotal().toFixed(2) }} €</strong> del pedido <strong>#{{ selectedOrder.ps_order_id }}</strong>. El importe exacto lo calcula el sistema con lo que se pagó.</div>
+            <div v-if="confirmModal" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center; z-index:1000;">
+                <div style="background:var(--surface); border:1px solid var(--border2); border-radius:14px; padding:24px; max-width:440px; width:90%; display:flex; flex-direction:column; gap:16px;">
+                    <div style="font-weight:700; color:var(--text); font-size:18px;">{{ exchangeMode ? 'Confirmar cambio' : 'Confirmar devolución' }}</div>
+                    <div v-if="exchangeMode" style="color:var(--text2); font-size:15px; line-height:1.45;">Se devuelven artículos del pedido <strong style="color:var(--text);">#{{ selectedOrder.ps_order_id }}</strong> por unos {{ euros(exchangeCredit()) }} y se venden artículos nuevos por {{ euros(exchangeNewTotal()) }}: <strong style="color:var(--text);">{{ exchangeBalance() > 0 ? 'a cobrar ' + euros(exchangeBalance()) : (exchangeBalance() < 0 ? 'a devolver ' + euros(-exchangeBalance()) : 'sin diferencia') }}</strong>. Los importes exactos los calcula el sistema.</div>
+                    <div v-else-if="noTicket" style="color:var(--text2); font-size:15px; line-height:1.45;">Se va a devolver aproximadamente <strong style="color:var(--text);">{{ euros(noTicketTotal()) }}</strong> sin ticket ({{ (methods.find(m => m.code === refundMethod) || {}).label }}). El importe exacto es el precio actual del catálogo.</div>
+                    <div v-else style="color:var(--text2); font-size:15px; line-height:1.45;">Se va a devolver aproximadamente <strong style="color:var(--text);">{{ euros(estimatedTotal()) }}</strong> del pedido <strong style="color:var(--text);">#{{ selectedOrder.ps_order_id }}</strong>. El importe exacto lo calcula el sistema con lo que se pagó.</div>
                     <div style="display:flex; gap:8px; justify-content:flex-end;">
-                        <button @click="cancelConfirm" style="padding:8px 14px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:13px;">Cancelar</button>
-                        <button @click="confirmRefund" :disabled="loading" style="padding:8px 14px; border-radius:8px; border:none; background:var(--red); color:#fff; cursor:pointer; font-family:inherit; font-size:13px; font-weight:600;">Confirmar</button>
+                        <button class="tpv-btn" @click="cancelConfirm">Cancelar</button>
+                        <button class="tpv-btn tpv-btn-primary" style="min-width:140px;" @click="confirmRefund" :disabled="loading">Confirmar</button>
                     </div>
                 </div>
             </div>
