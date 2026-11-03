@@ -9,12 +9,22 @@ use Throwable;
 
 final class RefundException extends RuntimeException
 {
+    public function __construct(string $message = '', int $code = 0, ?Throwable $previous = null)
+    {
+        parent::__construct($message, $code, $previous);
+    }
+
     public static function doubleRefundAttempt(int $psOrderId): self
     {
         return new self(
             sprintf('Order %d already fully refunded', $psOrderId),
             409
         );
+    }
+
+    public static function conflict(string $message): self
+    {
+        return new self($message, 409);
     }
 
     public static function orderNotFound(int $psOrderId): self

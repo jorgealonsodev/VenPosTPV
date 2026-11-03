@@ -136,6 +136,12 @@ final class TestDatabase
         self::runMigration($connection, 'Version00000010CreateSyncLogTable');
         self::runMigration($connection, 'Version00000017AddPriceTtcToCatalogTables');
         self::runMigration($connection, 'Version00000018AddPriceNetToCatalogTables');
+
+        if (!$connection->createSchemaManager()->introspectTable('order_meta')->hasColumn('refunded_amount')) {
+            self::runMigration($connection, 'Version00000005AddRefundedAmountToOrderMeta');
+        }
+
+        self::runMigration($connection, 'Version00000019CreateRefundTables');
     }
 
     private static function applyInstallSchema(Connection $connection): void

@@ -222,3 +222,43 @@ CREATE TABLE IF NOT EXISTS parked_ticket (
     INDEX idx_parked_ticket_created (created_at),
     INDEX idx_parked_ticket_terminal (terminal_id)
 ) ENGINE=InnoDB;
+
+-- refund (Version00000019): one row per refund attempt, written before PrestaShop is called
+CREATE TABLE IF NOT EXISTS refund (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    request_id VARCHAR(64) NOT NULL,
+    status ENUM('pending','done','failed') NOT NULL DEFAULT 'pending',
+    ps_order_id INT UNSIGNED NULL,
+    ps_order_slip_id INT UNSIGNED NULL,
+    terminal_id INT UNSIGNED NOT NULL,
+    session_id INT UNSIGNED NOT NULL,
+    user_id INT UNSIGNED NOT NULL,
+    reason_code VARCHAR(32) NOT NULL,
+    reason_text VARCHAR(255) NULL,
+    total DECIMAL(10,2) NOT NULL,
+    cash_amount DECIMAL(10,2) NOT NULL DEFAULT 0,
+    card_amount DECIMAL(10,2) NOT NULL DEFAULT 0,
+    card_confirmed TINYINT(1) NOT NULL DEFAULT 0,
+    ps_payload JSON NULL,
+    error_message VARCHAR(1000) NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at DATETIME NULL,
+    UNIQUE KEY uk_refund_request (request_id),
+    INDEX idx_refund_order_status (ps_order_id, status),
+    INDEX idx_refund_session (session_id)
+) ENGINE=InnoDB;
+
+-- refund_line (Version00000019): quantities already returned per sale line
+CREATE TABLE IF NOT EXISTS refund_line (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    refund_id BIGINT UNSIGNED NOT NULL,
+    line_index INT UNSIGNED NULL,
+    product_id INT UNSIGNED NOT NULL,
+    id_product_attribute INT UNSIGNED NOT NULL DEFAULT 0,
+    quantity INT UNSIGNED NOT NULL,
+    amount DECIMAL(10,2) NOT NULL,
+    restock TINYINT(1) NOT NULL DEFAULT 1,
+    restocked TINYINT(1) NOT NULL DEFAULT 0,
+    CONSTRAINT fk_refund_line_refund FOREIGN KEY (refund_id) REFERENCES refund (id) ON DELETE CASCADE,
+    INDEX idx_refund_line_refund (refund_id)
+) ENGINE=InnoDB;

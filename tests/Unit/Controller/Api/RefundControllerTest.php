@@ -65,6 +65,26 @@ final class RefundControllerTest extends TestCase
         $this->assertSame(Response::HTTP_OK, $response->getStatusCode());
     }
 
+    public function testRefundPassesReasonAndCardConfirmationAndMaps422(): void
+    {
+        $cashService = $this->createMock(CashSessionService::class);
+        $cashService->method('requireOpenSession')->willReturn(['session_id' => 1, 'terminal_id' => 1]);
+        $refundService = $this->createMock(RefundService::class);
+        $refundService->expects($this->once())->method('processRefund')
+            ->with(1, 42, [['line_index' => 0, 'quantity' => 1, 'restock' => false]], 'other', 'Llegó roto', true)
+            ->willThrowException(RefundException::validationFailed('Only 0 unit(s) of line 0 are left to refund'));
+
+        $response = $this->createController($refundService, cashService: $cashService)->refund(SessionRequest::json([
+            'ps_order_id' => 42,
+            'lines' => [['line_index' => 0, 'quantity' => 1, 'restock' => false]],
+            'reason_code' => 'other',
+            'reason_text' => 'Llegó roto',
+            'card_confirmed' => true,
+        ], ['user_id' => 1]));
+
+        $this->assertSame(Response::HTTP_UNPROCESSABLE_ENTITY, $response->getStatusCode());
+    }
+
     public function testSearchOrdersReturns401WithoutSession(): void
     {
         $response = $this->createController()->searchOrders(SessionRequest::create(['q' => 'ABC']));

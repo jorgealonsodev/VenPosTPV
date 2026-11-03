@@ -181,4 +181,29 @@ final class PsRefundClientTest extends TestCase
         $this->assertCount(3, $parts);
         $this->assertSame($expectedSignature, $parts[2]);
     }
+
+    public function testReplayed200IsAFinalSuccess(): void
+    {
+        $client = $this->createClient([new MockResponse(json_encode([
+            'order_slip_id' => 9, 'refunded_amount' => 10.0, 'refunded_lines' => [], 'restock_failed' => [], 'replayed' => true,
+        ]), ['http_code' => 200])]);
+
+        $result = $client->createRefund(['ps_order_id' => 42, 'request_id' => 'abcdefgh12', 'lines' => []]);
+
+        $this->assertSame(9, $result['order_slip_id']);
+        $this->assertTrue($result['replayed']);
+    }
+
+    public function testDefiniteRejectionsKeepTheirStatusCode(): void
+    {
+        foreach ([404 => 404, 409 => 409, 422 => 422] as $http => $code) {
+            $client = $this->createClient([new MockResponse(json_encode(['error' => 'x', 'details' => ['lines.0.quantity' => 'Only 0 unit(s) left to refund']]), ['http_code' => $http])]);
+            try {
+                $client->createRefund(['ps_order_id' => 42]);
+                $this->fail('Expected RefundException for HTTP ' . $http);
+            } catch (RefundException $e) {
+                $this->assertSame($code, $e->getCode());
+            }
+        }
+    }
 }

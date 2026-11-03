@@ -100,8 +100,18 @@ class OrderSearchService
             $breakdown = [];
         }
 
+        $psOrderId = (int) $row['ps_order_id'];
+        $lines = \is_array($breakdown['lines'] ?? null) ? array_values($breakdown['lines']) : [];
+        $refunded = $lines === [] ? [] : $this->refundedByLine($psOrderId);
+        foreach ($lines as $index => $line) {
+            $refundedQty = $refunded[$index]['quantity'] ?? 0;
+            $lines[$index]['refunded_qty'] = $refundedQty;
+            $lines[$index]['refunded_line_amount'] = $refunded[$index]['amount'] ?? 0.0;
+            $lines[$index]['refundable_qty'] = max(0, (int) ($line['qty'] ?? 0) - $refundedQty);
+        }
+
         return [
-            'ps_order_id' => (int) $row['ps_order_id'],
+            'ps_order_id' => $psOrderId,
             'terminal_id' => (int) $row['terminal_id'],
             'session_id' => (int) $row['session_id'],
             'user_id' => (int) $row['user_id'],
@@ -110,9 +120,41 @@ class OrderSearchService
             'payment_method' => $breakdown['payment_method'] ?? '',
             'amount_tendered' => (float) ($breakdown['amount_tendered'] ?? 0),
             'change_due' => (float) ($breakdown['change_due'] ?? 0),
-            'lines' => $breakdown['lines'] ?? [],
+            'lines' => $lines,
+            'tender' => \is_array($breakdown['tender'] ?? null) ? $breakdown['tender'] : null,
             'refunded_amount' => (float) $row['refunded_amount'],
             'created_at' => $row['created_at'],
         ];
+    }
+
+    /**
+     * Quantities and amounts already refunded (or reserved by a refund whose
+     * outcome is still unknown) per sale line index.
+     *
+     * @return array<int, array{quantity: int, amount: float}>
+     */
+    private function refundedByLine(int $psOrderId): array
+    {
+        $rows = $this->connection->fetchAllAssociative(
+            "SELECT rl.line_index, SUM(rl.quantity) AS quantity, SUM(rl.amount) AS amount
+             FROM refund_line rl
+             JOIN refund r ON r.id = rl.refund_id
+             WHERE r.ps_order_id = ? AND r.status IN ('pending', 'done') AND rl.line_index IS NOT NULL
+             GROUP BY rl.line_index",
+            [$psOrderId]
+        );
+
+        $result = [];
+        foreach ($rows as $row) {
+            if (!isset($row['line_index'])) {
+                continue;
+            }
+            $result[(int) $row['line_index']] = [
+                'quantity' => (int) $row['quantity'],
+                'amount' => round((float) $row['amount'], 2),
+            ];
+        }
+
+        return $result;
     }
 }

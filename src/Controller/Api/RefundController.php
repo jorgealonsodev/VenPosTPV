@@ -39,7 +39,9 @@ class RefundController
 
         $psOrderId = isset($body['ps_order_id']) ? (int) $body['ps_order_id'] : 0;
         $lines = isset($body['lines']) && \is_array($body['lines']) ? $body['lines'] : null;
-        $reason = isset($body['reason']) && \is_string($body['reason']) ? $body['reason'] : '';
+        $reasonCode = isset($body['reason_code']) && \is_string($body['reason_code']) ? $body['reason_code'] : '';
+        $reasonText = isset($body['reason_text']) && \is_string($body['reason_text']) ? $body['reason_text'] : '';
+        $cardConfirmed = ($body['card_confirmed'] ?? false) === true;
 
         if ($psOrderId <= 0) {
             return new JsonResponse(
@@ -52,7 +54,7 @@ class RefundController
 
         try {
             $this->cashSessionService->requireOpenSession($userId);
-            $result = $this->refundService->processRefund($userId, $psOrderId, $lines, $reason);
+            $result = $this->refundService->processRefund($userId, $psOrderId, $lines, $reasonCode, $reasonText, $cardConfirmed);
 
             return new JsonResponse(['data' => $result], Response::HTTP_OK);
         } catch (RefundException $e) {
@@ -64,10 +66,17 @@ class RefundController
                 );
             }
 
-            if ($code === 409 || $code === 422) {
+            if ($code === 409) {
                 return new JsonResponse(
                     ['error' => $e->getMessage(), 'retry' => false],
                     Response::HTTP_CONFLICT
+                );
+            }
+
+            if ($code === 422) {
+                return new JsonResponse(
+                    ['error' => $e->getMessage(), 'retry' => false],
+                    Response::HTTP_UNPROCESSABLE_ENTITY
                 );
             }
 
