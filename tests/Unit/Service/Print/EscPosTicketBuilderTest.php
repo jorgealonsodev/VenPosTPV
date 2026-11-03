@@ -441,4 +441,28 @@ final class EscPosTicketBuilderTest extends TestCase
         $nothingOwed = new CreditNoteInfo('R2026-000013', 'Pedido online XKBKNABJK', null, 'Talla o color', 0.0, 0.0, exchangeCredit: 24.18, webRefundAmount: 0.0);
         $this->assertStringNotContainsString('Reembolso pendiente', $this->createBuilder()->build($this->documentTicket($nothingOwed, 'online', 0.0, 0.0)));
     }
+
+    public function testIssuerLegalNameAndTaxIdArePrintedUnderTheStoreName(): void
+    {
+        $sale = $this->createTicketData();
+        $ticket = new TicketData(
+            orderId: 42, reference: 'ORD-042', storeName: 'Mi Tienda', storeAddress: $sale->storeAddress, ticketHeader: '', ticketFooter: '',
+            ticketLogo: null, ticketWidthPx: null, date: $sale->date, cashierName: 'Juan', lines: $sale->lines, subtotal: 3.8, tax: 0.2,
+            total: 4.0, paymentMethod: 'cash', amountTendered: 5.0, changeDue: 1.0, verificationUrl: 'https://example.com/v',
+            legalName: 'Mi Tienda Moda SL', taxId: 'B12345674',
+        );
+
+        $bytes = $this->createBuilder()->build($ticket);
+
+        self::assertStringContainsString("Mi Tienda Moda SL\n", $bytes);
+        self::assertStringContainsString("NIF: B12345674\n", $bytes);
+        self::assertLessThan(strpos($bytes, 'Calle Falsa'), strpos($bytes, 'NIF: B12345674'));
+    }
+
+    public function testNoIssuerLinesWhenTaxIdAndLegalNameAreEmpty(): void
+    {
+        $bytes = $this->createBuilder()->build($this->createTicketData());
+
+        self::assertStringNotContainsString('NIF:', $bytes);
+    }
 }

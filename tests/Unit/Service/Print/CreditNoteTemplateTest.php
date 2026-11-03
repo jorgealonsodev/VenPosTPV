@@ -13,7 +13,7 @@ use VenPosTPV\Service\Print\TicketLine;
 
 final class CreditNoteTemplateTest extends TestCase
 {
-    private function render(?CreditNoteInfo $note, string $barcodePath = '', bool $giftMode = false, string $method = 'cash', float $tendered = 30.0, float $change = 5.82, ?float $exchangeCredit = null, ?string $exchangeCreditNote = null): string
+    private function render(?CreditNoteInfo $note, string $barcodePath = '', bool $giftMode = false, string $method = 'cash', float $tendered = 30.0, float $change = 5.82, ?float $exchangeCredit = null, ?string $exchangeCreditNote = null, ?string $legalName = null, ?string $taxId = null): string
     {
         $twig = new Environment(new FilesystemLoader(\dirname(__DIR__, 4) . '/templates'));
 
@@ -23,7 +23,7 @@ final class CreditNoteTemplateTest extends TestCase
                 ticketLogo: null, ticketWidthPx: null, date: new \DateTimeImmutable('2026-11-03 12:00'), cashierName: 'Ana',
                 lines: [new TicketLine('Camisa M', 1, 24.18, 24.18)], subtotal: 19.98, tax: 4.2, total: 24.18,
                 paymentMethod: $method, amountTendered: $tendered, changeDue: $change, verificationUrl: 'http://tpv/v', creditNote: $note,
-                exchangeCredit: $exchangeCredit, exchangeCreditNote: $exchangeCreditNote,
+                exchangeCredit: $exchangeCredit, exchangeCreditNote: $exchangeCreditNote, legalName: $legalName, taxId: $taxId,
             ),
             'giftMode' => $giftMode,
             'qrPath' => '',
@@ -148,5 +148,16 @@ final class CreditNoteTemplateTest extends TestCase
         $this->assertStringContainsString('<div class="bold">Reembolso pendiente en la web: 24,18 €</div>', $html);
         $this->assertStringNotContainsString('Efectivo:', $html);
         $this->assertStringNotContainsString('Tarjeta:', $html);
+    }
+
+    public function testSaleAndCreditNoteShowTheIssuerLegalNameAndTaxId(): void
+    {
+        foreach ([null, new CreditNoteInfo('R2026-000007', 'REF42', null, 'Defectuoso', 24.18, 0.0)] as $note) {
+            $html = $this->render($note, legalName: 'Tienda Moda SL', taxId: 'B12345674');
+
+            $this->assertStringContainsString('<div class="center">Tienda Moda SL</div>', $html);
+            $this->assertStringContainsString('<div class="center">NIF: B12345674</div>', $html);
+        }
+        $this->assertStringNotContainsString('NIF:', $this->render(null));
     }
 }

@@ -149,6 +149,7 @@ final class TestDatabase
         self::runMigration($connection, 'Version00000024CreateExchangeTable');
         self::runMigration($connection, 'Version00000026AddVoucherToExchange');
         self::runMigration($connection, 'Version00000027AddOnlineOrderToRefund');
+        self::runMigration($connection, 'Version00000028AddIssuerToTerminal');
     }
 
     private static function applyInstallSchema(Connection $connection): void

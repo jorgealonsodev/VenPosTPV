@@ -10,6 +10,7 @@ use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Attribute\AsController;
 use Symfony\Component\Routing\Attribute\Route;
+use VenPosTPV\Service\Fiscal\SpanishTaxId;
 use VenPosTPV\Service\Print\PrinterConfig;
 use VenPosTPV\Service\Print\SystemPrintQueue;
 
@@ -31,7 +32,7 @@ final class TerminalController
         }
 
         $row = $this->connection->fetchAssociative(
-            'SELECT id, ps_shop_id, name, printer_config, scanner_config, hotkeys, dataphone_mode, printer_type, store_address, ticket_header, ticket_footer, ticket_logo, ticket_width_px, stock_sync_interval_seconds, stock_push_interval_seconds, refund_window_days, ticket_code, active, created_at, updated_at FROM terminal WHERE id = ?',
+            'SELECT id, ps_shop_id, name, printer_config, scanner_config, hotkeys, dataphone_mode, printer_type, store_address, legal_name, tax_id, ticket_header, ticket_footer, ticket_logo, ticket_width_px, stock_sync_interval_seconds, stock_push_interval_seconds, refund_window_days, ticket_code, active, created_at, updated_at FROM terminal WHERE id = ?',
             [$id]
         );
 
@@ -120,6 +121,18 @@ final class TerminalController
 
         if (array_key_exists('store_address', $body)) {
             $fields['store_address'] = trim((string) $body['store_address']);
+        }
+
+        if (array_key_exists('legal_name', $body)) {
+            $fields['legal_name'] = $this->normalizeNullableText($body['legal_name']);
+        }
+
+        if (array_key_exists('tax_id', $body)) {
+            $taxId = SpanishTaxId::normalize((string) $body['tax_id']);
+            if ($taxId !== '' && !SpanishTaxId::isValid($taxId)) {
+                return new JsonResponse(['error' => 'NIF no válido: revisa las cifras y la letra de control'], Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
+            $fields['tax_id'] = $taxId === '' ? null : $taxId;
         }
 
         if (array_key_exists('ticket_header', $body)) {

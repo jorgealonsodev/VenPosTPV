@@ -40,6 +40,13 @@
     </div>
     {% endif %}
     <div class="center bold large">{{ ticket.storeName }}</div>
+{# Issuer lines sit at column 0 so an empty block renders nothing at all. #}
+{% if ticket.legalName and ticket.legalName != ticket.storeName %}
+    <div class="center">{{ ticket.legalName }}</div>
+{% endif %}
+{% if ticket.taxId %}
+    <div class="center">NIF: {{ ticket.taxId }}</div>
+{% endif %}
     {% if ticket.storeAddress %}
         <div class="center">{{ ticket.storeAddress }}</div>
     {% endif %}

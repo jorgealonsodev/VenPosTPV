@@ -74,6 +74,12 @@ class EscPosTicketBuilder
         $printer->selectPrintMode(Printer::MODE_DOUBLE_HEIGHT | Printer::MODE_DOUBLE_WIDTH | Printer::MODE_EMPHASIZED);
         $printer->text($this->sanitize($ticketData->storeName) . "\n");
         $printer->selectPrintMode(Printer::MODE_EMPHASIZED);
+        if ($ticketData->legalName !== null && $ticketData->legalName !== $ticketData->storeName) {
+            $printer->text($this->sanitize($ticketData->legalName) . "\n");
+        }
+        if ($ticketData->taxId !== null) {
+            $printer->text('NIF: ' . $this->sanitize($ticketData->taxId) . "\n");
+        }
         if ($ticketData->storeAddress !== '') {
             $printer->text($this->sanitize($ticketData->storeAddress) . "\n");
         }

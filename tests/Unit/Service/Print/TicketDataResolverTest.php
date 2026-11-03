@@ -67,10 +67,12 @@ final class TicketDataResolverTest extends TestCase
                     ['name' => 'Juan'],
                 ],
                 [
-                    'SELECT store_address, ticket_header, ticket_footer, ticket_logo, ticket_width_px FROM terminal WHERE id = ?',
+                    'SELECT store_address, legal_name, tax_id, ticket_header, ticket_footer, ticket_logo, ticket_width_px FROM terminal WHERE id = ?',
                     [7],
                     [
                         'store_address' => 'Avenida Real 42',
+                        'legal_name' => 'Mi Tienda Moda SL',
+                        'tax_id' => 'B12345674',
                         'ticket_header' => 'Horario: L-V 09:00-20:00',
                         'ticket_footer' => 'Vuelva pronto',
                         'ticket_logo' => '/uploads/tickets/logo.png',
@@ -91,6 +93,8 @@ final class TicketDataResolverTest extends TestCase
         self::assertSame('ORD-042', $result->reference);
         self::assertSame('Mi Tienda', $result->storeName);
         self::assertSame('Avenida Real 42', $result->storeAddress);
+        self::assertSame('Mi Tienda Moda SL', $result->legalName);
+        self::assertSame('B12345674', $result->taxId);
         self::assertSame('Horario: L-V 09:00-20:00', $result->ticketHeader);
         self::assertSame('Vuelva pronto', $result->ticketFooter);
         self::assertSame('/uploads/tickets/logo.png', $result->ticketLogo);
@@ -135,7 +139,7 @@ final class TicketDataResolverTest extends TestCase
                     false,
                 ],
                 [
-                    'SELECT store_address, ticket_header, ticket_footer, ticket_logo, ticket_width_px FROM terminal WHERE id = ?',
+                    'SELECT store_address, legal_name, tax_id, ticket_header, ticket_footer, ticket_logo, ticket_width_px FROM terminal WHERE id = ?',
                     [7],
                     false,
                 ],

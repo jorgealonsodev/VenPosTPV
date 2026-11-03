@@ -35,6 +35,9 @@ final class TicketData
         // the credit note it comes from when known.
         public readonly ?float $exchangeCredit = null,
         public readonly ?string $exchangeCreditNote = null,
+        // Issuer data a simplified invoice must show: legal name and NIF.
+        public readonly ?string $legalName = null,
+        public readonly ?string $taxId = null,
     ) {
     }
 

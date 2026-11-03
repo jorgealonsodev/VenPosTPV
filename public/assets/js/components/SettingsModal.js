@@ -91,6 +91,8 @@ const SettingsModal = {
                     dataphone_mode: terminal.value.dataphone_mode,
                     printer_type: terminal.value.printer_type,
                     store_address: terminal.value.store_address,
+                    legal_name: terminal.value.legal_name ?? '',
+                    tax_id: terminal.value.tax_id ?? '',
                     ticket_header: terminal.value.ticket_header,
                     ticket_footer: terminal.value.ticket_footer,
                     ticket_logo: terminal.value.ticket_logo,
@@ -602,6 +604,18 @@ const SettingsModal = {
                                 </div>
 
                                 <div>
+                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Razón social</label>
+                                    <input v-model="terminal.legal_name" type="text" maxlength="120" placeholder="Mi Tienda Moda SL"
+                                        style="width:100%; max-width:420px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box;">
+                                    <div style="font-size:12px; color:var(--text3); margin-top:4px;">Nombre fiscal del titular. Se imprime en tickets y abonos si es distinto del nombre de la tienda.</div>
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">NIF</label>
+                                    <input v-model="terminal.tax_id" type="text" maxlength="16" autocapitalize="characters" placeholder="B12345674"
+                                        style="width:100%; max-width:200px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box; text-transform:uppercase;">
+                                    <div style="font-size:12px; color:var(--text3); margin-top:4px;">Obligatorio en la factura simplificada. Se comprueba la letra o cifra de control.</div>
+                                </div>
+                                <div>
                                     <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Dirección de la tienda</label>
                                     <textarea v-model="terminal.store_address" rows="2" placeholder="Calle Principal 123, 28001 Madrid"
                                         style="width:100%; max-width:420px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box; resize:vertical;"></textarea>
@@ -609,7 +623,7 @@ const SettingsModal = {
                                 </div>
                                 <div>
                                     <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Encabezado del ticket</label>
-                                    <textarea v-model="terminal.ticket_header" rows="4" placeholder="NIF: B12345678&#10;www.tutienda.com&#10;Gracias por visitarnos"
+                                    <textarea v-model="terminal.ticket_header" rows="4" placeholder="www.tutienda.com&#10;Gracias por visitarnos"
                                         style="width:100%; max-width:420px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box; resize:vertical;"></textarea>
                                     <div style="font-size:12px; color:var(--text3); margin-top:4px;">Texto libre multi-línea que aparecerá en la cabecera del ticket.</div>
                                 </div>

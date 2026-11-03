@@ -61,7 +61,7 @@ class TicketDataResolver
         ]);
 
         $cashierName = $this->cashierName((int) $row['user_id']);
-        [$storeAddress, $ticketHeader, $ticketFooter, $ticketLogo, $ticketWidthPx] = $this->terminalPresentation((int) $row['terminal_id']);
+        [$storeAddress, $ticketHeader, $ticketFooter, $ticketLogo, $ticketWidthPx, $legalName, $taxId] = $this->terminalPresentation((int) $row['terminal_id']);
 
         return new TicketData(
             orderId: $orderId,
@@ -85,6 +85,8 @@ class TicketDataResolver
             ticketCode: $this->ticketCode((int) $row['terminal_id']),
             exchangeCredit: $exchangeCredit,
             exchangeCreditNote: $exchangeCredit !== null ? $this->exchangeCreditNote($orderId) : null,
+            legalName: $legalName,
+            taxId: $taxId,
         );
     }
 
@@ -184,7 +186,7 @@ class TicketDataResolver
             'reference' => $withoutTicket ? $number : $reference,
             'total' => $saleTotal,
         ]);
-        [$storeAddress, $ticketHeader, $ticketFooter, $ticketLogo, $ticketWidthPx] = $this->terminalPresentation((int) $refund['terminal_id']);
+        [$storeAddress, $ticketHeader, $ticketFooter, $ticketLogo, $ticketWidthPx, $legalName, $taxId] = $this->terminalPresentation((int) $refund['terminal_id']);
 
         return new TicketData(
             orderId: (int) $refund['ps_order_id'],
@@ -220,6 +222,8 @@ class TicketDataResolver
                 exchangeCredit: $refund['exchange_credit'] !== null ? round((float) $refund['exchange_credit'], 2) : null,
                 webRefundAmount: $online && isset($refund['web_refund_amount']) ? round((float) $refund['web_refund_amount'], 2) : null,
             ),
+            legalName: $legalName,
+            taxId: $taxId,
         );
     }
 
@@ -281,12 +285,12 @@ class TicketDataResolver
     }
 
     /**
-     * @return array{0: string, 1: string, 2: string, 3: ?string, 4: ?int} address, header, footer, logo, width
+     * @return array{0: string, 1: string, 2: string, 3: ?string, 4: ?int, 5: ?string, 6: ?string} address, header, footer, logo, width, legal name, NIF
      */
     private function terminalPresentation(int $terminalId): array
     {
         $terminalRow = $this->connection->fetchAssociative(
-            'SELECT store_address, ticket_header, ticket_footer, ticket_logo, ticket_width_px FROM terminal WHERE id = ?',
+            'SELECT store_address, legal_name, tax_id, ticket_header, ticket_footer, ticket_logo, ticket_width_px FROM terminal WHERE id = ?',
             [$terminalId]
         );
 
@@ -311,6 +315,10 @@ class TicketDataResolver
             ? (int) $terminalRow['ticket_width_px']
             : null;
 
-        return [$storeAddress, $ticketHeader, $ticketFooter, $ticketLogo, $ticketWidthPx];
+        $text = static fn (string $key): ?string => $terminalRow !== false && \is_string($terminalRow[$key] ?? null) && trim($terminalRow[$key]) !== ''
+            ? trim($terminalRow[$key])
+            : null;
+
+        return [$storeAddress, $ticketHeader, $ticketFooter, $ticketLogo, $ticketWidthPx, $text('legal_name'), $text('tax_id')];
     }
 }

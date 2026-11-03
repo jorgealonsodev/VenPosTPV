@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS terminal (
     dataphone_mode ENUM('integrated','independent') NOT NULL DEFAULT 'integrated',
     printer_type ENUM('none','pdf','escpos','system') NOT NULL DEFAULT 'pdf',
     store_address VARCHAR(255) NOT NULL DEFAULT '',
+    legal_name VARCHAR(120) NULL,
+    tax_id VARCHAR(16) NULL,
     ticket_header TEXT NULL,
     ticket_footer TEXT NULL,
     ticket_logo MEDIUMTEXT NULL,
