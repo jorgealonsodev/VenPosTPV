@@ -413,7 +413,188 @@ async function testNoTicketApiCallsTheNewEndpoints() {
     assert.deepEqual(JSON.parse(requests[0][2]), { method: 'cash', lines: [] });
 }
 
+
+const PANTALON_ORDER = {
+    ps_order_id: 42, reference: 'REF42', payment_method: 'cash', tender: { cash: 40, card: 0 },
+    lines: [{ name: 'Pantalón', product_id: 5, id_product_attribute: 0, qty: 1, paid_total: 40, refundable_qty: 1 }],
+};
+const CHAQUETA = { id: 6, name: 'Chaqueta', price: 55, has_combinations: false };
+const CINTURON = { id: 7, name: 'Cinturón', price: 25, has_combinations: false };
+
+/** Loads the screen on a selected order in exchange mode, with a fake catalog and exchange API. */
+function loadExchange(order, exchangeOrder, extraApi = {}) {
+    const opened = [];
+    const loaded = load(async () => { throw new Error('a plain refund must not be sent'); }, undefined, opened, {
+        api: {
+            searchCatalog: async () => ({ data: [CHAQUETA, CINTURON] }),
+            catalogProduct: async () => ({ data: null }),
+            exchangeOrder,
+            ...extraApi,
+        },
+    });
+    loaded.state.selectOrder(order);
+    loaded.state.startExchange();
+    return { ...loaded, opened };
+}
+
+async function testExchangeFortyForFiftyFiveCollectsTheBalanceAndShowsBothDocuments() {
+    const calls = [];
+    const t = loadExchange(PANTALON_ORDER, async (id, request) => {
+        calls.push([id, request]);
+        return { data: { exchange_id: 3, status: 'done', credit: 40, new_total: 55, balance: 15,
+            refund: { refund_id: 9, credit_note_number: 'R2026-000009', cash_amount: 0, card_amount: 0, print_status: 'pdf' },
+            sale: { ps_order_id: 990, reference: 'NEWREF', payable: 15, change_due: 5, print_status: 'dispatched' } } };
+    });
+
+    assert.equal(t.state.exchangeMode.value, true);
+    assert.equal(t.state.validationError(), 'Selecciona al menos una línea a devolver');
+    t.state.toggleLine(0);
+    assert.equal(t.state.validationError(), 'Añade al menos un artículo nuevo');
+    t.state.productQuery.value = 'cha';
+    await t.state.searchProducts();
+    assert.equal(t.state.productResults.value.length, 2, 'reuses the catalog search');
+    await t.state.pickProduct(CHAQUETA);
+    assert.equal(t.state.exchangeLines.value.length, 1, 'picked items go to the exchange, not to a refund without ticket');
+    assert.equal(t.state.noTicketLines.value.length, 0);
+    assert.equal(t.state.exchangeCredit(), 40);
+    assert.equal(t.state.exchangeNewTotal(), 55);
+    assert.equal(t.state.exchangeBalance(), 15);
+
+    assert.equal(t.state.validationError(), 'Elige el motivo de la devolución');
+    t.state.setReason('size');
+    assert.equal(t.state.validationError(), 'Elige cómo paga la diferencia');
+    t.state.setExchangePayment('cash');
+    t.state.exchangeTendered.value = '10';
+    assert.equal(t.state.validationError(), 'El efectivo entregado no cubre la diferencia');
+    t.state.exchangeTendered.value = '20';
+    assert.equal(t.state.needsCardConfirmation(), false);
+    assert.equal(t.state.validationError(), '');
+
+    await t.state.confirmRefund();
+    assert.deepEqual(JSON.parse(JSON.stringify(calls)), [[42, {
+        return_lines: [{ line_index: 0, quantity: 1, restock: true }],
+        reason_code: 'size', reason_text: '',
+        new_cart_data: { lines: [{ product_id: 6, id_product_attribute: 0, qty: 1, price: 55, name: 'Chaqueta' }], total: 55 },
+        payment_method: 'cash', amount_tendered: 20, card_confirmed: false,
+    }]]);
+    assert.deepEqual(t.opened, [9], 'the credit note PDF opens when not printed');
+    assert.deepEqual(JSON.parse(JSON.stringify(t.state.lastExchange.value)), {
+        creditNote: 'R2026-000009', saleOrderId: 990, saleReference: 'NEWREF', balance: 15, changeDue: 5, cashBack: 0, cardBack: 0,
+    });
+    assert.match(t.emitted.at(-1)[1], /Abono R2026-000009/);
+    assert.match(t.emitted.at(-1)[1], /NEWREF/);
+    assert.match(t.emitted.at(-1)[1], /cobrar 15\.00 €/);
+    assert.equal(t.state.selectedOrder.value, null, 'ready for the next customer');
+    assert.equal(t.state.exchangeMode.value, false);
+}
+
+async function testExchangeFiftyFiveForFortyRefundsTheDifferenceByTheOriginalCard() {
+    const calls = [];
+    const order = { ...PANTALON_ORDER, payment_method: 'card', tender: { cash: 0, card: 55 }, lines: [{ ...PANTALON_ORDER.lines[0], name: 'Chaqueta', paid_total: 55 }] };
+    const t = loadExchange(order, async (id, request) => { calls.push(request); return { data: { exchange_id: 4, status: 'done', balance: -15, refund: { refund_id: 10, credit_note_number: 'R2026-000010', cash_amount: 0, card_amount: 15, print_status: 'printed' }, sale: { ps_order_id: 991, reference: 'NEW2', payable: 0, change_due: 0 } } }; });
+    t.state.toggleLine(0);
+    await t.state.pickProduct({ id: 5, name: 'Pantalón', price: 40, has_combinations: false });
+    t.state.setReason('size');
+    assert.equal(t.state.exchangeBalance(), -15);
+    assert.deepEqual(JSON.parse(JSON.stringify(t.state.exchangePayoutSplit())), { cash: 0, card: 15 });
+    assert.equal(t.state.needsCardConfirmation(), true);
+    assert.equal(t.state.validationError(), 'Confirma que has hecho la devolución en el datáfono');
+    t.state.cardConfirmed.value = true;
+    assert.equal(t.state.validationError(), '', 'no payment is collected when the shop owes the difference');
+
+    await t.state.confirmRefund();
+    assert.equal(calls[0].payment_method, '');
+    assert.equal(calls[0].amount_tendered, 0);
+    assert.equal(calls[0].card_confirmed, true);
+    assert.deepEqual(t.opened, [], 'printed: no PDF');
+    assert.match(t.emitted.at(-1)[1], /15\.00 € a tarjeta/);
+}
+
+async function testMixedBalanceSendsTheCashPart() {
+    const calls = [];
+    const t = loadExchange(PANTALON_ORDER, async (id, request) => { calls.push(request); return { data: { status: 'done', refund: {}, sale: {} } }; });
+    t.state.toggleLine(0);
+    await t.state.pickProduct(CHAQUETA);
+    t.state.setReason('size');
+    t.state.setExchangePayment('mixed');
+    t.state.exchangeCash.value = '15';
+    assert.equal(t.state.validationError(), 'El efectivo del pago mixto debe ser menor que la diferencia');
+    t.state.exchangeCash.value = '5';
+    assert.equal(t.state.validationError(), '');
+    await t.state.confirmRefund();
+    assert.equal(calls[0].payment_method, 'mixed');
+    assert.equal(calls[0].cash_amount, 5);
+    assert.equal(calls[0].amount_tendered, 5);
+}
+
+async function testFailedNewSaleKeepsTheCreditOpenAndTheExchangeCanBeRetried() {
+    const retried = [];
+    const t = loadExchange(PANTALON_ORDER, async () => ({ data: { exchange_id: 5, status: 'credit_open', credit: 40, new_total: 55, balance: 15,
+        refund: { refund_id: 11, credit_note_number: 'R2026-000011', cash_amount: 0, print_status: 'printed' }, sale: null, sale_error: 'timeout', sale_outcome_unknown: true } }), {
+        exchangeRetry: async (id) => { retried.push(id); return { data: { exchange_id: id, status: 'done', balance: 15, refund: { refund_id: 11, print_status: 'none' }, sale: { ps_order_id: 992, reference: 'NEW3', payable: 15, change_due: 0 } } }; },
+    });
+    t.state.toggleLine(0);
+    await t.state.pickProduct(CHAQUETA);
+    t.state.setReason('size');
+    t.state.setExchangePayment('card');
+
+    await t.state.confirmRefund();
+    assert.match(t.emitted.at(-1)[1], /^Abono R2026-000011 emitido, pero la venta nueva no se ha creado/);
+    assert.match(t.emitted.at(-1)[1], /comprueba en PrestaShop/);
+    assert.ok(t.state.selectedOrder.value, 'stays on the order');
+    assert.equal(t.state.selectedOrder.value.open_exchange.id, 5);
+    assert.equal(t.state.exchangeMode.value, false);
+    assert.equal(t.state.validationError(), 'Hay un cambio pendiente: complétalo primero');
+
+    await t.state.retryExchange();
+    assert.deepEqual(retried, [5]);
+    assert.match(t.emitted.at(-1)[1], /NEW3/);
+    assert.equal(t.state.lastExchange.value.saleReference, 'NEW3');
+    assert.equal(t.state.selectedOrder.value, null);
+}
+
+async function testOrderWithAnOpenExchangeOffersOnlyItsRetry() {
+    const t = loadExchange({ ...PANTALON_ORDER, pending_refund: { id: 7, total: 40 }, open_exchange: { id: 6, status: 'pending', credit_applied: 40, new_total: 55, balance: 15, error: null } }, async () => { throw new Error('no new exchange'); });
+    t.state.toggleLine(0);
+    await t.state.pickProduct(CHAQUETA);
+    t.state.setReason('size');
+    t.state.setExchangePayment('card');
+    assert.equal(t.state.validationError(), 'Hay un cambio pendiente: complétalo primero');
+    const source = fs.readFileSync(path.resolve(__dirname, '../../public/assets/js/components/RefundScreen.js'), 'utf8');
+    assert.match(source, /selectedOrder\.pending_refund && !selectedOrder\.open_exchange/, 'the refund retry banner gives way to the exchange one');
+    assert.match(source, />Cambiar</);
+}
+
+async function testExchangeApiCallsAreNeverQueuedOffline() {
+    const source = fs.readFileSync(path.resolve(__dirname, '../../public/assets/js/api.js'), 'utf8');
+    const requests = [];
+    const context = {
+        window: { TPV_BASE: '', addEventListener: () => {}, location: { href: '' } },
+        navigator: { onLine: true },
+        fetch: async (url, opts) => { requests.push([url, opts.method, opts.body]); return { ok: true, status: 200, json: async () => ({ data: {} }) }; },
+        Promise, Error, JSON, URLSearchParams, encodeURIComponent, console,
+    };
+    context.globalThis = context;
+    vm.runInNewContext(`${source}\nglobalThis.__api = ApiClient;`, context, { filename: 'api.js' });
+
+    await context.__api.exchangeOrder(42, { return_lines: [] });
+    await context.__api.exchangeRetry(5);
+    assert.deepEqual(requests.map((r) => [r[0], r[1]]), [['/api/exchange', 'POST'], ['/api/exchange/5/retry', 'POST']]);
+    assert.deepEqual(JSON.parse(requests[0][2]), { return_lines: [], ps_order_id: 42 });
+
+    const offline = { ...context, navigator: { onLine: false }, fetch: async () => { throw new Error('must not be sent'); } };
+    offline.globalThis = offline;
+    vm.runInNewContext(`${source}\nglobalThis.__api = ApiClient;`, offline, { filename: 'api.js' });
+    await assert.rejects(() => offline.__api.exchangeOrder(42, {}), /not sent or queued/);
+}
+
 (async () => {
+    await testExchangeApiCallsAreNeverQueuedOffline();
+    await testExchangeFortyForFiftyFiveCollectsTheBalanceAndShowsBothDocuments();
+    await testExchangeFiftyFiveForFortyRefundsTheDifferenceByTheOriginalCard();
+    await testMixedBalanceSendsTheCashPart();
+    await testFailedNewSaleKeepsTheCreditOpenAndTheExchangeCanBeRetried();
+    await testOrderWithAnOpenExchangeOffersOnlyItsRetry();
     await testNoTicketApiCallsTheNewEndpoints();
     await testNoTicketPicksProductsAndCombinationsAndSendsOnlyIdsQuantitiesRestockAndMethod();
     await testNoTicketCardNeedsConfirmationAndVoucherShowsTheCode();

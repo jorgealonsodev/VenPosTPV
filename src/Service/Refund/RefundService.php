@@ -70,6 +70,72 @@ class RefundService
         string $reasonText = '',
         bool $cardConfirmed = false,
     ): array {
+        return $this->startOrderRefund($userId, $psOrderId, $lines, $reasonCode, $reasonText, $cardConfirmed, null, null);
+    }
+
+    /**
+     * The returned half of an exchange: the same refund as processRefund() (window,
+     * quantities, reasons, restock, credit note, PrestaShop slip), except that up to
+     * $newTotal of its amount pays the new sale instead of leaving the shop. Only the
+     * rest is paid out, by the original tender split. $reserved runs inside the
+     * planning transaction, before PrestaShop is called, with
+     * {refund_id, credit, credit_applied, cash_amount, card_amount}; throwing there
+     * cancels everything.
+     *
+     * @param array<int, array{line_index?: mixed, quantity?: mixed, restock?: mixed}> $lines
+     * @param callable(array{refund_id: int, credit: float, credit_applied: float, cash_amount: float, card_amount: float}): void $reserved
+     *
+     * @return array{refund_id: int, credit_note_number: ?string, order_slip_id: int, refunded_amount: float, cash_amount: float, card_amount: float, voucher_code: ?string, lines: array<int, array<string, mixed>>, restock_failed: array<int, mixed>, saga_error: bool, already_completed: bool}
+     *
+     * @throws RefundException
+     */
+    public function processExchangeReturn(
+        int $userId,
+        int $psOrderId,
+        array $lines,
+        string $reasonCode,
+        string $reasonText,
+        bool $cardConfirmed,
+        float $newTotal,
+        callable $reserved,
+    ): array {
+        if ($lines === []) {
+            throw RefundException::validationFailed('Select at least one line to return');
+        }
+        if ($newTotal <= 0) {
+            throw RefundException::validationFailed('Add at least one new item to the exchange');
+        }
+
+        return $this->startOrderRefund($userId, $psOrderId, $lines, $reasonCode, $reasonText, $cardConfirmed, $newTotal, $reserved);
+    }
+
+    /**
+     * Whether a refund already finished (its local effects applied), so an exchange
+     * resumed later never sends or pays it again.
+     */
+    public function refundStatus(int $refundId): ?string
+    {
+        $status = $this->conn->fetchOne('SELECT status FROM refund WHERE id = ?', [$refundId]);
+
+        return $status === false ? null : (string) $status;
+    }
+
+    /**
+     * @param array<int, array{line_index?: mixed, quantity?: mixed, restock?: mixed}>|null $lines
+     * @param float|null $exchangeTotal the new sale's total when this refund pays an exchange
+     *
+     * @return array{refund_id: int, credit_note_number: ?string, order_slip_id: int, refunded_amount: float, cash_amount: float, card_amount: float, voucher_code: ?string, lines: array<int, array<string, mixed>>, restock_failed: array<int, mixed>, saga_error: bool, already_completed: bool}
+     */
+    private function startOrderRefund(
+        int $userId,
+        int $psOrderId,
+        ?array $lines,
+        string $reasonCode,
+        string $reasonText,
+        bool $cardConfirmed,
+        ?float $exchangeTotal,
+        ?callable $reserved,
+    ): array {
         $reasonText = $this->assertReason($reasonCode, $reasonText);
 
         $cashContext = $this->cashSessionService->requireOpenSession($userId);
@@ -78,7 +144,7 @@ class RefundService
 
         // Planning and reserving happen under a lock on the sale row, so two
         // terminals refunding the same sale cannot both take the same units.
-        [$refundId, $payload] = $this->conn->transactional(function () use ($psOrderId, $lines, $cardConfirmed, $requestId, $cashContext, $userId, $reasonCode, $reasonText): array {
+        [$refundId, $payload] = $this->conn->transactional(function () use ($psOrderId, $lines, $cardConfirmed, $requestId, $cashContext, $userId, $reasonCode, $reasonText, $exchangeTotal, $reserved): array {
             $locked = $this->conn->fetchOne('SELECT ps_order_id FROM order_meta WHERE ps_order_id = ? FOR UPDATE', [$psOrderId]);
             if ($locked === false) {
                 throw RefundException::orderNotFound($psOrderId);
@@ -110,7 +176,10 @@ class RefundService
                 throw RefundException::validationFailed('Refund total must be greater than 0');
             }
 
-            [$cashAmount, $cardAmount] = $this->splitByTender($order, $total);
+            // In an exchange only what the new items do not absorb leaves the shop.
+            $exchangeCredit = $exchangeTotal !== null ? round(min($total, $exchangeTotal), 2) : null;
+            $payout = $exchangeCredit !== null ? round($total - $exchangeCredit, 2) : $total;
+            [$cashAmount, $cardAmount] = $payout > 0 ? $this->splitByTender($order, $payout) : [0.0, 0.0];
             $this->assertCardConfirmed($cardAmount, $cardConfirmed);
 
             $payload = [
@@ -127,7 +196,7 @@ class RefundService
                 ], $planned),
             ];
 
-            $this->conn->insert('refund', [
+            $row = [
                 'request_id' => $requestId,
                 'status' => 'pending',
                 'ps_order_id' => $psOrderId,
@@ -142,7 +211,11 @@ class RefundService
                 'card_confirmed' => $cardConfirmed ? 1 : 0,
                 'ps_payload' => json_encode($payload, JSON_THROW_ON_ERROR),
                 'created_at' => (new \DateTimeImmutable())->format('Y-m-d H:i:s'),
-            ]);
+            ];
+            if ($exchangeCredit !== null) {
+                $row['exchange_credit'] = $exchangeCredit;
+            }
+            $this->conn->insert('refund', $row);
             $refundId = (int) $this->conn->lastInsertId();
 
             foreach ($planned as $line) {
@@ -154,6 +227,16 @@ class RefundService
                     'quantity' => $line['quantity'],
                     'amount' => $line['amount'],
                     'restock' => $line['restock'] ? 1 : 0,
+                ]);
+            }
+
+            if ($reserved !== null) {
+                $reserved([
+                    'refund_id' => $refundId,
+                    'credit' => $total,
+                    'credit_applied' => (float) $exchangeCredit,
+                    'cash_amount' => $cashAmount,
+                    'card_amount' => $cardAmount,
                 ]);
             }
 

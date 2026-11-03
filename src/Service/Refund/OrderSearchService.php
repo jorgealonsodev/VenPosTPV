@@ -123,6 +123,7 @@ class OrderSearchService
             'lines' => $lines,
             'tender' => \is_array($breakdown['tender'] ?? null) ? $breakdown['tender'] : null,
             'pending_refund' => $lines === [] ? null : $this->pendingRefund($psOrderId),
+            'open_exchange' => $lines === [] ? null : $this->openExchange($psOrderId),
             'refunded_amount' => (float) $row['refunded_amount'],
             'created_at' => $row['created_at'],
         ];
@@ -157,6 +158,38 @@ class OrderSearchService
         }
 
         return $result;
+    }
+
+    /**
+     * An exchange of this sale still waiting to be completed: its return's outcome
+     * is unknown (pending) or its credit is not spent yet (credit_open).
+     *
+     * @return array{id: int, status: string, credit_applied: float, new_total: float, balance: float, error: ?string}|null
+     */
+    private function openExchange(int $psOrderId): ?array
+    {
+        try {
+            $row = $this->connection->fetchAssociative(
+                "SELECT id, status, credit_applied, new_total, balance, error_message FROM exchange WHERE ps_order_id = ? AND status IN ('pending', 'credit_open') ORDER BY id LIMIT 1",
+                [$psOrderId]
+            );
+        } catch (\Throwable) {
+            // Database not migrated to exchanges yet: there can be none.
+            return null;
+        }
+
+        if (!\is_array($row) || !isset($row['id'])) {
+            return null;
+        }
+
+        return [
+            'id' => (int) $row['id'],
+            'status' => (string) $row['status'],
+            'credit_applied' => round((float) $row['credit_applied'], 2),
+            'new_total' => round((float) $row['new_total'], 2),
+            'balance' => round((float) $row['balance'], 2),
+            'error' => $row['error_message'] !== null ? (string) $row['error_message'] : null,
+        ];
     }
 
     /**

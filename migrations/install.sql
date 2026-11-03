@@ -246,6 +246,7 @@ CREATE TABLE IF NOT EXISTS refund (
     voucher_amount DECIMAL(10,2) NULL,
     voucher_cart_rule_id INT UNSIGNED NULL,
     voucher_requested_at DATETIME NULL,
+    exchange_credit DECIMAL(10,2) NULL,
     ps_payload JSON NULL,
     error_message VARCHAR(1000) NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -269,6 +270,29 @@ CREATE TABLE IF NOT EXISTS refund_line (
     restocked TINYINT(1) NOT NULL DEFAULT 0,
     CONSTRAINT fk_refund_line_refund FOREIGN KEY (refund_id) REFERENCES refund (id) ON DELETE CASCADE,
     INDEX idx_refund_line_refund (refund_id)
+) ENGINE=InnoDB;
+
+-- exchange (Version00000024): a refund whose credit pays a new sale, resumable when the sale fails
+CREATE TABLE IF NOT EXISTS exchange (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    status VARCHAR(16) NOT NULL DEFAULT 'pending',
+    ps_order_id INT UNSIGNED NOT NULL,
+    refund_id BIGINT UNSIGNED NOT NULL,
+    user_id INT UNSIGNED NOT NULL,
+    credit DECIMAL(10,2) NOT NULL,
+    credit_applied DECIMAL(10,2) NOT NULL,
+    new_total DECIMAL(10,2) NOT NULL,
+    balance DECIMAL(10,2) NOT NULL,
+    payment_method VARCHAR(16) NOT NULL,
+    amount_tendered DECIMAL(10,2) NOT NULL DEFAULT 0,
+    cart_data JSON NOT NULL,
+    new_ps_order_id INT UNSIGNED NULL,
+    new_reference VARCHAR(32) NULL,
+    error_message VARCHAR(1000) NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at DATETIME NULL,
+    UNIQUE KEY uk_exchange_refund (refund_id),
+    INDEX idx_exchange_order_status (ps_order_id, status)
 ) ENGINE=InnoDB;
 
 -- credit_note_sequence (Version00000020): consecutive credit-note numbers per year

@@ -146,6 +146,7 @@ final class TestDatabase
         self::runMigration($connection, 'Version00000021AddRefundWindowToTerminal');
         self::runMigration($connection, 'Version00000025AddTicketCodeToTerminal');
         self::runMigration($connection, 'Version00000022AddVoucherToRefund');
+        self::runMigration($connection, 'Version00000024CreateExchangeTable');
     }
 
     private static function applyInstallSchema(Connection $connection): void

@@ -98,6 +98,9 @@ const ApiClient = (function () {
         // Never queued offline: a replayed POST would be a second refund.
         refundNoTicket: (refund) => request('/api/refund/no-ticket', { method: 'POST', body: JSON.stringify(refund), queueOnNetworkFailure: false }),
         refundPendingNoTicket: () => request('/api/refund/pending-no-ticket', { method: 'GET' }),
+        // Exchanges move money and goods: never queued offline either.
+        exchangeOrder: (psOrderId, exchange) => request('/api/exchange', { method: 'POST', body: JSON.stringify({ ...exchange, ps_order_id: psOrderId }), queueOnNetworkFailure: false }),
+        exchangeRetry: (exchangeId) => request('/api/exchange/' + encodeURIComponent(exchangeId) + '/retry', { method: 'POST', body: JSON.stringify({}), queueOnNetworkFailure: false }),
         // Same catalog endpoints the sale screen uses (useCatalog / CatalogPanel).
         searchCatalog: (query) => {
             const qs = new URLSearchParams();

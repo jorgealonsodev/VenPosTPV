@@ -260,6 +260,24 @@ class CashSessionService
             [$sessionId]
         );
 
+        // Exchanges: the part of the returned goods that paid new items. It is money
+        // neither in nor out (sales and refunds above only count what was collected
+        // or paid back), so it is shown apart and never touches the drawer.
+        $exchangeCredit = 0.0;
+        $counts['exchanges'] = 0;
+        try {
+            $exchangeCredit = (float) $this->connection->fetchOne(
+                "SELECT COALESCE(SUM(exchange_credit), 0) FROM refund WHERE session_id = ? AND status = 'done' AND exchange_credit IS NOT NULL",
+                [$sessionId]
+            );
+            $counts['exchanges'] = (int) $this->connection->fetchOne(
+                "SELECT COUNT(*) FROM refund WHERE session_id = ? AND status = 'done' AND exchange_credit IS NOT NULL",
+                [$sessionId]
+            );
+        } catch (\Throwable) {
+            // Database not migrated to exchanges yet: there are none.
+        }
+
         $salesTotal = round($sales + $salesCard, 2);
         $refundsTotal = round($refunds + $refundsCard + $refundsVoucher, 2);
 
@@ -273,6 +291,7 @@ class CashSessionService
             'refunds_voucher' => round($refundsVoucher, 2),
             'refunds_total' => $refundsTotal,
             'net_total' => round($salesTotal - $refundsTotal, 2),
+            'exchange_credit' => round($exchangeCredit, 2),
             'cash_in_total' => round($cashIn, 2),
             'cash_out_total' => round($cashOut, 2),
             'expected_cash' => $expected,

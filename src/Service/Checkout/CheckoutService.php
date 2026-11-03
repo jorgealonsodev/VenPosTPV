@@ -45,15 +45,47 @@ class CheckoutService
     }
 
     /**
+     * Server-side total of a cart (catalog prices, discounts, stock), without
+     * creating anything: an exchange needs it before the returned part is refunded.
+     *
      * @param array<string, mixed> $cartData
      *
-     * @return array{ps_order_id: int, reference: string, total: float, change_due: float, payment_method: string, terminal_id: int}
+     * @throws CheckoutException 422 when the cart cannot be sold as submitted
+     */
+    public function quoteCart(array $cartData): float
+    {
+        if (array_key_exists('coupon', $cartData)) {
+            throw CheckoutException::psValidationFailed('Coupons cannot be used in an exchange');
+        }
+        $lines = $cartData['lines'] ?? $cartData['items'] ?? [];
+        if (!is_array($lines) || $lines === []) {
+            throw CheckoutException::psValidationFailed('Cart is empty');
+        }
+        $pricing = $this->resolveAuthoritativePricing($lines, $cartData['discount'] ?? null, (float) ($cartData['total'] ?? 0));
+        $this->validateStock($pricing['lines']);
+
+        return $pricing['total'];
+    }
+
+    /**
+     * $exchangeCredit is set only by the exchange flow on the server (never from the
+     * browser): that part of the total is already paid by returned goods, so only
+     * the rest is collected, booked in the drawer and stored in the tender.
+     *
+     * @param array<string, mixed> $cartData
+     *
+     * @return array{ps_order_id: int, reference: string, total: float, change_due: float, payment_method: string, terminal_id: int, saga_error: bool, payable?: float, exchange_credit?: float}
      *
      * @throws CheckoutException on validation or pre-PS errors
      */
-    public function createOrder(int $userId, array $cartData, string $paymentMethod, float $amountTendered): array
+    public function createOrder(int $userId, array $cartData, string $paymentMethod, float $amountTendered, float $exchangeCredit = 0.0): array
     {
+        $exchangeCredit = round(max(0.0, $exchangeCredit), 2);
         if (array_key_exists('coupon', $cartData)) {
+            if ($exchangeCredit > 0) {
+                throw CheckoutException::psValidationFailed('Coupons cannot be used in an exchange');
+            }
+
             return $this->createCouponOrder($userId, $cartData, $paymentMethod, $amountTendered);
         }
 
@@ -100,21 +132,28 @@ class CheckoutService
         ];
 
         $cashContext = $this->cashSessionService->requireOpenSession($userId);
-        $cashImpactAmount = $this->resolveCashImpactAmount($paymentMethod, $total, $amountTendered, $cartData);
+        // What the customer still pays; the whole total without an exchange credit.
+        $payable = round(max(0.0, $total - $exchangeCredit), 2);
+        $cashImpactAmount = $this->resolveCashImpactAmount($paymentMethod, $payable, $amountTendered, $cartData);
 
         $psResponse = $this->client->createOrder($payload);
 
         $psOrderId = (int) $psResponse['order_id'];
         $reference = (string) $psResponse['reference'];
-        $changeDue = max(0.0, round($amountTendered - $total, 2));
+        $changeDue = max(0.0, round($amountTendered - $payable, 2));
+
+        $tender = [
+            'cash' => $cashImpactAmount,
+            'card' => round(max(0.0, $payable - $cashImpactAmount), 2),
+        ];
+        if ($exchangeCredit > 0) {
+            $tender['exchange_credit'] = round($total - $payable, 2);
+        }
 
         // Once PrestaShop creates the order, local follow-up failures must not invite a duplicate retry.
         $sagaError = false;
         try {
-            $this->insertOrderMeta($psOrderId, $userId, $reference, $total, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines, null, [
-                'cash' => $cashImpactAmount,
-                'card' => round(max(0.0, $total - $cashImpactAmount), 2),
-            ]);
+            $this->insertOrderMeta($psOrderId, $userId, $reference, $total, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines, null, $tender);
         } catch (\Throwable $e) {
             $sagaError = true;
         }
@@ -155,10 +194,7 @@ class CheckoutService
             }
         }
 
-        // Clear cart
-        $this->cart->clear();
-
-        return [
+        $result = [
             'ps_order_id' => $psOrderId,
             'reference' => $reference,
             'total' => $total,
@@ -167,6 +203,15 @@ class CheckoutService
             'terminal_id' => (int) ($cashContext['terminal_id'] ?? 1),
             'saga_error' => $sagaError,
         ];
+
+        if ($exchangeCredit > 0) {
+            // The exchange's new items never came from the sale screen cart.
+            return $result + ['payable' => $payable, 'exchange_credit' => $tender['exchange_credit']];
+        }
+
+        $this->cart->clear();
+
+        return $result;
     }
 
     /**
@@ -733,10 +778,11 @@ class CheckoutService
                     'subtotal' => $subtotal,
                     'tax' => $tax,
                     'lines' => $breakdownLines,
+                    // exchange_credit: the part of the total paid with returned goods.
                     'tender' => [
                         'cash' => round((float) ($tender['cash'] ?? 0), 2),
                         'card' => round((float) ($tender['card'] ?? 0), 2),
-                    ],
+                    ] + (isset($tender['exchange_credit']) ? ['exchange_credit' => round((float) $tender['exchange_credit'], 2)] : []),
                     // Deliberately excludes bearer coupon code and quote.
                     'coupon' => $coupon,
                 ], JSON_THROW_ON_ERROR),

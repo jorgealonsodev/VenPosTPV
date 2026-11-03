@@ -123,6 +123,42 @@ final class CheckoutServiceTest extends TestCase
         $this->assertSame(76, $result['ps_order_id']);
     }
 
+    public function testOrdinaryCheckoutIgnoresAnExchangeCreditSentByTheBrowser(): void
+    {
+        $client = $this->createMock(PsOrderClient::class);
+        $client->method('createOrder')->willReturn(['order_id' => 81, 'reference' => 'ORD-81', 'total_paid' => 23.14]);
+        $conn = $this->createMock(Connection::class);
+        $conn->method('fetchAssociative')->willReturnCallback(static function (string $sql): array|false {
+            if (str_contains($sql, 'catalog_product')) return ['price' => 23.90, 'price_ttc' => 23.14, 'price_net' => 19.12];
+            return false;
+        });
+        $conn->method('fetchOne')->willReturn(10);
+        $conn->method('executeStatement')->willReturn(1);
+        $breakdown = null;
+        $conn->method('insert')->willReturnCallback(function (string $table, array $values) use (&$breakdown): int {
+            if ($table === 'order_meta') {
+                $breakdown = json_decode($values['payment_breakdown'], true);
+            }
+            return 1;
+        });
+        $cashSession = $this->createMock(CashSessionService::class);
+        $cashSession->method('requireOpenSession')->willReturn(['session_id' => 1, 'terminal_id' => 3]);
+        $cashSession->expects($this->once())->method('addMovement')->with(1, 'sale', 23.14);
+        $cart = $this->createMock(CartService::class);
+        $cart->expects($this->once())->method('clear');
+        $service = $this->createService(cart: $cart, client: $client, conn: $conn, cashSessionService: $cashSession);
+
+        $result = $service->createOrder(1, [
+            'lines' => [['product_id' => 1, 'qty' => 1, 'price' => 23.14]], 'total' => 23.14,
+            'exchange_credit' => 20.0, 'tender' => ['exchange_credit' => 20.0],
+        ], 'cash', 30.0);
+
+        $this->assertSame(['cash' => 23.14, 'card' => 0], $breakdown['tender'], 'the whole total is collected');
+        $this->assertSame(6.86, $result['change_due']);
+        $this->assertArrayNotHasKey('payable', $result, 'the checkout response keeps its shape');
+        $this->assertArrayNotHasKey('exchange_credit', $result);
+    }
+
     public function testCouponCashCheckoutBooksOnlyNetPayableAndDiscountMetadata(): void
     {
         $quote = [

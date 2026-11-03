@@ -8,6 +8,11 @@
  * "Sin ticket" refunds products picked from the catalog at their current price
  * (computed again on the server) by the method the cashier chooses: cash, card
  * or a PrestaShop voucher.
+ *
+ * "Cambiar" exchanges lines of the selected sale for new items in one operation:
+ * the returned lines become credit, the new items are picked with the same catalog
+ * search, and only the difference is paid (positive balance) or refunded by the
+ * original method (negative balance). The server prices both sides again.
  */
 const NO_TICKET_METHODS = [
     { code: 'cash', label: 'Efectivo' },
@@ -51,6 +56,14 @@ const RefundScreen = {
         const refundMethod = Vue.ref('');
         const pendingNoTicket = Vue.ref([]);
         const lastVoucher = Vue.ref(null);
+
+        // Exchange of the selected sale
+        const exchangeMode = Vue.ref(false);
+        const exchangeLines = Vue.ref([]);
+        const exchangePayment = Vue.ref('');
+        const exchangeTendered = Vue.ref('');
+        const exchangeCash = Vue.ref('');
+        const lastExchange = Vue.ref(null);
 
         // Same half-up rounding as PHP round(): 10.075 must give 10.08, not 10.07.
         const round2 = (n) => Math.round(Number(((Number(n) || 0) * 100).toPrecision(12))) / 100;
@@ -124,7 +137,7 @@ const RefundScreen = {
             const active = typeof document !== 'undefined' ? document.activeElement : null;
             const tag = active && active.tagName ? String(active.tagName).toUpperCase() : '';
             if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return undefined;
-            if (loading.value || confirmModal.value || noTicket.value) return undefined;
+            if (loading.value || confirmModal.value || noTicket.value || exchangeMode.value) return undefined;
             searchQuery.value = String(code || '').trim();
             return handleSearch();
         }
@@ -161,6 +174,7 @@ const RefundScreen = {
         }
 
         function backToSearch() {
+            resetExchange();
             selectedOrder.value = null;
             selectedLines.value = [];
             reasonCode.value = '';
@@ -243,9 +257,14 @@ const RefundScreen = {
             }
         }
 
+        // Products picked from the catalog go to the exchange or to the refund without ticket.
+        function catalogLines() {
+            return exchangeMode.value ? exchangeLines : noTicketLines;
+        }
+
         function addNoTicketLine(product, combo) {
             const attributeId = combo ? Number(combo.id) : 0;
-            const existing = noTicketLines.value.find((l) => l.product_id === Number(product.id) && l.id_product_attribute === attributeId);
+            const existing = catalogLines().value.find((l) => l.product_id === Number(product.id) && l.id_product_attribute === attributeId);
             if (existing) {
                 existing.quantity += 1;
                 return;
@@ -253,7 +272,7 @@ const RefundScreen = {
             const label = combo && Array.isArray(combo.attributes) && combo.attributes.length
                 ? ' (' + combo.attributes.map((a) => a.group_name + ': ' + a.attribute_name).join(' / ') + ')'
                 : '';
-            noTicketLines.value.push({
+            catalogLines().value.push({
                 product_id: Number(product.id),
                 id_product_attribute: attributeId,
                 name: (product.name || 'Producto') + label,
@@ -286,14 +305,14 @@ const RefundScreen = {
         }
 
         function updateNoTicketQty(idx, qty) {
-            const line = noTicketLines.value[idx];
+            const line = catalogLines().value[idx];
             if (line) {
                 line.quantity = Math.max(1, parseInt(qty, 10) || 1);
             }
         }
 
         function removeNoTicketLine(idx) {
-            noTicketLines.value.splice(idx, 1);
+            catalogLines().value.splice(idx, 1);
         }
 
         function setMethod(code) {
@@ -312,7 +331,11 @@ const RefundScreen = {
         }
 
         function estimatedSplit() {
-            const total = estimatedTotal();
+            return splitByTender(estimatedTotal());
+        }
+
+        // Same proportional rule as the server's RefundService::splitByTender.
+        function splitByTender(total) {
             const order = selectedOrder.value || {};
             const tender = order.tender || {};
             let cash = Number(tender.cash || 0);
@@ -325,9 +348,76 @@ const RefundScreen = {
             return { cash: cashPart, card: round2(total - cashPart) };
         }
 
+        function resetExchange() {
+            exchangeMode.value = false;
+            exchangeLines.value = [];
+            exchangePayment.value = '';
+            exchangeTendered.value = '';
+            exchangeCash.value = '';
+            productQuery.value = '';
+            productResults.value = [];
+            combinationChoice.value = null;
+        }
+
+        function startExchange() {
+            if (!selectedOrder.value) return;
+            resetExchange();
+            cardConfirmed.value = false;
+            lastExchange.value = null;
+            exchangeMode.value = true;
+        }
+
+        function cancelExchange() {
+            resetExchange();
+            cardConfirmed.value = false;
+        }
+
+        // Estimates only: the server recomputes credit, new total and balance.
+        function exchangeCredit() {
+            return estimatedTotal();
+        }
+
+        function exchangeNewTotal() {
+            return round2(exchangeLines.value.reduce((sum, l) => sum + l.unitPrice * l.quantity, 0));
+        }
+
+        function exchangeBalance() {
+            return round2(exchangeNewTotal() - exchangeCredit());
+        }
+
+        function exchangePayoutSplit() {
+            const balance = exchangeBalance();
+            return balance < 0 ? splitByTender(-balance) : { cash: 0, card: 0 };
+        }
+
+        function setExchangePayment(code) {
+            exchangePayment.value = code;
+        }
+
+        function cardRefundAmount() {
+            if (noTicket.value) return noTicketTotal();
+            return exchangeMode.value ? exchangePayoutSplit().card : estimatedSplit().card;
+        }
+
         function needsCardConfirmation() {
             if (noTicket.value) return refundMethod.value === 'card' && noTicketTotal() > 0;
-            return estimatedSplit().card > 0;
+            return cardRefundAmount() > 0;
+        }
+
+        function exchangeValidationError() {
+            if (!selectedLines.value.some((l) => l.checked)) return 'Selecciona al menos una línea a devolver';
+            if (exchangeLines.value.length === 0) return 'Añade al menos un artículo nuevo';
+            if (!reasonCode.value) return 'Elige el motivo de la devolución';
+            if (reasonCode.value === 'other' && !reasonText.value.trim()) return 'Escribe el motivo';
+            const balance = exchangeBalance();
+            if (balance > 0) {
+                if (!exchangePayment.value) return 'Elige cómo paga la diferencia';
+                if (exchangePayment.value === 'cash' && round2(exchangeTendered.value) < balance) return 'El efectivo entregado no cubre la diferencia';
+                const cash = round2(exchangeCash.value);
+                if (exchangePayment.value === 'mixed' && (cash <= 0 || cash >= balance)) return 'El efectivo del pago mixto debe ser menor que la diferencia';
+            }
+            if (needsCardConfirmation() && !cardConfirmed.value) return 'Confirma que has hecho la devolución en el datáfono';
+            return '';
         }
 
         function validationError() {
@@ -339,6 +429,8 @@ const RefundScreen = {
                 if (needsCardConfirmation() && !cardConfirmed.value) return 'Confirma que has hecho la devolución en el datáfono';
                 return '';
             }
+            if (selectedOrder.value && selectedOrder.value.open_exchange) return 'Hay un cambio pendiente: complétalo primero';
+            if (exchangeMode.value) return exchangeValidationError();
             if (selectedOrder.value && selectedOrder.value.pending_refund) return 'Hay una devolución pendiente de confirmar: reinténtala primero';
             if (!selectedLines.value.some((l) => l.checked)) return 'Selecciona al menos una línea';
             if (!reasonCode.value) return 'Elige el motivo de la devolución';
@@ -367,6 +459,103 @@ const RefundScreen = {
                 reason_text: reasonCode.value === 'other' ? reasonText.value.trim() : '',
                 card_confirmed: needsCardConfirmation() ? Boolean(cardConfirmed.value) : false,
             };
+        }
+
+        function buildExchangeRequest() {
+            const balance = exchangeBalance();
+            const lines = exchangeLines.value.map((l) => ({
+                product_id: l.product_id, id_product_attribute: l.id_product_attribute, qty: l.quantity, price: l.unitPrice, name: l.name,
+            }));
+            const request = {
+                return_lines: selectedLines.value
+                    .filter((l) => l.checked)
+                    .map((l) => ({ line_index: l.index, quantity: l.refundQty, restock: Boolean(l.restock) })),
+                reason_code: reasonCode.value,
+                reason_text: reasonCode.value === 'other' ? reasonText.value.trim() : '',
+                // Same cart_data as the sale screen sends to /api/checkout.
+                new_cart_data: { lines, total: exchangeNewTotal() },
+                payment_method: balance > 0 ? exchangePayment.value : '',
+                amount_tendered: 0,
+                card_confirmed: needsCardConfirmation() ? Boolean(cardConfirmed.value) : false,
+            };
+            if (balance > 0 && exchangePayment.value === 'cash') request.amount_tendered = round2(exchangeTendered.value);
+            if (balance > 0 && exchangePayment.value === 'mixed') {
+                request.cash_amount = round2(exchangeCash.value);
+                request.amount_tendered = request.cash_amount;
+            }
+            return request;
+        }
+
+        function exchangeDoneMessage(data) {
+            const refund = data.refund || {};
+            const sale = data.sale || {};
+            const balance = Number(data.balance || 0);
+            const parts = ['Cambio hecho'];
+            if (refund.credit_note_number) parts.push('Abono ' + refund.credit_note_number);
+            if (sale.reference) parts.push('Venta ' + sale.reference);
+            if (balance > 0) parts.push('cobrar ' + balance.toFixed(2) + ' €');
+            if (Number(refund.cash_amount) > 0) parts.push(Number(refund.cash_amount).toFixed(2) + ' € en efectivo');
+            if (Number(refund.card_amount) > 0) parts.push(Number(refund.card_amount).toFixed(2) + ' € a tarjeta');
+            if (Number(sale.change_due) > 0) parts.push('cambio ' + Number(sale.change_due).toFixed(2) + ' €');
+            return parts.join(' · ');
+        }
+
+        // Both documents are handed over; an open credit keeps the order on screen to retry.
+        function handleExchangeResult(data) {
+            const refund = data.refund || {};
+            handOverCreditNote(refund);
+            if (data.status === 'done') {
+                const sale = data.sale || {};
+                lastExchange.value = {
+                    creditNote: refund.credit_note_number || (lastExchange.value && lastExchange.value.creditNote) || null,
+                    saleOrderId: sale.ps_order_id || null,
+                    saleReference: sale.reference || '',
+                    balance: Number(data.balance || 0),
+                    changeDue: Number(sale.change_due || 0),
+                    cashBack: Number(refund.cash_amount || 0),
+                    cardBack: Number(refund.card_amount || 0),
+                };
+                emit('notify', exchangeDoneMessage(data), 'var(--green)');
+                backToSearch();
+                return;
+            }
+            const unknown = data.sale_outcome_unknown
+                ? ' Antes de reintentar, comprueba en PrestaShop que no se creó el pedido.'
+                : '';
+            emit('notify', (refund.credit_note_number ? 'Abono ' + refund.credit_note_number + ' emitido, pero la' : 'La') + ' venta nueva no se ha creado: reintenta el cambio. ' + (data.sale_error || '') + unknown, 'var(--red)');
+            lastExchange.value = refund.credit_note_number ? { creditNote: refund.credit_note_number } : lastExchange.value;
+            resetExchange();
+            selectedOrder.value = {
+                ...selectedOrder.value,
+                open_exchange: { id: data.exchange_id, status: data.status, credit_applied: Number(data.credit || 0), new_total: Number(data.new_total || 0), balance: Number(data.balance || 0), error: data.sale_error || null },
+            };
+        }
+
+        async function confirmExchange() {
+            const request = buildExchangeRequest();
+            loading.value = true;
+            try {
+                const result = await ApiClient.exchangeOrder(selectedOrder.value.ps_order_id, request);
+                handleExchangeResult((result && result.data) || {});
+            } catch (err) {
+                emit('notify', errorMessage(err), 'var(--red)');
+            } finally {
+                loading.value = false;
+            }
+        }
+
+        async function retryExchange() {
+            const open = selectedOrder.value && selectedOrder.value.open_exchange;
+            if (!open || loading.value) return;
+            loading.value = true;
+            try {
+                const result = await ApiClient.exchangeRetry(open.id);
+                handleExchangeResult((result && result.data) || {});
+            } catch (err) {
+                emit('notify', errorMessage(err), 'var(--red)');
+            } finally {
+                loading.value = false;
+            }
         }
 
         function openConfirm() {
@@ -479,6 +668,10 @@ const RefundScreen = {
                 return;
             }
             if (!selectedOrder.value || loading.value) return;
+            if (exchangeMode.value) {
+                await confirmExchange();
+                return;
+            }
 
             const request = buildRequest();
             loading.value = true;
@@ -547,6 +740,24 @@ const RefundScreen = {
             setMethod,
             noTicketTotal,
             retryNoTicket,
+            exchangeMode,
+            exchangeLines,
+            exchangePayment,
+            exchangeTendered,
+            exchangeCash,
+            lastExchange,
+            startExchange,
+            cancelExchange,
+            exchangeCredit,
+            exchangeNewTotal,
+            exchangeBalance,
+            exchangePayoutSplit,
+            setExchangePayment,
+            cardRefundAmount,
+            buildExchangeRequest,
+            retryExchange,
+            ticketPdf: (orderId) => ApiClient.ticketPdf(orderId),
+            paymentMethods: [{ code: 'cash', label: 'Efectivo' }, { code: 'card', label: 'Tarjeta' }, { code: 'mixed', label: 'Mixto' }],
         };
     },
     template: `
@@ -650,6 +861,17 @@ const RefundScreen = {
                     </button>
                     <button @click="openNoTicket" :disabled="loading" style="padding:8px 16px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text); cursor:pointer; font-family:inherit; font-size:13px; font-weight:600;">Sin ticket</button>
                 </div>
+                <div v-if="lastExchange && lastExchange.saleReference" style="background:var(--surface); border:2px solid var(--green); border-radius:10px; padding:12px; color:var(--text); font-size:14px; display:flex; align-items:center; gap:12px;">
+                    <div style="flex:1;">
+                        Cambio hecho · Abono <strong style="font-family:'IBM Plex Mono';">{{ lastExchange.creditNote }}</strong> · Venta nueva <strong style="font-family:'IBM Plex Mono';">{{ lastExchange.saleReference }}</strong>
+                        <div style="font-size:12px; color:var(--text2);">
+                            <span v-if="lastExchange.balance > 0">Cobrado {{ lastExchange.balance.toFixed(2) }} €<span v-if="lastExchange.changeDue > 0"> · cambio {{ lastExchange.changeDue.toFixed(2) }} €</span></span>
+                            <span v-else-if="lastExchange.balance < 0">Devuelto {{ (-lastExchange.balance).toFixed(2) }} €<span v-if="lastExchange.cashBack > 0"> · {{ lastExchange.cashBack.toFixed(2) }} € en efectivo</span><span v-if="lastExchange.cardBack > 0"> · {{ lastExchange.cardBack.toFixed(2) }} € a tarjeta</span></span>
+                            <span v-else>Sin diferencia</span>
+                        </div>
+                    </div>
+                    <button v-if="lastExchange.saleOrderId" @click="ticketPdf(lastExchange.saleOrderId)" style="padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text); cursor:pointer; font-family:inherit; font-size:12px;">Ticket venta (PDF)</button>
+                </div>
                 <div v-if="searchResults.length === 0 && !loading" style="color:var(--text3); font-size:13px; text-align:center; margin-top:40px;">
                     No hay resultados. Introduce un nº de pedido o referencia y pulsa Buscar.
                 </div>
@@ -677,7 +899,16 @@ const RefundScreen = {
                     </button>
                 </div>
 
-                <div v-if="selectedOrder.pending_refund" style="background:var(--red-bg); border:1px solid var(--red); border-radius:10px; padding:12px; display:flex; align-items:center; gap:12px; color:var(--text); font-size:13px;">
+                <div v-if="selectedOrder.open_exchange" style="background:var(--red-bg); border:1px solid var(--red); border-radius:10px; padding:12px; display:flex; align-items:center; gap:12px; color:var(--text); font-size:13px;">
+                    <div style="flex:1;">
+                        <span v-if="selectedOrder.open_exchange.status === 'pending'">Cambio #{{ selectedOrder.open_exchange.id }} sin confirmar por PrestaShop. No entregues dinero ni artículos hasta completarlo.</span>
+                        <span v-else>Cambio #{{ selectedOrder.open_exchange.id }}: el abono está hecho, falta crear la venta nueva de {{ Number(selectedOrder.open_exchange.new_total).toFixed(2) }} €.</span>
+                        <div v-if="selectedOrder.open_exchange.error" style="font-size:12px; margin-top:4px;">{{ selectedOrder.open_exchange.error }}</div>
+                    </div>
+                    <button @click="retryExchange" :disabled="loading" style="padding:8px 14px; border-radius:8px; border:none; background:var(--red); color:#fff; cursor:pointer; font-family:inherit; font-size:13px; font-weight:600;">Reintentar cambio</button>
+                </div>
+
+                <div v-if="selectedOrder.pending_refund && !selectedOrder.open_exchange" style="background:var(--red-bg); border:1px solid var(--red); border-radius:10px; padding:12px; display:flex; align-items:center; gap:12px; color:var(--text); font-size:13px;">
                     <div style="flex:1;">Devolución #{{ selectedOrder.pending_refund.id }} de {{ Number(selectedOrder.pending_refund.total).toFixed(2) }} € sin confirmar por PrestaShop. Reinténtala antes de hacer otra; entrega el dinero solo cuando se confirme.</div>
                     <button @click="retryPending" :disabled="loading" style="padding:8px 14px; border-radius:8px; border:none; background:var(--red); color:#fff; cursor:pointer; font-family:inherit; font-size:13px; font-weight:600;">Reintentar</button>
                 </div>
@@ -709,7 +940,58 @@ const RefundScreen = {
                     <input v-if="reasonCode === 'other'" v-model="reasonText" placeholder="Describe el motivo" maxlength="255" style="padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px;" />
                 </div>
 
-                <div style="display:flex; justify-content:space-between; align-items:center; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px; gap:12px;">
+                <div v-if="exchangeMode" style="background:var(--surface); border:1px solid var(--primary); border-radius:10px; padding:12px; display:flex; flex-direction:column; gap:8px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <div style="color:var(--text); font-size:14px; font-weight:700;">Artículos nuevos</div>
+                        <button @click="cancelExchange" style="background:transparent; border:1px solid var(--border); border-radius:8px; padding:4px 10px; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;">Cancelar cambio</button>
+                    </div>
+                    <div style="display:flex; gap:8px;">
+                        <input v-model="productQuery" @keyup.enter="searchProducts" placeholder="Buscar producto por nombre, referencia o EAN..." style="flex:1; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px;" />
+                        <button @click="searchProducts" :disabled="loading" style="padding:8px 16px; border-radius:8px; border:none; background:var(--primary); color:#fff; cursor:pointer; font-family:inherit; font-size:13px; font-weight:600;">Buscar</button>
+                    </div>
+                    <div v-if="productResults.length" style="border:1px solid var(--border); border-radius:10px; padding:8px; display:flex; flex-direction:column; gap:4px; max-height:200px; overflow:auto;">
+                        <button v-for="p in productResults" :key="p.id" @click="pickProduct(p)" style="display:flex; justify-content:space-between; gap:8px; padding:6px 8px; border:none; border-radius:6px; background:transparent; color:var(--text); cursor:pointer; font-family:inherit; font-size:13px; text-align:left;">
+                            <span>{{ p.name }} <span v-if="p.has_combinations" style="font-size:10px; color:var(--text3);">VARS</span></span>
+                            <span style="color:var(--text2);">{{ Number(p.price).toFixed(2) }} €</span>
+                        </button>
+                    </div>
+                    <div v-if="combinationChoice" style="border:1px solid var(--primary); border-radius:10px; padding:8px; display:flex; flex-direction:column; gap:4px;">
+                        <div style="color:var(--text2); font-size:12px; font-weight:600;">Elige la variante de {{ combinationChoice.name }}</div>
+                        <button v-for="c in combinationChoice.combinations" :key="c.id" @click="pickCombination(c)" style="display:flex; justify-content:space-between; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:transparent; color:var(--text); cursor:pointer; font-family:inherit; font-size:13px;">
+                            <span>{{ (c.attributes || []).map(a => a.group_name + ': ' + a.attribute_name).join(' / ') || '—' }}</span>
+                            <span style="color:var(--text2);">{{ (Number(combinationChoice.price) + Number(c.price_impact || 0)).toFixed(2) }} €</span>
+                        </button>
+                        <button @click="pickCombination(null)" style="padding:4px 8px; border:none; background:transparent; color:var(--text3); cursor:pointer; font-family:inherit; font-size:12px;">Cancelar</button>
+                    </div>
+                    <div v-if="exchangeLines.length === 0" style="color:var(--text3); font-size:13px;">Añade lo que se lleva el cliente.</div>
+                    <div v-for="(line, idx) in exchangeLines" :key="line.product_id + ':' + line.id_product_attribute" style="display:flex; align-items:center; gap:10px; padding:6px 0; border-bottom:1px solid var(--border);">
+                        <div style="flex:1; color:var(--text); font-size:13px;">{{ line.name }}</div>
+                        <div style="color:var(--text2); font-size:12px;">{{ line.unitPrice.toFixed(2) }} €</div>
+                        <input type="number" :value="line.quantity" @input="updateNoTicketQty(idx, $event.target.value)" min="1" style="width:60px; padding:4px 6px; border-radius:6px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:13px; text-align:center;" />
+                        <button @click="removeNoTicketLine(idx)" style="background:transparent; border:none; color:var(--text3); cursor:pointer; font-size:16px;">✕</button>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; color:var(--text2); font-size:13px;"><span>Abono de lo devuelto</span><span>{{ exchangeCredit().toFixed(2) }} €</span></div>
+                    <div style="display:flex; justify-content:space-between; color:var(--text2); font-size:13px;"><span>Total artículos nuevos</span><span>{{ exchangeNewTotal().toFixed(2) }} €</span></div>
+                    <div style="display:flex; justify-content:space-between; color:var(--text); font-size:16px; font-weight:700;">
+                        <span v-if="exchangeBalance() > 0">A cobrar</span><span v-else-if="exchangeBalance() < 0">A devolver</span><span v-else>Sin diferencia</span>
+                        <span>{{ Math.abs(exchangeBalance()).toFixed(2) }} €</span>
+                    </div>
+                    <div v-if="exchangeBalance() < 0" style="color:var(--text2); font-size:13px;">
+                        <div v-if="exchangePayoutSplit().cash > 0">Efectivo de caja: {{ exchangePayoutSplit().cash.toFixed(2) }} €</div>
+                        <div v-if="exchangePayoutSplit().card > 0">A tarjeta (datáfono): {{ exchangePayoutSplit().card.toFixed(2) }} €</div>
+                    </div>
+                    <template v-if="exchangeBalance() > 0">
+                        <div style="color:var(--text2); font-size:12px; font-weight:600;">Cómo paga la diferencia</div>
+                        <div style="display:flex; gap:6px;">
+                            <button v-for="m in paymentMethods" :key="m.code" @click="setExchangePayment(m.code)" :style="{ background: exchangePayment === m.code ? 'var(--primary)' : 'transparent', color: exchangePayment === m.code ? '#fff' : 'var(--text2)' }" style="padding:6px 14px; border-radius:8px; border:1px solid var(--border); cursor:pointer; font-family:inherit; font-size:13px;">{{ m.label }}</button>
+                        </div>
+                        <input v-if="exchangePayment === 'cash'" v-model="exchangeTendered" type="number" min="0" step="0.01" placeholder="Efectivo entregado" style="padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px;" />
+                        <div v-if="exchangePayment === 'cash' && Number(exchangeTendered) > exchangeBalance()" style="color:var(--text2); font-size:13px;">Cambio: {{ (Number(exchangeTendered) - exchangeBalance()).toFixed(2) }} €</div>
+                        <input v-if="exchangePayment === 'mixed'" v-model="exchangeCash" type="number" min="0" step="0.01" placeholder="Parte en efectivo (el resto con tarjeta)" style="padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px;" />
+                    </template>
+                </div>
+
+                <div v-if="!exchangeMode" style="display:flex; justify-content:space-between; align-items:center; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px; gap:12px;">
                     <div style="color:var(--text2); font-size:13px;">
                         <div v-if="estimatedSplit().cash > 0">Efectivo de caja: {{ estimatedSplit().cash.toFixed(2) }} €</div>
                         <div v-if="estimatedSplit().card > 0">A tarjeta (datáfono): {{ estimatedSplit().card.toFixed(2) }} €</div>
@@ -719,19 +1001,24 @@ const RefundScreen = {
 
                 <label v-if="needsCardConfirmation()" style="display:flex; align-items:center; gap:8px; color:var(--text); font-size:13px; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px; cursor:pointer;">
                     <input type="checkbox" v-model="cardConfirmed" style="width:18px; height:18px;" />
-                    He hecho la devolución de {{ estimatedSplit().card.toFixed(2) }} € en el datáfono
+                    He hecho la devolución de {{ cardRefundAmount().toFixed(2) }} € en el datáfono
                 </label>
 
-                <button @click="openConfirm" :disabled="loading" style="padding:10px 16px; border-radius:8px; border:none; background:var(--red); color:#fff; cursor:pointer; font-family:inherit; font-size:14px; font-weight:600;">
-                    <span v-if="loading">Procesando...</span>
-                    <span v-else>Confirmar devolución</span>
-                </button>
+                <div style="display:flex; gap:8px;">
+                    <button v-if="!exchangeMode" @click="startExchange" :disabled="loading || Boolean(selectedOrder.open_exchange)" style="flex:1; padding:10px 16px; border-radius:8px; border:1px solid var(--primary); background:transparent; color:var(--primary); cursor:pointer; font-family:inherit; font-size:14px; font-weight:600;">Cambiar</button>
+                    <button @click="openConfirm" :disabled="loading" style="flex:2; padding:10px 16px; border-radius:8px; border:none; background:var(--red); color:#fff; cursor:pointer; font-family:inherit; font-size:14px; font-weight:600;">
+                        <span v-if="loading">Procesando...</span>
+                        <span v-else-if="exchangeMode">Confirmar cambio</span>
+                        <span v-else>Confirmar devolución</span>
+                    </button>
+                </div>
             </div>
 
             <div v-if="confirmModal" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.4); display:flex; align-items:center; justify-content:center; z-index:1000;">
                 <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:20px; max-width:360px; width:90%; display:flex; flex-direction:column; gap:14px;">
-                    <div style="font-weight:700; color:var(--text); font-size:16px;">Confirmar devolución</div>
-                    <div v-if="noTicket" style="color:var(--text2); font-size:13px;">Se va a devolver aproximadamente <strong>{{ noTicketTotal().toFixed(2) }} €</strong> sin ticket ({{ (methods.find(m => m.code === refundMethod) || {}).label }}). El importe exacto es el precio actual del catálogo.</div>
+                    <div style="font-weight:700; color:var(--text); font-size:16px;">{{ exchangeMode ? 'Confirmar cambio' : 'Confirmar devolución' }}</div>
+                    <div v-if="exchangeMode" style="color:var(--text2); font-size:13px;">Se devuelven artículos del pedido <strong>#{{ selectedOrder.ps_order_id }}</strong> por unos {{ exchangeCredit().toFixed(2) }} € y se venden artículos nuevos por {{ exchangeNewTotal().toFixed(2) }} €: <strong>{{ exchangeBalance() > 0 ? 'a cobrar ' + exchangeBalance().toFixed(2) + ' €' : (exchangeBalance() < 0 ? 'a devolver ' + (-exchangeBalance()).toFixed(2) + ' €' : 'sin diferencia') }}</strong>. Los importes exactos los calcula el sistema.</div>
+                    <div v-else-if="noTicket" style="color:var(--text2); font-size:13px;">Se va a devolver aproximadamente <strong>{{ noTicketTotal().toFixed(2) }} €</strong> sin ticket ({{ (methods.find(m => m.code === refundMethod) || {}).label }}). El importe exacto es el precio actual del catálogo.</div>
                     <div v-else style="color:var(--text2); font-size:13px;">Se va a devolver aproximadamente <strong>{{ estimatedTotal().toFixed(2) }} €</strong> del pedido <strong>#{{ selectedOrder.ps_order_id }}</strong>. El importe exacto lo calcula el sistema con lo que se pagó.</div>
                     <div style="display:flex; gap:8px; justify-content:flex-end;">
                         <button @click="cancelConfirm" style="padding:8px 14px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:13px;">Cancelar</button>
