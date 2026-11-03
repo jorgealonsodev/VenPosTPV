@@ -92,6 +92,32 @@ class RefundController
         }
     }
 
+    #[Route('/refund/{id}/retry', methods: ['POST'], requirements: ['id' => '\\d+'])]
+    public function retry(Request $request, int $id): JsonResponse
+    {
+        $session = $request->getSession();
+        if ($session->get('user_id') === null) {
+            return new JsonResponse(['error' => 'Unauthorized'], Response::HTTP_UNAUTHORIZED);
+        }
+
+        try {
+            $result = $this->refundService->retryPending((int) $session->get('user_id'), $id);
+
+            return new JsonResponse(['data' => $result], Response::HTTP_OK);
+        } catch (RefundException $e) {
+            $status = match ($e->getCode()) {
+                404 => Response::HTTP_NOT_FOUND,
+                409 => Response::HTTP_CONFLICT,
+                422 => Response::HTTP_UNPROCESSABLE_ENTITY,
+                default => Response::HTTP_BAD_GATEWAY,
+            };
+
+            return new JsonResponse(['error' => $e->getMessage(), 'retry' => $status === Response::HTTP_BAD_GATEWAY], $status);
+        } catch (\Throwable $e) {
+            return new JsonResponse(['error' => 'Internal server error', 'retry' => true], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
     #[Route('/orders/search', methods: ['GET'])]
     public function searchOrders(Request $request): JsonResponse
     {

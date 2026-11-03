@@ -63,52 +63,59 @@ class RefundService
 
         $cashContext = $this->cashSessionService->requireOpenSession($userId);
 
-        // An earlier call with an unknown outcome must settle before anything new.
-        $pending = $this->conn->fetchAssociative(
-            "SELECT id FROM refund WHERE ps_order_id = ? AND status = 'pending' ORDER BY id LIMIT 1",
-            [$psOrderId]
-        );
-        if ($pending !== false) {
-            $this->resumePending((int) $pending['id']);
-
-            throw RefundException::conflict(sprintf(
-                'A previous refund of order %d was still pending and has now been completed; review the order before refunding again',
-                $psOrderId
-            ));
-        }
-
-        $order = $this->orderSearchService->getOrder($psOrderId);
-        if ($order === null) {
-            throw RefundException::orderNotFound($psOrderId);
-        }
-
-        $planned = $this->planLines($order, $lines);
-        $total = round(array_sum(array_column($planned, 'amount')), 2);
-        if ($total <= 0) {
-            throw RefundException::validationFailed('Refund total must be greater than 0');
-        }
-
-        [$cashAmount, $cardAmount] = $this->splitByTender($order, $total);
-        if ($cardAmount > 0 && !$cardConfirmed) {
-            throw RefundException::validationFailed(sprintf('Confirm the %.2f card refund on the payment terminal first', $cardAmount));
-        }
-
         $requestId = bin2hex(random_bytes(16));
-        $payload = [
-            'ps_order_id' => $psOrderId,
-            'request_id' => $requestId,
-            'refund_type' => $lines === null ? 'full' : 'partial',
-            'reason' => $reasonCode === 'other' ? $reasonText : $reasonCode,
-            'lines' => array_map(static fn (array $line): array => [
-                'id_product' => $line['product_id'],
-                'id_product_attribute' => $line['id_product_attribute'],
-                'quantity' => $line['quantity'],
-                'amount' => $line['amount'],
-                'restock' => $line['restock'],
-            ], $planned),
-        ];
 
-        $refundId = $this->conn->transactional(function () use ($requestId, $psOrderId, $cashContext, $userId, $reasonCode, $reasonText, $total, $cashAmount, $cardAmount, $cardConfirmed, $payload, $planned): int {
+        // Planning and reserving happen under a lock on the sale row, so two
+        // terminals refunding the same sale cannot both take the same units.
+        [$refundId, $payload] = $this->conn->transactional(function () use ($psOrderId, $lines, $cardConfirmed, $requestId, $cashContext, $userId, $reasonCode, $reasonText): array {
+            $locked = $this->conn->fetchOne('SELECT ps_order_id FROM order_meta WHERE ps_order_id = ? FOR UPDATE', [$psOrderId]);
+            if ($locked === false) {
+                throw RefundException::orderNotFound($psOrderId);
+            }
+
+            // An earlier call with an unknown outcome must be settled explicitly first.
+            $pending = $this->conn->fetchOne(
+                "SELECT id FROM refund WHERE ps_order_id = ? AND status = 'pending' ORDER BY id LIMIT 1",
+                [$psOrderId]
+            );
+            if ($pending !== false) {
+                throw RefundException::conflict(sprintf(
+                    'Refund #%d of order %d is waiting for PrestaShop confirmation; retry it before starting a new one',
+                    (int) $pending,
+                    $psOrderId
+                ));
+            }
+
+            $order = $this->orderSearchService->getOrder($psOrderId);
+            if ($order === null) {
+                throw RefundException::orderNotFound($psOrderId);
+            }
+
+            $planned = $this->planLines($order, $lines);
+            $total = round(array_sum(array_column($planned, 'amount')), 2);
+            if ($total <= 0) {
+                throw RefundException::validationFailed('Refund total must be greater than 0');
+            }
+
+            [$cashAmount, $cardAmount] = $this->splitByTender($order, $total);
+            if ($cardAmount > 0 && !$cardConfirmed) {
+                throw RefundException::validationFailed(sprintf('Confirm the %.2f card refund on the payment terminal first', $cardAmount));
+            }
+
+            $payload = [
+                'ps_order_id' => $psOrderId,
+                'request_id' => $requestId,
+                'refund_type' => $lines === null ? 'full' : 'partial',
+                'reason' => $reasonCode === 'other' ? $reasonText : $reasonCode,
+                'lines' => array_map(static fn (array $line): array => [
+                    'id_product' => $line['product_id'],
+                    'id_product_attribute' => $line['id_product_attribute'],
+                    'quantity' => $line['quantity'],
+                    'amount' => $line['amount'],
+                    'restock' => $line['restock'],
+                ], $planned),
+            ];
+
             $this->conn->insert('refund', [
                 'request_id' => $requestId,
                 'status' => 'pending',
@@ -139,11 +146,38 @@ class RefundService
                 ]);
             }
 
-            return $refundId;
+            return [$refundId, $payload];
         });
 
-        return $this->send($refundId, $payload);
+        return $this->send($refundId, $payload, (int) $cashContext['session_id']);
     }
+
+    /**
+     * Re-sends a refund whose PrestaShop outcome was unknown, with the same
+     * request_id so the shop replays it instead of refunding twice. Cash is paid
+     * out now, so the movement goes to the current open session.
+     *
+     * @return array{refund_id: int, order_slip_id: int, refunded_amount: float, cash_amount: float, card_amount: float, lines: array<int, array<string, mixed>>, restock_failed: array<int, mixed>, saga_error: bool}
+     *
+     * @throws RefundException
+     */
+    public function retryPending(int $userId, int $refundId): array
+    {
+        $cashContext = $this->cashSessionService->requireOpenSession($userId);
+
+        $row = $this->conn->fetchAssociative("SELECT ps_payload FROM refund WHERE id = ? AND status = 'pending'", [$refundId]);
+        if ($row === false) {
+            throw RefundException::conflict(sprintf('Refund #%d is not waiting for confirmation', $refundId));
+        }
+
+        $payload = json_decode((string) $row['ps_payload'], true);
+        if (!\is_array($payload)) {
+            throw RefundException::validationFailed(sprintf('Pending refund %d cannot be resumed', $refundId));
+        }
+
+        return $this->send($refundId, $payload, (int) $cashContext['session_id']);
+    }
+
 
     /**
      * Sends a stored refund to PrestaShop and applies its local effects.
@@ -152,13 +186,14 @@ class RefundService
      *
      * @return array{refund_id: int, order_slip_id: int, refunded_amount: float, cash_amount: float, card_amount: float, lines: array<int, array<string, mixed>>, restock_failed: array<int, mixed>, saga_error: bool}
      */
-    private function send(int $refundId, array $payload): array
+    private function send(int $refundId, array $payload, int $sessionId): array
     {
         try {
             $psResponse = $this->client->createRefund($payload);
         } catch (RefundException $e) {
-            if ($e->getCode() === 404 || $e->getCode() === 409 || $e->getCode() === 422) {
-                // Definitely rejected: nothing happened in the shop.
+            if ($e->getCode() === 404 || $e->getCode() === 422) {
+                // Definitely rejected: nothing happened in the shop. A 409 only means
+                // the order was busy, so the outcome is still unknown.
                 $this->conn->update('refund', [
                     'status' => 'failed',
                     'error_message' => mb_substr($e->getMessage(), 0, 1000),
@@ -169,17 +204,7 @@ class RefundService
             throw $e;
         }
 
-        return $this->complete($refundId, $psResponse);
-    }
-
-    private function resumePending(int $refundId): void
-    {
-        $payload = json_decode((string) $this->conn->fetchOne('SELECT ps_payload FROM refund WHERE id = ?', [$refundId]), true);
-        if (!\is_array($payload)) {
-            throw RefundException::validationFailed(sprintf('Pending refund %d cannot be resumed', $refundId));
-        }
-
-        $this->send($refundId, $payload);
+        return $this->complete($refundId, $psResponse, $sessionId);
     }
 
     /**
@@ -187,7 +212,7 @@ class RefundService
      *
      * @return array{refund_id: int, order_slip_id: int, refunded_amount: float, cash_amount: float, card_amount: float, lines: array<int, array<string, mixed>>, restock_failed: array<int, mixed>, saga_error: bool}
      */
-    private function complete(int $refundId, array $psResponse): array
+    private function complete(int $refundId, array $psResponse, int $sessionId): array
     {
         $refund = $this->conn->fetchAssociative('SELECT * FROM refund WHERE id = ?', [$refundId]);
         $slipId = (int) $psResponse['order_slip_id'];
@@ -204,9 +229,10 @@ class RefundService
         $sagaError = false;
 
         try {
-            $this->conn->transactional(function () use ($refund, $refundId, $slipId, $cashAmount, $total, $psOrderId, $lines, $restocked): void {
+            $this->conn->transactional(function () use ($sessionId, $refundId, $slipId, $cashAmount, $total, $psOrderId, $lines, $restocked): void {
                 $this->conn->update('refund', [
                     'status' => 'done',
+                    'session_id' => $sessionId,
                     'ps_order_slip_id' => $slipId,
                     'completed_at' => (new \DateTimeImmutable())->format('Y-m-d H:i:s'),
                 ], ['id' => $refundId]);
@@ -214,7 +240,7 @@ class RefundService
                 if ($cashAmount > 0) {
                     // Positive: the cash report subtracts the refund total from the drawer.
                     $this->conn->insert('movement', [
-                        'session_id' => (int) $refund['session_id'],
+                        'session_id' => $sessionId,
                         'type' => 'refund',
                         'amount' => $cashAmount,
                         'concept' => sprintf('Devolución pedido #%d', $psOrderId),

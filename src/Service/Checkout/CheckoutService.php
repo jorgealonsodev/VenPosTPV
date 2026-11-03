@@ -896,7 +896,8 @@ class CheckoutService
 
     /**
      * Splits $total across lines in proportion to their weights, in cents, so the
-     * shares always add up to $total exactly; the last line absorbs rounding.
+     * shares always add up to $total exactly. The heaviest line absorbs rounding,
+     * so a free line (weight 0) can never end up with a negative share.
      *
      * @param array<int, float> $weights
      *
@@ -908,15 +909,19 @@ class CheckoutService
         $totalCents = (int) round($total * 100);
         $shares = [];
         $assigned = 0;
-        $last = array_key_last($weights);
+        $heaviest = $weights === [] ? null : array_keys($weights, max($weights))[0];
 
         foreach ($weights as $index => $weight) {
-            if ($index === $last) {
-                $cents = $totalCents - $assigned;
-            } else {
-                $cents = $sum > 0 ? (int) round($totalCents * $weight / $sum) : 0;
-                $assigned += $cents;
-            }
+            $cents = $sum > 0 ? (int) round($totalCents * $weight / $sum) : 0;
+            $shares[$index] = $cents;
+            $assigned += $cents;
+        }
+
+        if ($heaviest !== null) {
+            $shares[$heaviest] += $totalCents - $assigned;
+        }
+
+        foreach ($shares as $index => $cents) {
             $shares[$index] = $cents / 100;
         }
 

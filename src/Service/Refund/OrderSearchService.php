@@ -122,6 +122,7 @@ class OrderSearchService
             'change_due' => (float) ($breakdown['change_due'] ?? 0),
             'lines' => $lines,
             'tender' => \is_array($breakdown['tender'] ?? null) ? $breakdown['tender'] : null,
+            'pending_refund' => $lines === [] ? null : $this->pendingRefund($psOrderId),
             'refunded_amount' => (float) $row['refunded_amount'],
             'created_at' => $row['created_at'],
         ];
@@ -156,5 +157,25 @@ class OrderSearchService
         }
 
         return $result;
+    }
+
+    /**
+     * A refund whose PrestaShop outcome is unknown blocks new refunds of the sale
+     * until the cashier retries it.
+     *
+     * @return array{id: int, total: float}|null
+     */
+    private function pendingRefund(int $psOrderId): ?array
+    {
+        $row = $this->connection->fetchAssociative(
+            "SELECT id, total FROM refund WHERE ps_order_id = ? AND status = 'pending' ORDER BY id LIMIT 1",
+            [$psOrderId]
+        );
+
+        if (!\is_array($row) || !isset($row['id'])) {
+            return null;
+        }
+
+        return ['id' => (int) $row['id'], 'total' => round((float) $row['total'], 2)];
     }
 }

@@ -20,6 +20,8 @@ final class RefundServiceMySqlIntegrationTest extends TestCase
 
     private ?Connection $connection = null;
 
+    private int $nextSessionId = self::SESSION_ID;
+
     /** @var array<int, array<string, mixed>> */
     private array $psPayloads = [];
 
@@ -103,7 +105,7 @@ final class RefundServiceMySqlIntegrationTest extends TestCase
             ];
         });
         $cash = $this->createMock(CashSessionService::class);
-        $cash->method('requireOpenSession')->willReturn(['session_id' => self::SESSION_ID, 'terminal_id' => 1, 'user_id' => 1]);
+        $cash->method('requireOpenSession')->willReturnCallback(fn (): array => ['session_id' => $this->nextSessionId, 'terminal_id' => 1, 'user_id' => 1]);
 
         return new RefundService(new OrderSearchService($this->connection), $client, $this->connection, $cash);
     }
@@ -241,7 +243,7 @@ final class RefundServiceMySqlIntegrationTest extends TestCase
         $this->assertSame('failed', $this->connection->fetchOne('SELECT status FROM refund'));
     }
 
-    public function testUncertainCallIsResumedWithSameRequestIdBeforeAnyNewRefund(): void
+    public function testUncertainCallBlocksNewRefundsUntilExplicitRetryWithSameRequestId(): void
     {
         $this->seedOrder(['cash' => 60.0, 'card' => 0.0]);
         $service = $this->service();
@@ -249,17 +251,57 @@ final class RefundServiceMySqlIntegrationTest extends TestCase
         $line = [['line_index' => 0, 'quantity' => 1, 'restock' => true]];
 
         $this->expectRefundError(0, fn () => $service->processRefund(1, self::ORDER_ID, $line, 'size'));
+        $refundId = (int) $this->connection->fetchOne('SELECT id FROM refund');
         $this->assertSame('pending', $this->connection->fetchOne('SELECT status FROM refund'));
         $this->assertSame([], $this->movements());
 
-        // The next attempt first completes the pending one with the same request_id,
-        // then stops so the cashier sees the order state before refunding again.
+        // Nothing is sent on its own: a new refund is refused until the cashier retries.
         $this->expectRefundError(409, fn () => $service->processRefund(1, self::ORDER_ID, $line, 'size'));
+        $this->assertCount(1, $this->psPayloads);
+        $order = (new OrderSearchService($this->connection))->getOrder(self::ORDER_ID);
+        $this->assertSame(['id' => $refundId, 'total' => 24.18], $order['pending_refund']);
+
+        $result = $service->retryPending(1, $refundId);
+
         $this->assertCount(2, $this->psPayloads);
         $this->assertSame($this->psPayloads[0]['request_id'], $this->psPayloads[1]['request_id']);
+        $this->assertSame($refundId, $result['refund_id']);
         $this->assertSame('done', $this->connection->fetchOne('SELECT status FROM refund'));
         $this->assertSame(['24.18'], array_column($this->movements(), 'amount'));
         $this->assertSame(6, $this->stock(3, 7));
+        $this->expectRefundError(409, fn () => $service->retryPending(1, $refundId));
+    }
+
+    public function testBusyShopKeepsTheRefundPendingInsteadOfFailingIt(): void
+    {
+        $this->seedOrder(['cash' => 60.0, 'card' => 0.0]);
+        $this->psFailures = [RefundException::conflict('Another refund for this order is in progress in PrestaShop')];
+
+        $this->expectRefundError(409, fn () => $this->service()->processRefund(1, self::ORDER_ID, [['line_index' => 0, 'quantity' => 1, 'restock' => true]], 'size'));
+
+        $this->assertSame('pending', $this->connection->fetchOne('SELECT status FROM refund'));
+    }
+
+    public function testRetryRecordsCashInTheCurrentSession(): void
+    {
+        $this->seedOrder(['cash' => 60.0, 'card' => 0.0]);
+        $this->psFailures = [RefundException::psUnavailable('timeout')];
+        $this->expectRefundError(0, fn () => $this->service()->processRefund(1, self::ORDER_ID, [['line_index' => 0, 'quantity' => 1, 'restock' => true]], 'size'));
+        $refundId = (int) $this->connection->fetchOne('SELECT id FROM refund');
+
+        $this->connection->executeStatement('SET FOREIGN_KEY_CHECKS = 0');
+        $this->connection->insert('session', ['id' => self::SESSION_ID + 1, 'terminal_id' => 1, 'user_id' => 1, 'opened_at' => '2026-11-04 09:00:00', 'opening_cash' => 50]);
+        $this->connection->executeStatement('SET FOREIGN_KEY_CHECKS = 1');
+        $this->nextSessionId = self::SESSION_ID + 1;
+
+        $this->service()->retryPending(1, $refundId);
+
+        $this->assertSame(
+            [self::SESSION_ID + 1],
+            array_map('intval', $this->connection->fetchFirstColumn("SELECT session_id FROM movement WHERE type = 'refund' AND ps_order_id = ?", [self::ORDER_ID]))
+        );
+        $this->connection->executeStatement('DELETE FROM movement WHERE session_id = ?', [self::SESSION_ID + 1]);
+        $this->connection->executeStatement('DELETE FROM session WHERE id = ?', [self::SESSION_ID + 1]);
     }
 
     public function testUnknownOrderIs404(): void

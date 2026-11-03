@@ -5,10 +5,10 @@ const vm = require('node:vm');
 
 function ref(value) { return { value }; }
 
-function load(refundOrder) {
+function load(refundOrder, refundRetry = async () => ({ data: {} })) {
     const source = fs.readFileSync(path.resolve(__dirname, '../../public/assets/js/components/RefundScreen.js'), 'utf8');
     const context = {
-        Vue: { ref }, ApiClient: { refundOrder, searchOrders: async () => ({ data: [] }) },
+        Vue: { ref }, ApiClient: { refundOrder, refundRetry, searchOrders: async () => ({ data: [] }) },
         useSession: { session: { online: true } }, Number, Math, JSON, parseInt, Boolean, Promise, Error, Array, console,
     };
     context.globalThis = context;
@@ -80,7 +80,21 @@ async function testServerErrorsAreShownInSpanishWithDetail() {
     assert.ok(state.selectedOrder.value, 'stays on the order after an error');
 }
 
+async function testPendingRefundBlocksNewOnesAndCanBeRetried() {
+    const retried = [];
+    const { state, emitted } = load(async () => { throw new Error('must not create a new refund'); }, async (id) => { retried.push(id); return { data: { refunded_amount: 24.18, cash_amount: 24.18 } }; });
+    state.selectOrder({ ...ORDER, tender: { cash: 60, card: 0 }, pending_refund: { id: 5, total: 24.18 } });
+    state.toggleLine(1);
+    state.setReason('size');
+    assert.equal(state.validationError(), 'Hay una devolución pendiente de confirmar: reinténtala primero');
+    await state.retryPending();
+    assert.deepEqual(retried, [5]);
+    assert.match(emitted.at(-1)[1], /24\.18 € en efectivo/);
+    assert.equal(state.selectedOrder.value, null);
+}
+
 (async () => {
+    await testPendingRefundBlocksNewOnesAndCanBeRetried();
     await testRequestCarriesOnlyIndexesQuantitiesRestockReasonAndConfirmation();
     await testOtherReasonNeedsTextAndQuantityIsCappedAtRefundable();
     await testServerErrorsAreShownInSpanishWithDetail();

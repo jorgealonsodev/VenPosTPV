@@ -694,6 +694,25 @@ final class CheckoutServiceTest extends TestCase
         $this->assertSame('Camisa M', $breakdown['lines'][0]['name']);
     }
 
+    public function testFreeLineNeverGetsANegativePaidShare(): void
+    {
+        // Two 5.00 items and a free gift, minus a 0.99 cart discount = 9.01.
+        $breakdown = $this->captureBreakdown([
+            'lines' => [
+                ['product_id' => 4, 'qty' => 1, 'price' => 20.0, 'discount' => 75],
+                ['product_id' => 4, 'qty' => 1, 'price' => 20.0, 'discount' => 75],
+                ['product_id' => 4, 'qty' => 1, 'price' => 20.0, 'discount' => 100],
+            ],
+            'discount' => ['type' => 'amt', 'value' => 0.99],
+            'total' => 9.01,
+        ], 'cash', 10.0);
+
+        $paid = array_column($breakdown['lines'], 'paid_total');
+        $this->assertEqualsWithDelta(9.01, array_sum($paid), 0.0001);
+        $this->assertEquals(0, $paid[2]);
+        $this->assertGreaterThanOrEqual(0, min($paid));
+    }
+
     public function testOrderMetaTenderForSingleMethodSales(): void
     {
         $cart = ['lines' => [['product_id' => 4, 'qty' => 1, 'price' => 20.0]], 'total' => 20.0];

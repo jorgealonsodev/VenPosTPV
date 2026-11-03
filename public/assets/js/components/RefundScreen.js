@@ -130,6 +130,7 @@ const RefundScreen = {
         }
 
         function validationError() {
+            if (selectedOrder.value && selectedOrder.value.pending_refund) return 'Hay una devolución pendiente de confirmar: reinténtala primero';
             if (!selectedLines.value.some((l) => l.checked)) return 'Selecciona al menos una línea';
             if (!reasonCode.value) return 'Elige el motivo de la devolución';
             if (reasonCode.value === 'other' && !reasonText.value.trim()) return 'Escribe el motivo';
@@ -174,8 +175,32 @@ const RefundScreen = {
             if (status === 404) return 'Pedido no encontrado';
             if (status === 409) return 'No se ha devuelto nada nuevo: ' + detail;
             if (status === 422) return 'No se puede devolver: ' + detail;
-            if (status === 502) return 'PrestaShop no responde; no se ha devuelto nada. Inténtalo de nuevo: ' + detail;
+            if (status === 502) return 'PrestaShop no ha confirmado la devolución. No entregues dinero; queda pendiente para reintentar: ' + detail;
             return 'Error en devolución: ' + detail;
+        }
+
+        function refundDoneMessage(data) {
+            const parts = ['Devolución de ' + Number(data.refunded_amount || 0).toFixed(2) + ' €'];
+            if (Number(data.cash_amount) > 0) parts.push(Number(data.cash_amount).toFixed(2) + ' € en efectivo');
+            if (Number(data.card_amount) > 0) parts.push(Number(data.card_amount).toFixed(2) + ' € a tarjeta');
+            const warn = data.saga_error || (Array.isArray(data.restock_failed) && data.restock_failed.length > 0);
+            return { text: parts.join(' · ') + (warn ? ' — revisar stock/caja' : ''), color: warn ? 'var(--orange, var(--red))' : 'var(--green)' };
+        }
+
+        async function retryPending() {
+            const pending = selectedOrder.value && selectedOrder.value.pending_refund;
+            if (!pending || loading.value) return;
+            loading.value = true;
+            try {
+                const result = await ApiClient.refundRetry(pending.id);
+                const done = refundDoneMessage((result && result.data) || {});
+                emit('notify', done.text, done.color);
+                backToSearch();
+            } catch (err) {
+                emit('notify', errorMessage(err), 'var(--red)');
+            } finally {
+                loading.value = false;
+            }
         }
 
         async function confirmRefund() {
@@ -186,12 +211,8 @@ const RefundScreen = {
             loading.value = true;
             try {
                 const result = await ApiClient.refundOrder(selectedOrder.value.ps_order_id, request);
-                const data = (result && result.data) || {};
-                const parts = ['Devolución de ' + Number(data.refunded_amount || 0).toFixed(2) + ' €'];
-                if (Number(data.cash_amount) > 0) parts.push(Number(data.cash_amount).toFixed(2) + ' € en efectivo');
-                if (Number(data.card_amount) > 0) parts.push(Number(data.card_amount).toFixed(2) + ' € a tarjeta');
-                const warn = data.saga_error || (Array.isArray(data.restock_failed) && data.restock_failed.length > 0);
-                emit('notify', parts.join(' · ') + (warn ? ' — revisar stock/caja' : ''), warn ? 'var(--orange, var(--red))' : 'var(--green)');
+                const done = refundDoneMessage((result && result.data) || {});
+                emit('notify', done.text, done.color);
                 backToSearch();
             } catch (err) {
                 emit('notify', errorMessage(err), 'var(--red)');
@@ -229,6 +250,7 @@ const RefundScreen = {
             buildRequest,
             openConfirm,
             confirmRefund,
+            retryPending,
             cancelConfirm,
             errorMessage,
         };
@@ -278,6 +300,11 @@ const RefundScreen = {
                     <button @click="backToSearch" style="background:transparent; border:1px solid var(--border); border-radius:8px; padding:4px 10px; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;">
                         Volver a resultados
                     </button>
+                </div>
+
+                <div v-if="selectedOrder.pending_refund" style="background:var(--red-bg); border:1px solid var(--red); border-radius:10px; padding:12px; display:flex; align-items:center; gap:12px; color:var(--text); font-size:13px;">
+                    <div style="flex:1;">Devolución #{{ selectedOrder.pending_refund.id }} de {{ Number(selectedOrder.pending_refund.total).toFixed(2) }} € sin confirmar por PrestaShop. Reinténtala antes de hacer otra; entrega el dinero solo cuando se confirme.</div>
+                    <button @click="retryPending" :disabled="loading" style="padding:8px 14px; border-radius:8px; border:none; background:var(--red); color:#fff; cursor:pointer; font-family:inherit; font-size:13px; font-weight:600;">Reintentar</button>
                 </div>
 
                 <div style="background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px; display:flex; flex-direction:column; gap:8px;">

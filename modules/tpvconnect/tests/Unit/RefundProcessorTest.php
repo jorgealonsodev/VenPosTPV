@@ -24,6 +24,9 @@ final class FakeRefundGateway implements RefundGateway
     public bool $lockAvailable = true;
     public int $locksReleased = 0;
     public ?string $failRestockFor = null;
+    public ?string $failStateWith = null;
+    /** @var array<int, string> */
+    public array $rememberLog = [];
 
     public function loadOrder(int $orderId): ?array
     {
@@ -55,6 +58,9 @@ final class FakeRefundGateway implements RefundGateway
 
     public function setOrderState(int $orderId, int $stateId): void
     {
+        if ($this->failStateWith !== null) {
+            throw new \RuntimeException($this->failStateWith);
+        }
         $this->states[] = [$orderId, $stateId];
     }
 
@@ -66,6 +72,7 @@ final class FakeRefundGateway implements RefundGateway
     public function rememberProcessedRequest(string $requestId, array $result): void
     {
         $this->requests[$requestId] = $result;
+        $this->rememberLog[] = $requestId;
     }
 
     public function acquireLock(string $name): bool
@@ -265,5 +272,26 @@ final class RefundProcessorTest extends TestCase
         (new RefundProcessor($this->gateway, 0))->process($this->request());
 
         $this->assertSame([], $this->gateway->states);
+    }
+
+    public function testSlipIsRecordedBeforeLaterStepsSoAFailedRunIsNeverRefundedTwice(): void
+    {
+        $this->gateway->failStateWith = 'SMTP down';
+
+        try {
+            $this->process($this->request());
+            $this->fail('Expected the state change failure to surface');
+        } catch (\RuntimeException $e) {
+            $this->assertSame('SMTP down', $e->getMessage());
+        }
+        $this->assertCount(1, $this->gateway->slips);
+
+        $this->gateway->failStateWith = null;
+        $replay = $this->process($this->request());
+
+        $this->assertTrue($replay['replayed']);
+        $this->assertSame(501, $replay['order_slip_id']);
+        $this->assertCount(1, $this->gateway->slips, 'no second credit slip');
+        $this->assertSame('Interrupted before restock was confirmed', $replay['restock_failed'][0]['error'] ?? null, 'restock outcome reported as unknown');
     }
 }

@@ -135,6 +135,27 @@ class RefundProcessor
 
             $slipId = $this->gateway->createSlip($orderId, $productList, $amount);
 
+            // Record the slip before anything else can fail: a retry must find it
+            // and never create a second one. Restock is unknown until confirmed.
+            $this->gateway->rememberProcessedRequest($requestId, [
+                'order_slip_id' => $slipId,
+                'refunded_amount' => $amount,
+                'refunded_lines' => array_map(static fn (array $line): array => [
+                    'id_order_detail' => $line['detail']['id_order_detail'],
+                    'id_product' => $line['id_product'],
+                    'id_product_attribute' => $line['id_product_attribute'],
+                    'quantity' => $line['quantity'],
+                    'amount' => $line['amount'],
+                    'restocked' => false,
+                ], $matched),
+                'restock_failed' => array_values(array_map(static fn (array $line): array => [
+                    'id_product' => $line['id_product'],
+                    'id_product_attribute' => $line['id_product_attribute'],
+                    'quantity' => $line['quantity'],
+                    'error' => 'Interrupted before restock was confirmed',
+                ], array_filter($matched, static fn (array $line): bool => $line['restock']))),
+            ]);
+
             $refundedLines = [];
             $restockFailed = [];
             foreach ($matched as $line) {
@@ -363,7 +384,12 @@ class PsRefundGateway implements RefundGateway
 
     public function findProcessedRequest(string $requestId): ?array
     {
-        $stored = Configuration::get(self::REQUEST_KEY_PREFIX . md5($requestId));
+        // Read the table directly, uncached: Configuration::get() serves a per-request
+        // cache that cannot see a result written by a concurrent request.
+        $stored = Db::getInstance()->getValue(
+            'SELECT `value` FROM `' . _DB_PREFIX_ . "configuration` WHERE `name` = '" . pSQL(self::REQUEST_KEY_PREFIX . md5($requestId)) . "'",
+            false
+        );
         if (!is_string($stored) || $stored === '') {
             return null;
         }
@@ -374,7 +400,9 @@ class PsRefundGateway implements RefundGateway
 
     public function rememberProcessedRequest(string $requestId, array $result): void
     {
-        Configuration::updateValue(self::REQUEST_KEY_PREFIX . md5($requestId), json_encode($result));
+        if (!Configuration::updateGlobalValue(self::REQUEST_KEY_PREFIX . md5($requestId), json_encode($result))) {
+            throw new RuntimeException('Could not record the refund request result');
+        }
     }
 
     public function acquireLock(string $name): bool

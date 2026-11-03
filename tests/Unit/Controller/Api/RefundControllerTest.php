@@ -85,6 +85,19 @@ final class RefundControllerTest extends TestCase
         $this->assertSame(Response::HTTP_UNPROCESSABLE_ENTITY, $response->getStatusCode());
     }
 
+    public function testRetryRequiresSessionAndMapsUnknownOutcomeTo502(): void
+    {
+        $this->assertSame(Response::HTTP_UNAUTHORIZED, $this->createController()->retry(SessionRequest::json([]), 5)->getStatusCode());
+
+        $refundService = $this->createMock(RefundService::class);
+        $refundService->expects($this->once())->method('retryPending')->with(1, 5)
+            ->willThrowException(RefundException::psUnavailable('timeout'));
+
+        $response = $this->createController($refundService)->retry(SessionRequest::json([], ['user_id' => 1]), 5);
+
+        $this->assertSame(Response::HTTP_BAD_GATEWAY, $response->getStatusCode());
+    }
+
     public function testSearchOrdersReturns401WithoutSession(): void
     {
         $response = $this->createController()->searchOrders(SessionRequest::create(['q' => 'ABC']));
