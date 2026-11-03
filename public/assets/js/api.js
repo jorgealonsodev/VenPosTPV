@@ -89,7 +89,7 @@ const ApiClient = (function () {
         ticketReprint: (orderId) => request('/api/ticket/reprint', { method: 'POST', body: JSON.stringify({ ps_order_id: orderId }) }),
         ticketReprintGift: (orderId) => request('/api/ticket/reprint', { method: 'POST', body: JSON.stringify({ ps_order_id: orderId, gift_mode: true }) }),
         ticketVerify: (token) => request('/api/ticket/verify?token=' + encodeURIComponent(token)),
-        refundOrder: (psOrderId, lines, reason) => request('/api/refund', { method: 'POST', body: JSON.stringify({ ps_order_id: psOrderId, lines: lines, reason: reason }) }),
+        refundOrder: (psOrderId, refund) => request('/api/refund', { method: 'POST', body: JSON.stringify({ ...refund, ps_order_id: psOrderId }) }),
         searchOrders: (query, params = {}) => {
             const qs = new URLSearchParams();
             if (query) qs.set('q', query);
