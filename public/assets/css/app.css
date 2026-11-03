@@ -450,6 +450,9 @@ html, body, #app {
 .tpv-banner-info { background: var(--surface); border: 1px solid var(--border2); }
 .tpv-banner-warn { background: var(--amber-bg); border: 1px solid var(--amber); }
 
+/* Status tag on an order ("Pedido online"): amber text on its own tint, >= 4.5:1 in both themes. */
+.tpv-tag { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 6px; font-size: 13px; font-weight: 700; color: var(--amber); background: var(--amber-bg); border: 1px solid var(--amber); }
+
 /* Sale-screen style split: ticket lines on the left, decisions and the action on the right. */
 .tpv-split { flex: 1; min-height: 0; display: flex; overflow: hidden; }
 .tpv-split-main { width: 62%; display: flex; flex-direction: column; gap: 12px; padding: 16px; overflow: auto; border-right: 1px solid var(--border); }

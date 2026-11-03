@@ -685,6 +685,113 @@ async function testTouchSteppersMoveQuantitiesWithinTheSameLimits() {
     assert.doesNotMatch(source, /blue/, 'no blue in the refund screen');
 }
 
+const ONLINE_ORDER = {
+    ps_order_id: 77, online: true, reference: 'XKBKNABJK', payment_method: 'online', tender: null, total: 37,
+    customer_name: 'Ana Pérez', state: 'Entregado', created_at: '2026-10-20 10:00:00', delivered_at: '2026-10-30 12:00:00',
+    lines: [
+        { name: 'Camisa - Talla: M', product_id: 3, id_product_attribute: 7, qty: 1, paid_total: 27, refundable_qty: 1 },
+        { name: 'Calcetines', product_id: 4, id_product_attribute: 0, qty: 3, paid_total: 10, refundable_qty: 3 },
+    ],
+};
+
+async function testOnlineOrderRefundPaysNothingAndLeavesTheWebRefundPending() {
+    const calls = [];
+    const { state, emitted } = load(async (id, request) => {
+        calls.push([id, request]);
+        return { data: { refund_id: 11, credit_note_number: 'R2026-000011', refunded_amount: 27, cash_amount: 0, card_amount: 0, online: true, web_refund_amount: 27 } };
+    });
+    state.selectOrder(ONLINE_ORDER);
+    assert.equal(state.isOnline(), true);
+    assert.equal(state.deliveredLabel(), 'Entregado el 30/10/2026');
+    state.toggleLine(0);
+    state.setReason('size');
+
+    assert.deepEqual(JSON.parse(JSON.stringify(state.estimatedSplit())), { cash: 0, card: 0, web: 27 });
+    assert.equal(state.needsCardConfirmation(), false, 'nothing is refunded on the payment terminal');
+    assert.equal(state.validationError(), '');
+
+    await state.confirmRefund();
+    assert.deepEqual(JSON.parse(JSON.stringify(calls)), [[77, { lines: [{ line_index: 0, quantity: 1, restock: true }], reason_code: 'size', reason_text: '', card_confirmed: false }]]);
+    const message = emitted.at(-1)[1];
+    assert.match(message, /^Abono R2026-000011: 27\.00 €/);
+    assert.match(message, /reembolso pendiente en la web 27\.00 €/);
+    assert.doesNotMatch(message, /efectivo|tarjeta/);
+}
+
+async function testTpvSaleIsNotMarkedOnline() {
+    const { state } = load(async () => ({ data: {} }));
+    state.selectOrder(ORDER);
+    assert.equal(state.isOnline(), false);
+    assert.equal(state.deliveredLabel(), '');
+    state.toggleLine(0);
+    assert.deepEqual(JSON.parse(JSON.stringify(state.estimatedSplit())), { cash: 10.08, card: 14.1 }, 'TPV sales keep the tender split');
+}
+
+async function testUndeliveredOrTpvMadeOnlineOrdersAreBlocked() {
+    const { state } = load(async () => { throw new Error('must not be sent'); });
+    state.selectOrder({ ...ONLINE_ORDER, delivered_at: null, state: 'Enviado' });
+    assert.equal(state.deliveredLabel(), 'Sin entregar (Enviado)');
+    state.toggleLine(0);
+    state.setReason('size');
+    assert.equal(state.validationError(), 'Pedido online sin entregar: no se puede devolver ni cambiar');
+    state.startExchange();
+    assert.equal(state.validationError(), 'Pedido online sin entregar: no se puede devolver ni cambiar');
+
+    state.selectOrder({ ...ONLINE_ORDER, created_by_tpv: true });
+    state.toggleLine(0);
+    state.setReason('size');
+    assert.equal(state.validationError(), 'Pedido de un TPV sin registro aquí: devuélvelo desde el back office de PrestaShop');
+}
+
+async function testOnlineExchangeOwedToTheCustomerIsAPendingWebRefund() {
+    const calls = [];
+    const t = loadExchange(ONLINE_ORDER, async (id, request) => {
+        calls.push([id, request]);
+        return { data: { exchange_id: 4, status: 'done', credit: 27, new_total: 25, balance: -2,
+            refund: { refund_id: 12, credit_note_number: 'R2026-000012', cash_amount: 0, card_amount: 0, online: true, web_refund_amount: 2 },
+            sale: { ps_order_id: 991, reference: 'NEWREF', payable: 0, change_due: 0 } } };
+    });
+    t.state.toggleLine(0);
+    await t.state.pickProduct(CINTURON);
+    t.state.setReason('size');
+    assert.equal(t.state.exchangeBalance(), -2);
+    assert.deepEqual(JSON.parse(JSON.stringify(t.state.exchangePayoutSplit())), { cash: 0, card: 0, web: 2 });
+    assert.equal(t.state.needsCardConfirmation(), false);
+    assert.equal(t.state.validationError(), '');
+
+    await t.state.confirmRefund();
+    assert.equal(calls[0][0], 77);
+    assert.equal(calls[0][1].payment_method, '');
+    assert.equal(calls[0][1].card_confirmed, false);
+    assert.match(t.emitted.at(-1)[1], /reembolso pendiente en la web 2\.00 €/);
+    assert.equal(t.state.lastExchange.value.webBack, 2);
+}
+
+async function testOnlineExchangeWithBalanceForTheShopIsCollectedNormally() {
+    const t = loadExchange(ONLINE_ORDER, async () => ({ data: {} }));
+    t.state.toggleLine(0);
+    await t.state.pickProduct(CHAQUETA);
+    t.state.setReason('size');
+    assert.equal(t.state.exchangeBalance(), 28);
+    assert.equal(t.state.validationError(), 'Elige cómo paga la diferencia');
+    t.state.setExchangePayment('card');
+    assert.equal(t.state.validationError(), '');
+}
+
+async function testTemplateShowsTheOnlineBadgeDeliveryAndWebRefundSummary() {
+    const source = fs.readFileSync(path.resolve(__dirname, '../../public/assets/js/components/RefundScreen.js'), 'utf8');
+    assert.match(source, /<span v-if="order\.online" class="tpv-tag">Pedido online<\/span>/, 'online badge in the results');
+    assert.match(source, /<span v-if="isOnline\(\)" class="tpv-tag">Pedido online<\/span>/, 'online badge on the selected order');
+    assert.match(source, /\{\{ deliveredLabel\(\) \}\}/);
+    assert.match(source, /Reembolso pendiente en la web: \{\{ euros\(estimatedSplit\(\)\.web\) \}\}/);
+    assert.match(source, /Reembolso pendiente en la web: \{\{ euros\(exchangePayoutSplit\(\)\.web\) \}\}/);
+    const css = fs.readFileSync(path.resolve(__dirname, '../../public/assets/css/app.css'), 'utf8');
+    const tag = /\.tpv-tag\s*\{([^}]*)\}/.exec(css);
+    assert.ok(tag, '.tpv-tag is defined');
+    assert.match(tag[1], /color:\s*var\(--amber\)/, 'amber on amber-bg: a pair the contrast guard checks');
+    assert.match(tag[1], /background:\s*var\(--amber-bg\)/);
+}
+
 (async () => {
     await testTouchSteppersMoveQuantitiesWithinTheSameLimits();
     await testExchangeApiCallsAreNeverQueuedOffline();
@@ -714,5 +821,11 @@ async function testTouchSteppersMoveQuantitiesWithinTheSameLimits() {
     await testRequestCarriesOnlyIndexesQuantitiesRestockReasonAndConfirmation();
     await testOtherReasonNeedsTextAndQuantityIsCappedAtRefundable();
     await testServerErrorsAreShownInSpanishWithDetail();
+    await testOnlineOrderRefundPaysNothingAndLeavesTheWebRefundPending();
+    await testTpvSaleIsNotMarkedOnline();
+    await testUndeliveredOrTpvMadeOnlineOrdersAreBlocked();
+    await testOnlineExchangeOwedToTheCustomerIsAPendingWebRefund();
+    await testOnlineExchangeWithBalanceForTheShopIsCollectedNormally();
+    await testTemplateShowsTheOnlineBadgeDeliveryAndWebRefundSummary();
     console.log('refundScreen tests passed');
 })().catch((err) => { console.error(err); process.exit(1); });

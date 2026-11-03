@@ -13,6 +13,11 @@
  * the returned lines become credit, the new items are picked with the same catalog
  * search, and only the difference is paid (positive balance) or refunded by the
  * original method (negative balance). The server prices both sides again.
+ *
+ * Online orders (found in PrestaShop when no TPV sale matches) are marked "Pedido
+ * online": they can be refunded or exchanged only once delivered, and no money goes
+ * back at the till — the summary shows "Reembolso pendiente en la web" instead of
+ * the cash/card split, because the office refunds them from the back office.
  */
 const NO_TICKET_METHODS = [
     { code: 'cash', label: 'Efectivo' },
@@ -350,10 +355,37 @@ const RefundScreen = {
             return splitByTender(estimatedTotal());
         }
 
+        function isOnline() {
+            return Boolean(selectedOrder.value && selectedOrder.value.online);
+        }
+
+        function formatDate(value) {
+            const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(value || ''));
+            return match ? match[3] + '/' + match[2] + '/' + match[1] : '';
+        }
+
+        // The refund window of an online order counts from its delivery (R3).
+        function deliveredLabel(order) {
+            const o = order || selectedOrder.value;
+            if (!o || !o.online) return '';
+            if (o.delivered_at) return 'Entregado el ' + formatDate(o.delivered_at);
+            return 'Sin entregar' + (o.state ? ' (' + o.state + ')' : '');
+        }
+
+        function onlineBlockedReason() {
+            const order = selectedOrder.value;
+            if (!order || !order.online) return '';
+            if (order.created_by_tpv) return 'Pedido de un TPV sin registro aquí: devuélvelo desde el back office de PrestaShop';
+            if (!order.delivered_at) return 'Pedido online sin entregar: no se puede devolver ni cambiar';
+            return '';
+        }
+
         // Same proportional rule as the server's RefundService::splitByTender: the
-        // exchange-credit share of a sale goes back as a voucher.
+        // exchange-credit share of a sale goes back as a voucher. An online order pays
+        // nothing at the till: all of it is refunded from the web.
         function splitByTender(total) {
             const order = selectedOrder.value || {};
+            if (order.online) return { cash: 0, card: 0, web: round2(total) };
             const tender = order.tender || {};
             let cash = Math.max(0, Number(tender.cash || 0));
             let card = Math.max(0, Number(tender.card || 0));
@@ -458,6 +490,7 @@ const RefundScreen = {
                 if (needsCardConfirmation() && !cardConfirmed.value) return 'Confirma que has hecho la devolución en el datáfono';
                 return '';
             }
+            if (onlineBlockedReason()) return onlineBlockedReason();
             if (selectedOrder.value && selectedOrder.value.open_exchange) return 'Hay un cambio pendiente: complétalo primero';
             if (exchangeMode.value) return exchangeValidationError();
             if (selectedOrder.value && selectedOrder.value.pending_refund) return 'Hay una devolución pendiente de confirmar: reinténtala primero';
@@ -525,6 +558,7 @@ const RefundScreen = {
             if (balance > 0) parts.push('cobrar ' + balance.toFixed(2) + ' €');
             if (Number(refund.cash_amount) > 0) parts.push(Number(refund.cash_amount).toFixed(2) + ' € en efectivo');
             if (Number(refund.card_amount) > 0) parts.push(Number(refund.card_amount).toFixed(2) + ' € a tarjeta');
+            if (Number(refund.web_refund_amount) > 0) parts.push('reembolso pendiente en la web ' + Number(refund.web_refund_amount).toFixed(2) + ' €');
             if (Number(sale.change_due) > 0) parts.push('cambio ' + Number(sale.change_due).toFixed(2) + ' €');
             return parts.join(' · ');
         }
@@ -544,6 +578,8 @@ const RefundScreen = {
                     cashBack: Number(refund.cash_amount || 0),
                     cardBack: Number(refund.card_amount || 0),
                 };
+                // Online order: what the office still refunds from the web.
+                if (Number(refund.web_refund_amount) > 0) lastExchange.value.webBack = Number(refund.web_refund_amount);
                 emit('notify', exchangeDoneMessage(data), 'var(--green)');
                 backToSearch();
                 return;
@@ -653,6 +689,7 @@ const RefundScreen = {
             if (Number(data.cash_amount) > 0) parts.push(Number(data.cash_amount).toFixed(2) + ' € en efectivo');
             if (Number(data.card_amount) > 0) parts.push(Number(data.card_amount).toFixed(2) + ' € a tarjeta');
             if (data.voucher_code) parts.push('Vale ' + data.voucher_code);
+            if (Number(data.web_refund_amount) > 0) parts.push('reembolso pendiente en la web ' + Number(data.web_refund_amount).toFixed(2) + ' €');
             const warn = data.saga_error || (Array.isArray(data.restock_failed) && data.restock_failed.length > 0);
             return { text: parts.join(' · ') + (warn ? ' — revisar stock/caja' : ''), color: warn ? 'var(--orange, var(--red))' : 'var(--green)' };
         }
@@ -767,6 +804,8 @@ const RefundScreen = {
             setReason,
             estimatedTotal,
             estimatedSplit,
+            isOnline,
+            deliveredLabel,
             needsCardConfirmation,
             validationError,
             buildRequest,
@@ -951,7 +990,7 @@ const RefundScreen = {
                         Cambio hecho · Abono <strong style="font-family:'IBM Plex Mono';">{{ lastExchange.creditNote }}</strong> · Venta nueva <strong style="font-family:'IBM Plex Mono';">{{ lastExchange.saleReference }}</strong>
                         <div style="font-size:14px; color:var(--text2);">
                             <span v-if="lastExchange.balance > 0">Cobrado {{ euros(lastExchange.balance) }}<span v-if="lastExchange.changeDue > 0"> · cambio {{ euros(lastExchange.changeDue) }}</span></span>
-                            <span v-else-if="lastExchange.balance < 0">Devuelto {{ euros(-lastExchange.balance) }}<span v-if="lastExchange.cashBack > 0"> · {{ euros(lastExchange.cashBack) }} en efectivo</span><span v-if="lastExchange.cardBack > 0"> · {{ euros(lastExchange.cardBack) }} a tarjeta</span></span>
+                            <span v-else-if="lastExchange.balance < 0">Devuelto {{ euros(-lastExchange.balance) }}<span v-if="lastExchange.cashBack > 0"> · {{ euros(lastExchange.cashBack) }} en efectivo</span><span v-if="lastExchange.cardBack > 0"> · {{ euros(lastExchange.cardBack) }} a tarjeta</span><span v-if="lastExchange.webBack > 0"> · {{ euros(lastExchange.webBack) }} pendiente en la web</span></span>
                             <span v-else>Sin diferencia</span>
                         </div>
                     </div>
@@ -962,12 +1001,13 @@ const RefundScreen = {
                 </div>
                 <button v-for="order in searchResults" :key="order.ps_order_id" class="tpv-row" style="font-family:inherit; text-align:left; flex-direction:column; align-items:stretch; gap:6px;" @click="selectOrder(order)">
                     <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
-                        <span style="font-weight:600; color:var(--text); font-size:16px;">#{{ order.ps_order_id }} — {{ order.reference }}</span>
+                        <span style="font-weight:600; color:var(--text); font-size:16px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">#{{ order.ps_order_id }} — {{ order.reference }} <span v-if="order.online" class="tpv-tag">Pedido online</span></span>
                         <span style="color:var(--text); font-size:16px; font-family:'IBM Plex Mono';">{{ euros(order.total) }}</span>
                     </div>
                     <div style="color:var(--text2); font-size:14px; display:flex; gap:12px; flex-wrap:wrap;">
-                        <span>{{ order.payment_method }}</span>
+                        <span v-if="order.online">{{ order.customer_name }}</span><span v-else>{{ order.payment_method }}</span>
                         <span>{{ order.created_at }}</span>
+                        <span v-if="order.online" :style="order.delivered_at ? '' : 'color:var(--amber); font-weight:600;'">{{ deliveredLabel(order) }}</span>
                         <span v-if="order.refunded_amount > 0" style="color:var(--amber); font-weight:600;">Devuelto: {{ euros(order.refunded_amount) }}</span>
                     </div>
                 </button>
@@ -978,8 +1018,9 @@ const RefundScreen = {
                 <div class="tpv-split-main">
                     <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
                         <div>
-                            <div style="font-weight:700; color:var(--text); font-size:18px;">Pedido #{{ selectedOrder.ps_order_id }}</div>
-                            <div style="color:var(--text2); font-size:14px;">{{ selectedOrder.reference }} — {{ selectedOrder.created_at }}</div>
+                            <div style="font-weight:700; color:var(--text); font-size:18px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">Pedido #{{ selectedOrder.ps_order_id }} <span v-if="isOnline()" class="tpv-tag">Pedido online</span></div>
+                            <div style="color:var(--text2); font-size:14px;">{{ selectedOrder.reference }} — {{ selectedOrder.created_at }}<span v-if="isOnline() && selectedOrder.customer_name"> — {{ selectedOrder.customer_name }}</span></div>
+                            <div v-if="isOnline()" style="font-size:14px;" :style="selectedOrder.delivered_at ? 'color:var(--text2);' : 'color:var(--amber); font-weight:600;'">{{ deliveredLabel() }}</div>
                         </div>
                         <button class="tpv-btn" @click="backToSearch">Volver a resultados</button>
                     </div>
@@ -1100,6 +1141,8 @@ const RefundScreen = {
                                 <div v-if="exchangePayoutSplit().cash > 0">Efectivo de caja: {{ euros(exchangePayoutSplit().cash) }}</div>
                                 <div v-if="exchangePayoutSplit().card > 0">A tarjeta (datáfono): {{ euros(exchangePayoutSplit().card) }}</div>
                                 <div v-if="exchangePayoutSplit().voucher > 0">En vale (PrestaShop): {{ euros(exchangePayoutSplit().voucher) }}</div>
+                                <div v-if="exchangePayoutSplit().web > 0" style="color:var(--text); font-weight:600;">Reembolso pendiente en la web: {{ euros(exchangePayoutSplit().web) }}</div>
+                                <div v-if="exchangePayoutSplit().web > 0">No se entrega dinero en caja: la oficina lo reembolsa desde la web.</div>
                             </div>
                             <template v-if="exchangeBalance() > 0">
                                 <div class="tpv-label" style="margin-top:8px;">Cómo paga la diferencia</div>
@@ -1120,6 +1163,10 @@ const RefundScreen = {
                             <div v-if="estimatedSplit().cash > 0" style="color:var(--text); font-size:15px;">Efectivo de caja: {{ estimatedSplit().cash.toFixed(2) }} €</div>
                             <div v-if="estimatedSplit().card > 0" style="color:var(--text); font-size:15px;">A tarjeta (datáfono): {{ estimatedSplit().card.toFixed(2) }} €</div>
                             <div v-if="estimatedSplit().voucher > 0" style="color:var(--text); font-size:15px;">En vale (PrestaShop): {{ estimatedSplit().voucher.toFixed(2) }} €</div>
+                            <template v-if="estimatedSplit().web > 0">
+                                <div style="color:var(--text); font-size:16px; font-weight:600;">Reembolso pendiente en la web: {{ euros(estimatedSplit().web) }}</div>
+                                <div style="color:var(--text2); font-size:14px;">No se entrega dinero en caja: la oficina lo reembolsa desde la web.</div>
+                            </template>
                         </div>
 
                         <button v-if="needsCardConfirmation()" class="tpv-toggle" :class="{ 'is-on': cardConfirmed }" role="switch" :aria-checked="cardConfirmed ? 'true' : 'false'" style="width:100%; min-height:64px; text-align:left;" @click="cardConfirmed = !cardConfirmed">
@@ -1148,6 +1195,7 @@ const RefundScreen = {
                     <div style="font-weight:700; color:var(--text); font-size:18px;">{{ exchangeMode ? 'Confirmar cambio' : 'Confirmar devolución' }}</div>
                     <div v-if="exchangeMode" style="color:var(--text2); font-size:15px; line-height:1.45;">Se devuelven artículos del pedido <strong style="color:var(--text);">#{{ selectedOrder.ps_order_id }}</strong> por unos {{ euros(exchangeCredit()) }} y se venden artículos nuevos por {{ euros(exchangeNewTotal()) }}: <strong style="color:var(--text);">{{ exchangeBalance() > 0 ? 'a cobrar ' + euros(exchangeBalance()) : (exchangeBalance() < 0 ? 'a devolver ' + euros(-exchangeBalance()) : 'sin diferencia') }}</strong>. Los importes exactos los calcula el sistema.</div>
                     <div v-else-if="noTicket" style="color:var(--text2); font-size:15px; line-height:1.45;">Se va a devolver aproximadamente <strong style="color:var(--text);">{{ euros(noTicketTotal()) }}</strong> sin ticket ({{ (methods.find(m => m.code === refundMethod) || {}).label }}). El importe exacto es el precio actual del catálogo.</div>
+                    <div v-else-if="isOnline()" style="color:var(--text2); font-size:15px; line-height:1.45;">Se van a devolver artículos por aproximadamente <strong style="color:var(--text);">{{ euros(estimatedTotal()) }}</strong> del pedido online <strong style="color:var(--text);">#{{ selectedOrder.ps_order_id }}</strong>. <strong style="color:var(--text);">No entregues dinero:</strong> queda como reembolso pendiente en la web.</div>
                     <div v-else style="color:var(--text2); font-size:15px; line-height:1.45;">Se va a devolver aproximadamente <strong style="color:var(--text);">{{ euros(estimatedTotal()) }}</strong> del pedido <strong style="color:var(--text);">#{{ selectedOrder.ps_order_id }}</strong>. El importe exacto lo calcula el sistema con lo que se pagó.</div>
                     <div style="display:flex; gap:8px; justify-content:flex-end;">
                         <button class="tpv-btn" @click="cancelConfirm">Cancelar</button>
