@@ -146,6 +146,17 @@ async function testRetryReprintsTheLocalSale() {
     assert.equal(message(store), 'Ticket enviado');
 }
 
+// While the agent is not connected the queued ticket still prints when it comes
+// back (C5), so a retry would print it twice: only the PDF is offered.
+async function testNoRetryWhileThePrinterIsNotConnected() {
+    const { store, clock, job } = loadStore();
+    job(18, {});
+    store.trackResponse({ print_status: 'queued', print_job_id: 18 }, { kind: 'sale', saleId: 9, orderId: 301 });
+    await clock.advance(15000);
+    assert.equal(message(store), 'La impresora no está conectada');
+    assert.equal(store.canRetry(), false, 'retry would print the ticket twice');
+}
+
 async function testCreditNoteOffersItsPdfAndNoReprint() {
     const { store, clock, job, calls } = loadStore();
     job(17, {});
@@ -206,6 +217,7 @@ async function testLabels() {
     await testPdfDoesNotCancelThePendingTicket();
     await testFollowingStopsWhenTheTicketExpires();
     await testRetryReprintsTheLocalSale();
+    await testNoRetryWhileThePrinterIsNotConnected();
     await testCreditNoteOffersItsPdfAndNoReprint();
     await testOtherPrintersAreNotFollowed();
     await testDrawerWarnsAfterFiveSeconds();

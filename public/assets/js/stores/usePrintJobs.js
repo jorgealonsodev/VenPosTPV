@@ -182,7 +182,9 @@ const usePrintJobs = (function () {
         /** C2: a reprint of the same sale (only sales and reprints have one). */
         function canRetry() {
             const job = state.job;
-            return !!job && job.problem && !job.retrying && (job.kind === 'sale' || job.kind === 'reprint') && !!(job.saleId || job.orderId);
+            // Only after a real failure: a ticket waiting for an offline agent still prints
+            // when it comes back (C5), so retrying then would print it twice.
+            return !!job && job.phase === 'failed' && !job.retrying && (job.kind === 'sale' || job.kind === 'reprint') && !!(job.saleId || job.orderId);
         }
 
         async function retry() {
