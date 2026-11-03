@@ -17,6 +17,8 @@ use VenPosTPV\Service\Checkout\Exception\CheckoutException;
 use VenPosTPV\Service\Checkout\PsOrderClient;
 use VenPosTPV\Service\Exchange\ExchangeService;
 use VenPosTPV\Service\Print\PrinterService;
+use VenPosTPV\Service\Print\TicketDataResolver;
+use VenPosTPV\Service\Print\TicketVerificationService;
 use VenPosTPV\Service\Refund\Exception\RefundException;
 use VenPosTPV\Service\Refund\OrderSearchService;
 use VenPosTPV\Service\Refund\PsRefundClient;
@@ -494,5 +496,56 @@ final class ExchangeServiceMySqlIntegrationTest extends TestCase
         $this->assertSame(100.0, $totals['expected_cash'], 'drawer: 100 + 15 - 15');
         $this->assertSame(80.0, $totals['exchange_credit']);
         $this->assertSame(2, $totals['counts']['exchanges']);
+    }
+
+    private function ticketResolver(): TicketDataResolver
+    {
+        return new TicketDataResolver($this->connection, new TicketVerificationService('test-secret', 'http://tpv'), 'Tienda', 'Calle 1');
+    }
+
+    public function testPrintedDocumentsOfAnExchangeShowTheCredit(): void
+    {
+        $this->seedSale(930005, ['cash' => 40.0, 'card' => 0.0]);
+        $result = $this->service()->processExchange(1, self::ORDER_ID, $this->returnFirstLine(), 'size', '', $this->cart(930006), 'cash', 20.0, false);
+        $resolver = $this->ticketResolver();
+
+        $creditNote = $resolver->resolveRefund($result['refund']['refund_id']);
+        $this->assertNotNull($creditNote);
+        $this->assertNotNull($creditNote->creditNote);
+        $this->assertSame(40.0, $creditNote->total);
+        $this->assertSame(40.0, $creditNote->creditNote->exchangeCredit);
+        $this->assertSame(0.0, $creditNote->creditNote->cashAmount);
+        $this->assertSame(0.0, $creditNote->creditNote->cardAmount);
+
+        $sale = $resolver->resolve(990001);
+        $this->assertNotNull($sale);
+        $this->assertSame(55.0, $sale->total);
+        $this->assertSame(40.0, $sale->exchangeCredit);
+        $this->assertSame($result['refund']['credit_note_number'], $sale->exchangeCreditNote);
+        $this->assertSame('Abono + Efectivo', $sale->paymentMethodLabel());
+
+        // The original sale and an ordinary ticket carry no exchange credit.
+        $original = $resolver->resolve(self::ORDER_ID);
+        $this->assertNotNull($original);
+        $this->assertNull($original->exchangeCredit);
+        $this->assertNull($original->exchangeCreditNote);
+    }
+
+    public function testCreditNoteOfAnExchangeWithMoneyBackShowsTheAppliedAndThePaidOutParts(): void
+    {
+        $this->seedSale(930006, ['cash' => 0.0, 'card' => 55.0]);
+        $result = $this->service()->processExchange(1, self::ORDER_ID, $this->returnFirstLine(), 'size', '', $this->cart(930005), 'cash', 0.0, true);
+        $resolver = $this->ticketResolver();
+
+        $creditNote = $resolver->resolveRefund($result['refund']['refund_id']);
+        $this->assertNotNull($creditNote?->creditNote);
+        $this->assertSame(55.0, $creditNote->total);
+        $this->assertSame(40.0, $creditNote->creditNote->exchangeCredit);
+        $this->assertSame(15.0, $creditNote->creditNote->cardAmount);
+        $this->assertSame(0.0, $creditNote->creditNote->cashAmount);
+
+        $sale = $resolver->resolve(990001);
+        $this->assertSame(40.0, $sale?->exchangeCredit);
+        $this->assertSame('Abono', $sale->paymentMethodLabel());
     }
 }

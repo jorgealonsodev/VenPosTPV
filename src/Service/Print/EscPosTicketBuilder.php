@@ -126,6 +126,9 @@ class EscPosTicketBuilder
             $printer->text('TOTAL DEVUELTO: ' . number_format($ticketData->total, 2) . " €\n");
             $printer->selectPrintMode();
             $printer->text("\n");
+            if ($creditNote->exchangeCredit !== null) {
+                $printer->text('Aplicado a cambio: ' . number_format($creditNote->exchangeCredit, 2) . " €\n");
+            }
             if ($creditNote->cashAmount > 0) {
                 $printer->text('Efectivo: ' . number_format($creditNote->cashAmount, 2) . " €\n");
             }
@@ -146,8 +149,17 @@ class EscPosTicketBuilder
             $printer->selectPrintMode();
 
             $printer->text("\n");
-            $printer->text('Metodo: ' . $this->paymentMethodLabel($ticketData->paymentMethod) . "\n");
-            $printer->text('Entrega: ' . number_format($ticketData->amountTendered, 2) . " €\n");
+            if ($ticketData->exchangeCredit !== null) {
+                $printer->text('Abono aplicado: ' . number_format($ticketData->exchangeCredit, 2) . " €\n");
+                if ($ticketData->exchangeCreditNote !== null) {
+                    $printer->text('Abono: ' . $this->sanitize($ticketData->exchangeCreditNote) . "\n");
+                }
+            }
+            $printer->text('Metodo: ' . $ticketData->paymentMethodLabel() . "\n");
+            // Nothing is tendered when the exchange credit pays the whole sale.
+            if ($ticketData->paymentMethod !== 'exchange') {
+                $printer->text('Entrega: ' . number_format($ticketData->amountTendered, 2) . " €\n");
+            }
             if ($ticketData->changeDue > 0) {
                 $printer->text('Cambio: ' . number_format($ticketData->changeDue, 2) . " €\n");
             }
@@ -244,16 +256,5 @@ class EscPosTicketBuilder
 
             $printer->text($this->sanitize($line) . "\n");
         }
-    }
-
-    private function paymentMethodLabel(string $method): string
-    {
-        return match ($method) {
-            'cash' => 'Efectivo',
-            'card' => 'Tarjeta',
-            'mixed' => 'Mixto',
-            'voucher' => 'Vale',
-            default => $method,
-        };
     }
 }

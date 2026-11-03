@@ -31,7 +31,32 @@ final class TicketData
         public readonly ?CreditNoteInfo $creditNote = null,
         // Which scan code the ticket carries: 'barcode' (Code128), 'qr' or 'both'.
         public readonly string $ticketCode = 'both',
+        // Sale of an exchange: the returned goods' credit applied to this total, and
+        // the credit note it comes from when known.
+        public readonly ?float $exchangeCredit = null,
+        public readonly ?string $exchangeCreditNote = null,
     ) {
+    }
+
+    /**
+     * Spanish label of how the sale was paid; with an exchange credit it reads
+     * "Abono" alone or "Abono + <method>" for the balance.
+     */
+    public function paymentMethodLabel(): string
+    {
+        $label = match ($this->paymentMethod) {
+            'cash' => 'Efectivo',
+            'card' => 'Tarjeta',
+            'mixed' => 'Mixto',
+            'voucher' => 'Vale',
+            'exchange' => 'Abono',
+            default => $this->paymentMethod,
+        };
+        if ($this->exchangeCredit === null || $this->paymentMethod === 'exchange') {
+            return $label;
+        }
+
+        return 'Abono + ' . $label;
     }
 
     public function showsBarcode(): bool

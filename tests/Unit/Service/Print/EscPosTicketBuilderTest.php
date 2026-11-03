@@ -336,4 +336,85 @@ final class EscPosTicketBuilderTest extends TestCase
             $this->assertStringContainsString('Mi Tienda', $out);
         }
     }
+
+    /**
+     * Sale or credit note sharing one layout, to compare against the bytes printed
+     * before the exchange credit existed.
+     */
+    private function documentTicket(?CreditNoteInfo $note, string $method = 'cash', float $tendered = 30.0, float $change = 5.82, ?float $exchangeCredit = null, ?string $exchangeCreditNote = null): TicketData
+    {
+        return new TicketData(
+            orderId: 42, reference: $note?->number ?? 'REF42', storeName: 'Tienda', storeAddress: '', ticketHeader: '', ticketFooter: '',
+            ticketLogo: null, ticketWidthPx: null, date: new \DateTimeImmutable('2026-11-03 12:00'), cashierName: 'Ana',
+            lines: [new TicketLine('Camisa M', 1, 24.18, 24.18)], subtotal: 19.98, tax: 4.2, total: 24.18,
+            paymentMethod: $method, amountTendered: $tendered, changeDue: $change, verificationUrl: 'http://tpv/v', creditNote: $note,
+            exchangeCredit: $exchangeCredit, exchangeCreditNote: $exchangeCreditNote,
+        );
+    }
+
+    public function testOrdinarySaleTicketPrintsTheSameBytesAsBeforeExchanges(): void
+    {
+        $out = $this->createBuilder()->build($this->documentTicket(null));
+
+        // sha1 of the bytes printed before the exchange credit was added (HEAD 8f64b2a).
+        $this->assertSame('538ac0deb92143ce0c89ef764a17be8b94e52ee8', sha1($out));
+        $this->assertStringNotContainsString('Abono', $out);
+    }
+
+    public function testOrdinaryCreditNotePrintsTheSameBytesAsBeforeExchanges(): void
+    {
+        $note = new CreditNoteInfo('R2026-000007', 'REF42', new \DateTimeImmutable('2026-10-30 10:00'), 'Defectuoso', 10.08, 14.1);
+        $out = $this->createBuilder()->build($this->documentTicket($note, 'mixed', 0.0, 0.0));
+
+        $this->assertSame('7869077be0a458105af52ff1160d4c65f6dbd1be', sha1($out));
+        $this->assertStringNotContainsString('cambio', $out);
+    }
+
+    public function testExchangeCreditNoteStatesTheAmountAppliedToTheExchange(): void
+    {
+        $note = new CreditNoteInfo('R2026-000009', 'REF42', null, 'Talla o color', 0.0, 0.0, exchangeCredit: 24.18);
+        $out = $this->createBuilder()->build($this->documentTicket($note, 'cash', 0.0, 0.0));
+
+        $this->assertStringContainsString('TOTAL DEVUELTO: 24.18', $out);
+        $this->assertStringContainsString('Aplicado a cambio: 24.18', $out);
+        $this->assertStringNotContainsString('Efectivo:', $out);
+        $this->assertStringNotContainsString('Tarjeta:', $out);
+    }
+
+    public function testExchangeCreditNoteWithMoneyBackPrintsOnlyThePaidOutPart(): void
+    {
+        // 55 returned for 40 of new goods: 40 applied, 15 back to the card.
+        $note = new CreditNoteInfo('R2026-000009', 'REF42', null, 'Talla o color', 0.0, 15.0, exchangeCredit: 40.0);
+        $out = $this->createBuilder()->build($this->documentTicket($note, 'card', 0.0, 0.0));
+
+        $applied = strpos($out, 'Aplicado a cambio: 40.00');
+        $card = strpos($out, 'Tarjeta: 15.00');
+        $this->assertNotFalse($applied);
+        $this->assertNotFalse($card);
+        $this->assertLessThan($card, $applied);
+        $this->assertStringNotContainsString('Efectivo:', $out);
+    }
+
+    public function testExchangeSaleShowsTheAppliedCreditBeforeTheTenderedMoney(): void
+    {
+        $out = $this->createBuilder()->build($this->documentTicket(null, 'cash', 20.0, 5.0, 9.18, 'R2026-000001'));
+
+        $credit = strpos($out, 'Abono aplicado: 9.18');
+        $this->assertNotFalse($credit);
+        $this->assertStringContainsString('Abono: R2026-000001', $out);
+        $this->assertStringContainsString('Metodo: Abono + Efectivo', $out);
+        $this->assertLessThan(strpos($out, 'Entrega: 20.00'), $credit);
+        $this->assertStringContainsString('Cambio: 5.00', $out);
+    }
+
+    public function testSalePaidEntirelyByTheCreditPrintsAbonoAndNoTenderedCash(): void
+    {
+        $out = $this->createBuilder()->build($this->documentTicket(null, 'exchange', 0.0, 0.0, 24.18));
+
+        $this->assertStringContainsString('Abono aplicado: 24.18', $out);
+        $this->assertStringContainsString('Metodo: Abono', $out);
+        $this->assertStringNotContainsString('Metodo: exchange', $out);
+        $this->assertStringNotContainsString('Abono: ', $out, 'no credit note number known');
+        $this->assertStringNotContainsString('Entrega', $out);
+    }
 }

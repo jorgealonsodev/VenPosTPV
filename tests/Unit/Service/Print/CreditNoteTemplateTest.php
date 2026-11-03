@@ -13,7 +13,7 @@ use VenPosTPV\Service\Print\TicketLine;
 
 final class CreditNoteTemplateTest extends TestCase
 {
-    private function render(?CreditNoteInfo $note, string $barcodePath = '', bool $giftMode = false): string
+    private function render(?CreditNoteInfo $note, string $barcodePath = '', bool $giftMode = false, string $method = 'cash', float $tendered = 30.0, float $change = 5.82, ?float $exchangeCredit = null, ?string $exchangeCreditNote = null): string
     {
         $twig = new Environment(new FilesystemLoader(\dirname(__DIR__, 4) . '/templates'));
 
@@ -22,7 +22,8 @@ final class CreditNoteTemplateTest extends TestCase
                 orderId: 42, reference: $note?->number ?? 'REF42', storeName: 'Tienda', storeAddress: '', ticketHeader: '', ticketFooter: '',
                 ticketLogo: null, ticketWidthPx: null, date: new \DateTimeImmutable('2026-11-03 12:00'), cashierName: 'Ana',
                 lines: [new TicketLine('Camisa M', 1, 24.18, 24.18)], subtotal: 19.98, tax: 4.2, total: 24.18,
-                paymentMethod: 'cash', amountTendered: 30.0, changeDue: 5.82, verificationUrl: 'http://tpv/v', creditNote: $note,
+                paymentMethod: $method, amountTendered: $tendered, changeDue: $change, verificationUrl: 'http://tpv/v', creditNote: $note,
+                exchangeCredit: $exchangeCredit, exchangeCreditNote: $exchangeCreditNote,
             ),
             'giftMode' => $giftMode,
             'qrPath' => '',
@@ -90,5 +91,51 @@ final class CreditNoteTemplateTest extends TestCase
 
         $this->assertStringNotContainsString('tpv_barcode_abc.png', $html);
         $this->assertStringNotContainsString('class="barcode"', $html);
+    }
+
+    public function testOrdinarySaleTicketRendersTheSameHtmlAsBeforeExchanges(): void
+    {
+        // sha1 of the HTML rendered before the exchange credit was added (HEAD 8f64b2a).
+        $this->assertSame('42b86e5e5a967cf0534d91890dc10da23c4cc10a', sha1($this->render(null)));
+    }
+
+    public function testOrdinaryCreditNoteRendersTheSameHtmlAsBeforeExchanges(): void
+    {
+        $note = new CreditNoteInfo('R2026-000007', 'REF42', new \DateTimeImmutable('2026-10-30 10:00'), 'Defectuoso', 10.08, 14.1);
+
+        $this->assertSame('30bc21b9cc97d2e52bc501e4c385b8c1b1ba7073', sha1($this->render($note, method: 'mixed', tendered: 0.0, change: 0.0)));
+    }
+
+    public function testExchangeCreditNoteStatesTheAmountAppliedAndOnlyThePaidOutPart(): void
+    {
+        $note = new CreditNoteInfo('R2026-000009', 'REF42', null, 'Talla o color', 0.0, 15.0, exchangeCredit: 40.0);
+        $html = $this->render($note, method: 'card', tendered: 0.0, change: 0.0);
+
+        $this->assertStringContainsString('<div>Aplicado a cambio: 40,00 €</div>', $html);
+        $this->assertStringContainsString('Tarjeta: 15,00', $html);
+        $this->assertLessThan(strpos($html, 'Tarjeta: 15,00'), strpos($html, 'Aplicado a cambio'));
+        $this->assertStringNotContainsString('Efectivo:', $html);
+    }
+
+    public function testExchangeSaleShowsTheAppliedCreditBeforeTheTenderedMoney(): void
+    {
+        $html = $this->render(null, tendered: 20.0, change: 5.0, exchangeCredit: 9.18, exchangeCreditNote: 'R2026-000001');
+
+        $this->assertStringContainsString('<div>Abono aplicado: 9,18 €</div>', $html);
+        $this->assertStringContainsString('<div>Abono: R2026-000001</div>', $html);
+        $this->assertStringContainsString('<div>Metodo: Abono + Efectivo</div>', $html);
+        $this->assertLessThan(strpos($html, 'Entrega: 20,00'), strpos($html, 'Abono aplicado'));
+        $this->assertStringContainsString('Cambio: 5,00', $html);
+    }
+
+    public function testSalePaidEntirelyByTheCreditShowsAbonoAndNoTenderedCash(): void
+    {
+        $html = $this->render(null, method: 'exchange', tendered: 0.0, change: 0.0, exchangeCredit: 24.18);
+
+        $this->assertStringContainsString('<div>Abono aplicado: 24,18 €</div>', $html);
+        $this->assertStringContainsString('<div>Metodo: Abono</div>', $html);
+        $this->assertStringNotContainsString('Exchange', $html);
+        $this->assertStringNotContainsString('Abono: ', $html);
+        $this->assertStringNotContainsString('Entrega', $html);
     }
 }

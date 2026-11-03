@@ -48,6 +48,11 @@ class TicketDataResolver
         $changeDue = isset($breakdown['change_due']) ? (float) $breakdown['change_due'] : 0.0;
         $subtotal = isset($breakdown['subtotal']) ? (float) $breakdown['subtotal'] : $total;
         $tax = isset($breakdown['tax']) ? (float) $breakdown['tax'] : 0.0;
+        // Part of the total paid with the goods returned in an exchange.
+        $exchangeCredit = \is_array($breakdown['tender'] ?? null) && is_numeric($breakdown['tender']['exchange_credit'] ?? null)
+            && (float) $breakdown['tender']['exchange_credit'] > 0
+            ? round((float) $breakdown['tender']['exchange_credit'], 2)
+            : null;
 
         $token = $this->verificationService->generateToken([
             'order_id' => $orderId,
@@ -78,7 +83,20 @@ class TicketDataResolver
             changeDue: $changeDue,
             verificationUrl: $this->verificationService->buildVerificationUrl($token),
             ticketCode: $this->ticketCode((int) $row['terminal_id']),
+            exchangeCredit: $exchangeCredit,
+            exchangeCreditNote: $exchangeCredit !== null ? $this->exchangeCreditNote($orderId) : null,
         );
+    }
+
+    /** Number of the credit note whose credit paid this exchange sale, null when unknown. */
+    private function exchangeCreditNote(int $orderId): ?string
+    {
+        $number = $this->connection->fetchOne(
+            'SELECT r.credit_note_number FROM exchange e JOIN refund r ON r.id = e.refund_id WHERE e.new_ps_order_id = ? ORDER BY e.id DESC LIMIT 1',
+            [$orderId]
+        );
+
+        return \is_string($number) && $number !== '' ? $number : null;
     }
 
     private const REASON_LABELS = [
@@ -102,7 +120,7 @@ class TicketDataResolver
     public function resolveRefund(int $refundId): ?TicketData
     {
         $refund = $this->connection->fetchAssociative(
-            "SELECT id, ps_order_id, terminal_id, user_id, credit_note_number, reason_code, reason_text, total, cash_amount, card_amount, voucher_code, voucher_amount, created_at, completed_at
+            "SELECT id, ps_order_id, terminal_id, user_id, credit_note_number, reason_code, reason_text, total, cash_amount, card_amount, voucher_code, voucher_amount, exchange_credit, created_at, completed_at
              FROM refund WHERE id = ? AND status = 'done'",
             [$refundId]
         );
@@ -191,6 +209,7 @@ class TicketDataResolver
                 cardAmount: round((float) $refund['card_amount'], 2),
                 voucherCode: isset($refund['voucher_code']) && $refund['voucher_code'] !== '' ? (string) $refund['voucher_code'] : null,
                 voucherAmount: $refund['voucher_amount'] !== null ? round((float) $refund['voucher_amount'], 2) : null,
+                exchangeCredit: $refund['exchange_credit'] !== null ? round((float) $refund['exchange_credit'], 2) : null,
             ),
         );
     }

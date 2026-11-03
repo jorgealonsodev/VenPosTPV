@@ -371,6 +371,7 @@ final class RefundServiceMySqlIntegrationTest extends TestCase
         $this->assertSame(17.91, $ticket->total);
         $this->assertSame(7.46, $note->cashAmount);
         $this->assertSame(10.45, $note->cardAmount);
+        $this->assertNull($note->exchangeCredit, 'an ordinary refund is not applied to an exchange');
         $this->assertCount(1, $ticket->lines);
         $this->assertSame('Calcetines', $ticket->lines[0]->name);
         $this->assertSame(1, $ticket->lines[0]->quantity);
