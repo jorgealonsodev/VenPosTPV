@@ -5,8 +5,11 @@ declare(strict_types=1);
 namespace VenPosTPV\Tests\Unit\Service\Checkout;
 
 use Doctrine\DBAL\Connection;
+use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
+use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\MessageBusInterface;
+use VenPosTPV\Message\PrintTicketMessage;
 use VenPosTPV\Service\Cart\CartService;
 use VenPosTPV\Service\Cash\CashSessionService;
 use VenPosTPV\Service\Cash\Exception\NoOpenCashSessionException;
@@ -14,6 +17,10 @@ use VenPosTPV\Service\Checkout\CheckoutService;
 use VenPosTPV\Service\Checkout\Exception\CheckoutException;
 use VenPosTPV\Service\Checkout\PsOrderClient;
 use VenPosTPV\Service\Print\PrinterService;
+use VenPosTPV\Service\Print\TicketDataResolver;
+use VenPosTPV\Service\Sale\TicketNumberer;
+use VenPosTPV\Service\Sync\Outbox;
+use VenPosTPV\Service\Sync\OutboxSyncTrigger;
 
 final class CheckoutServiceTest extends TestCase
 {
@@ -25,7 +32,12 @@ final class CheckoutServiceTest extends TestCase
         ?MessageBusInterface $messageBus = null,
         ?PrinterService $printerService = null,
         bool $couponCheckoutEnabled = false,
+        ?Outbox $outbox = null,
+        ?OutboxSyncTrigger $syncTrigger = null,
     ): CheckoutService {
+        $numberer = $this->createMock(TicketNumberer::class);
+        $numberer->method('next')->willReturn('A26000001');
+
         return new CheckoutService(
             $cart ?? $this->createMock(CartService::class),
             $client ?? $this->createMock(PsOrderClient::class),
@@ -34,7 +46,34 @@ final class CheckoutServiceTest extends TestCase
             $messageBus ?? $this->createMock(MessageBusInterface::class),
             $printerService ?? $this->createMock(PrinterService::class),
             $couponCheckoutEnabled,
+            null,
+            $numberer,
+            $outbox ?? $this->expectedOutbox ?? $this->createMock(Outbox::class),
+            $syncTrigger,
         );
+    }
+
+    private ?Outbox $expectedOutbox = null;
+
+    /** The local sale (order_meta.id) the stubbed transaction hands out. */
+    private const LOCAL_ORDER_ID = 15;
+
+    /** Runs the local sale transaction on the mocked connection, as DBAL would. */
+    private function localTransaction(MockObject $conn): void
+    {
+        $conn->method('transactional')->willReturnCallback(static fn (callable $operation): mixed => $operation($conn));
+        $conn->method('isTransactionActive')->willReturn(true);
+        $conn->method('lastInsertId')->willReturn((string) self::LOCAL_ORDER_ID);
+    }
+
+    /** The sale is queued once for upload, with a payload the predicate accepts (it never goes to PrestaShop here). */
+    private function expectSaleUpload(callable $predicate): void
+    {
+        $outbox = $this->createMock(Outbox::class);
+        $outbox->expects($this->once())->method('enqueueSale')
+            ->with(self::LOCAL_ORDER_ID, $this->callback($predicate))
+            ->willReturn('request-id');
+        $this->expectedOutbox = $outbox;
     }
 
     public function testCouponPreviewGateOffDoesNotContactPrestaShopOrCreateLocalEffects(): void
@@ -126,8 +165,9 @@ final class CheckoutServiceTest extends TestCase
     public function testOrdinaryCheckoutIgnoresAnExchangeCreditSentByTheBrowser(): void
     {
         $client = $this->createMock(PsOrderClient::class);
-        $client->method('createOrder')->willReturn(['order_id' => 81, 'reference' => 'ORD-81', 'total_paid' => 23.14]);
+        $client->expects($this->never())->method('createOrder');
         $conn = $this->createMock(Connection::class);
+        $this->localTransaction($conn);
         $conn->method('fetchAssociative')->willReturnCallback(static function (string $sql): array|false {
             if (str_contains($sql, 'catalog_product')) return ['price' => 23.90, 'price_ttc' => 23.14, 'price_net' => 19.12];
             return false;
@@ -143,7 +183,7 @@ final class CheckoutServiceTest extends TestCase
         });
         $cashSession = $this->createMock(CashSessionService::class);
         $cashSession->method('requireOpenSession')->willReturn(['session_id' => 1, 'terminal_id' => 3]);
-        $cashSession->expects($this->once())->method('addMovement')->with(1, 'sale', 23.14);
+        $cashSession->expects($this->once())->method('recordMovementInTransaction')->with(1, 'sale', 23.14, 'Checkout sale', null, self::LOCAL_ORDER_ID);
         $cart = $this->createMock(CartService::class);
         $cart->expects($this->once())->method('clear');
         $service = $this->createService(cart: $cart, client: $client, conn: $conn, cashSessionService: $cashSession);
@@ -371,47 +411,48 @@ final class CheckoutServiceTest extends TestCase
         $service->createOrder(1, ['lines' => []], 'cash', 50.0);
     }
 
-    public function testZeroStockThrowsValidationException(): void
+    public function testZeroStockWarnsAndStillSells(): void
     {
         $conn = $this->createMock(Connection::class);
-        $conn->method('fetchOne')
-            ->willReturn(0);
+        $this->localTransaction($conn);
+        $conn->method('fetchOne')->willReturn(0);
+        $stockUpdates = [];
+        $conn->method('executeStatement')->willReturnCallback(function (string $sql, array $params) use (&$stockUpdates): int {
+            $stockUpdates[] = [$sql, $params];
 
-        $service = $this->createService(conn: $conn);
+            return 1;
+        });
+        $cashSessionService = $this->createMock(CashSessionService::class);
+        $cashSessionService->method('requireOpenSession')->willReturn(['session_id' => 12, 'terminal_id' => 3, 'shop_id' => 1, 'user_id' => 1]);
 
-        $this->expectException(CheckoutException::class);
-        $this->expectExceptionMessage('Insufficient stock');
-
-        $service->createOrder(1, [
+        $result = $this->createService(conn: $conn, cashSessionService: $cashSessionService)->createOrder(1, [
             'lines' => [
                 ['product_id' => 1, 'qty' => 1, 'price' => 10.0],
             ],
             'total' => 10.0,
-        ], 'cash', 10.0);
+        ], 'card', 10.0);
+
+        $this->assertSame([['line_index' => 0, 'product_id' => 1, 'id_product_attribute' => 0, 'requested' => 1, 'available' => 0]], $result['stock_warnings']);
+        $this->assertSame([['UPDATE catalog_stock SET quantity = quantity - ? WHERE id_product = ? AND id_product_attribute = ?', [1, 1, 0]]], $stockUpdates, 'the local stock may go below zero');
     }
 
     public function testSuccessfulCheckoutReturnsOrderDetails(): void
     {
         $client = $this->createMock(PsOrderClient::class);
-        $client->expects($this->once())
-            ->method('createOrder')
-            ->willReturn([
-                'order_id' => 42,
-                'reference' => 'ORD-042',
-                'total_paid' => 99.99,
-            ]);
+        $client->expects($this->never())->method('createOrder');
 
         $conn = $this->createMock(Connection::class);
+        $this->localTransaction($conn);
         $conn->method('fetchOne')
             ->willReturn(10);
         $conn->expects($this->once())
             ->method('insert')
-            ->with('order_meta', $this->anything());
+            ->with('order_meta', $this->callback(static fn (array $row): bool => $row['reference'] === 'A26000001' && $row['ps_order_id'] === null && $row['synced'] === 0));
         $conn->expects($this->once())
             ->method('executeStatement')
             ->with(
-                'UPDATE catalog_stock SET quantity = quantity - ? WHERE id_product = ? AND id_product_attribute = 0 AND quantity >= ?',
-                [2, 1, 2]
+                'UPDATE catalog_stock SET quantity = quantity - ? WHERE id_product = ? AND id_product_attribute = ?',
+                [2, 1, 0]
             )
             ->willReturn(1);
 
@@ -419,15 +460,17 @@ final class CheckoutServiceTest extends TestCase
         $cart->expects($this->once())->method('clear');
 
         $cashSessionService = $this->createMock(CashSessionService::class);
-        $cashSessionService->method('requireOpenSession')->willReturn([
-            'session_id' => 12,
-            'terminal_id' => 3,
-            'shop_id' => 1,
-            'user_id' => 1,
-        ]);
-        $cashSessionService->expects($this->once())->method('addMovement');
+        $cashSessionService->method('requireOpenSession')->willReturn(['session_id' => 12, 'terminal_id' => 3, 'shop_id' => 1, 'user_id' => 1]);
+        $cashSessionService->expects($this->once())->method('recordMovementInTransaction')
+            ->with(12, 'sale', 99.99, 'Checkout sale', null, self::LOCAL_ORDER_ID);
+        $messageBus = $this->createMock(MessageBusInterface::class);
+        $messageBus->expects($this->once())->method('dispatch')
+            ->with(new PrintTicketMessage(TicketDataResolver::saleKey(self::LOCAL_ORDER_ID), 3))
+            ->willReturnCallback(static fn (object $message): Envelope => new Envelope($message));
+        $this->expectSaleUpload(static fn (array $payload): bool => $payload['reference'] === 'A26000001' && $payload['products'][0]['quantity'] === 2);
+        $trigger = new OutboxSyncTrigger();
 
-        $service = $this->createService(cart: $cart, client: $client, conn: $conn, cashSessionService: $cashSessionService);
+        $service = $this->createService(cart: $cart, client: $client, conn: $conn, cashSessionService: $cashSessionService, messageBus: $messageBus, syncTrigger: $trigger);
 
         $result = $service->createOrder(1, [
             'lines' => [
@@ -436,11 +479,15 @@ final class CheckoutServiceTest extends TestCase
             'total' => 99.99,
         ], 'cash', 100.0);
 
-        $this->assertSame(42, $result['ps_order_id']);
-        $this->assertSame('ORD-042', $result['reference']);
+        $this->assertSame(self::LOCAL_ORDER_ID, $result['order_id']);
+        $this->assertNull($result['ps_order_id']);
+        $this->assertSame('A26000001', $result['reference']);
+        $this->assertFalse($result['synced']);
         $this->assertSame(99.99, $result['total']);
         $this->assertSame(0.01, $result['change_due']);
         $this->assertSame('cash', $result['payment_method']);
+        $this->assertSame([], $result['stock_warnings']);
+        $this->assertTrue($trigger->isRequested(), 'an upload attempt follows the response');
     }
 
     public function testMissingCashSessionStopsBeforePsOrderAndKeepsCart(): void
@@ -458,6 +505,8 @@ final class CheckoutServiceTest extends TestCase
         $cart->expects($this->never())->method('clear');
 
         $conn = $this->createMock(Connection::class);
+
+        $this->localTransaction($conn);
         $conn->method('fetchOne')->willReturn(10);
 
         $service = $this->createService(
@@ -474,142 +523,83 @@ final class CheckoutServiceTest extends TestCase
         ], 'cash', 10.0);
     }
 
-    public function testCashSessionClosureAfterPsOrderReturnsCreatedOrderAndCompletesLocalSaga(): void
+    public function testCashSessionClosedDuringTheSaleStoresNothingAndKeepsTheCart(): void
     {
         $client = $this->createMock(PsOrderClient::class);
-        $client->expects($this->once())
-            ->method('createOrder')
-            ->willReturn([
-                'order_id' => 77,
-                'reference' => 'ORD-077',
-                'total_paid' => 10.0,
-            ]);
-
+        $client->expects($this->never())->method('createOrder');
         $conn = $this->createMock(Connection::class);
+        $this->localTransaction($conn);
         $conn->method('fetchOne')->willReturn(10);
-        $insertedTables = [];
-        $conn->expects($this->exactly(2))
-            ->method('insert')
-            ->willReturnCallback(function (string $table) use (&$insertedTables): int {
-                $insertedTables[] = $table;
-
-                return 1;
-            });
-        $conn->expects($this->once())
-            ->method('executeStatement')
-            ->willReturn(1);
+        $conn->method('executeStatement')->willReturn(1);
 
         $cashSessionService = $this->createMock(CashSessionService::class);
-        $cashSessionService->expects($this->once())
-            ->method('requireOpenSession')
-            ->willReturn(['session_id' => 12, 'terminal_id' => 3, 'shop_id' => 1, 'user_id' => 1]);
-        $cashSessionService->expects($this->once())
-            ->method('addMovement')
+        $cashSessionService->method('requireOpenSession')->willReturn(['session_id' => 12, 'terminal_id' => 3, 'shop_id' => 1, 'user_id' => 1]);
+        $cashSessionService->expects($this->once())->method('recordMovementInTransaction')
             ->willThrowException(new NoOpenCashSessionException());
-
+        $outbox = $this->createMock(Outbox::class);
+        $outbox->expects($this->never())->method('enqueueSale');
         $cart = $this->createMock(CartService::class);
-        $cart->expects($this->once())->method('clear');
+        $cart->expects($this->never())->method('clear');
+        $printer = $this->createMock(PrinterService::class);
+        $printer->expects($this->never())->method('openDrawer');
 
-        $service = $this->createService(
-            cart: $cart,
-            client: $client,
-            conn: $conn,
-            cashSessionService: $cashSessionService,
-        );
-
-        $result = $service->createOrder(1, [
-            'lines' => [['product_id' => 1, 'qty' => 1, 'price' => 10.0]],
-            'total' => 10.0,
-        ], 'cash', 10.0);
-
-        $this->assertSame(77, $result['ps_order_id']);
-        $this->assertSame('ORD-077', $result['reference']);
-        $this->assertTrue($result['saga_error']);
-        $this->assertSame(['order_meta', 'audit_log'], $insertedTables);
+        $this->expectException(NoOpenCashSessionException::class);
+        $this->createService(cart: $cart, client: $client, conn: $conn, cashSessionService: $cashSessionService, printerService: $printer, outbox: $outbox)
+            ->createOrder(1, ['lines' => [['product_id' => 1, 'qty' => 1, 'price' => 10.0]], 'total' => 10.0], 'cash', 10.0);
     }
 
-    public function testSagaLogsOrphanWhenOrderMetaFails(): void
+    public function testOrderMetaFailureRollsBackTheSaleAndIsRetryable(): void
     {
         $client = $this->createMock(PsOrderClient::class);
-        $client->expects($this->once())
-            ->method('createOrder')
-            ->willReturn([
-                'order_id' => 99,
-                'reference' => 'ORD-099',
-                'total_paid' => 50.0,
-            ]);
-
+        $client->expects($this->never())->method('createOrder');
         $conn = $this->createMock(Connection::class);
+        $this->localTransaction($conn);
         $conn->method('fetchOne')->willReturn(10);
-
-        $callCount = 0;
-        $conn->method('insert')
-            ->willReturnCallback(function (string $table) use (&$callCount): int {
-                ++$callCount;
-                if ($table === 'order_meta' && $callCount === 1) {
-                    throw new \RuntimeException('DB deadlock');
-                }
-
-                return 1;
-            });
-
+        $conn->method('insert')->willThrowException(new \RuntimeException('DB deadlock'));
+        $conn->method('executeStatement')->willReturn(1);
+        $outbox = $this->createMock(Outbox::class);
+        $outbox->expects($this->never())->method('enqueueSale');
         $cart = $this->createMock(CartService::class);
-        $cart->expects($this->once())->method('clear');
+        $cart->expects($this->never())->method('clear');
+        $messageBus = $this->createMock(MessageBusInterface::class);
+        $messageBus->expects($this->never())->method('dispatch');
 
-        $service = $this->createService(cart: $cart, client: $client, conn: $conn);
-
-        $result = $service->createOrder(1, [
-            'lines' => [
-                ['product_id' => 1, 'qty' => 1, 'price' => 50.0],
-            ],
-            'total' => 50.0,
-        ], 'cash', 50.0);
-
-        $this->assertSame(99, $result['ps_order_id']);
-        $this->assertTrue($result['saga_error']);
+        try {
+            $this->createService(cart: $cart, client: $client, conn: $conn, messageBus: $messageBus, outbox: $outbox)
+                ->createOrder(1, ['lines' => [['product_id' => 1, 'qty' => 1, 'price' => 30.0]], 'total' => 30.0], 'cash', 30.0);
+            $this->fail('the sale must fail');
+        } catch (CheckoutException $e) {
+            // Code 0: the controller answers 502 with retry, as nothing was stored.
+            $this->assertSame(0, $e->getCode());
+            $this->assertStringStartsWith('The sale could not be stored locally', $e->getMessage());
+        }
     }
 
-    public function testSagaLogsOrphanWhenStockUpdateFails(): void
+    public function testStockUpdateFailureRollsBackTheSaleAndIsRetryable(): void
     {
         $client = $this->createMock(PsOrderClient::class);
-        $client->expects($this->once())
-            ->method('createOrder')
-            ->willReturn([
-                'order_id' => 88,
-                'reference' => 'ORD-088',
-                'total_paid' => 30.0,
-            ]);
-
+        $client->expects($this->never())->method('createOrder');
         $conn = $this->createMock(Connection::class);
+        $this->localTransaction($conn);
         $conn->method('fetchOne')->willReturn(10);
-
-        $callCount = 0;
-        $conn->method('executeStatement')
-            ->willReturnCallback(function () use (&$callCount): int {
-                ++$callCount;
-                if ($callCount === 1) {
-                    throw new \RuntimeException('Lock timeout');
-                }
-
-                return 1;
-            });
-
         $conn->method('insert')->willReturn(1);
-
+        $conn->method('executeStatement')->willThrowException(new \RuntimeException('Lock timeout'));
+        $outbox = $this->createMock(Outbox::class);
+        $outbox->expects($this->never())->method('enqueueSale');
         $cart = $this->createMock(CartService::class);
-        $cart->expects($this->once())->method('clear');
+        $cart->expects($this->never())->method('clear');
+        $messageBus = $this->createMock(MessageBusInterface::class);
+        $messageBus->expects($this->never())->method('dispatch');
 
-        $service = $this->createService(cart: $cart, client: $client, conn: $conn);
-
-        $result = $service->createOrder(1, [
-            'lines' => [
-                ['product_id' => 1, 'qty' => 1, 'price' => 30.0],
-            ],
-            'total' => 30.0,
-        ], 'cash', 30.0);
-
-        $this->assertSame(88, $result['ps_order_id']);
-        $this->assertTrue($result['saga_error']);
+        try {
+            $this->createService(cart: $cart, client: $client, conn: $conn, messageBus: $messageBus, outbox: $outbox)
+                ->createOrder(1, ['lines' => [['product_id' => 1, 'qty' => 1, 'price' => 30.0]], 'total' => 30.0], 'cash', 30.0);
+            $this->fail('the sale must fail');
+        } catch (CheckoutException $e) {
+            // Code 0: the controller answers 502 with retry, as nothing was stored.
+            $this->assertSame(0, $e->getCode());
+            $this->assertStringStartsWith('The sale could not be stored locally', $e->getMessage());
+        }
     }
 
     public function testClearCartIsCalledAfterSuccess(): void
@@ -625,6 +615,8 @@ final class CheckoutServiceTest extends TestCase
         $cart->expects($this->once())->method('clear');
 
         $conn = $this->createMock(Connection::class);
+
+        $this->localTransaction($conn);
         $conn->method('fetchOne')->willReturn(10);
         $conn->method('insert')->willReturn(1);
         $conn->method('executeStatement')->willReturn(1);
@@ -648,6 +640,7 @@ final class CheckoutServiceTest extends TestCase
         $cashSession = $this->createMock(CashSessionService::class);
         $cashSession->method('requireOpenSession')->willReturn(['session_id' => 1, 'terminal_id' => 4]);
         $conn = $this->createMock(Connection::class);
+        $this->localTransaction($conn);
         $conn->method('fetchOne')->willReturn(10);
         $conn->method('insert')->willReturn(1);
         $localStockUpdates = [];
@@ -662,9 +655,9 @@ final class CheckoutServiceTest extends TestCase
         $result = $this->createService(client: $client, conn: $conn, cashSessionService: $cashSession)
             ->createOrder(1, ['lines' => [['product_id' => 3, 'qty' => 2, 'price' => 10.0]], 'total' => 20.0], 'card', 20.0);
 
-        $this->assertSame(42, $result['ps_order_id']);
-        $this->assertFalse($result['saga_error'] ?? false);
-        $this->assertSame([[2, 3, 2]], $localStockUpdates);
+        $this->assertNull($result['ps_order_id']);
+        $this->assertFalse($result['saga_error']);
+        $this->assertSame([[2, 3, 0]], $localStockUpdates);
     }
 
     /** @return array<string, mixed> decoded order_meta.payment_breakdown */
@@ -675,6 +668,7 @@ final class CheckoutServiceTest extends TestCase
         $cashSession = $this->createMock(CashSessionService::class);
         $cashSession->method('requireOpenSession')->willReturn(['session_id' => 1, 'terminal_id' => 2]);
         $conn = $this->createMock(Connection::class);
+        $this->localTransaction($conn);
         $conn->method('fetchOne')->willReturn(10);
         $conn->method('executeStatement')->willReturn(1);
         $conn->method('fetchAssociative')->willReturnCallback(function (string $sql, array $params = []): array|false {
@@ -760,18 +754,14 @@ final class CheckoutServiceTest extends TestCase
     public function testCustomerResolutionUsesCartCustomerId(): void
     {
         $client = $this->createMock(PsOrderClient::class);
-        $client->expects($this->once())
-            ->method('createOrder')
-            ->with($this->callback(function (array $payload): bool {
+        $client->expects($this->never())->method('createOrder');
+        $this->expectSaleUpload(function (array $payload): bool {
                 return $payload['id_customer'] === 5;
-            }))
-            ->willReturn([
-                'order_id' => 1,
-                'reference' => 'REF',
-                'total_paid' => 10.0,
-            ]);
+            });
 
         $conn = $this->createMock(Connection::class);
+
+        $this->localTransaction($conn);
         $conn->method('fetchOne')->willReturn(10);
         $conn->method('insert')->willReturn(1);
         $conn->method('executeStatement')->willReturn(1);
@@ -798,18 +788,14 @@ final class CheckoutServiceTest extends TestCase
     public function testAnonymousCustomerSendsZero(): void
     {
         $client = $this->createMock(PsOrderClient::class);
-        $client->expects($this->once())
-            ->method('createOrder')
-            ->with($this->callback(function (array $payload): bool {
+        $client->expects($this->never())->method('createOrder');
+        $this->expectSaleUpload(function (array $payload): bool {
                 return $payload['id_customer'] === 0;
-            }))
-            ->willReturn([
-                'order_id' => 1,
-                'reference' => 'REF',
-                'total_paid' => 10.0,
-            ]);
+            });
 
         $conn = $this->createMock(Connection::class);
+
+        $this->localTransaction($conn);
         $conn->method('fetchOne')->willReturn(10);
         $conn->method('insert')->willReturn(1);
         $conn->method('executeStatement')->willReturn(1);
@@ -843,6 +829,8 @@ final class CheckoutServiceTest extends TestCase
         ]);
 
         $conn = $this->createMock(Connection::class);
+
+        $this->localTransaction($conn);
         $conn->method('fetchOne')->willReturn(10);
         $conn->method('insert')->willReturn(1);
         $conn->method('executeStatement')->willReturn(1);
@@ -855,13 +843,14 @@ final class CheckoutServiceTest extends TestCase
             'user_id' => 1,
         ]);
         $cashSessionService->expects($this->once())
-            ->method('addMovement')
+            ->method('recordMovementInTransaction')
             ->with(
-                1,
+                12,
                 'sale',
                 20.0,
                 'Checkout sale',
-                501
+                null,
+                self::LOCAL_ORDER_ID
             );
 
         $service = $this->createService(client: $client, conn: $conn, cashSessionService: $cashSessionService);
@@ -885,6 +874,8 @@ final class CheckoutServiceTest extends TestCase
         ]);
 
         $conn = $this->createMock(Connection::class);
+
+        $this->localTransaction($conn);
         $conn->method('fetchOne')->willReturn(10);
         $conn->method('insert')->willReturn(1);
         $conn->method('executeStatement')->willReturn(1);
@@ -896,7 +887,7 @@ final class CheckoutServiceTest extends TestCase
             'shop_id' => 1,
             'user_id' => 1,
         ]);
-        $cashSessionService->expects($this->never())->method('addMovement');
+        $cashSessionService->expects($this->never())->method('recordMovementInTransaction');
 
         $service = $this->createService(client: $client, conn: $conn, cashSessionService: $cashSessionService);
 
@@ -918,6 +909,8 @@ final class CheckoutServiceTest extends TestCase
         ]);
 
         $conn = $this->createMock(Connection::class);
+
+        $this->localTransaction($conn);
         $conn->method('fetchOne')->willReturn(10);
         $conn->method('insert')->willReturn(1);
         $conn->method('executeStatement')->willReturn(1);
@@ -955,6 +948,8 @@ final class CheckoutServiceTest extends TestCase
         ]);
 
         $conn = $this->createMock(Connection::class);
+
+        $this->localTransaction($conn);
         $conn->method('fetchOne')->willReturn(10);
         $conn->method('insert')->willReturn(1);
         $conn->method('executeStatement')->willReturn(1);
@@ -993,6 +988,8 @@ final class CheckoutServiceTest extends TestCase
         ]);
 
         $conn = $this->createMock(Connection::class);
+
+        $this->localTransaction($conn);
         $conn->method('fetchOne')->willReturn(10);
         $conn->method('insert')->willReturn(1);
         $conn->method('executeStatement')->willReturn(1);
@@ -1033,6 +1030,7 @@ final class CheckoutServiceTest extends TestCase
 
         $inserted = [];
         $conn = $this->createMock(Connection::class);
+        $this->localTransaction($conn);
         $conn->method('fetchOne')->willReturn(10);
         $conn->method('fetchAssociative')->willReturn(['price' => 23.90, 'price_ttc' => 23.14, 'price_net' => 19.12]);
         $conn->method('executeStatement')->willReturn(1);
@@ -1063,6 +1061,7 @@ final class CheckoutServiceTest extends TestCase
     private function catalogConnection(array $catalogPrices, int $stock = 10): Connection
     {
         $conn = $this->createMock(Connection::class);
+        $this->localTransaction($conn);
         $conn->method('fetchOne')->willReturn($stock);
         $conn->method('fetchAssociative')
             ->willReturnCallback(function (string $sql, array $params = []) use ($catalogPrices): array|false {
@@ -1108,12 +1107,10 @@ final class CheckoutServiceTest extends TestCase
     public function testAcceptsSubmittedPriceMatchingCatalogPrice(): void
     {
         $client = $this->createMock(PsOrderClient::class);
-        $client->expects($this->once())
-            ->method('createOrder')
-            ->with($this->callback(static function (array $payload): bool {
+        $client->expects($this->never())->method('createOrder');
+        $this->expectSaleUpload(static function (array $payload): bool {
                 return (float) $payload['products'][0]['price'] === 9.0;
-            }))
-            ->willReturn(['order_id' => 501, 'reference' => 'ORD-501', 'total_paid' => 18.0]);
+            });
 
         $service = $this->createService(
             client: $client,
@@ -1211,12 +1208,10 @@ final class CheckoutServiceTest extends TestCase
     public function testAcceptsSubmittedTtcPriceAndBooksTheTtcTotal(): void
     {
         $client = $this->createMock(PsOrderClient::class);
-        $client->expects($this->once())
-            ->method('createOrder')
-            ->with($this->callback(static function (array $payload): bool {
+        $client->expects($this->never())->method('createOrder');
+        $this->expectSaleUpload(static function (array $payload): bool {
                 return (float) $payload['products'][0]['price'] === 23.14;
-            }))
-            ->willReturn(['order_id' => 504, 'reference' => 'ORD-504', 'total_paid' => 46.28]);
+            });
 
         $service = $this->createService(
             client: $client,
@@ -1253,12 +1248,10 @@ final class CheckoutServiceTest extends TestCase
     public function testNullTtcPriceKeepsTheBasePriceFallback(): void
     {
         $client = $this->createMock(PsOrderClient::class);
-        $client->expects($this->once())
-            ->method('createOrder')
-            ->with($this->callback(static function (array $payload): bool {
+        $client->expects($this->never())->method('createOrder');
+        $this->expectSaleUpload(static function (array $payload): bool {
                 return (float) $payload['products'][0]['price'] === 9.0;
-            }))
-            ->willReturn(['order_id' => 505, 'reference' => 'ORD-505', 'total_paid' => 9.0]);
+            });
 
         $service = $this->createService(
             client: $client,
@@ -1276,12 +1269,10 @@ final class CheckoutServiceTest extends TestCase
     public function testCombinationTtcPriceIsTheAbsoluteUnitPrice(): void
     {
         $client = $this->createMock(PsOrderClient::class);
-        $client->expects($this->once())
-            ->method('createOrder')
-            ->with($this->callback(static function (array $payload): bool {
+        $client->expects($this->never())->method('createOrder');
+        $this->expectSaleUpload(static function (array $payload): bool {
                 return (float) $payload['products'][0]['price'] === 25.50;
-            }))
-            ->willReturn(['order_id' => 506, 'reference' => 'ORD-506', 'total_paid' => 25.50]);
+            });
 
         $service = $this->createService(
             client: $client,
@@ -1302,12 +1293,10 @@ final class CheckoutServiceTest extends TestCase
     public function testCombinationWithoutTtcPriceFallsBackToBasePricePlusImpact(): void
     {
         $client = $this->createMock(PsOrderClient::class);
-        $client->expects($this->once())
-            ->method('createOrder')
-            ->with($this->callback(static function (array $payload): bool {
+        $client->expects($this->never())->method('createOrder');
+        $this->expectSaleUpload(static function (array $payload): bool {
                 return (float) $payload['products'][0]['price'] === 11.5;
-            }))
-            ->willReturn(['order_id' => 507, 'reference' => 'ORD-507', 'total_paid' => 11.5]);
+            });
 
         $service = $this->createService(
             client: $client,

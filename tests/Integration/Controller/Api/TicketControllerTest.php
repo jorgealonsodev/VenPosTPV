@@ -110,6 +110,46 @@ class TicketControllerTest extends TestCase
         self::assertSame(Response::HTTP_NOT_FOUND, $response->getStatusCode());
     }
 
+    public function testReprintByLocalOrderIdPrintsTheSaleEvenBeforeItIsUploaded(): void
+    {
+        $printerService = $this->createMock(PrinterService::class);
+        $printerService->expects($this->once())->method('reprintTicket')
+            ->with(TicketDataResolver::saleKey(7), 3, true)->willReturn(['printed' => true]);
+
+        $response = $this->createController(printerService: $printerService)->reprint(
+            SessionRequest::json(['order_id' => 7, 'gift_mode' => true], ['user_id' => 1, 'terminal_id' => 3])
+        );
+
+        self::assertSame(Response::HTTP_OK, $response->getStatusCode());
+        self::assertTrue(json_decode((string) $response->getContent(), true)['data']['printed']);
+    }
+
+    public function testReprintWithoutAnyOrderKeepsItsPrevious422(): void
+    {
+        $response = $this->createController()->reprint(SessionRequest::json([], ['user_id' => 1, 'terminal_id' => 3]));
+
+        self::assertSame(Response::HTTP_UNPROCESSABLE_ENTITY, $response->getStatusCode());
+        self::assertSame(['error' => 'Missing ps_order_id'], json_decode((string) $response->getContent(), true));
+    }
+
+    public function testSalePdfResolvesTheSaleByItsLocalKey(): void
+    {
+        $resolver = $this->createMock(TicketDataResolver::class);
+        $resolver->expects($this->once())->method('resolve')->with(TicketDataResolver::saleKey(7))->willReturn($this->createTicketData());
+        $pdfGenerator = $this->createMock(TicketPdfGenerator::class);
+        $pdfGenerator->method('generate')->willReturn('%PDF-1.4 test');
+
+        $response = $this->createController(ticketDataResolver: $resolver, pdfGenerator: $pdfGenerator)->salePdf(SessionRequest::create([], ['user_id' => 1]), 7);
+
+        self::assertSame(Response::HTTP_OK, $response->getStatusCode());
+        self::assertSame('attachment; filename="ticket-ORD-042.pdf"', $response->headers->get('Content-Disposition'));
+    }
+
+    public function testSalePdfRequiresASession(): void
+    {
+        self::assertSame(Response::HTTP_UNAUTHORIZED, $this->createController()->salePdf(SessionRequest::create(), 7)->getStatusCode());
+    }
+
     public function testVerifyReturns200ForValidToken(): void
     {
         $verificationService = $this->createMock(TicketVerificationService::class);

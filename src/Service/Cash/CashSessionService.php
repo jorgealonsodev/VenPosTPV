@@ -120,6 +120,37 @@ class CashSessionService
         return $state;
     }
 
+    /**
+     * Books a movement as part of a caller's transaction (a local-first sale stores
+     * its sale, cash, stock and upload together). Same invariant as addMovement():
+     * the session must still be open, and its row stays locked until the caller
+     * commits, so a concurrent close cannot miss the movement.
+     *
+     * @param int|null $orderId the local sale (order_meta.id) of a sale movement
+     *
+     * @throws \LogicException            outside a transaction
+     * @throws NoOpenCashSessionException when the session closed in the meantime
+     */
+    public function recordMovementInTransaction(int $sessionId, string $type, float $amount, string $concept = '', ?int $psOrderId = null, ?int $orderId = null): void
+    {
+        if (!$this->connection->isTransactionActive()) {
+            throw new \LogicException('recordMovementInTransaction() must run inside the caller transaction');
+        }
+        if ($sessionId < 1 || $this->connection->fetchOne('SELECT id FROM session WHERE id = ? AND closed_at IS NULL FOR UPDATE', [$sessionId]) === false) {
+            throw new NoOpenCashSessionException();
+        }
+
+        $this->connection->insert('movement', [
+            'session_id' => $sessionId,
+            'type' => $type,
+            'amount' => round($amount, 2),
+            'concept' => $concept !== '' ? $concept : null,
+            'ps_order_id' => $psOrderId,
+            'order_id' => $orderId,
+            'created_at' => (new \DateTimeImmutable())->format('Y-m-d H:i:s'),
+        ]);
+    }
+
     /** @return array<string,mixed> */
     public function closeSession(int $userId, float $countedCash): array
     {

@@ -81,23 +81,35 @@ CREATE TABLE IF NOT EXISTS movement (
     amount DECIMAL(10,2) NOT NULL,
     concept VARCHAR(255),
     ps_order_id INT UNSIGNED NULL,
+    -- Version00000031: the local sale (order_meta.id) of a sale movement
+    order_id BIGINT UNSIGNED NULL,
     ps_order_slip_id INT UNSIGNED NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (session_id) REFERENCES session(id),
     INDEX idx_ps_order (ps_order_id),
+    INDEX idx_movement_order (order_id),
     INDEX idx_session_type (session_id, type)
 ) ENGINE=InnoDB;
 
 -- 6. order_meta
+-- Version00000031: local key `id`; `reference` is the ticket code (A26000123) and
+-- the PrestaShop order reference; ps_order_id is set once the sale is uploaded;
+-- ps_reference only when PrestaShop answered a different reference; synced = 0
+-- while the upload is pending.
 CREATE TABLE IF NOT EXISTS order_meta (
-    ps_order_id INT UNSIGNED PRIMARY KEY,
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    reference VARCHAR(9) NULL,
+    ps_order_id INT UNSIGNED NULL,
+    ps_reference VARCHAR(9) NULL,
     terminal_id INT UNSIGNED NOT NULL,
     session_id INT UNSIGNED NOT NULL,
     user_id INT UNSIGNED NOT NULL,
     payment_breakdown JSON NOT NULL,
     printed TINYINT(1) NOT NULL DEFAULT 0,
     synced TINYINT(1) NOT NULL DEFAULT 1,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_order_meta_reference (reference),
+    UNIQUE KEY uk_order_meta_ps_order (ps_order_id)
 ) ENGINE=InnoDB;
 
 -- 7. offline_queue
@@ -323,4 +335,28 @@ CREATE TABLE IF NOT EXISTS ticket_sequence (
     year SMALLINT UNSIGNED NOT NULL,
     last_number INT UNSIGNED NOT NULL,
     PRIMARY KEY (letter, year)
+) ENGINE=InnoDB;
+
+-- outbox (Version00000031): uploads to PrestaShop still to do, in order per sale
+-- (sequence 1 = the sale, then its refunds/exchanges); status pending, processing,
+-- done or incident (definitive rejection, for the administrator).
+CREATE TABLE IF NOT EXISTS outbox (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    type VARCHAR(32) NOT NULL,
+    order_id BIGINT UNSIGNED NOT NULL,
+    sequence INT UNSIGNED NOT NULL,
+    request_id VARCHAR(64) NOT NULL,
+    payload JSON NOT NULL,
+    status VARCHAR(16) NOT NULL DEFAULT 'pending',
+    attempts INT UNSIGNED NOT NULL DEFAULT 0,
+    next_attempt_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    claim_token VARCHAR(32) NULL,
+    claimed_at DATETIME NULL,
+    last_error VARCHAR(1000) NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    done_at DATETIME NULL,
+    UNIQUE KEY uk_outbox_request (request_id),
+    UNIQUE KEY uk_outbox_order_sequence (order_id, sequence),
+    KEY idx_outbox_due (status, next_attempt_at)
 ) ENGINE=InnoDB;

@@ -9,13 +9,24 @@ use Symfony\Component\Messenger\MessageBusInterface;
 use VenPosTPV\Message\PrintTicketMessage;
 use VenPosTPV\Service\Cart\CartService;
 use VenPosTPV\Service\Cash\CashSessionService;
+use VenPosTPV\Service\Cash\Exception\NoOpenCashSessionException;
 use VenPosTPV\Service\Catalog\CatalogPriceResolver;
 use VenPosTPV\Service\Catalog\Exception\ProductNotInCatalogException;
 use VenPosTPV\Service\Checkout\Exception\CheckoutException;
 use VenPosTPV\Service\Print\PrinterService;
+use VenPosTPV\Service\Print\TicketDataResolver;
+use VenPosTPV\Service\Sale\TicketNumberer;
+use VenPosTPV\Service\Sync\Outbox;
+use VenPosTPV\Service\Sync\OutboxSyncTrigger;
 
 /**
- * Books a sale against PrestaShop and the local ledger.
+ * Books a sale in the local ledger first and uploads it to PrestaShop afterwards
+ * (PRD venta-local-primero V1-V4): one local transaction stores the sale with its
+ * ticket code, cash movement, local stock and outbox row; the ticket and drawer do
+ * not wait for PrestaShop, and OutboxSync uploads the order with the ticket code as
+ * its reference. Two flows still create the PrestaShop order first, unchanged until
+ * their own tasks: native coupons (PrestaShop must validate them at once, PRD V5) and
+ * the new sale of an exchange (its returned part already needs PrestaShop).
  *
  * Prices are resolved from the synced catalog on a tax-included basis, because
  * that is what PrestaShop actually charges: `catalog_product.price_ttc` for a
@@ -41,6 +52,9 @@ class CheckoutService
         private readonly PrinterService $printerService,
         private readonly bool $couponCheckoutEnabled = false,
         private readonly ?CatalogPriceResolver $priceResolver = null,
+        private readonly ?TicketNumberer $ticketNumberer = null,
+        private readonly ?Outbox $outbox = null,
+        private readonly ?OutboxSyncTrigger $syncTrigger = null,
     ) {
     }
 
@@ -74,9 +88,11 @@ class CheckoutService
      *
      * @param array<string, mixed> $cartData
      *
-     * @return array{ps_order_id: int, reference: string, total: float, change_due: float, payment_method: string, terminal_id: int, saga_error: bool, payable?: float, exchange_credit?: float}
+     * @return array<string, mixed> order_id (local), ps_order_id (null until uploaded), reference, synced, total,
+     *                              change_due, payment_method, terminal_id, saga_error, stock_warnings, and for an
+     *                              exchange payable and exchange_credit
      *
-     * @throws CheckoutException on validation or pre-PS errors
+     * @throws CheckoutException on validation errors (422) or when nothing could be stored (code 0, retryable)
      */
     public function createOrder(int $userId, array $cartData, string $paymentMethod, float $amountTendered, float $exchangeCredit = 0.0): array
     {
@@ -88,24 +104,108 @@ class CheckoutService
 
             return $this->createCouponOrder($userId, $cartData, $paymentMethod, $amountTendered);
         }
+        if ($exchangeCredit <= 0) {
+            return $this->createLocalOrder($userId, $cartData, $paymentMethod, $amountTendered);
+        }
 
+        return $this->createExchangeOrder($userId, $cartData, $paymentMethod, $amountTendered, $exchangeCredit);
+    }
+
+    /**
+     * The local-first sale (PRD V1, V2, V4). The ticket number is taken inside the
+     * transaction, so a rollback gives it back and the series has no gaps.
+     *
+     * @param array<string, mixed> $cartData
+     *
+     * @return array<string, mixed>
+     */
+    private function createLocalOrder(int $userId, array $cartData, string $paymentMethod, float $amountTendered): array
+    {
         $lines = $cartData['lines'] ?? $cartData['items'] ?? [];
-        $submittedTotal = (float) ($cartData['total'] ?? 0);
-        $customer = $cartData['customer'] ?? null;
-
-        if (empty($lines)) {
+        if (empty($lines) || !is_array($lines)) {
             throw CheckoutException::psValidationFailed('Cart is empty');
         }
 
-        // Prices and totals arrive from the browser: resolve them against the synced catalog.
-        $pricing = $this->resolveAuthoritativePricing($lines, $cartData['discount'] ?? null, $submittedTotal);
+        $pricing = $this->resolveAuthoritativePricing($lines, $cartData['discount'] ?? null, (float) ($cartData['total'] ?? 0));
         $lines = $pricing['lines'];
         $total = $pricing['total'];
+        $stockWarnings = $this->validateStock($lines);
 
-        // Validate stock for each line
-        $this->validateStock($lines);
+        $payload = $this->orderPayload($lines, $cartData, $paymentMethod, $amountTendered);
+        $cashContext = $this->cashSessionService->requireOpenSession($userId);
+        $cashImpactAmount = $this->resolveCashImpactAmount($paymentMethod, $total, $amountTendered, $cartData);
+        $changeDue = max(0.0, round($amountTendered - $total, 2));
+        $tender = [
+            'cash' => $cashImpactAmount,
+            'card' => round(max(0.0, $total - $cashImpactAmount), 2),
+        ];
+        $terminalId = (int) ($cashContext['terminal_id'] ?? 1);
+        $sessionId = (int) ($cashContext['session_id'] ?? 0);
+        $date = new \DateTimeImmutable();
+        $numberer = $this->ticketNumberer ?? new TicketNumberer($this->conn);
+        $outbox = $this->outbox ?? new Outbox($this->conn);
 
-        // Build PS payload
+        try {
+            $numberer->prepareYear($terminalId, $date);
+            [$orderId, $reference] = $this->conn->transactional(function () use ($numberer, $outbox, $terminalId, $sessionId, $date, $userId, $total, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines, $tender, $cashImpactAmount, $payload): array {
+                $reference = $numberer->next($terminalId, $date);
+                $orderId = $this->insertOrderMeta(null, $userId, $reference, $total, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines, null, $tender, false);
+                if ($cashImpactAmount > 0) {
+                    $this->cashSessionService->recordMovementInTransaction($sessionId, 'sale', $cashImpactAmount, 'Checkout sale', null, $orderId);
+                }
+                $this->decrementStock($lines);
+                $outbox->enqueueSale($orderId, $payload + ['reference' => $reference]);
+
+                return [$orderId, $reference];
+            });
+        } catch (\DomainException|\OverflowException $e) {
+            // No ticket letter, or the letter used up its numbers this year.
+            throw CheckoutException::ticketNumberUnavailable($e->getMessage(), $e);
+        } catch (NoOpenCashSessionException $e) {
+            throw $e;
+        } catch (CheckoutException $e) {
+            if ($e->getCode() === 422) {
+                throw $e;
+            }
+            throw CheckoutException::localSaveFailed($e);
+        } catch (\Throwable $e) {
+            // Everything rolled back: the sale does not exist and can be charged again.
+            throw CheckoutException::localSaveFailed($e);
+        }
+
+        try {
+            $this->messageBus->dispatch(new PrintTicketMessage(TicketDataResolver::saleKey($orderId), $terminalId));
+        } catch (\Throwable $e) {
+            // Print dispatch failure must not block checkout
+        }
+        if ($paymentMethod === 'cash' || $paymentMethod === 'mixed') {
+            try {
+                $this->printerService->openDrawer($terminalId);
+            } catch (\Throwable $e) {
+                // Drawer failure must not block checkout
+            }
+        }
+        // Upload attempt once the response is sent; the minute task covers the rest.
+        $this->syncTrigger?->request();
+        $this->cart->clear();
+
+        return [
+            'order_id' => $orderId,
+            'ps_order_id' => null,
+            'reference' => $reference,
+            'synced' => false,
+            'total' => $total,
+            'change_due' => $changeDue,
+            'payment_method' => $paymentMethod,
+            'terminal_id' => $terminalId,
+            'saga_error' => false,
+            'stock_warnings' => $stockWarnings,
+        ];
+    }
+
+    /** @param array<int, array<string, mixed>> $lines @param array<string, mixed> $cartData @return array<string, mixed> */
+    private function orderPayload(array $lines, array $cartData, string $paymentMethod, float $amountTendered): array
+    {
         $products = [];
         foreach ($lines as $line) {
             $products[] = [
@@ -116,12 +216,13 @@ class CheckoutService
             ];
         }
 
+        $customer = $cartData['customer'] ?? null;
         $idCustomer = 0;
-        if ($customer !== null && isset($customer['id']) && \is_int($customer['id']) && $customer['id'] > 0) {
+        if (is_array($customer) && isset($customer['id']) && \is_int($customer['id']) && $customer['id'] > 0) {
             $idCustomer = $customer['id'];
         }
 
-        $payload = [
+        return [
             'products' => $products,
             'id_customer' => $idCustomer,
             'id_currency' => 1,
@@ -130,6 +231,34 @@ class CheckoutService
             'amount_tendered' => $amountTendered,
             'notes' => '',
         ];
+    }
+
+    /**
+     * The new items of an exchange: still created in PrestaShop first, as before,
+     * because the exchange's returned part already needs PrestaShop (T5 queues both).
+     *
+     * @param array<string, mixed> $cartData
+     *
+     * @return array<string, mixed>
+     */
+    private function createExchangeOrder(int $userId, array $cartData, string $paymentMethod, float $amountTendered, float $exchangeCredit): array
+    {
+        $lines = $cartData['lines'] ?? $cartData['items'] ?? [];
+        $submittedTotal = (float) ($cartData['total'] ?? 0);
+
+        if (empty($lines)) {
+            throw CheckoutException::psValidationFailed('Cart is empty');
+        }
+
+        // Prices and totals arrive from the browser: resolve them against the synced catalog.
+        $pricing = $this->resolveAuthoritativePricing($lines, $cartData['discount'] ?? null, $submittedTotal);
+        $lines = $pricing['lines'];
+        $total = $pricing['total'];
+
+        // Stock 0 or less only warns (PRD V4).
+        $stockWarnings = $this->validateStock($lines);
+
+        $payload = $this->orderPayload($lines, $cartData, $paymentMethod, $amountTendered);
 
         $cashContext = $this->cashSessionService->requireOpenSession($userId);
         // What the customer still pays; the whole total without an exchange credit.
@@ -152,8 +281,9 @@ class CheckoutService
 
         // Once PrestaShop creates the order, local follow-up failures must not invite a duplicate retry.
         $sagaError = false;
+        $orderId = null;
         try {
-            $this->insertOrderMeta($psOrderId, $userId, $reference, $total, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines, null, $tender);
+            $orderId = $this->insertOrderMeta($psOrderId, $userId, $reference, $total, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines, null, $tender);
         } catch (\Throwable $e) {
             $sagaError = true;
         }
@@ -195,23 +325,20 @@ class CheckoutService
         }
 
         $result = [
+            'order_id' => $orderId,
             'ps_order_id' => $psOrderId,
             'reference' => $reference,
+            'synced' => true,
             'total' => $total,
             'change_due' => $changeDue,
             'payment_method' => $paymentMethod,
             'terminal_id' => (int) ($cashContext['terminal_id'] ?? 1),
             'saga_error' => $sagaError,
+            'stock_warnings' => $stockWarnings,
         ];
 
-        if ($exchangeCredit > 0) {
-            // The exchange's new items never came from the sale screen cart.
-            return $result + ['payable' => $payable, 'exchange_credit' => $tender['exchange_credit']];
-        }
-
-        $this->cart->clear();
-
-        return $result;
+        // The exchange's new items never came from the sale screen cart.
+        return $result + ['payable' => $payable, 'exchange_credit' => $tender['exchange_credit']];
     }
 
     /**
@@ -361,9 +488,13 @@ class CheckoutService
             $this->cart->clear();
         }
 
+        $orderId = $sagaError ? false : $this->conn->fetchOne('SELECT id FROM order_meta WHERE ps_order_id = ?', [$psOrderId]);
+
         return [
+            'order_id' => is_numeric($orderId) ? (int) $orderId : null,
             'ps_order_id' => $psOrderId,
             'reference' => $reference,
+            'synced' => true,
             'total' => $payable,
             'change_due' => $changeDue,
             'payment_method' => $paymentMethod,
@@ -675,13 +806,19 @@ class CheckoutService
     }
 
     /**
+     * Stock 0 or less is "Avisar y permitir" (PRD V4): the sale goes through and the
+     * cashier is warned about each line the local stock does not cover.
+     *
      * @param array<int, array<string, mixed>> $lines
      *
-     * @throws CheckoutException
+     * @return list<array{line_index: int, product_id: int, id_product_attribute: int, requested: int, available: int}>
+     *
+     * @throws CheckoutException for a line without a valid product
      */
-    private function validateStock(array $lines): void
+    private function validateStock(array $lines): array
     {
-        foreach ($lines as $line) {
+        $warnings = [];
+        foreach (array_values($lines) as $index => $line) {
             $productId = (int) ($line['product_id'] ?? $line['id'] ?? 0);
             $combinationId = (int) ($line['id_product_attribute'] ?? 0);
             $qty = (int) ($line['qty'] ?? $line['quantity'] ?? 1);
@@ -708,11 +845,17 @@ class CheckoutService
             }
 
             if ((int) $stock < $qty) {
-                throw CheckoutException::psValidationFailed(
-                    sprintf('Insufficient stock for product %d (requested %d, available %d)', $productId, $qty, (int) $stock)
-                );
+                $warnings[] = [
+                    'line_index' => $index,
+                    'product_id' => $productId,
+                    'id_product_attribute' => $combinationId,
+                    'requested' => $qty,
+                    'available' => (int) $stock,
+                ];
             }
         }
+
+        return $warnings;
     }
 
     /**
@@ -721,7 +864,7 @@ class CheckoutService
      * @throws CheckoutException
      */
     private function insertOrderMeta(
-        int $psOrderId,
+        ?int $psOrderId,
         int $userId,
         string $reference,
         float $total,
@@ -732,7 +875,8 @@ class CheckoutService
         array $lines,
         ?array $coupon = null,
         array $tender = ['cash' => 0.0, 'card' => 0.0],
-    ): void {
+        bool $synced = true,
+    ): int {
         try {
             $breakdownLines = [];
             $netTotals = [];
@@ -765,6 +909,8 @@ class CheckoutService
             $tax = $this->resolveVatAmount($lines, $subtotal, $total);
 
             $this->conn->insert('order_meta', [
+                // The ticket code; a PrestaShop reference longer than the column stays in payment_breakdown only.
+                'reference' => strlen($reference) <= 9 && $reference !== '' ? $reference : null,
                 'ps_order_id' => $psOrderId,
                 'terminal_id' => (int) ($cashContext['terminal_id'] ?? 1),
                 'session_id' => (int) ($cashContext['session_id'] ?? 0),
@@ -787,11 +933,13 @@ class CheckoutService
                     'coupon' => $coupon,
                 ], JSON_THROW_ON_ERROR),
                 'printed' => 0,
-                'synced' => 1,
+                'synced' => $synced ? 1 : 0,
                 'created_at' => (new \DateTimeImmutable())->format('Y-m-d H:i:s'),
             ]);
+
+            return (int) $this->conn->lastInsertId();
         } catch (\Throwable $e) {
-            throw CheckoutException::orderMetaFailed($psOrderId, $reference, $e);
+            throw CheckoutException::orderMetaFailed($psOrderId ?? 0, $reference, $e);
         }
     }
 
@@ -838,7 +986,8 @@ class CheckoutService
     }
 
     /**
-     * Decrements the local catalog_stock copy so the POS shows the sale at once.
+     * Decrements the local catalog_stock copy so the POS shows the sale at once. It
+     * may go below zero: stock 0 or less warns and still sells (PRD V4).
      *
      * Nothing is sent to PrestaShop: creating the native order already lowers its
      * stock_available (OrderDetail::updateProductQuantityInStock). Pushing the
@@ -861,35 +1010,12 @@ class CheckoutService
                     continue;
                 }
 
-                if ($combinationId > 0) {
-                    $affected = $this->conn->executeStatement(
-                        'UPDATE catalog_stock SET quantity = quantity - ? WHERE id_product = ? AND id_product_attribute = ? AND quantity >= ?',
-                        [$qty, $productId, $combinationId, $qty]
-                    );
-                    $existsQuery = 'SELECT quantity, ps_stock_id FROM catalog_stock WHERE id_product = ? AND id_product_attribute = ?';
-                    $existsParams = [$productId, $combinationId];
-                } else {
-                    $affected = $this->conn->executeStatement(
-                        'UPDATE catalog_stock SET quantity = quantity - ? WHERE id_product = ? AND id_product_attribute = 0 AND quantity >= ?',
-                        [$qty, $productId, $qty]
-                    );
-                    $existsQuery = 'SELECT quantity, ps_stock_id FROM catalog_stock WHERE id_product = ? AND id_product_attribute = 0';
-                    $existsParams = [$productId];
-                }
-
-                if ($affected === 0) {
-                    $row = $this->conn->fetchAssociative($existsQuery, $existsParams);
-
-                    if ($row === false) {
-                        // Product/combination not tracked in catalog_stock — skip silently
-                        continue;
-                    }
-
-                    throw new \RuntimeException(sprintf('Insufficient stock for product %d', $productId));
-                }
+                // A product or combination not tracked in catalog_stock updates nothing.
+                $this->conn->executeStatement(
+                    'UPDATE catalog_stock SET quantity = quantity - ? WHERE id_product = ? AND id_product_attribute = ?',
+                    [$qty, $productId, $combinationId]
+                );
             }
-        } catch (CheckoutException $e) {
-            throw $e;
         } catch (\Throwable $e) {
             throw CheckoutException::stockUpdateFailed(0, $e);
         }

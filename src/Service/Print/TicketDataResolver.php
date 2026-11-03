@@ -16,16 +16,41 @@ class TicketDataResolver
     ) {
     }
 
+    /**
+     * Print key of a sale by its local id (order_meta.id): the negative id, so it can
+     * never be mistaken for a PrestaShop order id and still travels through the
+     * existing integer print path (PrintTicketMessage, PrinterService) before the
+     * sale has a PrestaShop order.
+     */
+    public static function saleKey(int $orderMetaId): int
+    {
+        if ($orderMetaId < 1) {
+            throw new \InvalidArgumentException('A local sale id is positive');
+        }
+
+        return -$orderMetaId;
+    }
+
+    /**
+     * @param int $orderId a PrestaShop order id (positive) or a saleKey() (negative)
+     */
     public function resolve(int $orderId): ?TicketData
     {
-        $row = $this->connection->fetchAssociative(
-            'SELECT ps_order_id, terminal_id, user_id, payment_breakdown, created_at FROM order_meta WHERE ps_order_id = ?',
-            [$orderId]
-        );
+        $row = $orderId < 0
+            ? $this->connection->fetchAssociative(
+                'SELECT ps_order_id, terminal_id, user_id, payment_breakdown, created_at FROM order_meta WHERE id = ?',
+                [-$orderId]
+            )
+            : $this->connection->fetchAssociative(
+                'SELECT ps_order_id, terminal_id, user_id, payment_breakdown, created_at FROM order_meta WHERE ps_order_id = ?',
+                [$orderId]
+            );
 
         if ($row === false) {
             return null;
         }
+        // The PrestaShop order id once uploaded; the token and exchange lookups use it.
+        $psOrderId = isset($row['ps_order_id']) ? (int) $row['ps_order_id'] : ($orderId > 0 ? $orderId : null);
 
         $breakdown = json_decode((string) $row['payment_breakdown'], true);
         if (!\is_array($breakdown)) {
@@ -55,7 +80,7 @@ class TicketDataResolver
             : null;
 
         $token = $this->verificationService->generateToken([
-            'order_id' => $orderId,
+            'order_id' => $psOrderId,
             'reference' => $reference,
             'total' => $total,
         ]);
@@ -64,7 +89,7 @@ class TicketDataResolver
         [$storeAddress, $ticketHeader, $ticketFooter, $ticketLogo, $ticketWidthPx, $legalName, $taxId, $storeName] = $this->terminalPresentation((int) $row['terminal_id']);
 
         return new TicketData(
-            orderId: $orderId,
+            orderId: $psOrderId ?? $orderId,
             reference: $reference,
             storeName: $storeName,
             storeAddress: $storeAddress,
@@ -84,7 +109,7 @@ class TicketDataResolver
             verificationUrl: $this->verificationService->buildVerificationUrl($token),
             ticketCode: $this->ticketCode((int) $row['terminal_id']),
             exchangeCredit: $exchangeCredit,
-            exchangeCreditNote: $exchangeCredit !== null ? $this->exchangeCreditNote($orderId) : null,
+            exchangeCreditNote: $exchangeCredit !== null && $psOrderId !== null ? $this->exchangeCreditNote($psOrderId) : null,
             legalName: $legalName,
             taxId: $taxId,
         );

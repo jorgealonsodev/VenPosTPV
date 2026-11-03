@@ -84,16 +84,24 @@ const SaleScreen = {
         }
 
         async function handleReprint() {
-            if (!lastCompletedOrder.value || !lastCompletedOrder.value.ps_order_id) {
+            const order = lastCompletedOrder.value;
+            // order_id: the local sale, printable before it reaches PrestaShop.
+            const saleId = order && order.order_id ? order.order_id : null;
+            const psOrderId = order && order.ps_order_id ? order.ps_order_id : null;
+            if (!saleId && !psOrderId) {
                 notify('No hay ticket para reimprimir', 'var(--red)');
                 return;
             }
             try {
-                const result = await ApiClient.ticketReprint(lastCompletedOrder.value.ps_order_id);
+                const result = saleId ? await ApiClient.ticketReprintSale(saleId) : await ApiClient.ticketReprint(psOrderId);
                 if (result && result.data && result.data.printed) {
                     notify('Ticket reimpreso', 'var(--green)');
                 } else if (result && result.data && result.data.fallback === 'pdf') {
-                    ApiClient.ticketPdf(lastCompletedOrder.value.ps_order_id);
+                    if (saleId) {
+                        ApiClient.ticketSalePdf(saleId);
+                    } else {
+                        ApiClient.ticketPdf(psOrderId);
+                    }
                     notify('Descargando ticket PDF', 'var(--blue)');
                 } else {
                     notify('Reimpresion completada', 'var(--green)');

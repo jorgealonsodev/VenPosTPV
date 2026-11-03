@@ -11,6 +11,7 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 use Symfony\Component\HttpKernel\Attribute\AsController;
 use Symfony\Component\Routing\Attribute\Route;
 use VenPosTPV\Service\Print\PrinterService;
+use VenPosTPV\Service\Print\TicketData;
 use VenPosTPV\Service\Print\TicketDataResolver;
 use VenPosTPV\Service\Print\TicketPdfGenerator;
 use VenPosTPV\Service\Print\TicketVerificationService;
@@ -34,7 +35,26 @@ final class TicketController
             return new JsonResponse(['error' => 'Unauthorized'], Response::HTTP_UNAUTHORIZED);
         }
 
-        $ticketData = $this->ticketDataResolver->resolve($id);
+        // A PrestaShop order id; local sales have their own route below.
+        $ticketData = $id > 0 ? $this->ticketDataResolver->resolve($id) : null;
+
+        return $this->pdfResponse($request, $ticketData);
+    }
+
+    /** PDF of a sale by its local id (order_meta.id), uploaded to PrestaShop or not. */
+    #[Route('/ticket/sale/{id}/pdf', methods: ['GET'], requirements: ['id' => '\\d+'])]
+    public function salePdf(Request $request, int $id): Response
+    {
+        $session = $request->getSession();
+        if ($session->get('user_id') === null) {
+            return new JsonResponse(['error' => 'Unauthorized'], Response::HTTP_UNAUTHORIZED);
+        }
+
+        return $this->pdfResponse($request, $id > 0 ? $this->ticketDataResolver->resolve(TicketDataResolver::saleKey($id)) : null);
+    }
+
+    private function pdfResponse(Request $request, ?TicketData $ticketData): Response
+    {
         if ($ticketData === null) {
             return new JsonResponse(['error' => 'Order not found'], Response::HTTP_NOT_FOUND);
         }
@@ -63,10 +83,14 @@ final class TicketController
         }
 
         $body = json_decode((string) $request->getContent(), true) ?? [];
-        $orderId = isset($body['ps_order_id']) ? (int) $body['ps_order_id'] : 0;
+        // order_id is the local sale (works before the upload); ps_order_id the PrestaShop order.
+        $localId = isset($body['order_id']) ? (int) $body['order_id'] : 0;
+        $orderId = $localId > 0
+            ? TicketDataResolver::saleKey($localId)
+            : (isset($body['ps_order_id']) ? max(0, (int) $body['ps_order_id']) : 0);
         $giftMode = isset($body['gift_mode']) && $body['gift_mode'] === true;
 
-        if ($orderId <= 0) {
+        if ($orderId === 0) {
             return new JsonResponse(['error' => 'Missing ps_order_id'], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 

@@ -20,6 +20,8 @@ const PaymentModal = {
         const errorMsg = Vue.ref('');
         const errorRetry = Vue.ref(false);
         const lastOrderId = Vue.ref(null);
+        // Local sale id: the ticket exists before the sale is uploaded to PrestaShop.
+        const lastSaleId = Vue.ref(null);
         const voucherCode = Vue.ref('');
         const voucherPreview = Vue.ref(null);
         const voucherBusy = Vue.ref(false);
@@ -187,6 +189,7 @@ const PaymentModal = {
                         throw new Error('coupon_reconcile_required: el pedido nativo existe, pero el registro local debe reconciliarse antes de cobrar de nuevo.');
                     }
                     lastOrderId.value = response.data.ps_order_id || null;
+                    lastSaleId.value = response.data.order_id || null;
                     completedTotal.value = Object.prototype.hasOwnProperty.call(response.data, 'total')
                         ? Number(response.data.total)
                         : null;
@@ -194,12 +197,17 @@ const PaymentModal = {
                         ? Number(response.data.change_due)
                         : null;
                     const pt = printerType.value;
-                    if (pt === 'pdf' && lastOrderId.value) {
-                        ApiClient.ticketPdf(lastOrderId.value);
-                    } else if ((pt === 'escpos' || pt === 'system') && lastOrderId.value) {
-                        ApiClient.ticketReprint(lastOrderId.value).catch(() => {
-                            // ESC/POS print failure is non-blocking
-                        });
+                    if (pt === 'pdf') {
+                        downloadTicket();
+                    } else if (pt === 'escpos' || pt === 'system') {
+                        const printing = lastSaleId.value
+                            ? ApiClient.ticketReprintSale(lastSaleId.value)
+                            : (lastOrderId.value ? ApiClient.ticketReprint(lastOrderId.value) : null);
+                        if (printing) {
+                            printing.catch(() => {
+                                // ESC/POS print failure is non-blocking
+                            });
+                        }
                     }
                     step.value = 'done';
                     setTimeout(() => {
@@ -237,7 +245,9 @@ const PaymentModal = {
         }
 
         function downloadTicket() {
-            if (lastOrderId.value) {
+            if (lastSaleId.value) {
+                ApiClient.ticketSalePdf(lastSaleId.value);
+            } else if (lastOrderId.value) {
                 ApiClient.ticketPdf(lastOrderId.value);
             }
         }
@@ -292,7 +302,7 @@ const PaymentModal = {
             cashInput.value = props.total.toFixed(2).replace('.', ',');
         }
 
-        return { method, cashInput, card1, card2, step, errorMsg, errorRetry, lastOrderId, methods, cashParsed, change, cardParsed, card2Parsed, dataphoneMode, printerType, voucherCode, voucherPreview, voucherBusy, voucherError, voucherTender, voucherCashInput, voucherPayable, voucherDiscount, voucherGross, voucherCashParsed, voucherChange, voucherReconciliationRequired, completedTotal, completedChange, doneTotal, doneChange, isSubmitting, canConfirm, handleConfirm, retryCheckout, returnToSelection, appendNum, exacto, downloadTicket, applyVoucher, invalidateVoucher };
+        return { method, cashInput, card1, card2, step, errorMsg, errorRetry, lastOrderId, lastSaleId, methods, cashParsed, change, cardParsed, card2Parsed, dataphoneMode, printerType, voucherCode, voucherPreview, voucherBusy, voucherError, voucherTender, voucherCashInput, voucherPayable, voucherDiscount, voucherGross, voucherCashParsed, voucherChange, voucherReconciliationRequired, completedTotal, completedChange, doneTotal, doneChange, isSubmitting, canConfirm, handleConfirm, retryCheckout, returnToSelection, appendNum, exacto, downloadTicket, applyVoucher, invalidateVoucher };
     },
     template: `
         <div class="modal-backdrop" @click.self="$emit('close')">
@@ -309,7 +319,7 @@ const PaymentModal = {
                 <div v-if="printerType !== 'none'" style="color:var(--text3); font-size:13px;">
                     {{ printerType === 'escpos' ? 'Ticket enviado a impresora' : 'Abriendo ticket PDF...' }}
                 </div>
-                <button v-if="lastOrderId && printerType === 'pdf'" @click="downloadTicket"
+                <button v-if="(lastSaleId || lastOrderId) && printerType === 'pdf'" @click="downloadTicket"
                     style="margin-top:8px; padding:10px 20px; border-radius:10px; border:1px solid var(--green-dim); background:var(--green-bg); color:var(--green); cursor:pointer; font-weight:600;">
                     Descargar ticket PDF
                 </button>

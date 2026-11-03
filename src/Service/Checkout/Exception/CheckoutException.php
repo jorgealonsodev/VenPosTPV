@@ -26,6 +26,12 @@ final class CheckoutException extends RuntimeException
         );
     }
 
+    /** PrestaShop refused the order for good (HTTP 404 or 422): retrying cannot help. */
+    public static function psRejected(int $status, string $details): self
+    {
+        return new self(sprintf('PrestaShop rejected the order (HTTP %d): %s', $status, $details), 422);
+    }
+
     public static function couponUnavailable(string $message): self
     {
         return new self($message, 503);
@@ -38,6 +44,18 @@ final class CheckoutException extends RuntimeException
             409,
             $previous
         );
+    }
+
+    /** The cashier must fix the terminal (no ticket letter) or the series ran out: nothing was stored. */
+    public static function ticketNumberUnavailable(string $message, ?Throwable $previous = null): self
+    {
+        return new self($message, 422, $previous);
+    }
+
+    /** The local sale transaction rolled back: nothing was stored, charging again is safe. */
+    public static function localSaveFailed(Throwable $previous): self
+    {
+        return new self(sprintf('The sale could not be stored locally: %s', $previous->getMessage()), 0, $previous);
     }
 
     public static function stockUpdateFailed(int $psOrderId, Throwable $previous): self

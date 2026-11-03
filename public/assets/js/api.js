@@ -90,6 +90,11 @@ const ApiClient = (function () {
         },
         ticketReprint: (orderId) => request('/api/ticket/reprint', { method: 'POST', body: JSON.stringify({ ps_order_id: orderId }) }),
         ticketReprintGift: (orderId) => request('/api/ticket/reprint', { method: 'POST', body: JSON.stringify({ ps_order_id: orderId, gift_mode: true }) }),
+        // A sale by its local order_id: works before it is uploaded to PrestaShop.
+        ticketSalePdf: (orderId) => {
+            window.open(BASE_URL + '/api/ticket/sale/' + encodeURIComponent(orderId) + '/pdf', '_blank');
+        },
+        ticketReprintSale: (orderId) => request('/api/ticket/reprint', { method: 'POST', body: JSON.stringify({ order_id: orderId }) }),
         ticketVerify: (token) => request('/api/ticket/verify?token=' + encodeURIComponent(token)),
         refundOrder: (psOrderId, refund) => request('/api/refund', { method: 'POST', body: JSON.stringify({ ...refund, ps_order_id: psOrderId }) }),
         refundPdf: (refundId) => {

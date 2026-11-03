@@ -61,6 +61,17 @@ class RefundController
         $cardConfirmed = ($body['card_confirmed'] ?? false) === true;
 
         if ($psOrderId <= 0) {
+            // A sale stored locally but not uploaded yet has no PrestaShop order to refund
+            // against; refunds of such sales are queued behind it in T5 (PRD D1).
+            $localId = isset($body['order_id']) && is_numeric($body['order_id']) ? (int) $body['order_id'] : 0;
+            $reference = isset($body['reference']) && \is_string($body['reference']) ? $body['reference'] : '';
+            if (($localId > 0 || $reference !== '') && $this->orderSearchService->isUnsyncedSale($localId, $reference)) {
+                return new JsonResponse(
+                    ['error' => 'La venta aún no se ha subido a PrestaShop', 'code' => 'sale_not_synced', 'retry' => false],
+                    Response::HTTP_CONFLICT
+                );
+            }
+
             return new JsonResponse(
                 ['error' => 'Missing or invalid ps_order_id', 'retry' => false],
                 Response::HTTP_UNPROCESSABLE_ENTITY

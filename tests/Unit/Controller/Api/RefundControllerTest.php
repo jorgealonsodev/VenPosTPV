@@ -30,6 +30,33 @@ final class RefundControllerTest extends TestCase
         );
     }
 
+    public function testRefundOfASaleNotUploadedYetIsAClear409(): void
+    {
+        foreach ([['order_id' => 7], ['reference' => 'A26000007']] as $body) {
+            $orderSearch = $this->createMock(OrderSearchService::class);
+            $orderSearch->expects($this->once())->method('isUnsyncedSale')
+                ->with($body['order_id'] ?? 0, $body['reference'] ?? '')->willReturn(true);
+            $refundService = $this->createMock(RefundService::class);
+            $refundService->expects($this->never())->method('processRefund');
+
+            $response = $this->createController($refundService, $orderSearch)->refund(SessionRequest::json($body + ['ps_order_id' => null], ['user_id' => 1]));
+
+            $this->assertSame(Response::HTTP_CONFLICT, $response->getStatusCode());
+            $this->assertSame(['error' => 'La venta aún no se ha subido a PrestaShop', 'code' => 'sale_not_synced', 'retry' => false], json_decode((string) $response->getContent(), true));
+        }
+    }
+
+    public function testRefundWithoutAnyOrderKeepsItsPrevious422(): void
+    {
+        $orderSearch = $this->createMock(OrderSearchService::class);
+        $orderSearch->method('isUnsyncedSale')->willReturn(false);
+
+        $response = $this->createController(orderSearch: $orderSearch)->refund(SessionRequest::json(['lines' => []], ['user_id' => 1]));
+
+        $this->assertSame(Response::HTTP_UNPROCESSABLE_ENTITY, $response->getStatusCode());
+        $this->assertSame(['error' => 'Missing or invalid ps_order_id', 'retry' => false], json_decode((string) $response->getContent(), true));
+    }
+
     public function testNoTicketRefundRequiresASession(): void
     {
         $response = $this->createController()->refundWithoutTicket(SessionRequest::json(['method' => 'cash']));

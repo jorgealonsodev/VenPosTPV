@@ -19,6 +19,9 @@ class OrderSearchService
     /** PrestaShop's default order references: 9 letters. */
     private const WEB_REFERENCE = '/^[A-Za-z]{9}$/';
 
+    /** id, reference, ps_reference and synced: Version00000031 (local-first sales). */
+    private const SALE_COLUMNS = 'id, reference, ps_order_id, ps_reference, synced, terminal_id, session_id, user_id, payment_breakdown, refunded_amount, created_at';
+
     public function __construct(
         private readonly Connection $connection,
         private readonly ?PsOrderLookupClient $lookupClient = null,
@@ -41,8 +44,10 @@ class OrderSearchService
         }
 
         if (!empty($query['reference']) && \is_string($query['reference'])) {
-            $where[] = 'payment_breakdown LIKE ?';
+            // The ticket code is in payment_breakdown; a different PrestaShop reference (PRD S5) in ps_reference.
+            $where[] = '(payment_breakdown LIKE ? OR ps_reference = ?)';
             $params[] = '%' . $query['reference'] . '%';
+            $params[] = strtoupper($query['reference']);
         }
 
         if (!empty($query['date_from']) && \is_string($query['date_from'])) {
@@ -59,7 +64,7 @@ class OrderSearchService
             $where[] = 'refunded_amount > 0';
         }
 
-        $sql = 'SELECT ps_order_id, terminal_id, session_id, user_id, payment_breakdown, refunded_amount, created_at FROM order_meta WHERE ' . implode(' AND ', $where) . ' ORDER BY created_at DESC LIMIT 50';
+        $sql = 'SELECT ' . self::SALE_COLUMNS . ' FROM order_meta WHERE ' . implode(' AND ', $where) . ' ORDER BY created_at DESC LIMIT 50';
 
         $rows = $this->connection->fetchAllAssociative($sql, $params);
         if ($rows !== []) {
@@ -187,7 +192,7 @@ class OrderSearchService
     public function getOrder(int $psOrderId): ?array
     {
         $row = $this->connection->fetchAssociative(
-            'SELECT ps_order_id, terminal_id, session_id, user_id, payment_breakdown, refunded_amount, created_at FROM order_meta WHERE ps_order_id = ?',
+            'SELECT ' . self::SALE_COLUMNS . ' FROM order_meta WHERE ps_order_id = ?',
             [$psOrderId]
         );
 
@@ -204,9 +209,12 @@ class OrderSearchService
     public function getOrderByReference(string $reference): ?array
     {
         $row = $this->connection->fetchAssociative(
-            'SELECT ps_order_id, terminal_id, session_id, user_id, payment_breakdown, refunded_amount, created_at FROM order_meta WHERE payment_breakdown LIKE ?',
+            'SELECT ' . self::SALE_COLUMNS . ' FROM order_meta WHERE payment_breakdown LIKE ?',
             ['%"reference":"' . $reference . '"%']
         );
+        if ($row === false) {
+            $row = $this->connection->fetchAssociative('SELECT ' . self::SALE_COLUMNS . ' FROM order_meta WHERE ps_reference = ?', [$reference]);
+        }
 
         if ($row === false) {
             return null;
@@ -216,6 +224,25 @@ class OrderSearchService
     }
 
     /**
+     * A TPV sale stored locally but not uploaded to PrestaShop yet, by its local id
+     * or its ticket code. Its refunds and exchanges wait for T5 (PRD D1-D3).
+     */
+    public function isUnsyncedSale(int $orderId, string $reference): bool
+    {
+        if ($orderId > 0) {
+            return $this->connection->fetchOne('SELECT 1 FROM order_meta WHERE id = ? AND ps_order_id IS NULL', [$orderId]) !== false;
+        }
+        if ($reference !== '') {
+            return $this->connection->fetchOne('SELECT 1 FROM order_meta WHERE reference = ? AND ps_order_id IS NULL', [strtoupper($reference)]) !== false;
+        }
+
+        return false;
+    }
+
+    /**
+     * A sale not uploaded yet has ps_order_id null and synced false; its order_id
+     * (local key) and reference (ticket code) identify it.
+     *
      * @param array<string, mixed> $row
      *
      * @return array<string, mixed>
@@ -227,9 +254,10 @@ class OrderSearchService
             $breakdown = [];
         }
 
-        $psOrderId = (int) $row['ps_order_id'];
+        $psOrderId = isset($row['ps_order_id']) ? (int) $row['ps_order_id'] : null;
         $lines = \is_array($breakdown['lines'] ?? null) ? array_values($breakdown['lines']) : [];
-        $refunded = $lines === [] ? [] : $this->refundedByLine($psOrderId);
+        // Refunds are keyed by the PrestaShop order: a sale not uploaded yet has none.
+        $refunded = $lines === [] || $psOrderId === null ? [] : $this->refundedByLine($psOrderId);
         foreach ($lines as $index => $line) {
             $refundedQty = $refunded[$index]['quantity'] ?? 0;
             $lines[$index]['refunded_qty'] = $refundedQty;
@@ -238,7 +266,10 @@ class OrderSearchService
         }
 
         return [
+            'order_id' => isset($row['id']) ? (int) $row['id'] : null,
             'ps_order_id' => $psOrderId,
+            'synced' => $psOrderId !== null,
+            'ps_reference' => isset($row['ps_reference']) && $row['ps_reference'] !== '' ? (string) $row['ps_reference'] : null,
             'terminal_id' => (int) $row['terminal_id'],
             'session_id' => (int) $row['session_id'],
             'user_id' => (int) $row['user_id'],
@@ -249,8 +280,8 @@ class OrderSearchService
             'change_due' => (float) ($breakdown['change_due'] ?? 0),
             'lines' => $lines,
             'tender' => \is_array($breakdown['tender'] ?? null) ? $breakdown['tender'] : null,
-            'pending_refund' => $lines === [] ? null : $this->pendingRefund($psOrderId),
-            'open_exchange' => $lines === [] ? null : $this->openExchange($psOrderId),
+            'pending_refund' => $lines === [] || $psOrderId === null ? null : $this->pendingRefund($psOrderId),
+            'open_exchange' => $lines === [] || $psOrderId === null ? null : $this->openExchange($psOrderId),
             'refunded_amount' => (float) $row['refunded_amount'],
             'created_at' => $row['created_at'],
         ];
