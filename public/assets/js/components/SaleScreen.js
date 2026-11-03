@@ -232,7 +232,8 @@ const SaleScreen = {
         }
 
         const hasOpenSession = Vue.computed(() => {
-            return !!(session.value && session.value.sessionId);
+            // session is a reactive object (not a ref): read its sessionId directly.
+            return !!(session && session.sessionId);
         });
 
         return {
