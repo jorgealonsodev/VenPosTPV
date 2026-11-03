@@ -1,0 +1,36 @@
+[workspace]
+resolver = "3"
+members = ["agent-core", "venpos-agent", "venpos-agent-tray"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+license = "UNLICENSED"
+publish = false
+
+[workspace.dependencies]
+agent-core = { path = "agent-core" }
+base64 = "0.22"
+clap = { version = "4.6.7", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
+gethostname = "1.1.0"
+httpdate = "1.0.3"
+interprocess = "2.4.7"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.10"
+thiserror = "2.0.21"
+time = { version = "0.3.44", default-features = false, features = ["std", "parsing", "formatting"] }
+tracing = { version = "0.1.44", default-features = false, features = ["std", "attributes"] }
+tracing-appender = "0.2.5"
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["std", "fmt", "registry"] }
+ureq = { version = "3.5.1", default-features = false, features = ["rustls", "platform-verifier", "json"] }
+
+# Shipped binaries: small and self-contained (A10).
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+opt-level = "z"
+# panic = "unwind" (default) on purpose: the service is long-lived and the
+# job loop isolates failures per job; abort would kill every pending job.
