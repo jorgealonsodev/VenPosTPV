@@ -13,7 +13,7 @@ use VenPosTPV\Service\Print\TicketLine;
 
 final class CreditNoteTemplateTest extends TestCase
 {
-    private function render(?CreditNoteInfo $note, string $barcodePath = '', bool $giftMode = false, string $method = 'cash', float $tendered = 30.0, float $change = 5.82, ?float $exchangeCredit = null, ?string $exchangeCreditNote = null, ?string $legalName = null, ?string $taxId = null): string
+    private function render(?CreditNoteInfo $note, string $barcodePath = '', bool $giftMode = false, string $method = 'cash', float $tendered = 30.0, float $change = 5.82, ?float $exchangeCredit = null, ?string $exchangeCreditNote = null, ?string $legalName = null, ?string $taxId = null, ?string $webOrderReference = null): string
     {
         $twig = new Environment(new FilesystemLoader(\dirname(__DIR__, 4) . '/templates'));
 
@@ -23,7 +23,7 @@ final class CreditNoteTemplateTest extends TestCase
                 ticketLogo: null, ticketWidthPx: null, date: new \DateTimeImmutable('2026-11-03 12:00'), cashierName: 'Ana',
                 lines: [new TicketLine('Camisa M', 1, 24.18, 24.18)], subtotal: 19.98, tax: 4.2, total: 24.18,
                 paymentMethod: $method, amountTendered: $tendered, changeDue: $change, verificationUrl: 'http://tpv/v', creditNote: $note,
-                exchangeCredit: $exchangeCredit, exchangeCreditNote: $exchangeCreditNote, legalName: $legalName, taxId: $taxId,
+                exchangeCredit: $exchangeCredit, exchangeCreditNote: $exchangeCreditNote, legalName: $legalName, taxId: $taxId, webOrderReference: $webOrderReference,
             ),
             'giftMode' => $giftMode,
             'qrPath' => '',
@@ -159,5 +159,15 @@ final class CreditNoteTemplateTest extends TestCase
             $this->assertStringContainsString('<div class="center">NIF: B12345674</div>', $html);
         }
         $this->assertStringNotContainsString('NIF:', $this->render(null));
+    }
+
+    /** PRD S5: the PDF of a sale PrestaShop gave another reference shows it under the ticket code. */
+    public function testSaleWithADifferentPrestaShopReferenceShowsPedidoWebUnderTheReference(): void
+    {
+        $html = $this->render(null, webOrderReference: 'XKQWERTYU');
+
+        $this->assertMatchesRegularExpression('#<div class="center">Ref: REF42</div>\s*<div class="center">Pedido web: XKQWERTYU</div>#', $html);
+        $this->assertSame(sha1($this->render(null)), sha1($this->render(null, webOrderReference: '')), 'an empty web reference renders nothing');
+        $this->assertStringNotContainsString('Pedido web', $this->render(null));
     }
 }

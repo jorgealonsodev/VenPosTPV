@@ -1,16 +1,51 @@
 /**
- * OrderDetailView — read-only order detail (items, qty, subtotal, IVA, total, payment method).
+ * OrderDetailView — order detail (items, qty, subtotal, IVA, total, payment method) with
+ * reprint and PDF. A TPV sale goes by its local order_id, also before it is uploaded to
+ * PrestaShop; an online order (no local id) by its ps_order_id.
  */
 const OrderDetailView = {
     props: ['order'],
-    emits: ['back'],
-    setup(props) {
+    emits: ['back', 'notify'],
+    setup(props, { emit }) {
+        const title = Vue.computed(() => {
+            const order = props.order || {};
+            return order.reference || (order.ps_order_id ? '#' + order.ps_order_id : 'Venta ' + (order.order_id || ''));
+        });
+        const canPrint = Vue.computed(() => !!(props.order && (props.order.order_id || props.order.ps_order_id)));
+
+        async function reprint() {
+            const order = props.order || {};
+            const saleId = order.order_id || null;
+            const psOrderId = order.ps_order_id || null;
+            if (!saleId && !psOrderId) return;
+            try {
+                const result = saleId ? await ApiClient.ticketReprintSale(saleId) : await ApiClient.ticketReprint(psOrderId);
+                if (result && result.data && result.data.fallback === 'pdf') {
+                    pdf();
+                    emit('notify', 'Descargando ticket PDF', 'var(--blue)');
+                } else {
+                    emit('notify', 'Ticket reimpreso', 'var(--green)');
+                }
+            } catch (err) {
+                emit('notify', 'Error al reimprimir: ' + (err.message || 'Error'), 'var(--red)');
+            }
+        }
+
+        function pdf() {
+            const order = props.order || {};
+            if (order.order_id) {
+                ApiClient.ticketSalePdf(order.order_id);
+            } else if (order.ps_order_id) {
+                ApiClient.ticketPdf(order.ps_order_id);
+            }
+        }
+
         const totalQty = Vue.computed(() => {
             if (!props.order || !props.order.lines) return 0;
             return props.order.lines.reduce((sum, line) => sum + (line.qty || line.quantity || 1), 0);
         });
 
-        return { totalQty };
+        return { totalQty, title, canPrint, reprint, pdf };
     },
     template: `
         <div style="display:flex; flex-direction:column; height:100%; overflow:hidden;">
@@ -26,8 +61,9 @@ const OrderDetailView = {
             <!-- Info -->
             <div style="padding:12px 14px; border-bottom:1px solid var(--border); display:flex; flex-direction:column; gap:4px; flex-shrink:0;">
                 <div style="font-size:14px; font-weight:600; color:var(--text);">
-                    {{ order.reference || ('#' + order.ps_order_id) }}
+                    {{ title }}
                 </div>
+                <div v-if="order.ps_reference" style="font-size:12px; color:var(--text2);">Pedido web: {{ order.ps_reference }}</div>
                 <div style="font-size:12px; color:var(--text3); display:flex; gap:10px; flex-wrap:wrap;">
                     <span v-if="order.created_at">{{ order.created_at }}</span>
                     <span v-if="order.payment_method">{{ order.payment_method }}</span>
@@ -65,6 +101,10 @@ const OrderDetailView = {
                 <div v-if="order.payment_method" style="display:flex; justify-content:space-between; font-size:12px; color:var(--text2); margin-top:4px;">
                     <span>Método de pago</span>
                     <span style="text-transform:capitalize;">{{ order.payment_method }}</span>
+                </div>
+                <div v-if="canPrint" style="display:flex; gap:8px; margin-top:8px;">
+                    <button class="tpv-btn" style="flex:1;" @click="reprint"><icon name="receipt" :size="16" /> Reimprimir</button>
+                    <button class="tpv-btn" style="flex:1;" @click="pdf"><icon name="receipt" :size="16" /> PDF</button>
                 </div>
             </div>
         </div>

@@ -2,14 +2,23 @@
  * TicketPanel — active ticket lines with qty controls, totals, and action bar.
  */
 const TicketPanel = {
-    props: ['cart'],
+    // stockByKey: local stock by "<product>:<combination>" of what the sale screen added.
+    props: ['cart', 'stockByKey'],
     emits: ['remove', 'updateQty', 'showPayment', 'showDiscount', 'showCustomer', 'park', 'void'],
     setup(props) {
         const totalLines = Vue.computed(() => {
             return props.cart.lines.reduce((s, l) => s + (l.qty || 1), 0);
         });
 
-        return { totalLines };
+        /** PRD V4: more units than the TPV's stock. Marked only; the sale goes ahead. */
+        function outOfStock(line) {
+            if (!props.stockByKey || !line) return false;
+            const stock = props.stockByKey[line.product_id + ':' + (line.id_product_attribute || 0)];
+            if (stock === undefined || stock === null) return false;
+            return (line.qty || 1) > Number(stock);
+        }
+
+        return { totalLines, outOfStock };
     },
     template: `
         <div style="display:flex; flex-direction:column; height:100%; overflow:hidden;">
@@ -37,6 +46,7 @@ const TicketPanel = {
                         <div style="flex:1; min-width:0;">
                             <div style="font-size:12px; font-weight:500; color:var(--text); line-height:1.3;">{{ line.name }}</div>
                             <div v-if="line.reference" style="font-size:10px; color:var(--text3); font-family:'IBM Plex Mono'; margin-top:2px;">{{ line.reference }}</div>
+                            <span v-if="outOfStock(line)" class="tpv-tag" style="margin-top:4px; font-size:12px;" title="Se puede vender igualmente; revisa el inventario">Sin stock en el TPV</span>
                         </div>
                         <div style="font-family:'IBM Plex Mono'; font-size:13px; font-weight:600; color:var(--text); flex-shrink:0;">
                             €{{ (line.price * (line.qty || 1) * (1 - (line.discount || 0)/100)).toFixed(2) }}

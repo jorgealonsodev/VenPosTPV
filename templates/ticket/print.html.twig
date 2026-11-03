@@ -62,6 +62,10 @@
         <div class="center">Motivo: {{ ticket.creditNote.reason }}</div>
     {% else %}
         <div class="center">Ref: {{ ticket.reference }}</div>
+{# PRD S5, at column 0 like the issuer lines: without a web reference it renders nothing. #}
+{% if ticket.webOrderReference %}
+        <div class="center">Pedido web: {{ ticket.webOrderReference }}</div>
+{% endif %}
     {% endif %}
     <div class="center">Cajero: {{ ticket.cashierName }}</div>
 

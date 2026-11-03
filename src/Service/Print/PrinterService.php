@@ -194,8 +194,20 @@ class PrinterService
         fclose($socket);
     }
 
+    /**
+     * @param int $orderId a PrestaShop order id, or a TicketDataResolver::saleKey() (the
+     *                     negative local id) for a sale that may not be uploaded yet
+     */
     private function markPrinted(int $orderId): void
     {
+        if ($orderId < 0) {
+            $this->connection->executeStatement(
+                'UPDATE order_meta SET printed = 1, printed_at = NOW(), print_attempts = print_attempts + 1 WHERE id = ?',
+                [-$orderId]
+            );
+
+            return;
+        }
         $this->connection->executeStatement(
             'UPDATE order_meta SET printed = 1, printed_at = NOW(), print_attempts = print_attempts + 1 WHERE ps_order_id = ?',
             [$orderId]

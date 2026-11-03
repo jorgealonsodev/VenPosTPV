@@ -386,4 +386,34 @@ final class PrinterServiceTest extends TestCase
         $this->assertSame('Epson_TM-T20II', $sent[1][0]);
         $this->assertSame("\x1bp\x00\x19\xfa", $sent[1][1], 'standard ESC p drawer kick');
     }
+
+    /** Advisory L7: a sale not uploaded yet prints by its local key and is marked printed by its local id. */
+    public function testAnUnsyncedSalePrintedByItsLocalKeyIsMarkedPrintedByItsLocalId(): void
+    {
+        $conn = $this->createMock(Connection::class);
+        $conn->method('fetchOne')->willReturnCallback(fn (string $sql) => str_contains($sql, 'printer_config')
+            ? json_encode(['type' => 'network', 'host' => '127.0.0.1', 'port' => 9100, 'enabled' => true])
+            : false);
+        $marked = [];
+        $conn->method('executeStatement')->willReturnCallback(function (string $sql, array $params) use (&$marked): int {
+            $marked[] = [$sql, $params];
+
+            return 1;
+        });
+        $resolver = $this->createMock(TicketDataResolver::class);
+        $resolver->method('resolve')->with(-15)->willReturn($this->createTicketData());
+        $builder = $this->createMock(EscPosTicketBuilder::class);
+        $builder->method('build')->willReturn('escpos_bytes');
+        $service = new class ($conn, $resolver, $builder, $this->createMock(TicketPdfGenerator::class)) extends PrinterService {
+            protected function sendEscPos(TicketData $ticketData, \VenPosTPV\Service\Print\PrinterConfig $config, bool $giftMode = false): void
+            {
+            }
+        };
+
+        $service->printTicket(TicketDataResolver::saleKey(15), 1);
+        $this->assertSame(['printed' => true], $service->reprintTicket(-15, 1));
+
+        $sql = 'UPDATE order_meta SET printed = 1, printed_at = NOW(), print_attempts = print_attempts + 1 WHERE id = ?';
+        $this->assertSame([[$sql, [15]], [$sql, [15]]], $marked);
+    }
 }

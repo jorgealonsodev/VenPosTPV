@@ -1,8 +1,9 @@
 /**
- * CashCloseScreen — denomination counting and session summary, with parked tickets warning.
+ * CashCloseScreen — denomination counting and session summary, with parked tickets warning
+ * and the uploads to PrestaShop still to do (PRD I2, A6): a warning, never a block.
  */
 const CashCloseScreen = {
-    props: ['session', 'parkedCount'],
+    props: ['session', 'parkedCount', 'outbox'],
     emits: ['back', 'close', 'discardParked'],
     setup(props, { emit }) {
         const counted = Vue.reactive({});
@@ -32,7 +33,21 @@ const CashCloseScreen = {
             emit('discardParked');
         }
 
-        return { counted, denoms, total, expected, diff, handleDiscardParked };
+        const pendingUploadsText = Vue.computed(() => {
+            const pending = Number((props.outbox && props.outbox.pending) || 0);
+            if (pending <= 0) return '';
+            return pending === 1
+                ? 'Hay 1 operación pendiente de subir a PrestaShop'
+                : 'Hay ' + pending + ' operaciones pendientes de subir a PrestaShop';
+        });
+
+        const incidentsText = Vue.computed(() => {
+            const incidents = Number((props.outbox && props.outbox.incidents) || 0);
+            if (incidents <= 0) return '';
+            return incidents + ' en incidencia: un administrador debe revisarlas en Incidencias';
+        });
+
+        return { counted, denoms, total, expected, diff, handleDiscardParked, pendingUploadsText, incidentsText };
     },
     template: `
         <div style="width:100%; height:100%; background:var(--bg); overflow:auto; padding:32px; display:flex; flex-direction:column; gap:24px;">
@@ -61,6 +76,17 @@ const CashCloseScreen = {
                     style="flex-shrink:0; padding:8px 14px; border-radius:8px; border:1px solid var(--amber); background:var(--surface); color:var(--amber); cursor:pointer; font-family:inherit; font-size:12px; font-weight:600;">
                     Descartar aparcados ({{ parkedCount }})
                 </button>
+            </div>
+
+            <!-- Uploads to PrestaShop still to do: they upload on their own, the close goes ahead -->
+            <div v-if="pendingUploadsText || incidentsText" class="tpv-banner tpv-banner-warn" role="status" style="max-width:900px;">
+                <div style="display:flex; flex-direction:column; gap:2px;">
+                    <div v-if="pendingUploadsText" style="font-size:14px; font-weight:700; color:var(--amber);">{{ pendingUploadsText }}</div>
+                    <div v-if="incidentsText" style="font-size:14px; font-weight:700; color:var(--amber);">{{ incidentsText }}</div>
+                    <div style="font-size:13px; color:var(--text2);">
+                        Se suben solas cuando PrestaShop responde. Puedes cerrar la caja igualmente.
+                    </div>
+                </div>
             </div>
 
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; max-width:900px;">

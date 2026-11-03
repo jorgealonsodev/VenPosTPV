@@ -38,6 +38,9 @@ final class TicketData
         // Issuer data a simplified invoice must show: legal name and NIF.
         public readonly ?string $legalName = null,
         public readonly ?string $taxId = null,
+        // PRD S5: the PrestaShop reference when PrestaShop answered one other than the
+        // ticket code; printed as "Pedido web: XXXX" under it. Null for every other ticket.
+        public readonly ?string $webOrderReference = null,
     ) {
     }
 

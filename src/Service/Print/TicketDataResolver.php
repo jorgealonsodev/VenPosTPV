@@ -112,7 +112,24 @@ class TicketDataResolver
             exchangeCreditNote: $exchangeCredit !== null ? $this->exchangeCreditNote($psOrderId, $orderId < 0 ? -$orderId : null) : null,
             legalName: $legalName,
             taxId: $taxId,
+            webOrderReference: $this->webOrderReference($orderId, $reference),
         );
+    }
+
+    /**
+     * PRD S5: the reference PrestaShop gave the order when it is not the ticket code
+     * (OutboxSync keeps it in ps_reference only then); null otherwise.
+     */
+    private function webOrderReference(int $orderId, string $reference): ?string
+    {
+        $stored = $orderId < 0
+            ? $this->connection->fetchOne('SELECT ps_reference FROM order_meta WHERE id = ?', [-$orderId])
+            : $this->connection->fetchOne('SELECT ps_reference FROM order_meta WHERE ps_order_id = ?', [$orderId]);
+        if (!\is_string($stored) || trim($stored) === '' || trim($stored) === $reference) {
+            return null;
+        }
+
+        return trim($stored);
     }
 
     /**

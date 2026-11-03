@@ -25,6 +25,8 @@ const useSession = (function () {
         theme: 'dark',
         syncState: 'unknown',
         syncData: null,
+        // Uploads to PrestaShop still to do and incidents (PRD I1): { pending, incidents }.
+        outbox: null,
         dataphoneMode: 'integrated',
         printerType: 'pdf',
         stockSyncIntervalSeconds: 60,
@@ -214,7 +216,25 @@ const useSession = (function () {
         doPoll();
     }
 
+    /** Reads the outbox counts; a failed read keeps the last ones. */
+    async function refreshOutbox() {
+        if (typeof ApiClient.outboxStatus !== 'function') return session.outbox;
+        try {
+            const response = await ApiClient.outboxStatus();
+            if (response && response.data) {
+                session.outbox = {
+                    pending: Number(response.data.pending || 0),
+                    incidents: Number(response.data.incidents || 0),
+                };
+            }
+        } catch (e) {
+            // Keep the last known counts.
+        }
+        return session.outbox;
+    }
+
     async function doPoll() {
+        refreshOutbox();
         try {
             const response = await ApiClient.syncStatus();
             if (response && response.state) {
@@ -336,6 +356,7 @@ const useSession = (function () {
         session.screen = 'login';
         session.syncState = 'unknown';
         session.syncData = null;
+        session.outbox = null;
         // Remove screen from localStorage so it does not rehydrate
         try {
             const raw = localStorage.getItem(STORAGE_KEY);
@@ -363,6 +384,7 @@ const useSession = (function () {
         closeCash,
         hydrateCashSession,
         refreshCashTotals,
+        refreshOutbox,
         rememberDeviceToken,
         restoreDeviceCookie,
         toggleTheme,

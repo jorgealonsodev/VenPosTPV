@@ -465,4 +465,31 @@ final class EscPosTicketBuilderTest extends TestCase
 
         self::assertStringNotContainsString('NIF:', $bytes);
     }
+
+    private function localSale(?string $webOrderReference = null): TicketData
+    {
+        return new TicketData(
+            orderId: 42, reference: 'A26000123', storeName: 'Mi Tienda', storeAddress: 'Calle Falsa 123', ticketHeader: '', ticketFooter: 'Gracias',
+            ticketLogo: null, ticketWidthPx: 576, date: new \DateTimeImmutable('2024-01-15 14:30:00'), cashierName: 'Juan',
+            lines: [new TicketLine('Pan', 1, 0.8, 0.8)], subtotal: 0.66, tax: 0.14, total: 0.8, paymentMethod: 'cash',
+            amountTendered: 1.0, changeDue: 0.2, verificationUrl: 'https://example.com/verify?token=abc',
+            webOrderReference: $webOrderReference,
+        );
+    }
+
+    /** PRD S5: PrestaShop answered another reference; the reprint names it under the ticket code. */
+    public function testASaleWithADifferentPrestaShopReferencePrintsPedidoWebUnderTheReference(): void
+    {
+        $bytes = $this->createBuilder()->build($this->localSale('XKQWERTYU'));
+
+        self::assertStringContainsString("Ref: A26000123\nPedido web: XKQWERTYU\n", $bytes);
+    }
+
+    public function testATicketWithoutAWebReferencePrintsTheSameBytesAsBefore(): void
+    {
+        // sha1 of the bytes built before "Pedido web" existed (HEAD e868074).
+        self::assertSame('fa4af74b27a71be4d891fd22ccca15fdf83c07a5', sha1($this->createBuilder()->build($this->localSale())));
+        self::assertSame('0e1c9ffe288876ade23487e4f07824b11ab5e3e1', sha1($this->createBuilder()->build($this->localSale(), true)));
+        self::assertStringNotContainsString('Pedido web', $this->createBuilder()->build($this->localSale('')));
+    }
 }

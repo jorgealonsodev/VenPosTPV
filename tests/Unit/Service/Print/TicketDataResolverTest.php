@@ -188,4 +188,23 @@ final class TicketDataResolverTest extends TestCase
             self::assertSame($expected, $this->createService(conn: $conn, verificationService: $verification)->resolve(42)?->storeName);
         }
     }
+
+    /** PRD S5: a PrestaShop reference other than the ticket code is shown as "Pedido web". */
+    public function testADifferentPrestaShopReferenceBecomesTheWebOrderReference(): void
+    {
+        foreach ([[-15, 'XKQWERTYU', 'XKQWERTYU'], [-15, null, null], [-15, '', null], [-15, 'A26000015', null], [42, 'XKQWERTYU', 'XKQWERTYU']] as [$key, $stored, $expected]) {
+            $order = ['ps_order_id' => $key > 0 ? $key : null, 'terminal_id' => 7, 'user_id' => 5, 'payment_breakdown' => json_encode(['reference' => 'A26000015', 'total' => 1.0, 'lines' => []]), 'created_at' => '2024-01-15 14:30:00'];
+            $conn = $this->createMock(Connection::class);
+            $conn->method('fetchAssociative')->willReturnCallback(fn (string $sql) => str_contains($sql, 'FROM order_meta') ? $order : false);
+            $conn->method('fetchOne')->willReturnCallback(fn (string $sql, array $params = []) => str_contains($sql, 'ps_reference FROM order_meta')
+                ? ($params === [abs($key)] ? $stored : 'WRONGKEY0')
+                : false);
+            $verification = $this->createMock(TicketVerificationService::class);
+            $verification->method('buildVerificationUrl')->willReturn('http://v');
+
+            $ticket = (new TicketDataResolver($conn, $verification, 'Tienda', ''))->resolve($key);
+
+            $this->assertSame($expected, $ticket->webOrderReference, sprintf('key %d, stored %s', $key, var_export($stored, true)));
+        }
+    }
 }

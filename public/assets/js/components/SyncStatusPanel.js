@@ -1,9 +1,11 @@
 /**
- * SyncStatusPanel — modal-like overlay showing sync details.
+ * SyncStatusPanel — modal-like overlay showing sync details, including the uploads to
+ * PrestaShop still to do and the incidents (PRD I1); administrators open the incidents
+ * screen from here (I3).
  */
 const SyncStatusPanel = {
-    props: ['data', 'open'],
-    emits: ['close', 'sync-now'],
+    props: ['data', 'open', 'outbox', 'isAdmin'],
+    emits: ['close', 'sync-now', 'show-incidents'],
     setup(props, { emit }) {
         const isSyncing = Vue.ref(false);
 
@@ -114,6 +116,21 @@ const SyncStatusPanel = {
                         </div>
                     </div>
                 </div>
+
+                <div style="font-size:12px; color:var(--text3); margin-bottom:6px; text-transform:uppercase; letter-spacing:0.03em;">Ventas y devoluciones</div>
+                <div style="display:flex; gap:10px; margin-bottom:10px;">
+                    <div style="flex:1; padding:10px; background:var(--surface2); border-radius:10px; text-align:center;">
+                        <div style="font-size:12px; color:var(--text3); margin-bottom:2px;">Pendientes de subir</div>
+                        <div style="font-size:18px; font-weight:700; color:var(--text);">{{ outbox ? outbox.pending : '—' }}</div>
+                    </div>
+                    <div style="flex:1; padding:10px; background:var(--surface2); border-radius:10px; text-align:center;">
+                        <div style="font-size:12px; color:var(--text3); margin-bottom:2px;">Incidencias</div>
+                        <div style="font-size:18px; font-weight:700;" :style="{ color: outbox && outbox.incidents > 0 ? 'var(--red)' : 'var(--text)' }">{{ outbox ? outbox.incidents : '—' }}</div>
+                    </div>
+                </div>
+                <button v-if="isAdmin" @click="$emit('show-incidents')" class="tpv-btn" style="width:100%; margin-bottom:14px;">
+                    &#9888; Ver incidencias
+                </button>
 
                 <div style="display:flex; gap:10px;">
                     <div style="flex:1; padding:10px; background:var(--surface2); border-radius:10px; text-align:center;">

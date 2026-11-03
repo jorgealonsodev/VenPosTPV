@@ -463,3 +463,9 @@ html, body, #app {
     .tpv-split-main { width: 55%; }
     .tpv-split-side { width: 45%; }
 }
+
+/* Sync indicator counters (PRD I1): uploads still to do in amber on its tint, incidents
+   in white on --danger; both pairs are guarded by tests/Functional/themeContrast.test.cjs. */
+.tpv-sync-count { display: inline-flex; align-items: center; gap: 3px; min-height: 24px; padding: 2px 8px; border-radius: 999px; font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 700; line-height: 1; }
+.tpv-sync-count-pending { color: var(--amber); background: var(--amber-bg); border: 1px solid var(--amber); }
+.tpv-sync-count-incident { color: #fff; background: var(--danger); border: 1px solid var(--danger); }

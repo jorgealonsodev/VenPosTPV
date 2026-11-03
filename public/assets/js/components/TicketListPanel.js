@@ -10,6 +10,8 @@ const TicketListPanel = {
         const selectedOrder = Vue.ref(null);
         const { state: parkedState, refresh: refreshParked, removeTicket } = useParkedTickets;
         const paidOrders = Vue.ref([]);
+        // PRD S6: the ticket code (A26000123) or PrestaShop's reference finds the same sale.
+        const paidQuery = Vue.ref('');
         const refundedOrders = Vue.ref([]);
         const loading = Vue.ref(false);
         const confirmDelete = Vue.ref(null);
@@ -23,7 +25,7 @@ const TicketListPanel = {
         async function loadPaid() {
             loading.value = true;
             try {
-                const result = await ApiClient.searchOrders('');
+                const result = await ApiClient.searchOrders(paidQuery.value.trim().toUpperCase());
                 paidOrders.value = result && result.data ? result.data : [];
             } catch (err) {
                 emit('notify', 'Error al cargar cobrados: ' + (err.message || 'Error'), 'var(--red)');
@@ -44,6 +46,10 @@ const TicketListPanel = {
             } finally {
                 loading.value = false;
             }
+        }
+
+        function searchPaid() {
+            return loadPaid();
         }
 
         function selectOrder(order) {
@@ -124,7 +130,7 @@ const TicketListPanel = {
         });
 
         return {
-            activeTab, selectedOrder, parkedTickets, paidOrders, refundedOrders,
+            activeTab, selectedOrder, parkedTickets, paidOrders, refundedOrders, paidQuery, searchPaid,
             loading, confirmDelete,
             selectOrder, backToList, handleRestoreClick, askDelete, doDelete, cancelDelete,
             formatTicketTime, formatTicketDate, orderKey, orderLabel,
@@ -157,7 +163,7 @@ const TicketListPanel = {
 
             <!-- Content -->
             <div v-if="selectedOrder" style="flex:1; overflow:hidden;">
-                <order-detail-view :order="selectedOrder" @back="backToList" />
+                <order-detail-view :order="selectedOrder" @back="backToList" @notify="(msg, color) => $emit('notify', msg, color)" />
             </div>
             <div v-else style="flex:1; overflow:auto; padding:12px; display:flex; flex-direction:column; gap:8px;">
                 <!-- Aparcados -->
@@ -220,6 +226,10 @@ const TicketListPanel = {
 
                 <!-- Cobrados -->
                 <template v-if="activeTab === 'cobrados'">
+                    <form @submit.prevent="searchPaid" style="display:flex; gap:8px;">
+                        <input class="tpv-input" style="flex:1; min-width:0;" v-model="paidQuery" placeholder="Código del ticket o referencia web" aria-label="Buscar ticket por código" />
+                        <button type="submit" class="tpv-btn" :disabled="loading"><icon name="search" :size="16" /> Buscar</button>
+                    </form>
                     <div v-if="loading" style="text-align:center; color:var(--text3); font-size:13px; padding:20px;">Cargando...</div>
                     <div v-else-if="paidOrders.length === 0" style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; color:var(--text3); gap:10px;">
                         <icon name="receipt" :size="32" />

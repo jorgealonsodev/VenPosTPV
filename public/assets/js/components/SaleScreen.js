@@ -26,6 +26,11 @@ const SaleScreen = {
         const showLogoutConfirm = Vue.ref(false);
         const showSyncPanel = Vue.ref(false);
         const showTickets = Vue.ref(false);
+        const showIncidents = Vue.ref(false);
+        // Local stock of each added product/combination ("<product>:<combination>"), so
+        // the ticket marks lines the TPV has no stock for (PRD V4: warn, never block).
+        const stockByKey = Vue.reactive({});
+        const stockNotice = Vue.ref('');
         const showParkModal = Vue.ref(false);
         const parkNote = Vue.ref('');
         const showVoidConfirm = Vue.ref(false);
@@ -67,6 +72,14 @@ const SaleScreen = {
                 notify('Sin stock disponible', 'var(--red)');
                 return;
             }
+            const combinationId = p.selected_combination_id || 0;
+            const combination = combinationId && Array.isArray(p.combinations)
+                ? p.combinations.find((c) => c && c.id === combinationId)
+                : null;
+            const stock = combination && combination.stock !== undefined ? combination.stock : p.stock;
+            if (stock !== undefined && stock !== null) {
+                stockByKey[p.id + ':' + combinationId] = Number(stock);
+            }
             const ok = add(p);
             if (ok) {
                 lastAdded.value = p.id;
@@ -74,8 +87,20 @@ const SaleScreen = {
             }
         }
 
+        /** PRD V4: the products of the sale the TPV had no stock for, named for the cashier. */
+        function stockWarningText(warnings, lines) {
+            if (!Array.isArray(warnings) || warnings.length === 0) return '';
+            const names = warnings.map((w) => {
+                const line = Array.isArray(lines) ? lines[w.line_index] : null;
+                return line && line.name ? line.name : 'producto ' + String(w.product_id);
+            });
+            return 'Sin stock en el TPV: ' + names.join(', ') + ' — revisa el inventario';
+        }
+
         function handlePaymentComplete(orderData) {
             showPayment.value = false;
+            // Named before the cart is cleared: line_index points at its lines.
+            stockNotice.value = stockWarningText(orderData && orderData.stock_warnings, cart.lines);
             clear();
             ticketCount.value++;
             lastCompletedOrder.value = orderData;
@@ -158,7 +183,7 @@ const SaleScreen = {
         }
 
         async function handleCashClose() {
-            await Promise.all([refreshParked(), useSession.refreshCashTotals()]);
+            await Promise.all([refreshParked(), useSession.refreshCashTotals(), useSession.refreshOutbox()]);
             showCashClose.value = true;
         }
 
@@ -195,6 +220,15 @@ const SaleScreen = {
             } else {
                 notify('Ticket restaurado', 'var(--green)');
             }
+        }
+
+        function refreshOutbox() {
+            useSession.refreshOutbox();
+        }
+
+        function openIncidents() {
+            showSyncPanel.value = false;
+            showIncidents.value = true;
         }
 
         function handleRefundBack() {
@@ -248,6 +282,7 @@ const SaleScreen = {
             session, cart, catalog,
             showPayment, showDiscount, showCustomer, showCouponCreation, showCashClose, showRefund, showSettings,
             showLogoutConfirm, showSyncPanel, showTickets, showParkModal, parkNote, showVoidConfirm,
+            showIncidents, openIncidents, refreshOutbox, stockByKey, stockNotice,
             parkedCount,
             notification, listView, lastAdded, ticketCount, timeStr, lastCompletedOrder,
             hasOpenSession,
@@ -268,10 +303,14 @@ const SaleScreen = {
             <cash-close-screen
                 :session="{ openingCash: session.openingCash || 0, sales: (session.cashTotals && session.cashTotals.sales) || 0, salesCard: (session.cashTotals && session.cashTotals.salesCard) || 0, refunds: (session.cashTotals && session.cashTotals.refunds) || 0, refundsCard: (session.cashTotals && session.cashTotals.refundsCard) || 0, net: (session.cashTotals && session.cashTotals.net) || 0, expected: (session.cashTotals && session.cashTotals.expected) || null }"
                 :parked-count="parkedCount"
+                :outbox="session.outbox"
                 @back="handleCashCloseBack"
                 @close="handleCashCloseDone"
                 @discard-parked="handleDiscardParkedOnClose"
             />
+        </div>
+        <div v-else-if="showIncidents && session.role === 'admin'" style="width:100%; height:100%;">
+            <incidents-screen @back="showIncidents = false" @changed="refreshOutbox" />
         </div>
         <div v-else-if="showRefund" style="width:100%; height:100%;">
             <refund-screen :cashier-name="cashierName" @back="handleRefundBack" @notify="handleRefundNotify" />
@@ -295,6 +334,7 @@ const SaleScreen = {
                     <sync-status-indicator
                         :state="session.syncState"
                         :data="session.syncData"
+                        :outbox="session.outbox"
                         @click="showSyncPanel = true"
                     />
                     <button @click="toggleTheme" style="min-height:44px; background:transparent; border:1px solid var(--border); border-radius:8px; padding:4px 8px; color:var(--text3); font-size:11px; cursor:pointer; font-family:inherit; display:flex; align-items:center; gap:4px;">
@@ -363,6 +403,7 @@ const SaleScreen = {
                     />
                     <ticket-panel v-else
                         :cart="cart"
+                        :stock-by-key="stockByKey"
                         @remove="remove"
                         @update-qty="updateQty"
                         @show-payment="showPayment = true"
@@ -441,7 +482,14 @@ const SaleScreen = {
             </div>
 
             <!-- Sync Status Panel -->
-            <sync-status-panel :data="session.syncData" :open="showSyncPanel" @close="showSyncPanel = false" @sync-now="handleSyncNow" />
+            <sync-status-panel :data="session.syncData" :outbox="session.outbox" :is-admin="session.role === 'admin'" :open="showSyncPanel" @close="showSyncPanel = false" @sync-now="handleSyncNow" @show-incidents="openIncidents" />
+
+            <!-- PRD V4: sold without local stock; a notice, nothing is blocked -->
+            <div v-if="stockNotice" class="tpv-banner tpv-banner-warn" role="status"
+                style="position:fixed; left:16px; bottom:16px; max-width:520px; z-index:950; box-shadow:0 8px 24px rgba(0,0,0,0.3);">
+                <span style="flex:1; min-width:0; font-weight:600; color:var(--amber);">{{ stockNotice }}</span>
+                <button class="tpv-btn" @click="stockNotice = ''">Entendido</button>
+            </div>
 
             <!-- Settings Modal -->
             <settings-modal v-if="showSettings" @close="showSettings = false" />

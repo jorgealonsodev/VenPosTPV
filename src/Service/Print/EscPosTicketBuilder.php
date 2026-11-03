@@ -102,6 +102,9 @@ class EscPosTicketBuilder
             $printer->text('Motivo: ' . $this->sanitize($creditNote->reason) . "\n");
         } else {
             $printer->text('Ref: ' . $ticketData->reference . "\n");
+            if ($ticketData->webOrderReference !== null && $ticketData->webOrderReference !== '') {
+                $printer->text('Pedido web: ' . $this->sanitize($ticketData->webOrderReference) . "\n");
+            }
         }
         $printer->text('Cajero: ' . $this->sanitize($ticketData->cashierName) . "\n");
         $printer->text(str_repeat('-', 32) . "\n");
