@@ -212,4 +212,13 @@ class ReferencedOrderCreatorTest extends TestCase
         self::assertTrue((new \TpvConnectInstaller($module))->registerHooks());
         self::assertSame(['displayBackOfficeHeader', 'actionAdminControllerSetMedia', 'actionGenerateDocumentReference'], $module->registeredHooks);
     }
+
+    public function testLoadingTheClassFileDeclaresEveryClassThePrestaShopControllerUses(): void
+    {
+        // PHP early-binds a plain class at compile time, so an include guard on it
+        // used to return before the gateway and exception classes were declared.
+        foreach (['ReferencedOrderCreator', 'ReferencedOrderException', 'ReferencedOrderGateway', 'PsReferencedOrderGateway'] as $name) {
+            $this->assertTrue(class_exists($name) || interface_exists($name), $name . ' is declared');
+        }
+    }
 }

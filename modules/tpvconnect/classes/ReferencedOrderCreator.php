@@ -10,10 +10,6 @@ if (!defined('_PS_VERSION_')) {
     exit;
 }
 
-if (class_exists('ReferencedOrderCreator', false)) {
-    return;
-}
-
 /**
  * Rejected referenced-order request, carrying the HTTP status and per-field
  * details the front controller returns to the TPV.
