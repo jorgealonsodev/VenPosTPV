@@ -100,6 +100,19 @@ final class RefundControllerTest extends TestCase
         $this->assertSame(Response::HTTP_UNAUTHORIZED, $response->getStatusCode());
     }
 
+    public function testMalformedLinesAreRejectedInsteadOfRefundingEverything(): void
+    {
+        $cashService = $this->createMock(CashSessionService::class);
+        $cashService->method('requireOpenSession')->willReturn(['session_id' => 1, 'terminal_id' => 1]);
+        $refundService = $this->createMock(RefundService::class);
+        $refundService->expects($this->never())->method('processRefund');
+
+        $response = $this->createController($refundService, cashService: $cashService)->refund(SessionRequest::json(['ps_order_id' => 42, 'lines' => 'all'], ['user_id' => 1]));
+
+        $this->assertSame(Response::HTTP_UNPROCESSABLE_ENTITY, $response->getStatusCode());
+        $this->assertSame('lines must be a list of lines to refund', json_decode((string) $response->getContent(), true)['error']);
+    }
+
     public function testRefundReturns404OnMissingOrder(): void
     {
         $cashService = $this->createMock(CashSessionService::class);

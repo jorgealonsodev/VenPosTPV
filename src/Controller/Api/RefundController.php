@@ -51,7 +51,11 @@ class RefundController
         }
 
         $psOrderId = isset($body['ps_order_id']) ? (int) $body['ps_order_id'] : 0;
-        $lines = isset($body['lines']) && \is_array($body['lines']) ? $body['lines'] : null;
+        // A missing "lines" refunds everything left; a malformed one must never do that.
+        if (isset($body['lines']) && !\is_array($body['lines'])) {
+            return new JsonResponse(['error' => 'lines must be a list of lines to refund', 'retry' => false], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+        $lines = isset($body['lines']) ? $body['lines'] : null;
         $reasonCode = isset($body['reason_code']) && \is_string($body['reason_code']) ? $body['reason_code'] : '';
         $reasonText = isset($body['reason_text']) && \is_string($body['reason_text']) ? $body['reason_text'] : '';
         $cardConfirmed = ($body['card_confirmed'] ?? false) === true;

@@ -145,6 +145,17 @@ final class RefundServiceMySqlIntegrationTest extends TestCase
         }
     }
 
+    public function testRestockZeroOrFalseStringMeansNoRestock(): void
+    {
+        $this->seedOrder(['cash' => 60.0, 'card' => 0.0]);
+
+        $this->service()->processRefund(1, self::ORDER_ID, [['line_index' => 0, 'quantity' => 1, 'restock' => 0], ['line_index' => 1, 'quantity' => 1, 'restock' => 'false']], 'defective');
+
+        $this->assertSame([false, false], array_column($this->psPayloads[0]['lines'], 'restock'));
+        $this->assertSame(5, $this->stock(3, 7));
+        $this->assertSame(5, $this->stock(3, 8));
+    }
+
     public function testPartialCashRefundReturnsPaidShareAsPositiveRefundMovementAndRestocksCombination(): void
     {
         $this->seedOrder(['cash' => 60.0, 'card' => 0.0]);

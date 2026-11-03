@@ -569,6 +569,12 @@ class RefundService
         return $this->complete($refundId, $psResponse, $sessionId);
     }
 
+
+    /** false, 0, "0" and "false" all mean the item is not put back on sale. */
+    private static function wantsRestock(mixed $flag): bool
+    {
+        return !\in_array($flag, [false, 0, '0', 'false'], true);
+    }
     /**
      * @param array<int, mixed> $requested
      *
@@ -617,7 +623,7 @@ class RefundService
                 'id_product_attribute' => $attributeId,
                 'quantity' => $quantity,
                 'amount' => round($unitPrice * $quantity, 2),
-                'restock' => ($line['restock'] ?? true) !== false,
+                'restock' => self::wantsRestock($line['restock'] ?? true),
             ];
         }
 
@@ -869,7 +875,7 @@ class RefundService
                 'id_product_attribute' => (int) ($orderLine['id_product_attribute'] ?? 0),
                 'quantity' => $quantity,
                 'amount' => $amount,
-                'restock' => ($line['restock'] ?? true) !== false,
+                'restock' => self::wantsRestock($line['restock'] ?? true),
             ];
         }
 
