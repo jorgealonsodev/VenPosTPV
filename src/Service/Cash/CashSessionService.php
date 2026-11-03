@@ -97,8 +97,8 @@ class CashSessionService
         $this->rejectExistingTransaction();
         $this->requireShopId();
 
-        $state = $this->connection->transactional(function () use ($userId, $type, $amount, $concept, $psOrderId): array {
-            $session = $this->lockCurrentSessionByUser($userId);
+        $state = $this->connection->transactional(function () use ($type, $amount, $concept, $psOrderId): array {
+            $session = $this->lockCurrentSession();
             if ($session === null) {
                 throw new NoOpenCashSessionException();
             }
@@ -125,8 +125,8 @@ class CashSessionService
     {
         $this->rejectExistingTransaction();
 
-        $result = $this->connection->transactional(function () use ($userId, $countedCash): array {
-            $session = $this->lockCurrentSessionByUser($userId);
+        $result = $this->connection->transactional(function () use ($countedCash): array {
+            $session = $this->lockCurrentSession();
             if ($session === null) {
                 throw new \RuntimeException('No open cash session');
             }
@@ -167,7 +167,7 @@ class CashSessionService
     /** @return array<string,mixed> */
     public function getXReport(int $userId): array
     {
-        $session = $this->findCurrentSessionByUser($userId);
+        $session = $this->findCurrentSession();
         if ($session === null) {
             throw new \RuntimeException('No open cash session');
         }
@@ -243,7 +243,12 @@ class CashSessionService
     }
 
     /** @return array<string,mixed>|null */
-    private function lockCurrentSessionByUser(int $userId): ?array
+    /**
+     * Locks the open session of this request's terminal, whoever opened it: the
+     * drawer belongs to the terminal, and each movement records who acted. Same
+     * resolution order as findCurrentSession(), with FOR UPDATE.
+     */
+    private function lockCurrentSession(): ?array
     {
         $request = $this->requestStack->getCurrentRequest();
         $sessionId = 0;
@@ -255,8 +260,26 @@ class CashSessionService
         }
         if ($sessionId > 0) {
             $session = $this->connection->fetchAssociative(
-                'SELECT id, terminal_id, opened_at, opening_cash FROM session WHERE id = ? AND user_id = ? AND closed_at IS NULL FOR UPDATE',
-                [$sessionId, $userId]
+                'SELECT id, terminal_id, opened_at, opening_cash FROM session WHERE id = ? AND closed_at IS NULL FOR UPDATE',
+                [$sessionId]
+            );
+            if ($session !== false) {
+                return $session;
+            }
+        }
+
+        $terminalId = 0;
+        try {
+            $terminalId = $this->terminalService->resolveForShop($this->requireShopId());
+        } catch (\Throwable) {
+            // No shop or terminal context: fall through to the shop-wide lookup.
+        }
+
+        if ($terminalId > 0) {
+            $session = $this->connection->fetchAssociative(
+                'SELECT id, terminal_id, opened_at, opening_cash FROM session
+                 WHERE terminal_id = ? AND closed_at IS NULL ORDER BY id DESC LIMIT 1 FOR UPDATE',
+                [$terminalId]
             );
             if ($session !== false) {
                 return $session;
@@ -267,20 +290,9 @@ class CashSessionService
             'SELECT s.id, s.terminal_id, s.opened_at, s.opening_cash
              FROM session s
              INNER JOIN terminal t ON t.id = s.terminal_id
-             WHERE s.user_id = ? AND s.closed_at IS NULL AND t.ps_shop_id = ?
+             WHERE s.closed_at IS NULL AND t.ps_shop_id = ?
              ORDER BY s.id DESC LIMIT 1 FOR UPDATE',
-            [$userId, $this->requireShopId()]
-        );
-        if ($session !== false) {
-            return $session;
-        }
-
-        $session = $this->connection->fetchAssociative(
-            'SELECT id, terminal_id, opened_at, opening_cash
-             FROM session
-             WHERE user_id = ? AND closed_at IS NULL
-             ORDER BY id DESC LIMIT 1 FOR UPDATE',
-            [$userId]
+            [$this->requireShopId()]
         );
 
         return $session === false ? null : $session;

@@ -57,6 +57,39 @@ final class CashSessionServiceTest extends TestCase
         $this->assertSame(2, $context['opened_by_user_id']);
     }
 
+    public function testAnotherCashierCanRecordMovementsAndReadTheXReportOfTheTerminalDrawer(): void
+    {
+        $conn = $this->createMock(Connection::class);
+        $terminal = $this->createMock(TerminalService::class);
+        $_SESSION = ['shop_id' => 1, 'cash_session_id' => 10];
+        $opened = ['id' => 10, 'terminal_id' => 1, 'opened_at' => '2026-05-09 15:14:46', 'opening_cash' => 500, 'user_id' => 2, 'opened_by' => 'Master Admin'];
+
+        $conn->method('transactional')->willReturnCallback(static fn (callable $callback) => $callback());
+        $conn->method('fetchAssociative')->willReturnCallback(function (string $sql, array $params = []) use ($opened): array|false {
+            // The drawer belongs to the terminal: never require that the acting cashier opened it.
+            $this->assertStringNotContainsString('user_id = ?', $sql);
+
+            return $opened;
+        });
+        $inserted = [];
+        $conn->method('insert')->willReturnCallback(function (string $table, array $data) use (&$inserted): int {
+            $inserted[] = [$table, $data];
+
+            return 1;
+        });
+        $conn->method('fetchAllAssociative')->willReturn([]);
+        $conn->method('fetchOne')->willReturn(0);
+
+        $service = new CashSessionService($conn, $terminal, new RequestStack());
+
+        $service->addMovement(1, 'sale', 46.28, 'Checkout sale', 25);
+        $report = $service->getXReport(1);
+
+        $this->assertSame('movement', $inserted[0][0]);
+        $this->assertSame(10, $inserted[0][1]['session_id']);
+        $this->assertSame(10, $report['session_id']);
+    }
+
     public function testCurrentSessionAggregatesExpectedCashFormula(): void
     {
         $conn = $this->createMock(Connection::class);
