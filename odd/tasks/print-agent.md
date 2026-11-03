@@ -12,9 +12,9 @@ S6. Windows delivery: PRD I1, I2, AC9, GitHub Actions windows-latest (silent ins
 S7. Acceptance: AC1-AC4, AC7 (phase 1 part), AC10-AC13, AC16 live on this machine with the TM-T20 where possible; independent verifier (security item 2).
 
 ## Tasks
-T1 | S2 | delegated (parallel with T4) | pending | Server core: V37, queue, agent API v1, pairing + rate limiter, routing (T0/T9), drawer audit, POS endpoints.
-T2 | S3 | pending (after T1) | POS UX: payment modal states, drawer warning, offline banner, Ajustes Cajas pairing/status/history/version.
-T3 | S4 | pending (after T1) | Labels: ESC/POS generation, preview, product sheet + Etiquetas screen.
+T1 | S2 | delegated (parallel with T4) | done | 1631c49: V37 (print_job, print_agent, agent_pairing, drawer_audit, rate_limit) applied on dev DB (backup tpvdb-before-V37.sql); routing via PrinterService (no Messenger for agent tills), T9 no till-1 fallback for agent jobs, claim UPDATE ORDER BY priority,id (≤5 tickets/drawers + ≤1 label), leases 60 s, expiry 15 s/2 min/24 h, pairing HMAC code + sha256 key, rate limits, drawer audit for all types, retention in tpv:sync:outbox; public/.htaccess CGIPassAuth for Bearer. PHP 778 OK.
+T2 | S3 | delegated (parallel with T3) | in progress | POS UX: payment modal states, drawer warning, offline banner, Ajustes Cajas pairing/status/history/version.
+T3 | S4 | delegated (parallel with T2) | in progress | Labels: ESC/POS generation, preview, product sheet + Etiquetas screen.
 T4 | S5 | delegated (parallel with T1) | Rust agent: service, client, printing (Windows RAW / CUPS / direct), dedupe, IPC, Windows tray, CLI.
 T5 | S6 | delegated | in progress | NSIS installer, GitHub Actions Windows workflow, Linux binary packaging.
 T6 | S7 | pending | Live acceptance + independent verifier.
