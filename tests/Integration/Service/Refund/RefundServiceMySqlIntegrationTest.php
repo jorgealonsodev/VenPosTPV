@@ -22,6 +22,9 @@ final class RefundServiceMySqlIntegrationTest extends TestCase
 
     private int $nextSessionId = self::SESSION_ID;
 
+    /** @var (callable(): void)|null runs inside the next PrestaShop call, to model a concurrent request */
+    private $duringPsCall = null;
+
     /** @var array<int, array<string, mixed>> */
     private array $psPayloads = [];
 
@@ -91,6 +94,11 @@ final class RefundServiceMySqlIntegrationTest extends TestCase
         $client = $this->createMock(PsRefundClient::class);
         $client->method('createRefund')->willReturnCallback(function (array $payload): array {
             $this->psPayloads[] = $payload;
+            if ($this->duringPsCall !== null) {
+                $concurrent = $this->duringPsCall;
+                $this->duringPsCall = null;
+                $concurrent();
+            }
             $failure = array_shift($this->psFailures);
             if ($failure !== null) {
                 throw $failure;
@@ -270,6 +278,23 @@ final class RefundServiceMySqlIntegrationTest extends TestCase
         $this->assertSame(['24.18'], array_column($this->movements(), 'amount'));
         $this->assertSame(6, $this->stock(3, 7));
         $this->expectRefundError(409, fn () => $service->retryPending(1, $refundId));
+    }
+
+    public function testTwoRetriesOfTheSameRefundBookItOnlyOnce(): void
+    {
+        $this->seedOrder(['cash' => 60.0, 'card' => 0.0]);
+        $service = $this->service();
+        $this->psFailures = [RefundException::psUnavailable('timeout')];
+        $this->expectRefundError(0, fn () => $service->processRefund(1, self::ORDER_ID, [['line_index' => 0, 'quantity' => 1, 'restock' => true]], 'size'));
+        $refundId = (int) $this->connection->fetchOne('SELECT id FROM refund');
+
+        // A second terminal retries while the first retry waits for PrestaShop.
+        $this->duringPsCall = fn () => $service->retryPending(1, $refundId);
+        $service->retryPending(1, $refundId);
+
+        $this->assertSame(['24.18'], array_column($this->movements(), 'amount'));
+        $this->assertSame(6, $this->stock(3, 7));
+        $this->assertSame('24.18', (string) $this->connection->fetchOne('SELECT refunded_amount FROM order_meta WHERE ps_order_id = ?', [self::ORDER_ID]));
     }
 
     public function testBusyShopKeepsTheRefundPendingInsteadOfFailingIt(): void

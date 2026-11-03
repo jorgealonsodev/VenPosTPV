@@ -400,7 +400,9 @@ class PsRefundGateway implements RefundGateway
 
     public function rememberProcessedRequest(string $requestId, array $result): void
     {
-        if (!Configuration::updateGlobalValue(self::REQUEST_KEY_PREFIX . md5($requestId), json_encode($result))) {
+        // html=true: otherwise pSQL() strip_tags() the JSON and a '<' in an error
+        // message would truncate it, breaking the replay.
+        if (!Configuration::updateGlobalValue(self::REQUEST_KEY_PREFIX . md5($requestId), json_encode($result), true)) {
             throw new RuntimeException('Could not record the refund request result');
         }
     }

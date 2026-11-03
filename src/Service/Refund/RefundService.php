@@ -41,7 +41,7 @@ class RefundService
     /**
      * @param array<int, array{line_index?: mixed, quantity?: mixed, restock?: mixed}>|null $lines null refunds everything still refundable
      *
-     * @return array{refund_id: int, order_slip_id: int, refunded_amount: float, cash_amount: float, card_amount: float, lines: array<int, array<string, mixed>>, restock_failed: array<int, mixed>, saga_error: bool}
+     * @return array{refund_id: int, order_slip_id: int, refunded_amount: float, cash_amount: float, card_amount: float, lines: array<int, array<string, mixed>>, restock_failed: array<int, mixed>, saga_error: bool, already_completed: bool}
      *
      * @throws RefundException
      */
@@ -157,7 +157,7 @@ class RefundService
      * request_id so the shop replays it instead of refunding twice. Cash is paid
      * out now, so the movement goes to the current open session.
      *
-     * @return array{refund_id: int, order_slip_id: int, refunded_amount: float, cash_amount: float, card_amount: float, lines: array<int, array<string, mixed>>, restock_failed: array<int, mixed>, saga_error: bool}
+     * @return array{refund_id: int, order_slip_id: int, refunded_amount: float, cash_amount: float, card_amount: float, lines: array<int, array<string, mixed>>, restock_failed: array<int, mixed>, saga_error: bool, already_completed: bool}
      *
      * @throws RefundException
      */
@@ -184,7 +184,7 @@ class RefundService
      *
      * @param array<string, mixed> $payload
      *
-     * @return array{refund_id: int, order_slip_id: int, refunded_amount: float, cash_amount: float, card_amount: float, lines: array<int, array<string, mixed>>, restock_failed: array<int, mixed>, saga_error: bool}
+     * @return array{refund_id: int, order_slip_id: int, refunded_amount: float, cash_amount: float, card_amount: float, lines: array<int, array<string, mixed>>, restock_failed: array<int, mixed>, saga_error: bool, already_completed: bool}
      */
     private function send(int $refundId, array $payload, int $sessionId): array
     {
@@ -210,7 +210,7 @@ class RefundService
     /**
      * @param array{order_slip_id: int, refunded_amount: float, refunded_lines: array<int, array<string, mixed>>, restock_failed?: array<int, mixed>} $psResponse
      *
-     * @return array{refund_id: int, order_slip_id: int, refunded_amount: float, cash_amount: float, card_amount: float, lines: array<int, array<string, mixed>>, restock_failed: array<int, mixed>, saga_error: bool}
+     * @return array{refund_id: int, order_slip_id: int, refunded_amount: float, cash_amount: float, card_amount: float, lines: array<int, array<string, mixed>>, restock_failed: array<int, mixed>, saga_error: bool, already_completed: bool}
      */
     private function complete(int $refundId, array $psResponse, int $sessionId): array
     {
@@ -227,15 +227,23 @@ class RefundService
 
         $lines = $this->conn->fetchAllAssociative('SELECT * FROM refund_line WHERE refund_id = ? ORDER BY id', [$refundId]);
         $sagaError = false;
+        $alreadyCompleted = false;
 
         try {
-            $this->conn->transactional(function () use ($sessionId, $refundId, $slipId, $cashAmount, $total, $psOrderId, $lines, $restocked): void {
-                $this->conn->update('refund', [
+            $this->conn->transactional(function () use ($sessionId, $refundId, $slipId, $cashAmount, $total, $psOrderId, $lines, $restocked, &$alreadyCompleted): void {
+                // Only the request that moves the row out of pending applies the local
+                // effects; a concurrent retry that got the same slip replayed does nothing.
+                $claimed = $this->conn->update('refund', [
                     'status' => 'done',
                     'session_id' => $sessionId,
                     'ps_order_slip_id' => $slipId,
                     'completed_at' => (new \DateTimeImmutable())->format('Y-m-d H:i:s'),
-                ], ['id' => $refundId]);
+                ], ['id' => $refundId, 'status' => 'pending']);
+                if ($claimed === 0) {
+                    $alreadyCompleted = true;
+
+                    return;
+                }
 
                 if ($cashAmount > 0) {
                     // Positive: the cash report subtracts the refund total from the drawer.
@@ -287,8 +295,9 @@ class RefundService
                 'quantity' => (int) $l['quantity'],
                 'amount' => round((float) $l['amount'], 2),
             ], $lines),
-            'restock_failed' => $psResponse['restock_failed'] ?? [],
+            'restock_failed' => $alreadyCompleted ? [] : ($psResponse['restock_failed'] ?? []),
             'saga_error' => $sagaError,
+            'already_completed' => $alreadyCompleted,
         ];
     }
 
