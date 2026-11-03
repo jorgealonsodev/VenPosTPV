@@ -89,6 +89,32 @@ const useSession = (function () {
     // Only the most recent server response may set the cash UI state.
     let cashHydrationGeneration = 0;
 
+    function toCashTotals(data) {
+        return {
+            sales: Number(data.sales_cash || 0),
+            salesCard: Number(data.sales_card || 0),
+            refunds: Number(data.refunds_cash || 0),
+            refundsCard: Number(data.refunds_card || 0),
+            net: Number(data.net_total || 0),
+            cashIn: Number(data.cash_in_total || 0),
+            cashOut: Number(data.cash_out_total || 0),
+            expected: Number(data.expected_cash || 0),
+        };
+    }
+
+    // Totals change with every sale and refund; read them fresh before closing.
+    async function refreshCashTotals() {
+        try {
+            const response = await ApiClient.cashReportX();
+            if (response && response.data) {
+                session.cashTotals = toCashTotals(response.data);
+                save();
+            }
+        } catch (e) {
+            // Keep the last known totals; the close screen still lets the cashier count.
+        }
+    }
+
     async function hydrateCashSession() {
         const generation = ++cashHydrationGeneration;
 
@@ -113,13 +139,7 @@ const useSession = (function () {
             session.terminalId = data.terminal_id;
             session.cashOpenedAt = data.opened_at;
             session.openingCash = Number(data.opening_cash || 0);
-            session.cashTotals = {
-                sales: Number(data.sales_cash || 0),
-                refunds: Number(data.refunds_cash || 0),
-                cashIn: Number(data.cash_in_total || 0),
-                cashOut: Number(data.cash_out_total || 0),
-                expected: Number(data.expected_cash || 0),
-            };
+            session.cashTotals = toCashTotals(data);
             session.screen = 'sale';
             startSyncPolling();
             startStockSyncTimer();
@@ -295,6 +315,7 @@ const useSession = (function () {
         openCash,
         closeCash,
         hydrateCashSession,
+        refreshCashTotals,
         toggleTheme,
         logout,
         save,

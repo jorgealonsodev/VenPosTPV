@@ -30,6 +30,7 @@ function loadStore({
     cashOpen = () => Promise.resolve({ data: {} }),
     cashClose = () => Promise.resolve({}),
     authLogout = () => Promise.resolve({}),
+    cashReportX = () => Promise.resolve({ data: {} }),
 }) {
     const storage = new Map([['venpostpv_session', JSON.stringify({ screen: storedScreen })]]);
     const window = {
@@ -55,6 +56,7 @@ function loadStore({
             post: () => Promise.resolve({}),
             authLogout,
             cashClose,
+            cashReportX,
         },
         setTimeout() { return 1; },
         clearTimeout() {},
@@ -210,7 +212,24 @@ async function testCurrentUsersOpenSessionEntersSale() {
     assert.equal(store.session.terminalId, 7);
 }
 
+async function testRefreshCashTotalsReadsTheXReportByMethod() {
+    const { store } = loadStore({
+        cashCurrent: () => Promise.resolve({ data: { open: false } }),
+        cashReportX: () => Promise.resolve({ data: {
+            sales_cash: 60, sales_card: 80, refunds_cash: 17, refunds_card: 15, net_total: 108,
+            cash_in_total: 0, cash_out_total: 0, expected_cash: 143,
+        } }),
+    });
+
+    await store.refreshCashTotals();
+
+    assert.deepEqual(JSON.parse(JSON.stringify(store.session.cashTotals)), {
+        sales: 60, salesCard: 80, refunds: 17, refundsCard: 15, net: 108, cashIn: 0, cashOut: 0, expected: 143,
+    });
+}
+
 async function main() {
+    await testRefreshCashTotalsReadsTheXReportByMethod();
     await testCachedSaleRedirectsWhenServerSaysClosed();
     await testInitialTransportFailureDoesNotTrustCachedSale();
     await testCloseInvalidatesAnInFlightHydration();
@@ -218,7 +237,7 @@ async function main() {
     await testStaleHydrationCannotOverwriteNewOpenSession();
     await testForeignSessionConflictDoesNotEnterSale();
     await testCurrentUsersOpenSessionEntersSale();
-    console.log('useSession functional harness: 7 passed');
+    console.log('useSession functional harness: 8 passed');
 }
 
 main().catch((error) => {

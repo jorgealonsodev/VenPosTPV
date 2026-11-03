@@ -79,7 +79,7 @@ function testSaleScreenShowsCouponEntryToBothAuthorizedRolesOnly() {
     assert.doesNotMatch(source, /showSettings = true[\s\S]{0,160}Crear cupón/);
     assert.match(appSource, /app\.component\('coupon-creation-modal', CouponCreationModal\)/);
     assert.match(pageSource, /components\/CouponCreationModal\.js\?v=[^"']*coupon-creation-v2/);
-    assert.match(pageSource, /SaleScreen\.js\?v=20261101-parked-tickets-v2-coupon-creation-v2/);
+    assert.match(pageSource, /SaleScreen\.js\?v=20261103-cash-by-method-v1/);
 }
 
 async function testAmbiguousCreationKeepsReopenedModalLocked() {

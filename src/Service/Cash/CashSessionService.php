@@ -190,6 +190,9 @@ class CashSessionService
             'opened_by' => isset($session['opened_by']) ? (string) $session['opened_by'] : null,
             'sales_cash' => $totals['sales_cash'],
             'refunds_cash' => $totals['refunds_cash'],
+            'sales_card' => $totals['sales_card'],
+            'refunds_card' => $totals['refunds_card'],
+            'net_total' => $totals['net_total'],
             'cash_in_total' => $totals['cash_in_total'],
             'cash_out_total' => $totals['cash_out_total'],
             'expected_cash' => $totals['expected_cash'],
@@ -231,10 +234,38 @@ class CashSessionService
         $openingCash = (float) $this->connection->fetchOne('SELECT opening_cash FROM session WHERE id = ?', [$sessionId]);
         $expected = round($openingCash + $cashIn - $cashOut + $sales - $refunds, 2);
 
+        // Card amounts never touch the drawer, so they come from the sales and
+        // refunds themselves; expected_cash above stays cash-only.
+        $salesCard = (float) $this->connection->fetchOne(
+            "SELECT COALESCE(SUM(COALESCE(
+                 CAST(JSON_UNQUOTE(JSON_EXTRACT(payment_breakdown, '$.tender.card')) AS DECIMAL(10,2)),
+                 CASE WHEN JSON_UNQUOTE(JSON_EXTRACT(payment_breakdown, '$.payment_method')) = 'card'
+                      THEN CAST(JSON_UNQUOTE(JSON_EXTRACT(payment_breakdown, '$.total')) AS DECIMAL(10,2)) ELSE 0 END
+             )), 0)
+             FROM order_meta WHERE session_id = ?",
+            [$sessionId]
+        );
+        $refundsCard = (float) $this->connection->fetchOne(
+            "SELECT COALESCE(SUM(card_amount), 0) FROM refund WHERE session_id = ? AND status = 'done'",
+            [$sessionId]
+        );
+        $counts['refunds'] = (int) $this->connection->fetchOne(
+            "SELECT COUNT(*) FROM refund WHERE session_id = ? AND status = 'done'",
+            [$sessionId]
+        );
+
+        $salesTotal = round($sales + $salesCard, 2);
+        $refundsTotal = round($refunds + $refundsCard, 2);
+
         return [
             'opening_cash' => round($openingCash, 2),
             'sales_cash' => round($sales, 2),
+            'sales_card' => round($salesCard, 2),
+            'sales_total' => $salesTotal,
             'refunds_cash' => round($refunds, 2),
+            'refunds_card' => round($refundsCard, 2),
+            'refunds_total' => $refundsTotal,
+            'net_total' => round($salesTotal - $refundsTotal, 2),
             'cash_in_total' => round($cashIn, 2),
             'cash_out_total' => round($cashOut, 2),
             'expected_cash' => $expected,

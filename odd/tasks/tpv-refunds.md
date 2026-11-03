@@ -28,7 +28,7 @@ T4 | S1,S2,S3 | inline | pending | Online orders: search, delivered-date window,
 T5 | S6 | inline | pending | Code128 on sale ticket + scan QR/Code128 in refund search.
 T6 | S1,S2 | inline | pending | Refund without ticket (current price, cashier-chosen method incl. voucher via coupon service, partial_use).
 T7 | S1,S2 | inline | pending | Exchanges with balance (refund + new sale in one flow).
-T8 | S7 | inline | pending | X/Z reports: refunds line by method and net.
+T8 | S7 | inline | done | RED -> GREEN (MySQL integration CashReportByMethod + Node useSession). aggregateTotals adds sales_card (order_meta tender.card, legacy card total), refunds_card + refunds count (refund done in session), sales_total, refunds_total, net_total; expected_cash stays cash-only; buildCurrentState exposes sales_card/refunds_card/net_total; Z report totals carry the same keys (new rows only). useSession.refreshCashTotals() refreshes totals from the X report when the close screen opens (it used page-load totals before); CashCloseScreen shows Devoluciones (efectivo), Ventas con tarjeta, Devoluciones a tarjeta, Neto. couponCreation.test pinned SaleScreen cache string updated. Live X report on dev shows the new fields.
 
 ## Log
 

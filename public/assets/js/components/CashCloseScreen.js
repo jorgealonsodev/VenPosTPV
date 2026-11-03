@@ -90,8 +90,20 @@ const CashCloseScreen = {
                             <span style="font-family:'IBM Plex Mono'; font-size:15px; color:var(--green); font-weight:500;">€{{ Number(session.sales || 0).toFixed(2) }}</span>
                         </div>
                         <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <span style="color:var(--text2); font-size:13px;">Devoluciones</span>
+                            <span style="color:var(--text2); font-size:13px;">Devoluciones (efectivo)</span>
                             <span style="font-family:'IBM Plex Mono'; font-size:15px; color:var(--red); font-weight:500;">€{{ Number(session.refunds || 0).toFixed(2) }}</span>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <span style="color:var(--text3); font-size:12px;">Ventas con tarjeta</span>
+                            <span style="font-family:'IBM Plex Mono'; font-size:13px; color:var(--text3);">€{{ Number(session.salesCard || 0).toFixed(2) }}</span>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <span style="color:var(--text3); font-size:12px;">Devoluciones a tarjeta</span>
+                            <span style="font-family:'IBM Plex Mono'; font-size:13px; color:var(--text3);">€{{ Number(session.refundsCard || 0).toFixed(2) }}</span>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <span style="color:var(--text2); font-size:13px;">Neto (ventas − devoluciones)</span>
+                            <span style="font-family:'IBM Plex Mono'; font-size:15px; color:var(--text); font-weight:500;">€{{ Number(session.net || 0).toFixed(2) }}</span>
                         </div>
                         <div style="display:flex; justify-content:space-between; align-items:center;">
                             <span style="color:var(--text2); font-size:13px;">Efectivo esperado</span>

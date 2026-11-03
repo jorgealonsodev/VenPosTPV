@@ -150,7 +150,7 @@ const SaleScreen = {
         }
 
         async function handleCashClose() {
-            await refreshParked();
+            await Promise.all([refreshParked(), useSession.refreshCashTotals()]);
             showCashClose.value = true;
         }
 
@@ -257,7 +257,7 @@ const SaleScreen = {
     template: `
         <div v-if="showCashClose">
             <cash-close-screen
-                :session="{ openingCash: session.openingCash || 0, sales: (session.cashTotals && session.cashTotals.sales) || 0, refunds: (session.cashTotals && session.cashTotals.refunds) || 0, expected: (session.cashTotals && session.cashTotals.expected) || null }"
+                :session="{ openingCash: session.openingCash || 0, sales: (session.cashTotals && session.cashTotals.sales) || 0, salesCard: (session.cashTotals && session.cashTotals.salesCard) || 0, refunds: (session.cashTotals && session.cashTotals.refunds) || 0, refundsCard: (session.cashTotals && session.cashTotals.refundsCard) || 0, net: (session.cashTotals && session.cashTotals.net) || 0, expected: (session.cashTotals && session.cashTotals.expected) || null }"
                 :parked-count="parkedCount"
                 @back="handleCashCloseBack"
                 @close="handleCashCloseDone"
