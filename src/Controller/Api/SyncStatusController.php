@@ -53,8 +53,13 @@ class SyncStatusController
     }
 
     #[Route('/sync/now', methods: ['POST'])]
-    public function syncNow(): JsonResponse
+    public function syncNow(Request $request): JsonResponse
     {
+        $session = $request->getSession();
+        if ($session->get('user_id') === null) {
+            return new JsonResponse(['error' => 'Unauthorized'], Response::HTTP_UNAUTHORIZED);
+        }
+
         $counts = $this->catalogSyncService->syncAll();
 
         return new JsonResponse([

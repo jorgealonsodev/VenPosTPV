@@ -70,8 +70,6 @@ services:
             $cashSessionService: '@VenPosTPV\Service\Cash\CashSessionService'
             $messageBus: '@Symfony\Component\Messenger\MessageBusInterface'
             $printerService: '@VenPosTPV\Service\Print\PrinterService'
-            $psApiClient: '@VenPosTPV\Service\PrestaShop\PrestaShopApiClient'
-            $syncLogRepo: '@VenPosTPV\Service\Sync\SyncLogRepository'
             $couponCheckoutEnabled: '%env(bool:TPV_COUPON_CHECKOUT_ENABLED)%'
 
     # Ticket Verification Service

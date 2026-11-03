@@ -13,9 +13,7 @@ use VenPosTPV\Service\Cash\Exception\NoOpenCashSessionException;
 use VenPosTPV\Service\Checkout\CheckoutService;
 use VenPosTPV\Service\Checkout\Exception\CheckoutException;
 use VenPosTPV\Service\Checkout\PsOrderClient;
-use VenPosTPV\Service\PrestaShop\PrestaShopApiClient;
 use VenPosTPV\Service\Print\PrinterService;
-use VenPosTPV\Service\Sync\SyncLogRepository;
 
 final class CheckoutServiceTest extends TestCase
 {
@@ -26,8 +24,6 @@ final class CheckoutServiceTest extends TestCase
         ?CashSessionService $cashSessionService = null,
         ?MessageBusInterface $messageBus = null,
         ?PrinterService $printerService = null,
-        ?PrestaShopApiClient $psApiClient = null,
-        ?SyncLogRepository $syncLogRepo = null,
         bool $couponCheckoutEnabled = false,
     ): CheckoutService {
         return new CheckoutService(
@@ -37,8 +33,6 @@ final class CheckoutServiceTest extends TestCase
             $cashSessionService ?? $this->createMock(CashSessionService::class),
             $messageBus ?? $this->createMock(MessageBusInterface::class),
             $printerService ?? $this->createMock(PrinterService::class),
-            $psApiClient ?? $this->createMock(PrestaShopApiClient::class),
-            $syncLogRepo ?? $this->createMock(SyncLogRepository::class),
             $couponCheckoutEnabled,
         );
     }
@@ -607,6 +601,34 @@ final class CheckoutServiceTest extends TestCase
             ],
             'total' => 10.0,
         ], 'cash', 10.0);
+    }
+
+    public function testCheckoutNeverWritesStockToPrestaShop(): void
+    {
+        // PrestaShop lowers stock_available itself when the order is created, so a
+        // push from the TPV would count the sale twice or erase online sales.
+        $client = $this->createMock(PsOrderClient::class);
+        $client->method('createOrder')->willReturn(['order_id' => 42, 'reference' => 'REF', 'total_paid' => 20.0]);
+        $cashSession = $this->createMock(CashSessionService::class);
+        $cashSession->method('requireOpenSession')->willReturn(['session_id' => 1, 'terminal_id' => 4]);
+        $conn = $this->createMock(Connection::class);
+        $conn->method('fetchOne')->willReturn(10);
+        $conn->method('insert')->willReturn(1);
+        $localStockUpdates = [];
+        $conn->method('executeStatement')->willReturnCallback(function (string $sql, array $params = []) use (&$localStockUpdates): int {
+            if (str_contains($sql, 'UPDATE catalog_stock')) {
+                $localStockUpdates[] = $params;
+            }
+
+            return 1;
+        });
+        $conn->method('fetchAssociative')->willReturn(['quantity' => 8, 'ps_stock_id' => 55]);
+        $result = $this->createService(client: $client, conn: $conn, cashSessionService: $cashSession)
+            ->createOrder(1, ['lines' => [['product_id' => 3, 'qty' => 2, 'price' => 10.0]], 'total' => 20.0], 'card', 20.0);
+
+        $this->assertSame(42, $result['ps_order_id']);
+        $this->assertFalse($result['saga_error'] ?? false);
+        $this->assertSame([[2, 3, 2]], $localStockUpdates);
     }
 
     public function testCustomerResolutionUsesCartCustomerId(): void

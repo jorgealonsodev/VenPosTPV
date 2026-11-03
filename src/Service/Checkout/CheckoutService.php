@@ -10,9 +10,7 @@ use VenPosTPV\Message\PrintTicketMessage;
 use VenPosTPV\Service\Cart\CartService;
 use VenPosTPV\Service\Cash\CashSessionService;
 use VenPosTPV\Service\Checkout\Exception\CheckoutException;
-use VenPosTPV\Service\PrestaShop\PrestaShopApiClient;
 use VenPosTPV\Service\Print\PrinterService;
-use VenPosTPV\Service\Sync\SyncLogRepository;
 
 /**
  * Books a sale against PrestaShop and the local ledger.
@@ -39,8 +37,6 @@ class CheckoutService
         private readonly CashSessionService $cashSessionService,
         private readonly MessageBusInterface $messageBus,
         private readonly PrinterService $printerService,
-        private readonly PrestaShopApiClient $psApiClient,
-        private readonly SyncLogRepository $syncLogRepo,
         private readonly bool $couponCheckoutEnabled = false,
     ) {
     }
@@ -822,8 +818,12 @@ class CheckoutService
     }
 
     /**
-     * Decrements local catalog_stock AND pushes updated quantity to PrestaShop (outbound sync).
-     * PS push is fire-and-forget — failure is logged but does NOT block checkout.
+     * Decrements the local catalog_stock copy so the POS shows the sale at once.
+     *
+     * Nothing is sent to PrestaShop: creating the native order already lowers its
+     * stock_available (OrderDetail::updateProductQuantityInStock). Pushing the
+     * quantity again would count the sale twice, or overwrite online sales with a
+     * stale local count. The next catalog sync reconciles the local copy.
      *
      * @param array<int, array<string, mixed>> $lines
      *
@@ -866,20 +866,6 @@ class CheckoutService
                     }
 
                     throw new \RuntimeException(sprintf('Insufficient stock for product %d', $productId));
-                }
-
-                // Push updated quantity to PrestaShop (outbound) — fire-and-forget
-                $row = $this->conn->fetchAssociative($existsQuery, $existsParams);
-                if ($row !== false && !empty($row['ps_stock_id'])) {
-                    $psStockId = (int) $row['ps_stock_id'];
-                    $newQty = (int) $row['quantity'];
-                    try {
-                        $this->psApiClient->updateStockAvailable($psStockId, $newQty);
-                        $this->syncLogRepo->upsert('stock', 'outbound', new \DateTimeImmutable(), 1);
-                    } catch (\Throwable $e) {
-                        // Log failure but do NOT block checkout
-                        $this->syncLogRepo->upsert('stock_push_error', 'outbound', new \DateTimeImmutable(), 0);
-                    }
                 }
             }
         } catch (CheckoutException $e) {
