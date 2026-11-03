@@ -10,6 +10,7 @@ use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Attribute\AsController;
 use Symfony\Component\Routing\Attribute\Route;
 use VenPosTPV\Service\Catalog\CatalogSyncService;
+use VenPosTPV\Service\Sync\OutboxSync;
 use VenPosTPV\Service\Sync\StockPushService;
 use VenPosTPV\Service\Sync\SyncStatusService;
 
@@ -20,6 +21,7 @@ class SyncStatusController
         private readonly SyncStatusService $syncStatusService,
         private readonly CatalogSyncService $catalogSyncService,
         private readonly StockPushService $stockPushService,
+        private readonly ?OutboxSync $outboxSync = null,
     ) {
     }
 
@@ -60,11 +62,31 @@ class SyncStatusController
             return new JsonResponse(['error' => 'Unauthorized'], Response::HTTP_UNAUTHORIZED);
         }
 
-        $counts = $this->catalogSyncService->syncAll();
+        // Pending sales and refunds go first: they matter more than the catalog.
+        $outbox = null;
+        if ($this->outboxSync !== null) {
+            $this->outboxSync->makePendingDue();
+            $outbox = $this->outboxSync->run(50);
+        }
 
-        return new JsonResponse([
-            'data' => ['queued' => true, 'counts' => $counts],
-        ]);
+        try {
+            $counts = $this->catalogSyncService->syncAll();
+            $catalogError = null;
+        } catch (\Throwable $e) {
+            if ($this->outboxSync === null) {
+                throw $e;
+            }
+            $counts = null;
+            $catalogError = $e->getMessage();
+        }
+
+        $data = ['queued' => true, 'counts' => $counts];
+        if ($this->outboxSync !== null) {
+            $data['outbox'] = $outbox;
+            $data['catalog_error'] = $catalogError;
+        }
+
+        return new JsonResponse(['data' => $data]);
     }
 
     #[Route('/sync/push-stock', methods: ['POST'])]

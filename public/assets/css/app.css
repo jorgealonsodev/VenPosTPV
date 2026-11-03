@@ -469,3 +469,9 @@ html, body, #app {
 .tpv-sync-count { display: inline-flex; align-items: center; gap: 3px; min-height: 24px; padding: 2px 8px; border-radius: 999px; font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 700; line-height: 1; }
 .tpv-sync-count-pending { color: var(--amber); background: var(--amber-bg); border: 1px solid var(--amber); }
 .tpv-sync-count-incident { color: #fff; background: var(--danger); border: 1px solid var(--danger); }
+
+/* Manual sync button: the icon turns while the sync runs */
+@keyframes tpv-spin { to { transform: rotate(360deg); } }
+.tpv-spin svg { animation: tpv-spin 0.9s linear infinite; }
+.tpv-spin:disabled { cursor: progress; opacity: 0.8; }
+@media (prefers-reduced-motion: reduce) { .tpv-spin svg { animation: none; } }

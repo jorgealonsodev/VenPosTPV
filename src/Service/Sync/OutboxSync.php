@@ -72,6 +72,18 @@ class OutboxSync
     }
 
     /**
+     * Manual "sync now": pending rows waiting out their backoff become due at once.
+     * Rows being processed or in incident are left alone.
+     */
+    public function makePendingDue(): int
+    {
+        return (int) $this->connection->executeStatement(
+            "UPDATE outbox SET next_attempt_at = ? WHERE status = 'pending' AND next_attempt_at > ?",
+            [$this->now(), $this->now()]
+        );
+    }
+
+    /**
      * Uploads up to $limit due rows.
      *
      * @return array{uploaded: int, retried: int, incidents: int, recovered: int}

@@ -11,6 +11,7 @@ use Symfony\Component\HttpFoundation\Session\Session;
 use Symfony\Component\HttpFoundation\Session\Storage\MockArraySessionStorage;
 use VenPosTPV\Controller\Api\SyncStatusController;
 use VenPosTPV\Service\Catalog\CatalogSyncService;
+use VenPosTPV\Service\Sync\OutboxSync;
 use VenPosTPV\Service\Sync\StockPushService;
 use VenPosTPV\Service\Sync\SyncStatusDTO;
 use VenPosTPV\Service\Sync\SyncStatusService;
@@ -109,5 +110,27 @@ class SyncStatusControllerTest extends TestCase
         $data = json_decode((string) $response->getContent(), true, 512, JSON_THROW_ON_ERROR);
         $this->assertTrue($data['data']['queued']);
         $this->assertSame(1, $data['data']['counts']['products']);
+    }
+
+    public function testManualSyncUploadsPendingOperationsNowEvenWhenTheCatalogFails(): void
+    {
+        $catalog = $this->createMock(CatalogSyncService::class);
+        $catalog->method('syncAll')->willThrowException(new \RuntimeException('PrestaShop down'));
+        $outbox = $this->createMock(OutboxSync::class);
+        $outbox->expects($this->once())->method('makePendingDue')->willReturn(2);
+        $outbox->expects($this->once())->method('run')->willReturn(['uploaded' => 2, 'retried' => 0, 'incidents' => 0, 'recovered' => 0]);
+        $controller = new SyncStatusController(
+            $this->createMock(SyncStatusService::class),
+            $catalog,
+            $this->createMock(StockPushService::class),
+            $outbox,
+        );
+
+        $response = $controller->syncNow($this->requestWithUser(5));
+
+        $this->assertSame(Response::HTTP_OK, $response->getStatusCode());
+        $data = json_decode((string) $response->getContent(), true, 512, JSON_THROW_ON_ERROR);
+        $this->assertSame(2, $data['data']['outbox']['uploaded']);
+        $this->assertSame('PrestaShop down', $data['data']['catalog_error']);
     }
 }

@@ -252,10 +252,22 @@ const SaleScreen = {
             logout();
         }
 
+        const syncingNow = Vue.ref(false);
+
+        /** Manual sync: uploads pending sales/refunds now and refreshes the catalog. */
         async function handleSyncNow() {
+            if (syncingNow.value) return;
+            syncingNow.value = true;
             try {
-                await ApiClient.syncNow();
-                notify('Sincronización iniciada', 'var(--blue)');
+                const response = await ApiClient.syncNow();
+                const data = (response && response.data) || {};
+                const uploaded = data.outbox ? data.outbox.uploaded : 0;
+                if (data.catalog_error) {
+                    notify('Sin conexión con PrestaShop: las ventas pendientes se subirán solas', 'var(--orange)');
+                } else {
+                    notify(uploaded > 0 ? 'Sincronizado: ' + uploaded + ' operaciones subidas' : 'Sincronizado', 'var(--primary)');
+                }
+                useSession.refreshOutbox();
                 setTimeout(async () => {
                     try {
                         const response = await ApiClient.syncStatus();
@@ -268,7 +280,9 @@ const SaleScreen = {
                     }
                 }, 3000);
             } catch (err) {
-                notify('Error al iniciar sincronización: ' + (err.message || 'Error'), 'var(--red)');
+                notify('Error al sincronizar: ' + (err.message || 'Error'), 'var(--red)');
+            } finally {
+                syncingNow.value = false;
             }
         }
 
@@ -293,7 +307,7 @@ const SaleScreen = {
             handleCashClose, handleCashCloseDone, handleCashCloseBack, handleDiscardParkedOnClose,
             handleRefund, handleRefundBack, handleRefundNotify,
             handleLogout, handleLogoutConfirmed,
-            handleSyncNow,
+            handleSyncNow, syncingNow,
             toggleTickets, handleRestoreTicket,
         };
     },
@@ -336,6 +350,11 @@ const SaleScreen = {
                         :outbox="session.outbox"
                         @click="showSyncPanel = true"
                     />
+                    <button @click="handleSyncNow" :disabled="syncingNow" title="Sincronizar ahora con PrestaShop" aria-label="Sincronizar ahora"
+                        :class="{ 'tpv-spin': syncingNow }"
+                        style="min-height:44px; min-width:44px; background:transparent; border:1px solid var(--border); border-radius:8px; padding:4px 8px; color:var(--text2); cursor:pointer; display:flex; align-items:center; justify-content:center;">
+                        <icon name="sync" :size="16" />
+                    </button>
                     <button @click="toggleTheme" style="min-height:44px; background:transparent; border:1px solid var(--border); border-radius:8px; padding:4px 8px; color:var(--text3); font-size:11px; cursor:pointer; font-family:inherit; display:flex; align-items:center; gap:4px;">
                         <icon :name="session.theme === 'dark' ? 'sun' : 'moon'" :size="13" />
                     </button>
