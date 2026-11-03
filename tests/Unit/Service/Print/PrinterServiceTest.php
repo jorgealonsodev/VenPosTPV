@@ -8,6 +8,7 @@ use Doctrine\DBAL\Connection;
 use PHPUnit\Framework\TestCase;
 use VenPosTPV\Service\Print\EscPosTicketBuilder;
 use VenPosTPV\Service\Print\PrinterService;
+use VenPosTPV\Service\Print\SystemPrintQueue;
 use VenPosTPV\Service\Print\TicketData;
 use VenPosTPV\Service\Print\TicketDataResolver;
 use VenPosTPV\Service\Print\TicketLine;
@@ -343,5 +344,46 @@ final class PrinterServiceTest extends TestCase
 
         $this->expectException(\RuntimeException::class);
         $this->createService(resolver: $resolver)->printRefundTicket(99, 1);
+    }
+
+    public function testSystemPrinterReceivesTheEscPosTicketAndMarksItPrinted(): void
+    {
+        $ticketData = $this->createTicketData();
+        $conn = $this->createMock(Connection::class);
+        $conn->method('fetchOne')->willReturn(json_encode(['enabled' => true, 'type' => 'system', 'queue' => 'Epson_TM-T20II']));
+        $conn->expects($this->once())->method('executeStatement')->with($this->stringContains('printed = 1'));
+        $resolver = $this->createMock(TicketDataResolver::class);
+        $resolver->method('resolve')->willReturn($ticketData);
+        $builder = $this->createMock(EscPosTicketBuilder::class);
+        $builder->method('build')->willReturn('ESCPOS-BYTES');
+        $queue = $this->createMock(SystemPrintQueue::class);
+        $queue->expects($this->once())->method('send')->with('Epson_TM-T20II', 'ESCPOS-BYTES');
+        $pdf = $this->createMock(TicketPdfGenerator::class);
+        $pdf->expects($this->never())->method('generate');
+
+        (new PrinterService($conn, $resolver, $builder, $pdf, $queue))->printTicket(1, 1);
+    }
+
+    public function testSystemPrinterAlsoPrintsCreditNotesAndOpensTheDrawer(): void
+    {
+        $conn = $this->createMock(Connection::class);
+        $conn->method('fetchOne')->willReturn(json_encode(['enabled' => true, 'type' => 'system', 'queue' => 'Epson_TM-T20II']));
+        $resolver = $this->createMock(TicketDataResolver::class);
+        $resolver->method('resolveRefund')->willReturn($this->createTicketData());
+        $builder = $this->createMock(EscPosTicketBuilder::class);
+        $builder->method('build')->willReturn('NOTE');
+        $queue = $this->createMock(SystemPrintQueue::class);
+        $sent = [];
+        $queue->method('send')->willReturnCallback(function (string $q, string $bytes) use (&$sent): void {
+            $sent[] = [$q, $bytes];
+        });
+
+        $service = new PrinterService($conn, $resolver, $builder, $this->createMock(TicketPdfGenerator::class), $queue);
+        $this->assertSame('printed', $service->printRefundTicket(7, 1));
+        $service->openDrawer(1);
+
+        $this->assertSame(['Epson_TM-T20II', 'NOTE'], $sent[0]);
+        $this->assertSame('Epson_TM-T20II', $sent[1][0]);
+        $this->assertSame("\x1bp\x00\x19\xfa", $sent[1][1], 'standard ESC p drawer kick');
     }
 }

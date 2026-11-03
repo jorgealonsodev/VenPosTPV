@@ -196,7 +196,7 @@ const PaymentModal = {
                     const pt = printerType.value;
                     if (pt === 'pdf' && lastOrderId.value) {
                         ApiClient.ticketPdf(lastOrderId.value);
-                    } else if (pt === 'escpos' && lastOrderId.value) {
+                    } else if ((pt === 'escpos' || pt === 'system') && lastOrderId.value) {
                         ApiClient.ticketReprint(lastOrderId.value).catch(() => {
                             // ESC/POS print failure is non-blocking
                         });

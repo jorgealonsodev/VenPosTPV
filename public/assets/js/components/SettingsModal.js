@@ -31,6 +31,16 @@ const SettingsModal = {
         const terminalLoading = Vue.ref(false);
         const terminalSaving = Vue.ref(false);
         const terminalError = Vue.ref('');
+        const systemPrinters = Vue.ref([]);
+
+        async function loadSystemPrinters() {
+            try {
+                const resp = await ApiClient.get('/api/printers/system');
+                systemPrinters.value = Array.isArray(resp.data) ? resp.data : [];
+            } catch (e) {
+                systemPrinters.value = [];
+            }
+        }
 
         // Sync section
         const syncInterval = Vue.ref(useSession.session.stockSyncIntervalSeconds ?? 60);
@@ -92,6 +102,7 @@ const SettingsModal = {
                 if (terminal.value.name != null) payload.name = terminal.value.name;
                 if (terminal.value.printer_ip != null) payload.printer_ip = terminal.value.printer_ip;
                 if (terminal.value.printer_port != null) payload.printer_port = terminal.value.printer_port;
+                if (terminal.value.printer_queue != null) payload.printer_queue = terminal.value.printer_queue;
 
                 await ApiClient.terminalUpdate(terminal.value.id, payload);
                 success.value = 'Configuración guardada';
@@ -257,9 +268,11 @@ const SettingsModal = {
         Vue.onMounted(() => {
             loadEmployees();
             loadTerminal();
+            loadSystemPrinters();
         });
 
         return {
+            systemPrinters,
             employees, loading, error, success,
             activeSection,
             showCreateForm, createForm, createError, creating, handleCreate,
@@ -467,7 +480,18 @@ const SettingsModal = {
                                         <option value="none">Sin impresora</option>
                                         <option value="pdf">PDF</option>
                                         <option value="escpos">ESC/POS (red)</option>
+                                        <option value="system">Impresora del sistema (USB)</option>
                                     </select>
+                                </div>
+                                <div v-if="terminal.printer_type === 'system'">
+                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Impresora instalada en este equipo</label>
+                                    <select v-model="terminal.printer_queue"
+                                        style="width:100%; max-width:320px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; cursor:pointer; box-sizing:border-box;">
+                                        <option value="" disabled>Elige una impresora</option>
+                                        <option v-for="q in systemPrinters" :key="q" :value="q">{{ q }}</option>
+                                    </select>
+                                    <div style="font-size:12px; color:var(--text3); margin-top:4px;">Imprime el ticket directamente (con corte y apertura del cajón). Solo funciona si el TPV corre en el mismo ordenador que la impresora.</div>
+                                    <div v-if="systemPrinters.length === 0" style="font-size:12px; color:var(--red); margin-top:4px;">No se encuentran impresoras instaladas en este equipo.</div>
                                 </div>
                                 <template v-if="terminal.printer_type === 'escpos'">
                                     <div>

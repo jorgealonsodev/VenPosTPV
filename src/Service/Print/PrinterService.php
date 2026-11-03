@@ -13,6 +13,7 @@ class PrinterService
         private readonly TicketDataResolver $ticketDataResolver,
         private readonly EscPosTicketBuilder $escPosBuilder,
         private readonly TicketPdfGenerator $pdfGenerator,
+        private readonly SystemPrintQueue $systemPrintQueue = new SystemPrintQueue(),
     ) {
     }
 
@@ -31,7 +32,7 @@ class PrinterService
         );
         $config = PrinterConfig::fromJson($configRow !== false && \is_string($configRow) ? $configRow : null);
 
-        if ($config->enabled && $config->type === 'network' && $config->host !== '') {
+        if ($config->printsDirectly()) {
             try {
                 $this->sendEscPos($ticketData, $config, $giftMode);
                 $this->markPrinted($orderId);
@@ -80,7 +81,7 @@ class PrinterService
             'gift_mode' => $giftMode,
         ]);
 
-        if ($config->enabled && $config->type === 'network' && $config->host !== '') {
+        if ($config->printsDirectly()) {
             try {
                 $this->sendEscPos($ticketData, $config, $giftMode);
                 $this->markPrinted($orderId);
@@ -111,7 +112,7 @@ class PrinterService
         $configRow = $this->connection->fetchOne('SELECT printer_config FROM terminal WHERE id = ?', [$terminalId]);
         $config = PrinterConfig::fromJson($configRow !== false && \is_string($configRow) ? $configRow : null);
 
-        if ($config->enabled && $config->type === 'network' && $config->host !== '') {
+        if ($config->printsDirectly()) {
             try {
                 $this->sendEscPos($ticketData, $config);
                 $this->logAudit($terminalId, 'credit_note_printed', (string) $refundId, ['number' => $ticketData->reference]);
@@ -133,7 +134,7 @@ class PrinterService
         );
         $config = PrinterConfig::fromJson($configRow !== false && \is_string($configRow) ? $configRow : null);
 
-        if (!$config->enabled || $config->type !== 'network' || $config->host === '') {
+        if (!$config->printsDirectly()) {
             $this->logAudit($terminalId, 'drawer_open_skipped', (string) $terminalId, [
                 'reason' => 'Printer not configured or disabled',
                 'printer_enabled' => $config->enabled,
@@ -163,21 +164,25 @@ class PrinterService
     {
         // Standard ESC/POS drawer kick command: pulse on pin 2
         // \x1B\x70\x00\x19\xFA  →  ESC p 0 25 250
-        $bytes = "\x1B\x70\x00\x19\xFA";
-
-        $socket = @fsockopen($config->host, $config->port, $errno, $errstr, 5.0);
-        if ($socket === false) {
-            throw new \RuntimeException(sprintf('Printer connection failed for drawer kick: %s (%d)', $errstr, $errno));
-        }
-
-        stream_set_timeout($socket, 5);
-        fwrite($socket, $bytes);
-        fclose($socket);
+        $this->sendRaw($config, "\x1B\x70\x00\x19\xFA");
     }
 
     protected function sendEscPos(TicketData $ticketData, PrinterConfig $config, bool $giftMode = false): void
     {
-        $bytes = $this->escPosBuilder->build($ticketData, $giftMode);
+        $this->sendRaw($config, $this->escPosBuilder->build($ticketData, $giftMode));
+    }
+
+    /**
+     * Delivers ESC/POS bytes to the configured printer: a system queue (USB or any
+     * printer installed on this machine) or a network printer on host:port.
+     */
+    private function sendRaw(PrinterConfig $config, string $bytes): void
+    {
+        if ($config->type === 'system') {
+            $this->systemPrintQueue->send($config->queue, $bytes);
+
+            return;
+        }
 
         $socket = @fsockopen($config->host, $config->port, $errno, $errstr, 5.0);
         if ($socket === false) {

@@ -10,11 +10,16 @@ use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Attribute\AsController;
 use Symfony\Component\Routing\Attribute\Route;
+use VenPosTPV\Service\Print\PrinterConfig;
+use VenPosTPV\Service\Print\SystemPrintQueue;
 
 #[AsController]
 final class TerminalController
 {
-    public function __construct(private readonly Connection $connection)
+    public function __construct(
+        private readonly Connection $connection,
+        private readonly SystemPrintQueue $systemPrintQueue,
+    )
     {
     }
 
@@ -34,7 +39,26 @@ final class TerminalController
             return new JsonResponse(['error' => 'Terminal no encontrado'], Response::HTTP_NOT_FOUND);
         }
 
+        // Expose the stored printer settings in the shape the settings form edits.
+        $printer = PrinterConfig::fromJson(\is_string($row['printer_config'] ?? null) ? $row['printer_config'] : null);
+        $row['printer_ip'] = $printer->type === 'network' ? $printer->host : '';
+        $row['printer_port'] = $printer->type === 'network' ? $printer->port : 9100;
+        $row['printer_queue'] = $printer->type === 'system' ? $printer->queue : '';
+
         return new JsonResponse(['data' => $row]);
+    }
+
+    /**
+     * Printers installed on the machine running the TPV (e.g. a USB receipt printer).
+     */
+    #[Route('/printers/system', methods: ['GET'])]
+    public function systemPrinters(Request $request): JsonResponse
+    {
+        if (!$this->isAdmin($request)) {
+            return $this->unauthorized();
+        }
+
+        return new JsonResponse(['data' => $this->systemPrintQueue->list()]);
     }
 
     #[Route('/terminal/{id}', methods: ['PUT'])]
@@ -66,10 +90,32 @@ final class TerminalController
 
         if (isset($body['printer_type'])) {
             $type = (string) $body['printer_type'];
-            if (!in_array($type, ['none', 'pdf', 'escpos'], true)) {
+            if (!in_array($type, ['none', 'pdf', 'escpos', 'system'], true)) {
                 return new JsonResponse(['error' => 'Tipo de impresora no válido'], Response::HTTP_UNPROCESSABLE_ENTITY);
             }
             $fields['printer_type'] = $type;
+
+            // printer_config is what the print service reads: keep it in step with the type.
+            if ($type === 'escpos') {
+                $host = trim((string) ($body['printer_ip'] ?? ''));
+                $port = (int) ($body['printer_port'] ?? 9100);
+                if ($host === '' || !preg_match('/^[A-Za-z0-9.:-]+$/', $host)) {
+                    return new JsonResponse(['error' => 'Indica la IP de la impresora de red'], Response::HTTP_UNPROCESSABLE_ENTITY);
+                }
+                if ($port < 1 || $port > 65535) {
+                    return new JsonResponse(['error' => 'Puerto de impresora no válido (1-65535)'], Response::HTTP_UNPROCESSABLE_ENTITY);
+                }
+                $config = ['enabled' => true, 'type' => 'network', 'host' => $host, 'port' => $port];
+            } elseif ($type === 'system') {
+                $queue = trim((string) ($body['printer_queue'] ?? ''));
+                if (!\in_array($queue, $this->systemPrintQueue->list(), true)) {
+                    return new JsonResponse(['error' => 'Elige una impresora instalada en este equipo'], Response::HTTP_UNPROCESSABLE_ENTITY);
+                }
+                $config = ['enabled' => true, 'type' => 'system', 'queue' => $queue];
+            } else {
+                $config = ['enabled' => false, 'type' => $type];
+            }
+            $fields['printer_config'] = json_encode($config, JSON_THROW_ON_ERROR);
         }
 
         if (array_key_exists('store_address', $body)) {
