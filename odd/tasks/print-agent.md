@@ -1,0 +1,23 @@
+# Print agent — tickets and cash drawer when the TPV runs online (Plesk subdomain)
+Branch: feat/print-agent (from feat/local-first-sales). Delivery: ask-on-risk, one commit per task. Runners: PHPUnit (.runtime/php-8.5.12/bin/php vendor/bin/phpunit), Node harnesses (tests/Functional/*.test.cjs), Go (`go test ./...` in agent/).
+Context: the TPV will be deployed on a Plesk subdomain next to PrestaShop; the server cannot reach the shop's USB Epson. A small agent in the shop prints and opens the drawer.
+
+## Specs
+S1. User decision (2026-11-03): "lo quiero desplegar en un subdominio en plesk, al lado de la tienda pricipal de prestahop"; printing option chosen: "Agente en la tienda (Recomendado)" — "Un programa pequeño en el ordenador de la caja se conecta al subdominio por HTTPS (saliente, sin abrir puertos), recoge los tickets de su caja y los manda a la Epson USB, y abre el cajón. Mismo resultado que ahora: ticket automático y cajón." Operating systems: "Crea el de windows y el de linux".
+S2. Server contract (TPV, PHP): new printer type `agent` per till. When a till uses `agent`, every print (sale ticket, gift ticket, reprint, credit note, test print) and every drawer opening becomes a job in a `print_job` queue for that till instead of going to CUPS/IP; the bytes are the same ESC/POS the builder produces today. Agent authenticates with a per-till agent token (random ≥256-bit, only its sha256 stored), created by an admin in Ajustes → Cajas ("Conectar agente de impresión", shown once, can be regenerated which revokes the old one).
+S3. Agent API (HTTPS, JSON, `Authorization: Bearer <token>`):
+  - `GET /api/agent/jobs?wait=25` long-poll: returns up to 10 jobs `{id, kind: "ticket"|"drawer", data_base64, created_at}` claimed for this agent (claim with token + timeout 60 s; unacknowledged claims return to queued), or `[]` after the wait. Also records the agent heartbeat (last_seen_at, agent version, hostname, printer name).
+  - `POST /api/agent/jobs/{id}/done` and `POST /api/agent/jobs/{id}/failed {"error": "..."}` (idempotent; failed jobs retried up to 3 times then marked failed).
+  - Jobs older than 10 minutes and never printed expire (status expired) so a reconnecting agent does not print old tickets or open the drawer late; drawer jobs expire after 60 s.
+  - 401 for missing/invalid/revoked token; tokens never in URLs or logs.
+S4. Agent program (Go, single binary per OS, `agent/` folder): config file (server URL, token, printer name), loop long-poll → send raw bytes to the printer → ack; reconnect with backoff; log file with rotation; Windows: runs as a Windows service, prints RAW via the Windows spooler (winspool OpenPrinter/StartDocPrinter with datatype RAW/WritePrinter); Linux: systemd service, prints via `lp -d <queue> -o raw` (or a device path). Commands: `install`, `uninstall`, `run`, `test-print`, `list-printers`. Builds: `venpos-print-agent-windows-amd64.exe`, `venpos-print-agent-linux-amd64`. No inbound ports.
+S5. Visibility: Ajustes → Cajas shows agent status per till (conectado / sin conexión desde hh:mm, version, printer); the sale screen warns when the till's agent has been offline > 2 min ("La impresora no está conectada: el ticket se puede ver en PDF"); printing never blocks a sale: if no agent picks the job up within 15 s, the payment screen offers the PDF.
+S6. Docs: docs/print-agent.md (install on Windows and Linux, pairing, troubleshooting) in Spanish for the shop owner.
+
+## Tasks
+T1 | S2, S3, S5 (server + UI) | delegated (parallel with T2) | pending | print_job queue, agent token, agent API, PrinterService routing, Ajustes Cajas pairing + status, sale-screen warning.
+T2 | S3, S4, S6 | delegated (parallel with T1) | pending | Go agent for Windows and Linux, install as service, docs.
+T3 | all | pending | Live test on this machine: agent (Linux) against local TPV with the Epson; cross-built Windows binary smoke-tested where possible; independent verifier (security item 2).
+
+## Log
+L1. 2026-11-03 user: "si esta pagina la despliego online me imprimira tickets y abrira el cajon?" → explained the server prints via CUPS/IP and cannot reach the shop from Plesk. User: "lo quiero desplegar en un subdominio en plesk, al lado de la tienda pricipal de prestahop". Chose "Agente en la tienda (Recomendado)"; OS: "Crea el de windows y el de linux". Noted: with the TPV online, a shop internet outage stops checkout (local-first protects only against PrestaShop failures); browser offline mode would be a separate feature.
