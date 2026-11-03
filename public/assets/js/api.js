@@ -1,5 +1,9 @@
 /**
  * API client wrapper with session auth, 401 redirect, and offline queue.
+ *
+ * Only idempotent requests may be queued and replayed: /api/checkout carries the
+ * payment attempt's request_id (PaymentModal), so a retry plus the queued replay of
+ * the same attempt return one sale. Refunds and exchanges are never queued.
  */
 const ApiClient = (function () {
     const BASE_URL = window.TPV_BASE || '';
@@ -61,12 +65,15 @@ const ApiClient = (function () {
         return response.json();
     }
 
-    function flushQueue() {
-        while (offlineQueue.length > 0) {
-            const item = offlineQueue.shift();
-            fetch(item.url, item.opts).catch(() => {
-                offlineQueue.unshift(item);
-            });
+    /** Replays the queue in order; whatever still fails stays queued for the next time. */
+    async function flushQueue() {
+        const items = offlineQueue.splice(0, offlineQueue.length);
+        for (const item of items) {
+            try {
+                await fetch(item.url, item.opts);
+            } catch (e) {
+                offlineQueue.push(item);
+            }
         }
     }
 
@@ -76,6 +83,8 @@ const ApiClient = (function () {
         put: (path, body) => request(path, { method: 'PUT', body: JSON.stringify(body) }),
         del: (path) => request(path, { method: 'DELETE' }),
         isOnline: () => isOnline,
+        pendingCount: () => offlineQueue.length,
+        flush: () => flushQueue(),
         checkout: (payload) => request('/api/checkout', { method: 'POST', body: JSON.stringify(payload) }),
         couponPreview: (payload) => request('/api/checkout/coupon-preview', { method: 'POST', body: JSON.stringify(payload), queueOnNetworkFailure: false }),
         couponCheckout: (payload) => request('/api/checkout', { method: 'POST', body: JSON.stringify(payload), queueOnNetworkFailure: false }),
@@ -96,7 +105,9 @@ const ApiClient = (function () {
         },
         ticketReprintSale: (orderId) => request('/api/ticket/reprint', { method: 'POST', body: JSON.stringify({ order_id: orderId }) }),
         ticketVerify: (token) => request('/api/ticket/verify?token=' + encodeURIComponent(token)),
-        refundOrder: (psOrderId, refund) => request('/api/refund', { method: 'POST', body: JSON.stringify({ ...refund, ps_order_id: psOrderId }) }),
+        // A TPV sale goes by refund.order_id (also before it is uploaded); ps_order_id
+        // names an online order. Never queued offline: a replayed POST would be a second refund.
+        refundOrder: (psOrderId, refund) => request('/api/refund', { method: 'POST', body: JSON.stringify({ ...refund, ps_order_id: psOrderId }), queueOnNetworkFailure: false }),
         refundPdf: (refundId) => {
             window.open(BASE_URL + '/api/refund/' + encodeURIComponent(refundId) + '/pdf', '_blank');
         },

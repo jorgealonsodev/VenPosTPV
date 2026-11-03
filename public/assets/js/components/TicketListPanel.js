@@ -50,6 +50,17 @@ const TicketListPanel = {
             selectedOrder.value = order;
         }
 
+        // A sale not uploaded to PrestaShop yet has no ps_order_id (PRD D1): its
+        // local order_id keys it and its ticket code names it.
+        function orderKey(order) {
+            return order && order.order_id ? 'sale-' + order.order_id : 'ps-' + (order && order.ps_order_id);
+        }
+
+        function orderLabel(order) {
+            if (!order) return '';
+            return order.ps_order_id ? '#' + order.ps_order_id + ' — ' + (order.reference || '') : (order.reference || 'Venta ' + order.order_id);
+        }
+
         function backToList() {
             selectedOrder.value = null;
         }
@@ -116,7 +127,7 @@ const TicketListPanel = {
             activeTab, selectedOrder, parkedTickets, paidOrders, refundedOrders,
             loading, confirmDelete,
             selectOrder, backToList, handleRestoreClick, askDelete, doDelete, cancelDelete,
-            formatTicketTime, formatTicketDate,
+            formatTicketTime, formatTicketDate, orderKey, orderLabel,
         };
     },
     template: `
@@ -214,11 +225,11 @@ const TicketListPanel = {
                         <icon name="receipt" :size="32" />
                         <span style="font-size:13px;">No hay tickets cobrados</span>
                     </div>
-                    <div v-for="order in paidOrders" :key="order.ps_order_id" @click="selectOrder(order)"
+                    <div v-for="order in paidOrders" :key="orderKey(order)" @click="selectOrder(order)"
                         style="background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px; cursor:pointer; display:flex; flex-direction:column; gap:4px; transition:all .1s;"
                         onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='var(--surface)'">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <span style="font-weight:600; color:var(--text); font-size:14px;">#{{ order.ps_order_id }} — {{ order.reference }}</span>
+                            <span style="font-weight:600; color:var(--text); font-size:14px;">{{ orderLabel(order) }}</span>
                             <span style="color:var(--text2); font-size:12px; font-family:'IBM Plex Mono';">€{{ Number(order.total || 0).toFixed(2) }}</span>
                         </div>
                         <div style="color:var(--text3); font-size:12px;">
@@ -235,11 +246,11 @@ const TicketListPanel = {
                         <icon name="undo" :size="32" />
                         <span style="font-size:13px;">No hay tickets devueltos</span>
                     </div>
-                    <div v-for="order in refundedOrders" :key="order.ps_order_id" @click="selectOrder(order)"
+                    <div v-for="order in refundedOrders" :key="orderKey(order)" @click="selectOrder(order)"
                         style="background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px; cursor:pointer; display:flex; flex-direction:column; gap:4px; transition:all .1s;"
                         onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='var(--surface)'">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <span style="font-weight:600; color:var(--text); font-size:14px;">#{{ order.ps_order_id }} — {{ order.reference }}</span>
+                            <span style="font-weight:600; color:var(--text); font-size:14px;">{{ orderLabel(order) }}</span>
                             <span style="color:var(--red); font-size:12px; font-family:'IBM Plex Mono';">Devuelto: €{{ Number(order.refunded_amount || 0).toFixed(2) }}</span>
                         </div>
                         <div style="color:var(--text3); font-size:12px;">

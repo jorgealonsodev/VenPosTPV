@@ -84,6 +84,10 @@ final class VoucherIssuer
                 // Validation and an unavailable schema fail before the cart rule is
                 // posted, so the voucher may be requested again on a retry.
                 $this->conn->update($table, ['voucher_requested_at' => null, 'error_message' => mb_substr($e->getMessage(), 0, 1000)], ['id' => $id]);
+                if ($e->getCode() === 503) {
+                    // PrestaShop cannot be reached: no voucher exists (PRD D3).
+                    throw RefundException::voucherUnavailable($e);
+                }
 
                 throw RefundException::psUnavailable($e->getMessage(), $e);
             }

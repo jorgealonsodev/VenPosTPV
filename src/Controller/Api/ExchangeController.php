@@ -13,9 +13,11 @@ use VenPosTPV\Service\Cash\Exception\NoOpenCashSessionException;
 use VenPosTPV\Service\Exchange\ExchangeService;
 use VenPosTPV\Service\Refund\CreditNoteHandOver;
 use VenPosTPV\Service\Refund\Exception\RefundException;
+use VenPosTPV\Service\Refund\OrderSearchService;
 
 /**
- * Product exchanges of TPV sales: POST /api/exchange {ps_order_id, return_lines:
+ * Product exchanges of TPV sales: POST /api/exchange {order_id | reference |
+ * ps_order_id (compatibility, and online orders), voucher_fallback?, return_lines:
  * [{line_index, quantity, restock}], reason_code, reason_text, new_cart_data (as
  * /api/checkout cart_data), payment_method, amount_tendered, cash_amount?,
  * card_confirmed?}. The response carries credit, new_total and balance, the refund
@@ -24,7 +26,9 @@ use VenPosTPV\Service\Refund\Exception\RefundException;
  * new sale failed: POST /api/exchange/{id}/retry completes it, or POST
  * /api/exchange/{id}/voucher closes it by giving the open credit back as a
  * PrestaShop voucher ({exchange_id, status: 'closed_voucher', voucher_code,
- * voucher_amount}) when the new sale can never be completed.
+ * voucher_amount}) when the new sale can never be completed. Both halves are local
+ * first (PRD D1); a voucher PrestaShop cannot create now answers 503
+ * voucher_unavailable so the cashier picks another tender (D3).
  */
 #[AsController]
 class ExchangeController
@@ -32,6 +36,7 @@ class ExchangeController
     public function __construct(
         private readonly ExchangeService $exchangeService,
         private readonly CreditNoteHandOver $handOver,
+        private readonly OrderSearchService $orderSearchService,
     ) {
     }
 
@@ -45,10 +50,14 @@ class ExchangeController
 
         $body = json_decode((string) $request->getContent(), true);
         $body = \is_array($body) ? $body : [];
-        $psOrderId = isset($body['ps_order_id']) ? (int) $body['ps_order_id'] : 0;
-        if ($psOrderId <= 0) {
+        $target = RefundController::saleTarget($body, $this->orderSearchService);
+        if ($target === null) {
             return new JsonResponse(['error' => 'Missing or invalid ps_order_id', 'retry' => false], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
+        if ($target === []) {
+            return new JsonResponse(['error' => 'Sale not found', 'retry' => false], Response::HTTP_NOT_FOUND);
+        }
+        $voucherFallback = isset($body['voucher_fallback']) && \is_string($body['voucher_fallback']) && $body['voucher_fallback'] !== '' ? $body['voucher_fallback'] : null;
 
         $cartData = \is_array($body['new_cart_data'] ?? null) ? $body['new_cart_data'] : [];
         if (isset($body['cash_amount']) && is_numeric($body['cash_amount'])) {
@@ -57,7 +66,7 @@ class ExchangeController
 
         return $this->respond($request, fn (): array => $this->exchangeService->processExchange(
             (int) $session->get('user_id'),
-            $psOrderId,
+            $target['ps_order_id'] ?? 0,
             \is_array($body['return_lines'] ?? null) ? array_values($body['return_lines']) : [],
             \is_string($body['reason_code'] ?? null) ? $body['reason_code'] : '',
             \is_string($body['reason_text'] ?? null) ? $body['reason_text'] : '',
@@ -66,6 +75,8 @@ class ExchangeController
             isset($body['amount_tendered']) && is_numeric($body['amount_tendered']) ? (float) $body['amount_tendered'] : 0.0,
             ($body['card_confirmed'] ?? false) === true,
             (int) $session->get('shop_id', 0),
+            $target['order_id'] ?? 0,
+            $voucherFallback,
         ));
     }
 
@@ -128,14 +139,7 @@ class ExchangeController
     private function errorResponse(\Throwable $e): JsonResponse
     {
         if ($e instanceof RefundException) {
-            $status = match ($e->getCode()) {
-                404 => Response::HTTP_NOT_FOUND,
-                409 => Response::HTTP_CONFLICT,
-                422 => Response::HTTP_UNPROCESSABLE_ENTITY,
-                default => Response::HTTP_BAD_GATEWAY,
-            };
-
-            return new JsonResponse(['error' => $e->getMessage(), 'retry' => $status === Response::HTTP_BAD_GATEWAY], $status);
+            return RefundController::refundError($e);
         }
         if ($e instanceof NoOpenCashSessionException) {
             return new JsonResponse(['error' => $e->getMessage(), 'retry' => false], Response::HTTP_CONFLICT);

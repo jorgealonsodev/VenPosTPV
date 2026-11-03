@@ -44,6 +44,22 @@ final class RefundException extends RuntimeException
         );
     }
 
+    /** Code of voucherUnavailable(): PrestaShop could not be reached, so no voucher exists. */
+    public const VOUCHER_UNAVAILABLE = 503;
+
+    /**
+     * Vouchers are PrestaShop cart rules (PRD D3): without a connection none can be
+     * created, and the cashier gives the money back by another method.
+     */
+    public static function voucherUnavailable(?Throwable $previous = null): self
+    {
+        return new self(
+            'Sin conexión con PrestaShop: el vale no se puede crear ahora. Elige efectivo o tarjeta.',
+            self::VOUCHER_UNAVAILABLE,
+            $previous
+        );
+    }
+
     public static function validationFailed(string $message): self
     {
         return new self(

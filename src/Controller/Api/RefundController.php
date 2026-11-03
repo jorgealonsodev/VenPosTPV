@@ -50,7 +50,6 @@ class RefundController
             $body = [];
         }
 
-        $psOrderId = isset($body['ps_order_id']) ? (int) $body['ps_order_id'] : 0;
         // A missing "lines" refunds everything left; a malformed one must never do that.
         if (isset($body['lines']) && !\is_array($body['lines'])) {
             return new JsonResponse(['error' => 'lines must be a list of lines to refund', 'retry' => false], Response::HTTP_UNPROCESSABLE_ENTITY);
@@ -59,67 +58,85 @@ class RefundController
         $reasonCode = isset($body['reason_code']) && \is_string($body['reason_code']) ? $body['reason_code'] : '';
         $reasonText = isset($body['reason_text']) && \is_string($body['reason_text']) ? $body['reason_text'] : '';
         $cardConfirmed = ($body['card_confirmed'] ?? false) === true;
+        $voucherFallback = isset($body['voucher_fallback']) && \is_string($body['voucher_fallback']) && $body['voucher_fallback'] !== '' ? $body['voucher_fallback'] : null;
 
-        if ($psOrderId <= 0) {
-            // A sale stored locally but not uploaded yet has no PrestaShop order to refund
-            // against; refunds of such sales are queued behind it in T5 (PRD D1).
-            $localId = isset($body['order_id']) && is_numeric($body['order_id']) ? (int) $body['order_id'] : 0;
-            $reference = isset($body['reference']) && \is_string($body['reference']) ? $body['reference'] : '';
-            if (($localId > 0 || $reference !== '') && $this->orderSearchService->isUnsyncedSale($localId, $reference)) {
-                return new JsonResponse(
-                    ['error' => 'La venta aún no se ha subido a PrestaShop', 'code' => 'sale_not_synced', 'retry' => false],
-                    Response::HTTP_CONFLICT
-                );
-            }
-
-            return new JsonResponse(
-                ['error' => 'Missing or invalid ps_order_id', 'retry' => false],
-                Response::HTTP_UNPROCESSABLE_ENTITY
-            );
+        // The sale: by its local order_id or ticket reference (also before it is
+        // uploaded, PRD D1), or by ps_order_id for compatibility and online orders.
+        $target = self::saleTarget($body, $this->orderSearchService);
+        if ($target === null) {
+            return new JsonResponse(['error' => 'Missing or invalid ps_order_id', 'retry' => false], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+        if ($target === []) {
+            return new JsonResponse(['error' => 'Sale not found', 'retry' => false], Response::HTTP_NOT_FOUND);
         }
 
         $userId = (int) $session->get('user_id');
+        $shopId = (int) $session->get('shop_id', 0);
 
         try {
             $this->cashSessionService->requireOpenSession($userId);
-            $result = $this->refundService->processRefund($userId, $psOrderId, $lines, $reasonCode, $reasonText, $cardConfirmed, (int) $session->get('shop_id', 0));
+            $result = isset($target['order_id'])
+                ? $this->refundService->processSaleRefund($userId, $target['order_id'], $lines, $reasonCode, $reasonText, $cardConfirmed, $shopId, $voucherFallback)
+                : $this->refundService->processRefund($userId, $target['ps_order_id'], $lines, $reasonCode, $reasonText, $cardConfirmed, $shopId, $voucherFallback);
             $result['print_status'] = $this->printCreditNote($result, $request);
             $this->openDrawerForCash($result, $request);
 
             return new JsonResponse(['data' => $result], Response::HTTP_OK);
         } catch (RefundException $e) {
-            $code = $e->getCode();
-            if ($code === 404) {
-                return new JsonResponse(
-                    ['error' => $e->getMessage(), 'retry' => false],
-                    Response::HTTP_NOT_FOUND
-                );
-            }
-
-            if ($code === 409) {
-                return new JsonResponse(
-                    ['error' => $e->getMessage(), 'retry' => false],
-                    Response::HTTP_CONFLICT
-                );
-            }
-
-            if ($code === 422) {
-                return new JsonResponse(
-                    ['error' => $e->getMessage(), 'retry' => false],
-                    Response::HTTP_UNPROCESSABLE_ENTITY
-                );
-            }
-
-            return new JsonResponse(
-                ['error' => $e->getMessage(), 'retry' => true],
-                Response::HTTP_BAD_GATEWAY
-            );
+            return self::refundError($e);
         } catch (\Throwable $e) {
             return new JsonResponse(
                 ['error' => 'Internal server error', 'retry' => true],
                 Response::HTTP_INTERNAL_SERVER_ERROR
             );
         }
+    }
+
+    /**
+     * The sale a request names: ['order_id' => id] for a TPV sale given by order_id or
+     * reference, ['ps_order_id' => id] when only ps_order_id is given (a TPV sale or
+     * an online order, resolved by the service), [] when the order_id or reference
+     * matches no TPV sale, null when nothing usable was sent. Shared with exchanges.
+     *
+     * @param array<string, mixed> $body
+     *
+     * @return array{order_id?: int, ps_order_id?: int}|null
+     */
+    public static function saleTarget(array $body, OrderSearchService $orderSearchService): ?array
+    {
+        $orderId = isset($body['order_id']) && is_numeric($body['order_id']) ? (int) $body['order_id'] : 0;
+        $reference = isset($body['reference']) && \is_string($body['reference']) ? trim($body['reference']) : '';
+        if ($orderId > 0 || $reference !== '') {
+            $found = $orderSearchService->findSaleId($orderId, $reference);
+
+            return $found !== null ? ['order_id' => $found] : [];
+        }
+        $psOrderId = isset($body['ps_order_id']) && is_numeric($body['ps_order_id']) ? (int) $body['ps_order_id'] : 0;
+
+        return $psOrderId > 0 ? ['ps_order_id' => $psOrderId] : null;
+    }
+
+    /**
+     * 404/409/422 as such; 503 voucher_unavailable when PrestaShop cannot create a
+     * voucher (the cashier picks another tender, PRD D3); anything else is a
+     * retryable 502.
+     */
+    public static function refundError(RefundException $e): JsonResponse
+    {
+        if ($e->getCode() === RefundException::VOUCHER_UNAVAILABLE) {
+            return new JsonResponse(
+                ['error' => $e->getMessage(), 'code' => 'voucher_unavailable', 'retry' => false],
+                Response::HTTP_SERVICE_UNAVAILABLE
+            );
+        }
+        $status = match ($e->getCode()) {
+            404 => Response::HTTP_NOT_FOUND,
+            409 => Response::HTTP_CONFLICT,
+            422 => Response::HTTP_UNPROCESSABLE_ENTITY,
+            default => Response::HTTP_BAD_GATEWAY,
+        };
+
+        return new JsonResponse(['error' => $e->getMessage(), 'retry' => $status === Response::HTTP_BAD_GATEWAY], $status);
     }
 
     /**
@@ -162,14 +179,7 @@ class RefundController
 
             return new JsonResponse(['data' => $result], Response::HTTP_OK);
         } catch (RefundException $e) {
-            $status = match ($e->getCode()) {
-                404 => Response::HTTP_NOT_FOUND,
-                409 => Response::HTTP_CONFLICT,
-                422 => Response::HTTP_UNPROCESSABLE_ENTITY,
-                default => Response::HTTP_BAD_GATEWAY,
-            };
-
-            return new JsonResponse(['error' => $e->getMessage(), 'retry' => $status === Response::HTTP_BAD_GATEWAY], $status);
+            return self::refundError($e);
         } catch (NoOpenCashSessionException $e) {
             return new JsonResponse(['error' => $e->getMessage(), 'retry' => false], Response::HTTP_CONFLICT);
         } catch (\Throwable) {
@@ -207,14 +217,7 @@ class RefundController
 
             return new JsonResponse(['data' => $result], Response::HTTP_OK);
         } catch (RefundException $e) {
-            $status = match ($e->getCode()) {
-                404 => Response::HTTP_NOT_FOUND,
-                409 => Response::HTTP_CONFLICT,
-                422 => Response::HTTP_UNPROCESSABLE_ENTITY,
-                default => Response::HTTP_BAD_GATEWAY,
-            };
-
-            return new JsonResponse(['error' => $e->getMessage(), 'retry' => $status === Response::HTTP_BAD_GATEWAY], $status);
+            return self::refundError($e);
         } catch (\Throwable $e) {
             return new JsonResponse(['error' => 'Internal server error', 'retry' => true], Response::HTTP_INTERNAL_SERVER_ERROR);
         }

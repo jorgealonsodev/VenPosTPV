@@ -792,7 +792,153 @@ async function testTemplateShowsTheOnlineBadgeDeliveryAndWebRefundSummary() {
     assert.match(tag[1], /background:\s*var\(--amber-bg\)/);
 }
 
+// PRD venta-local-primero D1: a sale stored locally but not uploaded yet has no
+// PrestaShop order id; it is refunded and exchanged by its local order_id.
+const LOCAL_SALE = {
+    order_id: 15, ps_order_id: null, synced: false, reference: 'A26000015', payment_method: 'cash', tender: { cash: 30, card: 0 },
+    lines: [{ name: 'Camisa', product_id: 3, id_product_attribute: 0, qty: 1, paid_total: 30, refundable_qty: 1 }],
+};
+
+async function testSaleNotUploadedYetIsRefundedByItsLocalIdAndLabelledByItsTicketCode() {
+    const calls = [];
+    const { state, emitted } = load(async (id, request) => {
+        calls.push([id, request]);
+        return { data: { refund_id: 21, credit_note_number: 'R2026-000021', refunded_amount: 30, cash_amount: 30, card_amount: 0, queued: true, order_id: 15, ps_order_id: null } };
+    });
+    state.selectOrder(LOCAL_SALE);
+    assert.equal(state.orderLabel(LOCAL_SALE), 'A26000015', 'no "#null": the ticket code names it');
+    assert.equal(state.orderLabel(ORDER), '#42');
+    assert.equal(state.orderKey(LOCAL_SALE), 'sale-15');
+    state.toggleLine(0);
+    state.setReason('size');
+    assert.equal(state.validationError(), '');
+
+    await state.confirmRefund();
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][0], null);
+    assert.deepEqual(JSON.parse(JSON.stringify(calls[0][1])), {
+        lines: [{ line_index: 0, quantity: 1, restock: true }],
+        reason_code: 'size', reason_text: '', card_confirmed: false, order_id: 15,
+    });
+    assert.match(emitted.at(-1)[1], /R2026-000021/);
+    assert.match(emitted.at(-1)[1], /se sube a PrestaShop/);
+    assert.equal(state.selectedOrder.value, null, 'done: back to the search');
+}
+
+async function testVoucherPrestaShopCannotCreateOffersCashOrCardInstead() {
+    const calls = [];
+    const offline = 'HTTP 503: {"error":"Sin conexión con PrestaShop: el vale no se puede crear ahora. Elige efectivo o tarjeta.","code":"voucher_unavailable","retry":false}';
+    const { state, emitted } = load(async (id, request) => {
+        calls.push([id, request]);
+        if (calls.length === 1) throw new Error(offline);
+        return { data: { refund_id: 22, credit_note_number: 'R2026-000022', refunded_amount: 18.33, cash_amount: 18.33 } };
+    });
+    state.selectOrder({ ...LOCAL_SALE, tender: { cash: 15, card: 0, exchange_credit: 40 } });
+    state.toggleLine(0);
+    state.setReason('size');
+
+    await state.confirmRefund();
+
+    assert.equal(emitted.at(-1)[1], 'Sin conexión con PrestaShop: el vale no se puede crear ahora. Elige efectivo o tarjeta.');
+    assert.equal(state.voucherUnavailable.value, true);
+    assert.ok(state.selectedOrder.value, 'stays on the sale to choose another tender');
+
+    await state.refundVoucherShareAs('cash');
+
+    assert.equal(calls.length, 2);
+    assert.equal(calls[1][1].voucher_fallback, 'cash');
+    assert.equal(calls[1][1].order_id, 15);
+    assert.equal(state.voucherUnavailable.value, false);
+}
+
+async function testNoTicketVoucherOfflineShowsTheMessageAndAsksForAnotherMethod() {
+    const t = await loadNoTicket(async () => {
+        throw new Error('HTTP 503: {"error":"Sin conexión con PrestaShop: el vale no se puede crear ahora. Elige efectivo o tarjeta.","code":"voucher_unavailable","retry":false}');
+    });
+    t.state.setMethod('voucher');
+    await t.state.confirmRefund();
+
+    assert.equal(t.emitted.at(-1)[1], 'Sin conexión con PrestaShop: el vale no se puede crear ahora. Elige efectivo o tarjeta.');
+    assert.equal(t.state.refundMethod.value, '', 'the cashier picks cash or card');
+}
+
+async function testExchangeOfASaleNotUploadedYetSendsItsLocalId() {
+    const calls = [];
+    const t = loadExchange(LOCAL_SALE, async (id, request) => {
+        calls.push([id, request]);
+        return { data: { exchange_id: 4, status: 'done', credit: 30, new_total: 55, balance: 25,
+            refund: { refund_id: 23, credit_note_number: 'R2026-000023', cash_amount: 0, card_amount: 0, print_status: 'printed' },
+            sale: { order_id: 16, ps_order_id: null, reference: 'A26000016', payable: 25, change_due: 0, print_status: 'dispatched' } } };
+    });
+    t.state.toggleLine(0);
+    await t.state.pickProduct(CHAQUETA);
+    t.state.setReason('size');
+    t.state.setExchangePayment('card');
+
+    await t.state.confirmRefund();
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][0], null);
+    assert.equal(calls[0][1].order_id, 15);
+    assert.equal(t.state.lastExchange.value.saleReference, 'A26000016');
+}
+
+async function testCheckoutAndRefundsAreNeverReplayedTwiceFromTheOfflineQueue() {
+    const source = fs.readFileSync(path.resolve(__dirname, '../../public/assets/js/api.js'), 'utf8');
+    const requests = [];
+    let fail = true;
+    const context = {
+        window: { TPV_BASE: '', addEventListener: () => {}, location: { href: '' } },
+        navigator: { onLine: true },
+        fetch: async (url, opts) => {
+            requests.push([url, opts.body]);
+            if (fail) throw new TypeError('Failed to fetch');
+            return { ok: true, status: 200, json: async () => ({ data: {} }) };
+        },
+        Promise, Error, JSON, URLSearchParams, encodeURIComponent, console,
+    };
+    context.globalThis = context;
+    vm.runInNewContext(`${source}\nglobalThis.__api = ApiClient;`, context, { filename: 'api.js' });
+
+    await assert.rejects(context.__api.checkout({ payment_method: 'cash', request_id: 'attempt-1' }));
+    await assert.rejects(context.__api.refundOrder(null, { order_id: 15, lines: [] }));
+    assert.equal(context.__api.pendingCount(), 1, 'only the checkout is queued: it carries its request_id');
+    fail = false;
+    await context.__api.flush();
+    assert.deepEqual(requests.map((r) => [r[0], JSON.parse(r[1]).request_id || null]), [
+        ['/api/checkout', 'attempt-1'],
+        ['/api/refund', null],
+        ['/api/checkout', 'attempt-1'],
+    ], 'the replay repeats the same request_id, so the server returns the same sale');
+    assert.deepEqual(JSON.parse(requests[1][1]), { order_id: 15, lines: [], ps_order_id: null });
+}
+
+async function testTicketListNamesASaleNotUploadedYetByItsTicketCode() {
+    const source = fs.readFileSync(path.resolve(__dirname, '../../public/assets/js/components/TicketListPanel.js'), 'utf8');
+    const context = {
+        Vue: { ref, computed: (fn) => ({ get value() { return fn(); } }), watch() {}, onMounted() {} },
+        useParkedTickets: { state: { tickets: [] }, refresh: async () => {}, removeTicket: async () => {} },
+        ApiClient: { searchOrders: async () => ({ data: [] }) },
+    };
+    context.globalThis = context;
+    vm.runInNewContext(`${source}\nglobalThis.__panel = TicketListPanel;`, context, { filename: 'TicketListPanel.js' });
+    const state = context.__panel.setup({}, { emit: () => {} });
+
+    assert.equal(state.orderLabel(LOCAL_SALE), 'A26000015');
+    assert.equal(state.orderLabel(ORDER), '#42 — REF42');
+    assert.equal(state.orderKey(LOCAL_SALE), 'sale-15');
+    assert.equal(state.orderKey(ORDER), 'ps-42');
+    assert.doesNotMatch(context.__panel.template, /:key="order\.ps_order_id"/, 'unsynced sales all have a null ps_order_id');
+}
+
 (async () => {
+    await testTicketListNamesASaleNotUploadedYetByItsTicketCode();
+    await testSaleNotUploadedYetIsRefundedByItsLocalIdAndLabelledByItsTicketCode();
+    await testVoucherPrestaShopCannotCreateOffersCashOrCardInstead();
+    await testNoTicketVoucherOfflineShowsTheMessageAndAsksForAnotherMethod();
+    await testExchangeOfASaleNotUploadedYetSendsItsLocalId();
+    await testCheckoutAndRefundsAreNeverReplayedTwiceFromTheOfflineQueue();
     await testTouchSteppersMoveQuantitiesWithinTheSameLimits();
     await testExchangeApiCallsAreNeverQueuedOffline();
     await testExchangeFortyForFiftyFiveCollectsTheBalanceAndShowsBothDocuments();

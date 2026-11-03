@@ -30,26 +30,69 @@ final class RefundControllerTest extends TestCase
         );
     }
 
-    public function testRefundOfASaleNotUploadedYetIsAClear409(): void
+    public function testRefundOfASaleNotUploadedYetIsMadeByItsLocalIdOrReference(): void
     {
         foreach ([['order_id' => 7], ['reference' => 'A26000007']] as $body) {
             $orderSearch = $this->createMock(OrderSearchService::class);
-            $orderSearch->expects($this->once())->method('isUnsyncedSale')
-                ->with($body['order_id'] ?? 0, $body['reference'] ?? '')->willReturn(true);
+            $orderSearch->expects($this->once())->method('findSaleId')
+                ->with($body['order_id'] ?? 0, $body['reference'] ?? '')->willReturn(7);
             $refundService = $this->createMock(RefundService::class);
             $refundService->expects($this->never())->method('processRefund');
+            $refundService->expects($this->once())->method('processSaleRefund')
+                ->with(1, 7, [['line_index' => 0, 'quantity' => 1]], 'size', '', false, 4, null)
+                ->willReturn(['refund_id' => 9, 'credit_note_number' => 'R2026-000009', 'order_id' => 7, 'reference' => 'A26000007', 'ps_order_id' => null, 'queued' => true, 'cash_amount' => 0.0, 'saga_error' => false]);
+            $printer = $this->createMock(PrinterService::class);
+            $printer->expects($this->once())->method('printRefundTicket')->with(9)->willReturn('printed');
 
-            $response = $this->createController($refundService, $orderSearch)->refund(SessionRequest::json($body + ['ps_order_id' => null], ['user_id' => 1]));
+            $response = $this->createController($refundService, $orderSearch, null, $printer)->refund(SessionRequest::json(
+                $body + ['ps_order_id' => null, 'lines' => [['line_index' => 0, 'quantity' => 1]], 'reason_code' => 'size'],
+                ['user_id' => 1, 'shop_id' => 4]
+            ));
 
-            $this->assertSame(Response::HTTP_CONFLICT, $response->getStatusCode());
-            $this->assertSame(['error' => 'La venta aún no se ha subido a PrestaShop', 'code' => 'sale_not_synced', 'retry' => false], json_decode((string) $response->getContent(), true));
+            $this->assertSame(Response::HTTP_OK, $response->getStatusCode());
+            $data = json_decode((string) $response->getContent(), true)['data'];
+            $this->assertSame(['order_id' => 7, 'reference' => 'A26000007', 'ps_order_id' => null, 'queued' => true, 'print_status' => 'printed'], array_intersect_key($data, ['order_id' => 1, 'reference' => 1, 'ps_order_id' => 1, 'queued' => 1, 'print_status' => 1]));
+        }
+    }
+
+    public function testUnknownLocalSaleIs404WithoutCallingTheService(): void
+    {
+        $orderSearch = $this->createMock(OrderSearchService::class);
+        $orderSearch->method('findSaleId')->willReturn(null);
+        $refundService = $this->createMock(RefundService::class);
+        $refundService->expects($this->never())->method('processSaleRefund');
+
+        $response = $this->createController($refundService, $orderSearch)->refund(SessionRequest::json(['reference' => 'Z26999999'], ['user_id' => 1]));
+
+        $this->assertSame(Response::HTTP_NOT_FOUND, $response->getStatusCode());
+    }
+
+    public function testVoucherPrestaShopCannotCreateIsA503TheScreenOffersAnotherTenderFor(): void
+    {
+        $refundService = $this->createMock(RefundService::class);
+        $refundService->expects($this->once())->method('processRefund')
+            ->with(1, 77, null, 'size', '', false, 2, 'cash')
+            ->willThrowException(RefundException::voucherUnavailable());
+        $refundService->method('processNoTicketRefund')->willThrowException(RefundException::voucherUnavailable());
+        $controller = $this->createController($refundService);
+
+        foreach ([
+            $controller->refund(SessionRequest::json(['ps_order_id' => 77, 'reason_code' => 'size', 'voucher_fallback' => 'cash'], ['user_id' => 1, 'shop_id' => 2])),
+            $controller->refundWithoutTicket(SessionRequest::json(['method' => 'voucher'], ['user_id' => 1, 'shop_id' => 2])),
+        ] as $response) {
+            $this->assertSame(Response::HTTP_SERVICE_UNAVAILABLE, $response->getStatusCode());
+            $this->assertSame([
+                'error' => 'Sin conexión con PrestaShop: el vale no se puede crear ahora. Elige efectivo o tarjeta.',
+                'code' => 'voucher_unavailable',
+                'retry' => false,
+            ], json_decode((string) $response->getContent(), true));
         }
     }
 
     public function testRefundWithoutAnyOrderKeepsItsPrevious422(): void
     {
         $orderSearch = $this->createMock(OrderSearchService::class);
-        $orderSearch->method('isUnsyncedSale')->willReturn(false);
+        $orderSearch->expects($this->never())->method('findSaleId');
 
         $response = $this->createController(orderSearch: $orderSearch)->refund(SessionRequest::json(['lines' => []], ['user_id' => 1]));
 

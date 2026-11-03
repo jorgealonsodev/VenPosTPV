@@ -9,6 +9,7 @@ use PHPUnit\Framework\TestCase;
 use Symfony\Component\HttpFoundation\RequestStack;
 use VenPosTPV\Service\Cash\CashSessionService;
 use VenPosTPV\Service\Cash\TerminalService;
+use VenPosTPV\Service\Checkout\PsOrderClient;
 use VenPosTPV\Service\Print\TicketDataResolver;
 use VenPosTPV\Service\Print\TicketVerificationService;
 use VenPosTPV\Service\Refund\Exception\RefundException;
@@ -16,6 +17,7 @@ use VenPosTPV\Service\Refund\OrderSearchService;
 use VenPosTPV\Service\Refund\PsOrderLookupClient;
 use VenPosTPV\Service\Refund\PsRefundClient;
 use VenPosTPV\Service\Refund\RefundService;
+use VenPosTPV\Service\Sync\OutboxSync;
 use VenPosTPV\Tests\Support\TestDatabase;
 
 /**
@@ -80,6 +82,7 @@ final class OnlineRefundMySqlIntegrationTest extends TestCase
     private function clean(): void
     {
         $c = $this->connection;
+        $c->executeStatement('DELETE FROM outbox WHERE order_id IN (SELECT id FROM order_meta WHERE ps_order_id BETWEEN 880500 AND 880599)');
         $c->executeStatement('DELETE FROM refund WHERE ps_order_id BETWEEN 880500 AND 880599');
         $c->executeStatement('DELETE FROM credit_note_sequence');
         $c->executeStatement('DELETE FROM movement WHERE session_id = ?', [self::SESSION_ID]);
@@ -135,6 +138,20 @@ final class OnlineRefundMySqlIntegrationTest extends TestCase
 
     private function service(): RefundService
     {
+        return new RefundService($this->searchService(), $this->client(), $this->connection, $this->cash());
+    }
+
+    /** Runs the outbox once, as the minute task does: TPV sales' refunds are queued. */
+    private function upload(): void
+    {
+        $orders = $this->createMock(PsOrderClient::class);
+        $orders->expects($this->never())->method('createReferencedOrder');
+        $at = new \DateTimeImmutable('+1 minute');
+        (new OutboxSync($this->connection, $orders, null, fn (): \DateTimeImmutable => $at, $this->client()))->run();
+    }
+
+    private function client(): PsRefundClient
+    {
         $client = $this->createMock(PsRefundClient::class);
         $client->method('createRefund')->willReturnCallback(function (array $payload): array {
             $this->psPayloads[] = $payload;
@@ -152,7 +169,7 @@ final class OnlineRefundMySqlIntegrationTest extends TestCase
             ];
         });
 
-        return new RefundService($this->searchService(), $client, $this->connection, $this->cash());
+        return $client;
     }
 
     private function cash(): CashSessionService
@@ -202,6 +219,10 @@ final class OnlineRefundMySqlIntegrationTest extends TestCase
         $this->assertSame(27.0, $result['web_refund_amount']);
         $this->assertNotNull($result['credit_note_number']);
 
+        // Still synchronous: an online order needs PrestaShop at that moment.
+        $this->assertCount(1, $this->psPayloads, 'sent during the request');
+        $this->assertSame(0, (int) $this->connection->fetchOne('SELECT COUNT(*) FROM outbox WHERE request_id = ?', [$row = $this->connection->fetchOne('SELECT request_id FROM refund WHERE id = ?', [$result['refund_id']])]), 'nothing is queued');
+        $this->assertSame(901, (int) $this->connection->fetchOne('SELECT ps_order_slip_id FROM refund WHERE id = ?', [$result['refund_id']]));
         $payload = $this->psPayloads[0];
         $this->assertSame(self::ORDER_ID, $payload['ps_order_id']);
         $this->assertSame('web_refund_pending', $payload['target_state']);
@@ -235,6 +256,7 @@ final class OnlineRefundMySqlIntegrationTest extends TestCase
         $this->assertSame(30.0, $result['cash_amount']);
         $this->assertFalse($result['online']);
         $this->assertNull($result['web_refund_amount']);
+        $this->upload();
         $this->assertArrayNotHasKey('target_state', $this->psPayloads[0]);
         $this->assertArrayNotHasKey('web_refund_amount', $this->psPayloads[0]);
         $this->assertSame([], $this->lookups, 'a TPV sale never asks the shop for the order');

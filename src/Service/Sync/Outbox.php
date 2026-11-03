@@ -16,6 +16,12 @@ class Outbox
 {
     public const TYPE_SALE = 'sale';
 
+    /** The credit slip and restock of a refund of a TPV sale, behind its sale (PRD D2). */
+    public const TYPE_REFUND = 'refund';
+
+    /** The restock of a refund without a ticket: it belongs to no sale. */
+    public const TYPE_RESTOCK = 'restock';
+
     public const STATUS_PENDING = 'pending';
     public const STATUS_PROCESSING = 'processing';
     public const STATUS_DONE = 'done';
@@ -47,22 +53,35 @@ class Outbox
      * sequence numbers of one order.
      *
      * @param array<string, mixed> $payload
+     * @param string|null $requestId the operation's own idempotency key, so the module
+     *                               replays it by the same request_id; a new one when null
      */
-    public function enqueueAfter(string $type, int $orderId, array $payload): string
+    public function enqueueAfter(string $type, int $orderId, array $payload, ?string $requestId = null): string
     {
         $sequence = 1 + (int) $this->connection->fetchOne('SELECT COALESCE(MAX(sequence), 0) FROM outbox WHERE order_id = ?', [$orderId]);
 
-        return $this->insert($type, $orderId, $sequence, $payload);
+        return $this->insert($type, $orderId, $sequence, $payload, $requestId);
+    }
+
+    /**
+     * Queues an operation that belongs to no sale (the restock of a refund without a
+     * ticket): it waits for nothing.
+     *
+     * @param array<string, mixed> $payload
+     */
+    public function enqueueStandalone(string $type, array $payload, ?string $requestId = null): string
+    {
+        return $this->insert($type, null, 1, $payload, $requestId);
     }
 
     /** @param array<string, mixed> $payload */
-    private function insert(string $type, int $orderId, int $sequence, array $payload): string
+    private function insert(string $type, ?int $orderId, int $sequence, array $payload, ?string $requestId = null): string
     {
         if (!$this->connection->isTransactionActive()) {
             throw new \LogicException('Outbox rows must be written inside the transaction of their operation');
         }
 
-        $requestId = bin2hex(random_bytes(16));
+        $requestId ??= bin2hex(random_bytes(16));
         $now = (new \DateTimeImmutable())->format('Y-m-d H:i:s');
         $this->connection->insert('outbox', [
             'type' => $type,

@@ -39,6 +39,45 @@ final class CheckoutControllerTest extends TestCase
         return (array) json_decode((string) $response->getContent(), true);
     }
 
+    public function testCheckoutPassesTheRequestIdAndARepeatedAttemptIsNotPrintedAgain(): void
+    {
+        $cashService = $this->createMock(CashSessionService::class);
+        $cashService->method('requireOpenSession')->willReturn(self::OPEN_SESSION);
+        $checkoutService = $this->createMock(CheckoutService::class);
+        $checkoutService->expects($this->exactly(2))->method('createOrder')
+            ->with(1, ['lines' => [['product_id' => 1]]], 'cash', 20.0, 0.0, 'attempt-0001-abcd')
+            ->willReturnOnConsecutiveCalls(
+                ['order_id' => 5, 'reference' => 'A26000005', 'replayed' => false],
+                ['order_id' => 5, 'reference' => 'A26000005', 'replayed' => true],
+            );
+        $controller = new CheckoutController($checkoutService, $cashService);
+        $body = ['payment_method' => 'cash', 'amount_tendered' => 20, 'cart_data' => ['lines' => [['product_id' => 1]]], 'request_id' => 'attempt-0001-abcd'];
+
+        $first = $this->decode($controller->checkout($this->makeRequest($body, 1)))['data'];
+        $again = $this->decode($controller->checkout($this->makeRequest($body, 1)))['data'];
+
+        $this->assertSame('dispatched', $first['print_status']);
+        $this->assertSame('none', $again['print_status'], 'printed by the request that created it');
+        $this->assertSame($first['order_id'], $again['order_id']);
+    }
+
+    public function testCheckoutWithoutRequestIdBehavesAsBeforeAndANonStringOneIs422(): void
+    {
+        $cashService = $this->createMock(CashSessionService::class);
+        $cashService->method('requireOpenSession')->willReturn(self::OPEN_SESSION);
+        $checkoutService = $this->createMock(CheckoutService::class);
+        $checkoutService->expects($this->once())->method('createOrder')
+            ->with(1, [], 'card', 0.0, 0.0, null)
+            ->willReturn(['order_id' => 6]);
+        $controller = new CheckoutController($checkoutService, $cashService);
+
+        $ok = $controller->checkout($this->makeRequest(['payment_method' => 'card'], 1));
+        $bad = $controller->checkout($this->makeRequest(['payment_method' => 'card', 'request_id' => 123], 1));
+
+        $this->assertSame(['order_id' => 6, 'print_status' => 'dispatched'], $this->decode($ok)['data']);
+        $this->assertSame(Response::HTTP_UNPROCESSABLE_ENTITY, $bad->getStatusCode());
+    }
+
     public function testCouponPreviewReturnsAuthenticatedPreview(): void
     {
         $cashService = $this->createMock(CashSessionService::class);

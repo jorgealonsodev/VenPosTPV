@@ -24,9 +24,10 @@ use VenPosTPV\Service\Sync\OutboxSyncTrigger;
  * (PRD venta-local-primero V1-V4): one local transaction stores the sale with its
  * ticket code, cash movement, local stock and outbox row; the ticket and drawer do
  * not wait for PrestaShop, and OutboxSync uploads the order with the ticket code as
- * its reference. Two flows still create the PrestaShop order first, unchanged until
- * their own tasks: native coupons (PrestaShop must validate them at once, PRD V5) and
- * the new sale of an exchange (its returned part already needs PrestaShop).
+ * its reference. The new items of an exchange are a local sale too (PRD D1). Native
+ * coupons still create the PrestaShop order first (PrestaShop must validate them at
+ * once, PRD V5, T6). A browser request_id makes a repeated checkout return the sale
+ * it already created instead of charging it twice.
  *
  * Prices are resolved from the synced catalog on a tax-included basis, because
  * that is what PrestaShop actually charges: `catalog_product.price_ttc` for a
@@ -86,6 +87,11 @@ class CheckoutService
      * browser): that part of the total is already paid by returned goods, so only
      * the rest is collected, booked in the drawer and stored in the tender.
      *
+     * $requestId is the browser's id of one payment attempt, the same on every retry
+     * or offline replay of that attempt: a repeated one returns the sale it already
+     * created (`replayed: true`) without a second ticket number, cash movement,
+     * stock change or upload.
+     *
      * @param array<string, mixed> $cartData
      *
      * @return array<string, mixed> order_id (local), ps_order_id (null until uploaded), reference, synced, total,
@@ -94,9 +100,18 @@ class CheckoutService
      *
      * @throws CheckoutException on validation errors (422) or when nothing could be stored (code 0, retryable)
      */
-    public function createOrder(int $userId, array $cartData, string $paymentMethod, float $amountTendered, float $exchangeCredit = 0.0): array
+    public function createOrder(int $userId, array $cartData, string $paymentMethod, float $amountTendered, float $exchangeCredit = 0.0, ?string $requestId = null): array
     {
         $exchangeCredit = round(max(0.0, $exchangeCredit), 2);
+        if ($requestId !== null) {
+            if (preg_match(self::REQUEST_ID, $requestId) !== 1) {
+                throw CheckoutException::psValidationFailed('request_id must be 8 to 64 letters, digits, "-" or "_"');
+            }
+            $existing = $this->replayedSale($requestId);
+            if ($existing !== null) {
+                return $existing;
+            }
+        }
         if (array_key_exists('coupon', $cartData)) {
             if ($exchangeCredit > 0) {
                 throw CheckoutException::psValidationFailed('Coupons cannot be used in an exchange');
@@ -104,22 +119,55 @@ class CheckoutService
 
             return $this->createCouponOrder($userId, $cartData, $paymentMethod, $amountTendered);
         }
-        if ($exchangeCredit <= 0) {
-            return $this->createLocalOrder($userId, $cartData, $paymentMethod, $amountTendered);
-        }
 
-        return $this->createExchangeOrder($userId, $cartData, $paymentMethod, $amountTendered, $exchangeCredit);
+        return $this->createLocalOrder($userId, $cartData, $paymentMethod, $amountTendered, $exchangeCredit, $requestId);
+    }
+
+    /** A client payment-attempt id: what api.js generates (a UUID) or any similar token. */
+    private const REQUEST_ID = '/^[A-Za-z0-9_-]{8,64}$/';
+
+    /**
+     * The sale an earlier request with this request_id created, answered as it was
+     * then (stock warnings are not stored, so none are repeated), or null.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function replayedSale(string $requestId): ?array
+    {
+        $row = $this->conn->fetchAssociative('SELECT id, ps_order_id, reference, terminal_id, payment_breakdown FROM order_meta WHERE request_id = ?', [$requestId]);
+        if ($row === false) {
+            return null;
+        }
+        $breakdown = json_decode((string) $row['payment_breakdown'], true);
+        $breakdown = is_array($breakdown) ? $breakdown : [];
+        // The cart was charged by the first request: the screen starts a new sale.
+        $this->cart->clear();
+
+        return [
+            'order_id' => (int) $row['id'],
+            'ps_order_id' => $row['ps_order_id'] !== null ? (int) $row['ps_order_id'] : null,
+            'reference' => (string) ($row['reference'] ?? ($breakdown['reference'] ?? '')),
+            'synced' => $row['ps_order_id'] !== null,
+            'total' => (float) ($breakdown['total'] ?? 0),
+            'change_due' => (float) ($breakdown['change_due'] ?? 0),
+            'payment_method' => (string) ($breakdown['payment_method'] ?? ''),
+            'terminal_id' => (int) $row['terminal_id'],
+            'saga_error' => false,
+            'stock_warnings' => [],
+            'replayed' => true,
+        ];
     }
 
     /**
-     * The local-first sale (PRD V1, V2, V4). The ticket number is taken inside the
-     * transaction, so a rollback gives it back and the series has no gaps.
+     * The local-first sale (PRD V1, V2, V4), also the new items of an exchange. The
+     * ticket number is taken inside the transaction, so a rollback gives it back and
+     * the series has no gaps.
      *
      * @param array<string, mixed> $cartData
      *
      * @return array<string, mixed>
      */
-    private function createLocalOrder(int $userId, array $cartData, string $paymentMethod, float $amountTendered): array
+    private function createLocalOrder(int $userId, array $cartData, string $paymentMethod, float $amountTendered, float $exchangeCredit = 0.0, ?string $requestId = null): array
     {
         $lines = $cartData['lines'] ?? $cartData['items'] ?? [];
         if (empty($lines) || !is_array($lines)) {
@@ -133,12 +181,17 @@ class CheckoutService
 
         $payload = $this->orderPayload($lines, $cartData, $paymentMethod, $amountTendered);
         $cashContext = $this->cashSessionService->requireOpenSession($userId);
-        $cashImpactAmount = $this->resolveCashImpactAmount($paymentMethod, $total, $amountTendered, $cartData);
-        $changeDue = max(0.0, round($amountTendered - $total, 2));
+        // What the customer still pays; the whole total without an exchange credit.
+        $payable = round(max(0.0, $total - $exchangeCredit), 2);
+        $cashImpactAmount = $this->resolveCashImpactAmount($paymentMethod, $payable, $amountTendered, $cartData);
+        $changeDue = max(0.0, round($amountTendered - $payable, 2));
         $tender = [
             'cash' => $cashImpactAmount,
-            'card' => round(max(0.0, $total - $cashImpactAmount), 2),
+            'card' => round(max(0.0, $payable - $cashImpactAmount), 2),
         ];
+        if ($exchangeCredit > 0) {
+            $tender['exchange_credit'] = round($total - $payable, 2);
+        }
         $terminalId = (int) ($cashContext['terminal_id'] ?? 1);
         $sessionId = (int) ($cashContext['session_id'] ?? 0);
         $date = new \DateTimeImmutable();
@@ -147,9 +200,9 @@ class CheckoutService
 
         try {
             $numberer->prepareYear($terminalId, $date);
-            [$orderId, $reference] = $this->conn->transactional(function () use ($numberer, $outbox, $terminalId, $sessionId, $date, $userId, $total, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines, $tender, $cashImpactAmount, $payload): array {
+            [$orderId, $reference] = $this->conn->transactional(function () use ($numberer, $outbox, $terminalId, $sessionId, $date, $userId, $total, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines, $tender, $cashImpactAmount, $payload, $requestId): array {
                 $reference = $numberer->next($terminalId, $date);
-                $orderId = $this->insertOrderMeta(null, $userId, $reference, $total, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines, null, $tender, false);
+                $orderId = $this->insertOrderMeta(null, $userId, $reference, $total, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines, null, $tender, false, $requestId);
                 if ($cashImpactAmount > 0) {
                     $this->cashSessionService->recordMovementInTransaction($sessionId, 'sale', $cashImpactAmount, 'Checkout sale', null, $orderId);
                 }
@@ -163,13 +216,17 @@ class CheckoutService
             throw CheckoutException::ticketNumberUnavailable($e->getMessage(), $e);
         } catch (NoOpenCashSessionException $e) {
             throw $e;
-        } catch (CheckoutException $e) {
-            if ($e->getCode() === 422) {
+        } catch (\Throwable $e) {
+            // Everything rolled back. A concurrent request with the same request_id
+            // that won the unique key already stored the sale: answer that one.
+            $existing = $requestId !== null ? $this->replayedSale($requestId) : null;
+            if ($existing !== null) {
+                return $existing;
+            }
+            if ($e instanceof CheckoutException && $e->getCode() === 422) {
                 throw $e;
             }
-            throw CheckoutException::localSaveFailed($e);
-        } catch (\Throwable $e) {
-            // Everything rolled back: the sale does not exist and can be charged again.
+            // The sale does not exist and can be charged again.
             throw CheckoutException::localSaveFailed($e);
         }
 
@@ -187,9 +244,8 @@ class CheckoutService
         }
         // Upload attempt once the response is sent; the minute task covers the rest.
         $this->syncTrigger?->request();
-        $this->cart->clear();
 
-        return [
+        $result = [
             'order_id' => $orderId,
             'ps_order_id' => null,
             'reference' => $reference,
@@ -201,6 +257,13 @@ class CheckoutService
             'saga_error' => false,
             'stock_warnings' => $stockWarnings,
         ];
+        if ($exchangeCredit > 0) {
+            // The exchange's new items never came from the sale screen cart.
+            return $result + ['payable' => $payable, 'exchange_credit' => $tender['exchange_credit']];
+        }
+        $this->cart->clear();
+
+        return $result + ($requestId !== null ? ['replayed' => false] : []);
     }
 
     /** @param array<int, array<string, mixed>> $lines @param array<string, mixed> $cartData @return array<string, mixed> */
@@ -231,114 +294,6 @@ class CheckoutService
             'amount_tendered' => $amountTendered,
             'notes' => '',
         ];
-    }
-
-    /**
-     * The new items of an exchange: still created in PrestaShop first, as before,
-     * because the exchange's returned part already needs PrestaShop (T5 queues both).
-     *
-     * @param array<string, mixed> $cartData
-     *
-     * @return array<string, mixed>
-     */
-    private function createExchangeOrder(int $userId, array $cartData, string $paymentMethod, float $amountTendered, float $exchangeCredit): array
-    {
-        $lines = $cartData['lines'] ?? $cartData['items'] ?? [];
-        $submittedTotal = (float) ($cartData['total'] ?? 0);
-
-        if (empty($lines)) {
-            throw CheckoutException::psValidationFailed('Cart is empty');
-        }
-
-        // Prices and totals arrive from the browser: resolve them against the synced catalog.
-        $pricing = $this->resolveAuthoritativePricing($lines, $cartData['discount'] ?? null, $submittedTotal);
-        $lines = $pricing['lines'];
-        $total = $pricing['total'];
-
-        // Stock 0 or less only warns (PRD V4).
-        $stockWarnings = $this->validateStock($lines);
-
-        $payload = $this->orderPayload($lines, $cartData, $paymentMethod, $amountTendered);
-
-        $cashContext = $this->cashSessionService->requireOpenSession($userId);
-        // What the customer still pays; the whole total without an exchange credit.
-        $payable = round(max(0.0, $total - $exchangeCredit), 2);
-        $cashImpactAmount = $this->resolveCashImpactAmount($paymentMethod, $payable, $amountTendered, $cartData);
-
-        $psResponse = $this->client->createOrder($payload);
-
-        $psOrderId = (int) $psResponse['order_id'];
-        $reference = (string) $psResponse['reference'];
-        $changeDue = max(0.0, round($amountTendered - $payable, 2));
-
-        $tender = [
-            'cash' => $cashImpactAmount,
-            'card' => round(max(0.0, $payable - $cashImpactAmount), 2),
-        ];
-        if ($exchangeCredit > 0) {
-            $tender['exchange_credit'] = round($total - $payable, 2);
-        }
-
-        // Once PrestaShop creates the order, local follow-up failures must not invite a duplicate retry.
-        $sagaError = false;
-        $orderId = null;
-        try {
-            $orderId = $this->insertOrderMeta($psOrderId, $userId, $reference, $total, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines, null, $tender);
-        } catch (\Throwable $e) {
-            $sagaError = true;
-        }
-
-        if ($cashImpactAmount > 0) {
-            try {
-                // addMovement rechecks the session, which may have closed after the PS order was created.
-                $this->cashSessionService->addMovement($userId, 'sale', $cashImpactAmount, 'Checkout sale', $psOrderId);
-            } catch (\Throwable $e) {
-                $sagaError = true;
-            }
-        }
-
-        try {
-            $this->decrementStock($lines);
-        } catch (\Throwable $e) {
-            $sagaError = true;
-        }
-
-        if ($sagaError) {
-            $this->logCheckoutOrphan($psOrderId, $reference, $paymentMethod, $total, $payload);
-        }
-
-        // Dispatch async print ticket
-        $terminalId = (int) ($cashContext['terminal_id'] ?? 1);
-        try {
-            $this->messageBus->dispatch(new PrintTicketMessage($psOrderId, $terminalId));
-        } catch (\Throwable $e) {
-            // Print dispatch failure must not block checkout
-        }
-
-        // Open cash drawer for cash or mixed payments
-        if ($paymentMethod === 'cash' || $paymentMethod === 'mixed') {
-            try {
-                $this->printerService->openDrawer($terminalId);
-            } catch (\Throwable $e) {
-                // Drawer failure must not block checkout
-            }
-        }
-
-        $result = [
-            'order_id' => $orderId,
-            'ps_order_id' => $psOrderId,
-            'reference' => $reference,
-            'synced' => true,
-            'total' => $total,
-            'change_due' => $changeDue,
-            'payment_method' => $paymentMethod,
-            'terminal_id' => (int) ($cashContext['terminal_id'] ?? 1),
-            'saga_error' => $sagaError,
-            'stock_warnings' => $stockWarnings,
-        ];
-
-        // The exchange's new items never came from the sale screen cart.
-        return $result + ['payable' => $payable, 'exchange_credit' => $tender['exchange_credit']];
     }
 
     /**
@@ -876,6 +831,7 @@ class CheckoutService
         ?array $coupon = null,
         array $tender = ['cash' => 0.0, 'card' => 0.0],
         bool $synced = true,
+        ?string $requestId = null,
     ): int {
         try {
             $breakdownLines = [];
@@ -935,7 +891,8 @@ class CheckoutService
                 'printed' => 0,
                 'synced' => $synced ? 1 : 0,
                 'created_at' => (new \DateTimeImmutable())->format('Y-m-d H:i:s'),
-            ]);
+                // Unique: a repeated payment attempt returns this sale (V32).
+            ] + ($requestId !== null ? ['request_id' => $requestId] : []));
 
             return (int) $this->conn->lastInsertId();
         } catch (\Throwable $e) {

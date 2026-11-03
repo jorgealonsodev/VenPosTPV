@@ -110,7 +110,39 @@ async function testSaleScreenReprintsTheLastSaleByLocalIdOrPrestaShopId() {
     assert.deepEqual(empty.notes, ['No hay ticket para reimprimir']);
 }
 
+// Verifier advisory L7: one request_id per payment attempt, the same on every retry
+// (and on the replay api.js queues when the network drops), so the server answers
+// the sale it already created instead of charging twice.
+async function testEveryRetryOfOnePaymentAttemptCarriesTheSameRequestId() {
+    const sent = [];
+    let failures = 1;
+    const api = {
+        ...apiSpy({}).api,
+        checkout: async (payload) => {
+            sent.push(payload);
+            if (failures-- > 0) throw new Error('network: Failed to fetch');
+            return { data: { order_id: 17, ps_order_id: null, reference: 'A26000017', total: 10, change_due: 0, replayed: true } };
+        },
+    };
+    const { state } = loadPayment(api, 'pdf');
+    await pay(state);
+    assert.equal(state.step.value, 'error');
+    assert.equal(state.errorRetry.value, true, 'a network failure offers the retry');
+
+    await state.retryCheckout();
+
+    assert.equal(sent.length, 2);
+    assert.match(sent[0].request_id, /^[A-Za-z0-9_-]{8,64}$/);
+    assert.equal(sent[1].request_id, sent[0].request_id, 'the retry is the same attempt');
+    assert.equal(state.step.value, 'done');
+
+    const next = loadPayment({ ...api, checkout: async (payload) => { sent.push(payload); return { data: { order_id: 18, total: 10, change_due: 0 } }; } }, 'pdf');
+    await pay(next.state);
+    assert.notEqual(sent[2].request_id, sent[0].request_id, 'a new payment is a new attempt');
+}
+
 (async () => {
+    await testEveryRetryOfOnePaymentAttemptCarriesTheSameRequestId();
     await testUnsyncedSalePrintsByLocalIdOnEscPos();
     await testUnsyncedSaleDownloadsItsPdfByLocalId();
     await testResponseWithOnlyAPrestaShopIdKeepsThePreviousCalls();

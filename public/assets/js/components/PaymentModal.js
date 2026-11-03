@@ -33,6 +33,19 @@ const PaymentModal = {
         const completedTotal = Vue.ref(null);
         const completedChange = Vue.ref(null);
         const isSubmitting = Vue.ref(false);
+        // One id per payment attempt, kept on every retry of it and on the replay
+        // api.js queues when the network drops: /api/checkout then returns the sale
+        // it already created instead of charging twice.
+        let attemptRequestId = null;
+
+        function newRequestId() {
+            if (typeof crypto !== 'undefined' && crypto && typeof crypto.randomUUID === 'function') {
+                return crypto.randomUUID();
+            }
+            let id = 'pay-' + Date.now().toString(36);
+            while (id.length < 36) id += Math.floor(Math.random() * 36).toString(36);
+            return id;
+        }
 
         const methods = [
             { id: 'cash', label: 'Efectivo', icon: '💵' },
@@ -181,6 +194,10 @@ const PaymentModal = {
                 };
             }
             const payload = { payment_method: paymentMethod, amount_tendered: amountTendered, cart_data: cartData };
+            if (!isVoucher) {
+                if (!attemptRequestId) attemptRequestId = newRequestId();
+                payload.request_id = attemptRequestId;
+            }
 
             try {
                 const response = isVoucher ? await ApiClient.couponCheckout(payload) : await ApiClient.checkout(payload);
@@ -233,7 +250,9 @@ const PaymentModal = {
                     voucherReconciliationRequired.value = true;
                     invalidateVoucher();
                 }
-                const retry = !isVoucher && (msg.includes('502') || msg.includes('Unavailable') || msg.includes('network'));
+                // Safe to retry: the request_id makes a repeated attempt return the same sale.
+                const retry = !isVoucher && (msg.includes('502') || msg.includes('Unavailable') || msg.includes('network')
+                    || msg.includes('Failed to fetch') || msg.includes('NetworkError'));
                 errorMsg.value = couponResultUnknown
                     ? msg + ' No reintentes automáticamente; reconcilia el resultado antes de volver a cobrar.'
                     : msg;
@@ -256,7 +275,8 @@ const PaymentModal = {
             if (voucherReconciliationRequired.value) return;
             step.value = 'select';
             errorMsg.value = '';
-            handleConfirm();
+            // Same attempt, same request_id.
+            return handleConfirm();
         }
 
         function returnToSelection() {

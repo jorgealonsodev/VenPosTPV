@@ -139,7 +139,7 @@ class OrderSearchService
     private function hydrateOnlineOrder(array $order): array
     {
         $psOrderId = (int) $order['id_order'];
-        $local = $this->refundedByLine($psOrderId);
+        $local = $this->refundedByLine($psOrderId, null);
 
         $lines = [];
         foreach (array_values(\is_array($order['lines'] ?? null) ? $order['lines'] : []) as $index => $line) {
@@ -179,8 +179,8 @@ class OrderSearchService
             'payment_method' => 'online',
             'lines' => $lines,
             'tender' => null,
-            'pending_refund' => $this->pendingRefund($psOrderId),
-            'open_exchange' => $this->openExchange($psOrderId),
+            'pending_refund' => $this->pendingRefund($psOrderId, null),
+            'open_exchange' => $this->openExchange($psOrderId, null),
             'refunded_amount' => round((float) $this->connection->fetchOne("SELECT COALESCE(SUM(total), 0) FROM refund WHERE ps_order_id = ? AND status = 'done'", [$psOrderId]), 2),
             'created_at' => (string) ($order['date_add'] ?? ''),
         ];
@@ -224,19 +224,33 @@ class OrderSearchService
     }
 
     /**
-     * A TPV sale stored locally but not uploaded to PrestaShop yet, by its local id
-     * or its ticket code. Its refunds and exchanges wait for T5 (PRD D1-D3).
+     * A TPV sale by its local id (order_meta.id), uploaded to PrestaShop or not.
+     *
+     * @return array<string, mixed>|null
      */
-    public function isUnsyncedSale(int $orderId, string $reference): bool
+    public function getOrderById(int $orderId): ?array
+    {
+        $row = $this->connection->fetchAssociative('SELECT ' . self::SALE_COLUMNS . ' FROM order_meta WHERE id = ?', [$orderId]);
+
+        return $row === false ? null : $this->hydrateOrder($row);
+    }
+
+    /**
+     * The local id of a TPV sale named by its local id or its ticket code (also a
+     * different PrestaShop reference, PRD S5), null when no TPV sale matches.
+     */
+    public function findSaleId(int $orderId, string $reference): ?int
     {
         if ($orderId > 0) {
-            return $this->connection->fetchOne('SELECT 1 FROM order_meta WHERE id = ? AND ps_order_id IS NULL', [$orderId]) !== false;
-        }
-        if ($reference !== '') {
-            return $this->connection->fetchOne('SELECT 1 FROM order_meta WHERE reference = ? AND ps_order_id IS NULL', [strtoupper($reference)]) !== false;
+            $id = $this->connection->fetchOne('SELECT id FROM order_meta WHERE id = ?', [$orderId]);
+        } elseif (trim($reference) !== '') {
+            $reference = strtoupper(trim($reference));
+            $id = $this->connection->fetchOne('SELECT id FROM order_meta WHERE reference = ? OR ps_reference = ? ORDER BY id LIMIT 1', [$reference, $reference]);
+        } else {
+            return null;
         }
 
-        return false;
+        return $id === false ? null : (int) $id;
     }
 
     /**
@@ -255,9 +269,10 @@ class OrderSearchService
         }
 
         $psOrderId = isset($row['ps_order_id']) ? (int) $row['ps_order_id'] : null;
+        $orderId = isset($row['id']) ? (int) $row['id'] : null;
         $lines = \is_array($breakdown['lines'] ?? null) ? array_values($breakdown['lines']) : [];
-        // Refunds are keyed by the PrestaShop order: a sale not uploaded yet has none.
-        $refunded = $lines === [] || $psOrderId === null ? [] : $this->refundedByLine($psOrderId);
+        // Refunds belong to the local sale (V32), also before it is uploaded.
+        $refunded = $lines === [] ? [] : $this->refundedByLine($psOrderId, $orderId);
         foreach ($lines as $index => $line) {
             $refundedQty = $refunded[$index]['quantity'] ?? 0;
             $lines[$index]['refunded_qty'] = $refundedQty;
@@ -280,8 +295,8 @@ class OrderSearchService
             'change_due' => (float) ($breakdown['change_due'] ?? 0),
             'lines' => $lines,
             'tender' => \is_array($breakdown['tender'] ?? null) ? $breakdown['tender'] : null,
-            'pending_refund' => $lines === [] || $psOrderId === null ? null : $this->pendingRefund($psOrderId),
-            'open_exchange' => $lines === [] || $psOrderId === null ? null : $this->openExchange($psOrderId),
+            'pending_refund' => $lines === [] ? null : $this->pendingRefund($psOrderId, $orderId),
+            'open_exchange' => $lines === [] ? null : $this->openExchange($psOrderId, $orderId),
             'refunded_amount' => (float) $row['refunded_amount'],
             'created_at' => $row['created_at'],
         ];
@@ -293,15 +308,19 @@ class OrderSearchService
      *
      * @return array<int, array{quantity: int, amount: float}>
      */
-    private function refundedByLine(int $psOrderId): array
+    private function refundedByLine(?int $psOrderId, ?int $orderId): array
     {
+        [$scope, $params] = self::scope('r.', $psOrderId, $orderId);
+        if ($scope === null) {
+            return [];
+        }
         $rows = $this->connection->fetchAllAssociative(
             "SELECT rl.line_index, SUM(rl.quantity) AS quantity, SUM(rl.amount) AS amount
              FROM refund_line rl
              JOIN refund r ON r.id = rl.refund_id
-             WHERE r.ps_order_id = ? AND r.status IN ('pending', 'done') AND rl.line_index IS NOT NULL
+             WHERE " . $scope . " AND r.status IN ('pending', 'done') AND rl.line_index IS NOT NULL
              GROUP BY rl.line_index",
-            [$psOrderId]
+            $params
         );
 
         $result = [];
@@ -324,12 +343,16 @@ class OrderSearchService
      *
      * @return array{id: int, status: string, credit_applied: float, new_total: float, balance: float, error: ?string}|null
      */
-    private function openExchange(int $psOrderId): ?array
+    private function openExchange(?int $psOrderId, ?int $orderId): ?array
     {
+        [$scope, $params] = self::scope('', $psOrderId, $orderId);
+        if ($scope === null) {
+            return null;
+        }
         try {
             $row = $this->connection->fetchAssociative(
-                "SELECT id, status, credit_applied, new_total, balance, error_message FROM exchange WHERE ps_order_id = ? AND status IN ('pending', 'credit_open') ORDER BY id LIMIT 1",
-                [$psOrderId]
+                "SELECT id, status, credit_applied, new_total, balance, error_message FROM exchange WHERE " . $scope . " AND status IN ('pending', 'credit_open') ORDER BY id LIMIT 1",
+                $params
             );
         } catch (\Throwable) {
             // Database not migrated to exchanges yet: there can be none.
@@ -356,11 +379,15 @@ class OrderSearchService
      *
      * @return array{id: int, total: float}|null
      */
-    private function pendingRefund(int $psOrderId): ?array
+    private function pendingRefund(?int $psOrderId, ?int $orderId): ?array
     {
+        [$scope, $params] = self::scope('', $psOrderId, $orderId);
+        if ($scope === null) {
+            return null;
+        }
         $row = $this->connection->fetchAssociative(
-            "SELECT id, total FROM refund WHERE ps_order_id = ? AND status = 'pending' ORDER BY id LIMIT 1",
-            [$psOrderId]
+            "SELECT id, total FROM refund WHERE " . $scope . " AND status = 'pending' ORDER BY id LIMIT 1",
+            $params
         );
 
         if (!\is_array($row) || !isset($row['id'])) {
@@ -368,5 +395,27 @@ class OrderSearchService
         }
 
         return ['id' => (int) $row['id'], 'total' => round((float) $row['total'], 2)];
+    }
+
+    /**
+     * Rows (refunds, exchanges) of a TPV sale: by its local id, and by its PrestaShop
+     * id for rows written before they knew the local sale; an online order only has
+     * its PrestaShop id.
+     *
+     * @return array{0: ?string, 1: array<int, int>}
+     */
+    private static function scope(string $alias, ?int $psOrderId, ?int $orderId): array
+    {
+        if ($orderId !== null && $psOrderId !== null) {
+            return ['(' . $alias . 'order_id = ? OR ' . $alias . 'ps_order_id = ?)', [$orderId, $psOrderId]];
+        }
+        if ($orderId !== null) {
+            return [$alias . 'order_id = ?', [$orderId]];
+        }
+        if ($psOrderId !== null) {
+            return [$alias . 'ps_order_id = ?', [$psOrderId]];
+        }
+
+        return [null, []];
     }
 }

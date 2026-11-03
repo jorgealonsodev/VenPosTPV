@@ -9,6 +9,9 @@ use Doctrine\DBAL\Exception\RetryableException;
 use Psr\Log\LoggerInterface;
 use VenPosTPV\Service\Checkout\Exception\CheckoutException;
 use VenPosTPV\Service\Checkout\PsOrderClient;
+use VenPosTPV\Service\Refund\Exception\RefundException;
+use VenPosTPV\Service\Refund\PsRefundClient;
+use VenPosTPV\Service\Refund\PsRestockClient;
 
 /**
  * Uploads the outbox to PrestaShop (PRD S1-S5).
@@ -26,6 +29,11 @@ use VenPosTPV\Service\Checkout\PsOrderClient;
  *   an incident for the administrator; the local sale and the cash stay as they are.
  * - Stock is never pushed: creating the order lowers PrestaShop's stock, and the
  *   sale already lowered the local copy.
+ * - Refunds (type refund, PRD D2) wait behind their sale; their PrestaShop order id
+ *   is read from the sale when they are sent, because a sale refunded before its
+ *   upload has none yet. The module replays a refund or restock by its request_id,
+ *   so sending one again after an unknown outcome never refunds twice. Restocks of
+ *   refunds without a ticket (type restock) belong to no sale and wait for nothing.
  */
 class OutboxSync
 {
@@ -47,6 +55,8 @@ class OutboxSync
         private readonly PsOrderClient $client,
         private readonly ?LoggerInterface $logger = null,
         ?\Closure $clock = null,
+        private readonly ?PsRefundClient $refundClient = null,
+        private readonly ?PsRestockClient $restockClient = null,
     ) {
         $this->clock = $clock ?? static fn (): \DateTimeImmutable => new \DateTimeImmutable();
     }
@@ -135,15 +145,27 @@ class OutboxSync
      */
     private function process(array $row): ?string
     {
-        if ($row['type'] !== Outbox::TYPE_SALE) {
-            return $this->incident($row, sprintf("Uploading '%s' operations is not supported yet", (string) $row['type']));
-        }
-
         $payload = json_decode((string) $row['payload'], true);
         if (!\is_array($payload)) {
             return $this->incident($row, 'The stored upload is not valid JSON');
         }
 
+        return match ($row['type']) {
+            Outbox::TYPE_SALE => $this->processSale($row, $payload),
+            Outbox::TYPE_REFUND => $this->processRefund($row, $payload),
+            Outbox::TYPE_RESTOCK => $this->processRestock($row, $payload),
+            default => $this->incident($row, sprintf("Uploading '%s' operations is not supported", (string) $row['type'])),
+        };
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     * @param array<string, mixed> $payload
+     *
+     * @return 'uploaded'|'retried'|'incidents'|null
+     */
+    private function processSale(array $row, array $payload): ?string
+    {
         try {
             $order = $this->client->createReferencedOrder($payload);
         } catch (CheckoutException $e) {
@@ -227,6 +249,142 @@ class OutboxSync
 
             return true;
         });
+    }
+
+    /**
+     * The credit slip of a refund of a TPV sale, sent once the sale is in PrestaShop.
+     *
+     * @param array<string, mixed> $row
+     * @param array<string, mixed> $payload the module's refund request, plus `_local` (never sent)
+     *
+     * @return 'uploaded'|'retried'|'incidents'|null
+     */
+    private function processRefund(array $row, array $payload): ?string
+    {
+        if ($this->refundClient === null) {
+            return $this->retry($row, 'The PrestaShop refund client is not configured');
+        }
+        $local = \is_array($payload['_local'] ?? null) ? $payload['_local'] : [];
+        unset($payload['_local']);
+
+        $psOrderId = $this->connection->fetchOne('SELECT ps_order_id FROM order_meta WHERE id = ?', [(int) $row['order_id']]);
+        if ($psOrderId === false) {
+            return $this->incident($row, sprintf('The sale %d of this refund does not exist', (int) $row['order_id']));
+        }
+        if ($psOrderId === null) {
+            // Not reachable while the sale's own row is not done; kept safe anyway.
+            return $this->retry($row, 'The sale of this refund is not in PrestaShop yet');
+        }
+        // The module request exactly as a refund always sent it (JSON storage turns 40.0 into 40).
+        $payload = ['ps_order_id' => (int) $psOrderId] + $payload;
+        $payload['lines'] = array_map(static fn (array $line): array => [
+            'id_product' => (int) ($line['id_product'] ?? 0),
+            'id_product_attribute' => (int) ($line['id_product_attribute'] ?? 0),
+            'quantity' => (int) ($line['quantity'] ?? 0),
+            'amount' => (float) ($line['amount'] ?? 0),
+            'restock' => !empty($line['restock']),
+        ], \is_array($payload['lines'] ?? null) ? array_values(array_filter($payload['lines'], 'is_array')) : []);
+
+        try {
+            $slip = $this->refundClient->createRefund($payload);
+        } catch (RefundException $e) {
+            // 404/422: definitely rejected. 409 (order busy) and the rest: outcome unknown.
+            return \in_array($e->getCode(), [404, 422], true) ? $this->incident($row, $e->getMessage()) : $this->retry($row, $e->getMessage());
+        } catch (\Throwable $e) {
+            return $this->retry($row, $e->getMessage());
+        }
+
+        return $this->closeWith($row, function () use ($local, $slip, $psOrderId): void {
+            $refundId = (int) ($local['refund_id'] ?? 0);
+            $slipId = $slip['order_slip_id'];
+            $this->connection->executeStatement(
+                'UPDATE refund SET ps_order_slip_id = ?, ps_order_id = COALESCE(ps_order_id, ?) WHERE id = ?',
+                [$slipId, (int) $psOrderId, $refundId]
+            );
+            foreach ($slip['refunded_lines'] as $line) {
+                // What PrestaShop really put back on sale; the local stock was raised at once.
+                $this->connection->executeStatement(
+                    'UPDATE refund_line SET restocked = ? WHERE refund_id = ? AND product_id = ? AND id_product_attribute = ?',
+                    [!empty($line['restocked']) ? 1 : 0, $refundId, (int) ($line['id_product'] ?? 0), (int) ($line['id_product_attribute'] ?? 0)]
+                );
+            }
+            if (isset($local['movement_id']) && (int) $local['movement_id'] > 0) {
+                $this->connection->executeStatement(
+                    'UPDATE movement SET ps_order_slip_id = ?, ps_order_id = COALESCE(ps_order_id, ?) WHERE id = ?',
+                    [$slipId, (int) $psOrderId, (int) $local['movement_id']]
+                );
+            }
+        });
+    }
+
+    /**
+     * The restock of a refund without a ticket.
+     *
+     * @param array<string, mixed> $row
+     * @param array<string, mixed> $payload {request_id, lines, _local}
+     *
+     * @return 'uploaded'|'retried'|'incidents'|null
+     */
+    private function processRestock(array $row, array $payload): ?string
+    {
+        if ($this->restockClient === null) {
+            return $this->retry($row, 'The PrestaShop restock client is not configured');
+        }
+        $local = \is_array($payload['_local'] ?? null) ? $payload['_local'] : [];
+
+        try {
+            $restock = $this->restockClient->restock([
+                'request_id' => (string) ($payload['request_id'] ?? $row['request_id']),
+                'lines' => \is_array($payload['lines'] ?? null) ? $payload['lines'] : [],
+            ]);
+        } catch (RefundException $e) {
+            return \in_array($e->getCode(), [404, 422], true) ? $this->incident($row, $e->getMessage()) : $this->retry($row, $e->getMessage());
+        } catch (\Throwable $e) {
+            return $this->retry($row, $e->getMessage());
+        }
+
+        return $this->closeWith($row, function () use ($local, $restock): void {
+            foreach ($restock['restocked_lines'] as $line) {
+                $this->connection->executeStatement(
+                    'UPDATE refund_line SET restocked = ? WHERE refund_id = ? AND product_id = ? AND id_product_attribute = ?',
+                    [!empty($line['restocked']) ? 1 : 0, (int) ($local['refund_id'] ?? 0), (int) ($line['id_product'] ?? 0), (int) ($line['id_product_attribute'] ?? 0)]
+                );
+            }
+        });
+    }
+
+    /**
+     * Marks a claimed row done and records what PrestaShop answered, in one
+     * transaction; only the holder of the claim token may close it.
+     *
+     * @param array<string, mixed> $row
+     * @param callable(): void $record
+     *
+     * @return 'uploaded'|'retried'|null
+     */
+    private function closeWith(array $row, callable $record): ?string
+    {
+        $now = $this->now();
+        try {
+            $closed = $this->connection->transactional(function () use ($row, $record, $now): bool {
+                $done = $this->connection->executeStatement(
+                    "UPDATE outbox SET status = 'done', claim_token = NULL, last_error = NULL, done_at = ?, updated_at = ?
+                     WHERE id = ? AND claim_token = ?",
+                    [$now, $now, (int) $row['id'], (string) $row['claim_token']]
+                );
+                if ($done !== 1) {
+                    return false;
+                }
+                $record();
+
+                return true;
+            });
+        } catch (\Throwable $e) {
+            // PrestaShop already has it: the next attempt is replayed by request_id.
+            return $this->retry($row, 'Recording the PrestaShop answer failed: ' . $e->getMessage());
+        }
+
+        return $closed ? 'uploaded' : null;
     }
 
     /** @param array<string, mixed> $row @return 'retried'|null */

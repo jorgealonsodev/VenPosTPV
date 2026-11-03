@@ -25,17 +25,23 @@ use VenPosTPV\Service\Refund\Exception\RefundException;
 use VenPosTPV\Service\Refund\OrderSearchService;
 use VenPosTPV\Service\Refund\PsRefundClient;
 use VenPosTPV\Service\Refund\RefundService;
+use VenPosTPV\Service\Sync\Outbox;
+use VenPosTPV\Service\Sync\OutboxSync;
 use VenPosTPV\Tests\Support\TestDatabase;
 
 /**
  * A9: "Un cambio de 40 € por un artículo de 55 € cobra 15 €. Al revés, devuelve
  * 15 € por el medio original." The returned lines are a normal refund (credit note,
  * PrestaShop slip, restock); their money pays the new sale instead of leaving.
+ * Both halves are local first (PRD D1): the slip and the new sale wait in the
+ * outbox (newSales(), upload()); only a voucher needs PrestaShop at once.
  */
 final class ExchangeServiceMySqlIntegrationTest extends TestCase
 {
     private const SESSION_ID = 9301;
     private const ORDER_ID = 930001;
+    private const TERMINAL_ID = 9301;
+    private const LETTER = 'W';
 
     /** product id => tax-included price */
     private const PRICES = [930005 => 40.0, 930006 => 55.0, 930007 => 40.0, 930008 => 60.0];
@@ -48,11 +54,8 @@ final class ExchangeServiceMySqlIntegrationTest extends TestCase
     /** @var array<int, \Throwable|null> */
     private array $refundFailures = [];
 
-    /** @var array<int, array<string, mixed>> */
-    private array $orderPayloads = [];
-
-    /** @var array<int, \Throwable|null> */
-    private array $orderFailures = [];
+    /** @var array<int, \Throwable|null> failures of the next local new sales (their outbox write) */
+    private array $saleFailures = [];
 
     /** @var array<int, array{input: array<string, mixed>, shop: int}> */
     private array $coupons = [];
@@ -73,7 +76,8 @@ final class ExchangeServiceMySqlIntegrationTest extends TestCase
         $this->clean();
         $c = $this->connection;
         $c->executeStatement('SET FOREIGN_KEY_CHECKS = 0');
-        $c->insert('session', ['id' => self::SESSION_ID, 'terminal_id' => 1, 'user_id' => 1, 'opened_at' => '2026-11-03 09:00:00', 'opening_cash' => 100]);
+        $c->insert('terminal', ['id' => self::TERMINAL_ID, 'ps_shop_id' => 1, 'name' => 'Exchanges', 'ticket_letter' => self::LETTER]);
+        $c->insert('session', ['id' => self::SESSION_ID, 'terminal_id' => self::TERMINAL_ID, 'user_id' => 1, 'opened_at' => '2026-11-03 09:00:00', 'opening_cash' => 100]);
         $c->executeStatement('SET FOREIGN_KEY_CHECKS = 1');
         foreach (self::PRICES as $id => $price) {
             $c->insert('catalog_product', ['id' => $id, 'name' => 'Producto ' . $id, 'price' => round($price / 1.21, 6), 'price_ttc' => $price, 'price_net' => round($price / 1.21, 6)]);
@@ -95,6 +99,9 @@ final class ExchangeServiceMySqlIntegrationTest extends TestCase
     private function clean(): void
     {
         $c = $this->connection;
+        $c->executeStatement('DELETE FROM outbox WHERE order_id IN (SELECT id FROM order_meta WHERE session_id = ? OR (ps_order_id >= 930000 AND ps_order_id < 1000000))', [self::SESSION_ID]);
+        $c->executeStatement('DELETE FROM order_meta WHERE session_id = ? AND ps_order_id IS NULL', [self::SESSION_ID]);
+        $c->executeStatement('DELETE FROM ticket_sequence WHERE letter = ?', [self::LETTER]);
         $c->executeStatement('DELETE FROM exchange WHERE ps_order_id >= 930000 AND ps_order_id < 940000');
         $c->executeStatement('DELETE FROM refund_line WHERE refund_id IN (SELECT id FROM refund WHERE ps_order_id >= 930000 AND ps_order_id < 940000)');
         $c->executeStatement('DELETE FROM refund WHERE ps_order_id >= 930000 AND ps_order_id < 940000');
@@ -103,6 +110,7 @@ final class ExchangeServiceMySqlIntegrationTest extends TestCase
         $c->executeStatement('DELETE FROM order_meta WHERE ps_order_id >= 930000 AND ps_order_id < 1000000');
         $c->executeStatement("DELETE FROM audit_log WHERE action IN ('checkout_orphan', 'refund_orphan')");
         $c->executeStatement('DELETE FROM session WHERE id = ?', [self::SESSION_ID]);
+        $c->executeStatement('DELETE FROM terminal WHERE id = ?', [self::TERMINAL_ID]);
         $c->executeStatement('DELETE FROM catalog_stock WHERE id_product BETWEEN 930000 AND 939999');
         $c->executeStatement('DELETE FROM catalog_product WHERE id BETWEEN 930000 AND 939999');
     }
@@ -116,7 +124,7 @@ final class ExchangeServiceMySqlIntegrationTest extends TestCase
     {
         $price = self::PRICES[$productId];
         $this->connection->insert('order_meta', [
-            'ps_order_id' => $orderId, 'terminal_id' => 1, 'session_id' => self::SESSION_ID, 'user_id' => 1,
+            'ps_order_id' => $orderId, 'terminal_id' => self::TERMINAL_ID, 'session_id' => self::SESSION_ID, 'user_id' => 1,
             'payment_breakdown' => json_encode([
                 'reference' => 'ORIG' . $orderId, 'total' => $price,
                 'payment_method' => $tender['card'] > 0 && $tender['cash'] > 0 ? 'mixed' : ($tender['card'] > 0 ? 'card' : 'cash'),
@@ -147,33 +155,19 @@ final class ExchangeServiceMySqlIntegrationTest extends TestCase
         $c = $this->connection;
         $cash = new CashSessionService($c, $this->createMock(TerminalService::class), new RequestStack());
 
-        $refundClient = $this->createMock(PsRefundClient::class);
-        $refundClient->method('createRefund')->willReturnCallback(function (array $payload): array {
-            $this->refundPayloads[] = $payload;
-            $failure = array_shift($this->refundFailures);
-            if ($failure !== null) {
-                throw $failure;
-            }
-
-            return [
-                'order_slip_id' => 800 + \count($this->refundPayloads),
-                'refunded_amount' => round(array_sum(array_column($payload['lines'], 'amount')), 2),
-                'refunded_lines' => array_map(static fn (array $l): array => $l + ['restocked' => $l['restock']], $payload['lines']),
-                'restock_failed' => [],
-                'replayed' => false,
-            ];
-        });
+        $refundClient = $this->refundClient();
 
         $orderClient = $this->createMock(PsOrderClient::class);
-        $orderClient->method('createOrder')->willReturnCallback(function (array $payload): array {
-            $this->orderPayloads[] = $payload;
-            $failure = array_shift($this->orderFailures);
+        $orderClient->expects($this->never())->method('createOrder');
+        $realOutbox = new Outbox($c);
+        $outbox = $this->createMock(Outbox::class);
+        $outbox->method('enqueueSale')->willReturnCallback(function (int $orderId, array $payload) use ($realOutbox): string {
+            $failure = array_shift($this->saleFailures);
             if ($failure !== null) {
                 throw $failure;
             }
-            $n = \count($this->orderPayloads);
 
-            return ['order_id' => 990000 + $n, 'reference' => 'NEWREF' . $n, 'total_paid' => 0.0];
+            return $realOutbox->enqueueSale($orderId, $payload);
         });
 
         $printer = $this->createMock(PrinterService::class);
@@ -202,7 +196,7 @@ final class ExchangeServiceMySqlIntegrationTest extends TestCase
         });
 
         $refunds = new RefundService(new OrderSearchService($c), $refundClient, $c, $cash, null, null, $coupons);
-        $checkout = new CheckoutService($cart, $orderClient, $c, $cash, $bus, $printer);
+        $checkout = new CheckoutService($cart, $orderClient, $c, $cash, $bus, $printer, outbox: $outbox);
 
         return new ExchangeService($refunds, $checkout, $c, $coupons, $cash);
     }
@@ -218,12 +212,58 @@ final class ExchangeServiceMySqlIntegrationTest extends TestCase
         return (int) $this->connection->fetchOne('SELECT quantity FROM catalog_stock WHERE id_product = ? AND id_product_attribute = 0', [$productId]);
     }
 
-    /** @return array<string, mixed> */
-    private function tender(int $psOrderId): array
+    /** @return array<string, mixed> the tender of a local sale */
+    private function tender(int $orderId): array
     {
-        $breakdown = json_decode((string) $this->connection->fetchOne('SELECT payment_breakdown FROM order_meta WHERE ps_order_id = ?', [$psOrderId]), true);
+        $breakdown = json_decode((string) $this->connection->fetchOne('SELECT payment_breakdown FROM order_meta WHERE id = ?', [$orderId]), true);
 
         return $breakdown['tender'];
+    }
+
+    /** @return list<array<string, mixed>> the module requests of the new sales queued so far */
+    private function newSales(): array
+    {
+        return array_map(
+            static fn (string $payload): array => json_decode($payload, true),
+            $this->connection->fetchFirstColumn(
+                "SELECT o.payload FROM outbox o JOIN order_meta m ON m.id = o.order_id WHERE o.type = 'sale' AND m.session_id = ? ORDER BY o.id",
+                [self::SESSION_ID]
+            )
+        );
+    }
+
+    private function refundClient(): PsRefundClient
+    {
+        $refundClient = $this->createMock(PsRefundClient::class);
+        $refundClient->method('createRefund')->willReturnCallback(function (array $payload): array {
+            $this->refundPayloads[] = $payload;
+            $failure = array_shift($this->refundFailures);
+            if ($failure !== null) {
+                throw $failure;
+            }
+
+            return [
+                'order_slip_id' => 800 + \count($this->refundPayloads),
+                'refunded_amount' => round(array_sum(array_column($payload['lines'], 'amount')), 2),
+                'refunded_lines' => array_map(static fn (array $l): array => $l + ['restocked' => $l['restock']], $payload['lines']),
+                'restock_failed' => [],
+                'replayed' => false,
+            ];
+        });
+
+        return $refundClient;
+    }
+
+    /**
+     * Uploads the queued slips (the new sales' rows are left alone: their upload is
+     * OutboxSync's own test). Runs only refund rows by marking the sale rows aside.
+     */
+    private function upload(): void
+    {
+        $orders = $this->createMock(PsOrderClient::class);
+        $orders->method('createReferencedOrder')->willThrowException(CheckoutException::psUnavailable('not in this test'));
+        $at = new \DateTimeImmutable('+1 minute');
+        (new OutboxSync($this->connection, $orders, null, fn (): \DateTimeImmutable => $at, $this->refundClient()))->run();
     }
 
     private function rows(string $table): int
@@ -243,7 +283,7 @@ final class ExchangeServiceMySqlIntegrationTest extends TestCase
 
     private function assertNothingHappened(): void
     {
-        $this->assertSame([], $this->orderPayloads, 'no new sale');
+        $this->assertSame([], $this->newSales(), 'no new sale');
         $this->assertSame([], $this->movements(), 'no money');
         $this->assertSame(5, $this->stock(930005));
         $this->assertSame(5, $this->stock(930006));
@@ -261,28 +301,32 @@ final class ExchangeServiceMySqlIntegrationTest extends TestCase
         $this->assertSame(40.0, $result['credit']);
         $this->assertSame(55.0, $result['new_total']);
         $this->assertSame(15.0, $result['balance']);
-        // Returned part: a normal refund through PrestaShop with its credit note, no money out.
+        // Returned part: a normal refund with its credit note, no money out; the slip is queued.
+        $this->assertSame([], $this->refundPayloads, 'PrestaShop is not called during the exchange');
+        $this->upload();
         $this->assertSame([['id_product' => 930005, 'id_product_attribute' => 0, 'quantity' => 1, 'amount' => 40.0, 'restock' => true]], $this->refundPayloads[0]['lines']);
         $this->assertMatchesRegularExpression('/^R\d{4}-000001$/', (string) $result['refund']['credit_note_number']);
         $this->assertSame(0.0, $result['refund']['cash_amount']);
         $this->assertSame(0.0, $result['refund']['card_amount']);
         $refund = $this->connection->fetchAssociative('SELECT status, total, exchange_credit FROM refund WHERE id = ?', [$result['refund']['refund_id']]);
         $this->assertSame(['status' => 'done', 'total' => '40.00', 'exchange_credit' => '40.00'], $refund);
-        // New items: a normal sale, of which only the balance was collected.
-        $this->assertCount(1, $this->orderPayloads);
-        $this->assertSame(930006, $this->orderPayloads[0]['products'][0]['id_product']);
-        $this->assertSame(990001, $result['sale']['ps_order_id']);
-        $this->assertSame('NEWREF1', $result['sale']['reference']);
+        // New items: a normal local sale, of which only the balance was collected.
+        $this->assertCount(1, $this->newSales());
+        $this->assertSame(930006, $this->newSales()[0]['products'][0]['id_product']);
+        $this->assertNull($result['sale']['ps_order_id'], 'uploaded later');
+        $saleId = $result['sale']['order_id'];
+        $this->assertSame(self::LETTER . date('y') . '000001', $result['sale']['reference']);
+        $this->assertSame($result['sale']['reference'], $this->newSales()[0]['reference']);
         $this->assertSame(55.0, $result['sale']['total']);
         $this->assertSame(15.0, $result['sale']['payable']);
         $this->assertSame(5.0, $result['sale']['change_due']);
-        $this->assertEquals(['cash' => 15.0, 'card' => 0.0, 'exchange_credit' => 40.0], $this->tender(990001));
+        $this->assertEquals(['cash' => 15.0, 'card' => 0.0, 'exchange_credit' => 40.0], $this->tender($saleId));
         $this->assertEquals([['type' => 'sale', 'amount' => '15.00']], $this->movements(), 'only the balance enters the drawer');
         $this->assertSame(6, $this->stock(930005), 'returned item restocked');
         $this->assertSame(4, $this->stock(930006), 'new item leaves the stock');
         $this->assertSame('40.00', (string) $this->connection->fetchOne('SELECT refunded_amount FROM order_meta WHERE ps_order_id = ?', [self::ORDER_ID]));
-        $exchange = $this->connection->fetchAssociative('SELECT status, refund_id, new_ps_order_id, new_reference FROM exchange WHERE id = ?', [$result['exchange_id']]);
-        $this->assertEquals(['status' => 'done', 'refund_id' => $result['refund']['refund_id'], 'new_ps_order_id' => '990001', 'new_reference' => 'NEWREF1'], $exchange);
+        $exchange = $this->connection->fetchAssociative('SELECT status, refund_id, new_ps_order_id, new_order_id, new_reference FROM exchange WHERE id = ?', [$result['exchange_id']]);
+        $this->assertEquals(['status' => 'done', 'refund_id' => $result['refund']['refund_id'], 'new_ps_order_id' => null, 'new_order_id' => $saleId, 'new_reference' => $result['sale']['reference']], $exchange);
         $this->assertSame(1, $this->drawerOpens, 'cash came in');
         $this->assertSame(0, $this->cartClears, 'the sale screen cart is not touched');
     }
@@ -307,7 +351,7 @@ final class ExchangeServiceMySqlIntegrationTest extends TestCase
         $this->assertEquals(['exchange_credit' => '40.00', 'card_confirmed' => 1], $this->connection->fetchAssociative('SELECT exchange_credit, card_confirmed FROM refund'));
         $this->assertSame('exchange', $result['sale']['payment_method']);
         $this->assertSame(0.0, $result['sale']['payable']);
-        $this->assertEquals(['cash' => 0.0, 'card' => 0.0, 'exchange_credit' => 40.0], $this->tender(990001));
+        $this->assertEquals(['cash' => 0.0, 'card' => 0.0, 'exchange_credit' => 40.0], $this->tender($result['sale']['order_id']));
         $this->assertSame([], $this->movements(), 'no cash moves for a card refund');
         $this->assertSame(0, $this->drawerOpens);
     }
@@ -349,7 +393,7 @@ final class ExchangeServiceMySqlIntegrationTest extends TestCase
         $this->assertSame(0.0, $result['sale']['change_due']);
         $this->assertSame([], $this->movements());
         $this->assertSame(0, $this->drawerOpens);
-        $this->assertEquals(['cash' => 0.0, 'card' => 0.0, 'exchange_credit' => 40.0], $this->tender(990001));
+        $this->assertEquals(['cash' => 0.0, 'card' => 0.0, 'exchange_credit' => 40.0], $this->tender($result['sale']['order_id']));
     }
 
     public function testPositiveBalanceByCardOrMixedCollectsOnlyTheCashPartInTheDrawer(): void
@@ -359,11 +403,11 @@ final class ExchangeServiceMySqlIntegrationTest extends TestCase
         $service = $this->service();
 
         $card = $service->processExchange(1, self::ORDER_ID, $this->returnFirstLine(), 'size', '', $this->cart(930006), 'card', 0.0, false);
-        $this->assertEquals(['cash' => 0.0, 'card' => 15.0, 'exchange_credit' => 40.0], $this->tender($card['sale']['ps_order_id']));
+        $this->assertEquals(['cash' => 0.0, 'card' => 15.0, 'exchange_credit' => 40.0], $this->tender($card['sale']['order_id']));
         $this->assertSame([], $this->movements());
 
         $mixed = $service->processExchange(1, self::ORDER_ID + 1, $this->returnFirstLine(), 'size', '', $this->cart(930006) + ['cash_amount' => 5.0], 'mixed', 5.0, false);
-        $this->assertEquals(['cash' => 5.0, 'card' => 10.0, 'exchange_credit' => 40.0], $this->tender($mixed['sale']['ps_order_id']));
+        $this->assertEquals(['cash' => 5.0, 'card' => 10.0, 'exchange_credit' => 40.0], $this->tender($mixed['sale']['order_id']));
         $this->assertEquals([['type' => 'sale', 'amount' => '5.00']], $this->movements());
     }
 
@@ -402,11 +446,12 @@ final class ExchangeServiceMySqlIntegrationTest extends TestCase
         $this->expectRefundError(422, fn () => $service->processExchange(1, self::ORDER_ID + 1, [], 'size', '', $this->cart(930006), 'cash', 20.0, false));
         $this->expectRefundError(404, fn () => $service->processExchange(1, 939999, $this->returnFirstLine(), 'size', '', $this->cart(930006), 'cash', 20.0, false));
         $this->assertSame([], $this->refundPayloads);
-        $this->assertSame([], $this->orderPayloads);
+        $this->assertSame([], $this->newSales());
 
         // Defective goods are not restocked when the cashier unticks it.
         $result = $service->processExchange(1, self::ORDER_ID + 1, [['line_index' => 0, 'quantity' => 1, 'restock' => false]], 'defective', '', $this->cart(930006), 'cash', 20.0, false);
         $this->assertSame('done', $result['status']);
+        $this->upload();
         $this->assertFalse($this->refundPayloads[0]['lines'][0]['restock']);
         $this->assertSame(5, $this->stock(930005));
 
@@ -414,55 +459,60 @@ final class ExchangeServiceMySqlIntegrationTest extends TestCase
         $this->expectRefundError(422, fn () => $service->processExchange(1, self::ORDER_ID + 1, $this->returnFirstLine(), 'size', '', $this->cart(930006), 'cash', 20.0, false));
     }
 
-    public function testPrestaShopRejectingTheReturnLeavesNoEffects(): void
+    public function testPrestaShopRejectingTheSlipLaterBecomesAnIncidentAndKeepsTheExchange(): void
     {
         $this->seedSale(930005, ['cash' => 40.0, 'card' => 0.0]);
+        $result = $this->service()->processExchange(1, self::ORDER_ID, $this->returnFirstLine(), 'size', '', $this->cart(930006), 'cash', 20.0, false);
         $this->refundFailures = [RefundException::validationFailed('PS validation failed')];
 
-        $this->expectRefundError(422, fn () => $this->service()->processExchange(1, self::ORDER_ID, $this->returnFirstLine(), 'size', '', $this->cart(930006), 'cash', 20.0, false));
+        $this->upload();
 
-        $this->assertNothingHappened();
-        $this->assertSame('failed', $this->connection->fetchOne('SELECT status FROM refund'));
-        $this->assertSame('failed', $this->connection->fetchOne('SELECT status FROM exchange'));
+        $requestId = $this->connection->fetchOne('SELECT request_id FROM refund WHERE id = ?', [$result['refund']['refund_id']]);
+        $this->assertSame('incident', $this->connection->fetchOne('SELECT status FROM outbox WHERE request_id = ?', [$requestId]));
+        $this->assertSame('done', $this->connection->fetchOne('SELECT status FROM refund'));
+        $this->assertSame('done', $this->connection->fetchOne('SELECT status FROM exchange'));
+        $this->assertEquals([['type' => 'sale', 'amount' => '15.00']], $this->movements());
     }
 
-    public function testPrestaShopDownBlocksTheExchangeUntilItIsRetried(): void
+    public function testExchangeWithPrestaShopDownCompletesAtOnceAndQueuesTheSlipBehindTheSale(): void
     {
         $this->seedSale(930005, ['cash' => 40.0, 'card' => 0.0]);
         $service = $this->service();
         $this->refundFailures = [RefundException::psUnavailable('Connection refused')];
 
-        $this->expectRefundError(0, fn () => $service->processExchange(1, self::ORDER_ID, $this->returnFirstLine(), 'size', '', $this->cart(930006), 'cash', 20.0, false));
-
-        $this->assertNothingHappened();
-        $exchangeId = (int) $this->connection->fetchOne('SELECT id FROM exchange');
-        $this->assertSame('pending', $this->connection->fetchOne('SELECT status FROM exchange'));
-        $open = (new OrderSearchService($this->connection))->getOrder(self::ORDER_ID)['open_exchange'];
-        $this->assertSame($exchangeId, $open['id']);
-        $this->assertSame('pending', $open['status']);
-        // The sale stays blocked like any refund with an unknown outcome.
-        $this->expectRefundError(409, fn () => $service->processExchange(1, self::ORDER_ID, $this->returnFirstLine(), 'size', '', $this->cart(930006), 'cash', 20.0, false));
-
-        $result = $service->retry(1, $exchangeId);
+        $result = $service->processExchange(1, self::ORDER_ID, $this->returnFirstLine(), 'size', '', $this->cart(930006), 'cash', 20.0, false);
 
         $this->assertSame('done', $result['status']);
-        $this->assertSame($this->refundPayloads[0]['request_id'], $this->refundPayloads[\count($this->refundPayloads) - 1]['request_id'], 'same request id: PrestaShop replays instead of refunding twice');
-        $this->assertCount(1, $this->orderPayloads);
+        $this->assertNotNull($result['refund']['credit_note_number'], 'the credit note prints at once');
+        $this->assertTrue($result['refund']['queued']);
         $this->assertEquals([['type' => 'sale', 'amount' => '15.00']], $this->movements());
         $this->assertNull((new OrderSearchService($this->connection))->getOrder(self::ORDER_ID)['open_exchange']);
+
+        $this->upload();
+        $this->assertCount(1, $this->refundPayloads, 'tried once, PrestaShop down');
+        $requestId = $this->connection->fetchOne('SELECT request_id FROM refund WHERE id = ?', [$result['refund']['refund_id']]);
+        $this->assertSame('pending', $this->connection->fetchOne('SELECT status FROM outbox WHERE request_id = ?', [$requestId]));
+        $this->connection->executeStatement('UPDATE outbox SET next_attempt_at = NOW() WHERE request_id = ?', [$requestId]);
+        $this->upload();
+
+        $this->assertSame($requestId, $this->refundPayloads[1]['request_id'], 'same request id: PrestaShop replays instead of refunding twice');
+        $this->assertSame(self::ORDER_ID, $this->refundPayloads[1]['ps_order_id']);
+        $this->assertSame('done', $this->connection->fetchOne('SELECT status FROM outbox WHERE request_id = ?', [$requestId]));
+        $this->assertEquals([['type' => 'sale', 'amount' => '15.00']], $this->movements(), 'money moved once');
     }
 
     public function testFailedNewSaleKeepsTheCreditOpenAndRetryNeverRefundsOrPaysTwice(): void
     {
         $this->seedSale(930006, ['cash' => 55.0, 'card' => 0.0]);
         $service = $this->service();
-        $this->orderFailures = [CheckoutException::psUnavailable('timeout')];
+        $this->saleFailures = [new \RuntimeException('timeout')];
 
         $result = $service->processExchange(1, self::ORDER_ID, $this->returnFirstLine(), 'size', '', $this->cart(930005), 'cash', 0.0, false);
 
         $this->assertSame('credit_open', $result['status']);
         $this->assertNull($result['sale']);
-        $this->assertTrue($result['sale_outcome_unknown']);
+        $this->assertFalse($result['sale_outcome_unknown'], 'the local sale was rolled back: it does not exist');
+        $this->assertSame([], $this->newSales());
         $this->assertStringContainsString('timeout', (string) $result['sale_error']);
         // The returned part is complete: credit note issued, 15 paid out once.
         $this->assertNotNull($result['refund']['credit_note_number']);
@@ -477,19 +527,20 @@ final class ExchangeServiceMySqlIntegrationTest extends TestCase
         $retried = $service->retry(1, $result['exchange_id']);
 
         $this->assertSame('done', $retried['status']);
-        $this->assertSame(990002, $retried['sale']['ps_order_id']);
+        $this->assertNotNull($retried['sale']['order_id']);
+        $this->upload();
         $this->assertCount(1, $this->refundPayloads, 'the returned part is never sent again');
         $this->assertEquals([['type' => 'refund', 'amount' => '15.00']], $this->movements(), 'the difference is never paid twice');
-        $this->assertEquals(['cash' => 0.0, 'card' => 0.0, 'exchange_credit' => 40.0], $this->tender(990002));
+        $this->assertEquals(['cash' => 0.0, 'card' => 0.0, 'exchange_credit' => 40.0], $this->tender($retried['sale']['order_id']));
         $this->expectRefundError(409, fn () => $service->retry(1, $result['exchange_id']));
-        $this->assertCount(2, $this->orderPayloads);
+        $this->assertCount(1, $this->newSales());
     }
 
     /** An exchange whose new sale definitely failed: credit note done, 15 paid out, 40 of credit open. */
     private function openCredit(ExchangeService $service): int
     {
         $this->seedSale(930006, ['cash' => 55.0, 'card' => 0.0]);
-        $this->orderFailures = [CheckoutException::psValidationFailed('Product not found')];
+        $this->saleFailures = [CheckoutException::psValidationFailed('Product not found')];
         $result = $service->processExchange(1, self::ORDER_ID, $this->returnFirstLine(), 'size', '', $this->cart(930005), 'cash', 0.0, false);
         $this->assertSame('credit_open', $result['status']);
 
@@ -526,7 +577,8 @@ final class ExchangeServiceMySqlIntegrationTest extends TestCase
         $this->expectRefundError(409, fn () => $service->retry(1, $exchangeId));
         $this->expectRefundError(409, fn () => $service->closeWithVoucher(1, $exchangeId, 3));
         $this->assertCount(1, $this->coupons, 'never a second voucher');
-        $this->assertCount(1, $this->orderPayloads, 'no new sale after closing');
+        $this->assertCount(0, $this->newSales(), 'no new sale after closing');
+        $this->upload();
         $this->assertCount(1, $this->refundPayloads);
         $this->assertEquals([['type' => 'refund', 'amount' => '15.00']], $this->movements(), 'the voucher moves no cash');
     }
@@ -568,17 +620,19 @@ final class ExchangeServiceMySqlIntegrationTest extends TestCase
         $this->expectRefundError(409, fn () => $service->closeWithVoucher(1, $exchangeId, 3));
         $this->expectRefundError(409, fn () => $service->retry(1, $exchangeId));
         $this->assertCount(1, $this->coupons, 'never a second voucher automatically');
-        $this->assertCount(1, $this->orderPayloads, 'no new sale while a voucher may exist');
+        $this->assertCount(0, $this->newSales(), 'no new sale while a voucher may exist');
         $this->assertSame(0.0, (new CashSessionService($this->connection, $this->createMock(TerminalService::class), new RequestStack()))->getXReport(1)['totals']['refunds_voucher']);
     }
 
     public function testOnlyAnOpenCreditCanBeClosedWithAVoucherAndOnlyForAKnownShop(): void
     {
-        $this->seedSale(930005, ['cash' => 40.0, 'card' => 0.0]);
+        // A return paid back on exchange credit waits for its voucher; its outcome is unknown.
+        $this->seedSale(930006, ['cash' => 0.0, 'card' => 0.0, 'exchange_credit' => 55.0]);
         $service = $this->service();
-        $this->refundFailures = [RefundException::psUnavailable('Connection refused')];
-        $this->expectRefundError(0, fn () => $service->processExchange(1, self::ORDER_ID, $this->returnFirstLine(), 'size', '', $this->cart(930006), 'cash', 20.0, false));
+        $this->couponFailures = [CouponCreationException::reconcile('ABCD2345')];
+        $this->expectRefundError(409, fn () => $service->processExchange(1, self::ORDER_ID, $this->returnFirstLine(), 'size', '', $this->cart(930005), 'cash', 0.0, false, 3));
         $pendingId = (int) $this->connection->fetchOne('SELECT id FROM exchange');
+        $this->coupons = [];
 
         $this->expectRefundError(409, fn () => $service->closeWithVoucher(1, $pendingId, 3));
         $this->expectRefundError(409, fn () => $service->closeWithVoucher(1, 999999, 3));
@@ -590,7 +644,7 @@ final class ExchangeServiceMySqlIntegrationTest extends TestCase
     public function testRejectedNewSaleIsReportedAsDefinitelyNotCreated(): void
     {
         $this->seedSale(930005, ['cash' => 40.0, 'card' => 0.0]);
-        $this->orderFailures = [CheckoutException::psValidationFailed('Product not found')];
+        $this->saleFailures = [CheckoutException::psValidationFailed('Product not found')];
 
         $result = $this->service()->processExchange(1, self::ORDER_ID, $this->returnFirstLine(), 'size', '', $this->cart(930006), 'cash', 20.0, false);
 
@@ -639,7 +693,7 @@ final class ExchangeServiceMySqlIntegrationTest extends TestCase
         $this->assertSame(0.0, $creditNote->creditNote->cashAmount);
         $this->assertSame(0.0, $creditNote->creditNote->cardAmount);
 
-        $sale = $resolver->resolve(990001);
+        $sale = $resolver->resolve(TicketDataResolver::saleKey($result['sale']['order_id']));
         $this->assertNotNull($sale);
         $this->assertSame(55.0, $sale->total);
         $this->assertSame(40.0, $sale->exchangeCredit);
@@ -666,7 +720,7 @@ final class ExchangeServiceMySqlIntegrationTest extends TestCase
         $this->assertSame(15.0, $creditNote->creditNote->cardAmount);
         $this->assertSame(0.0, $creditNote->creditNote->cashAmount);
 
-        $sale = $resolver->resolve(990001);
+        $sale = $resolver->resolve(TicketDataResolver::saleKey($result['sale']['order_id']));
         $this->assertSame(40.0, $sale?->exchangeCredit);
         $this->assertSame('Abono', $sale->paymentMethodLabel());
     }

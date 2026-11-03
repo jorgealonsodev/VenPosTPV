@@ -101,6 +101,8 @@ CREATE TABLE IF NOT EXISTS order_meta (
     reference VARCHAR(9) NULL,
     ps_order_id INT UNSIGNED NULL,
     ps_reference VARCHAR(9) NULL,
+    -- Version00000032: the browser's id of one payment attempt (a repeated checkout returns this sale)
+    request_id VARCHAR(64) NULL,
     terminal_id INT UNSIGNED NOT NULL,
     session_id INT UNSIGNED NOT NULL,
     user_id INT UNSIGNED NOT NULL,
@@ -109,7 +111,8 @@ CREATE TABLE IF NOT EXISTS order_meta (
     synced TINYINT(1) NOT NULL DEFAULT 1,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uk_order_meta_reference (reference),
-    UNIQUE KEY uk_order_meta_ps_order (ps_order_id)
+    UNIQUE KEY uk_order_meta_ps_order (ps_order_id),
+    UNIQUE KEY uk_order_meta_request (request_id)
 ) ENGINE=InnoDB;
 
 -- 7. offline_queue
@@ -248,6 +251,8 @@ CREATE TABLE IF NOT EXISTS refund (
     request_id VARCHAR(64) NOT NULL,
     status ENUM('pending','done','failed') NOT NULL DEFAULT 'pending',
     ps_order_id INT UNSIGNED NULL,
+    -- Version00000032: the local sale (order_meta.id); NULL for online orders and refunds without a ticket
+    order_id BIGINT UNSIGNED NULL,
     ps_order_slip_id INT UNSIGNED NULL,
     credit_note_number VARCHAR(20) NULL,
     terminal_id INT UNSIGNED NOT NULL,
@@ -275,6 +280,7 @@ CREATE TABLE IF NOT EXISTS refund (
     UNIQUE KEY uk_refund_request (request_id),
     UNIQUE KEY uk_refund_credit_note (credit_note_number),
     INDEX idx_refund_order_status (ps_order_id, status),
+    INDEX idx_refund_sale_status (order_id, status),
     INDEX idx_refund_session (session_id)
 ) ENGINE=InnoDB;
 
@@ -298,7 +304,9 @@ CREATE TABLE IF NOT EXISTS refund_line (
 CREATE TABLE IF NOT EXISTS exchange (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     status VARCHAR(16) NOT NULL DEFAULT 'pending',
-    ps_order_id INT UNSIGNED NOT NULL,
+    -- Version00000032: ps_order_id NULL while the returned sale is not uploaded; order_id / new_order_id are local sales
+    ps_order_id INT UNSIGNED NULL,
+    order_id BIGINT UNSIGNED NULL,
     refund_id BIGINT UNSIGNED NOT NULL,
     user_id INT UNSIGNED NOT NULL,
     credit DECIMAL(10,2) NOT NULL,
@@ -309,6 +317,7 @@ CREATE TABLE IF NOT EXISTS exchange (
     amount_tendered DECIMAL(10,2) NOT NULL DEFAULT 0,
     cart_data JSON NOT NULL,
     new_ps_order_id INT UNSIGNED NULL,
+    new_order_id BIGINT UNSIGNED NULL,
     new_reference VARCHAR(32) NULL,
     -- Version00000026: voucher issued for an open credit that closes the exchange (closed_voucher)
     voucher_code VARCHAR(32) NULL,
@@ -320,7 +329,8 @@ CREATE TABLE IF NOT EXISTS exchange (
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     completed_at DATETIME NULL,
     UNIQUE KEY uk_exchange_refund (refund_id),
-    INDEX idx_exchange_order_status (ps_order_id, status)
+    INDEX idx_exchange_order_status (ps_order_id, status),
+    INDEX idx_exchange_sale_status (order_id, status)
 ) ENGINE=InnoDB;
 
 -- credit_note_sequence (Version00000020): consecutive credit-note numbers per year
@@ -339,11 +349,12 @@ CREATE TABLE IF NOT EXISTS ticket_sequence (
 
 -- outbox (Version00000031): uploads to PrestaShop still to do, in order per sale
 -- (sequence 1 = the sale, then its refunds/exchanges); status pending, processing,
--- done or incident (definitive rejection, for the administrator).
+-- done or incident (definitive rejection, for the administrator). Types: sale,
+-- refund (behind its sale), restock (refund without ticket, no sale: order_id NULL, V32).
 CREATE TABLE IF NOT EXISTS outbox (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     type VARCHAR(32) NOT NULL,
-    order_id BIGINT UNSIGNED NOT NULL,
+    order_id BIGINT UNSIGNED NULL,
     sequence INT UNSIGNED NOT NULL,
     request_id VARCHAR(64) NOT NULL,
     payload JSON NOT NULL,
@@ -359,4 +370,17 @@ CREATE TABLE IF NOT EXISTS outbox (
     UNIQUE KEY uk_outbox_request (request_id),
     UNIQUE KEY uk_outbox_order_sequence (order_id, sequence),
     KEY idx_outbox_due (status, next_attempt_at)
+) ENGINE=InnoDB;
+
+-- terminal_device (Version00000033): the computer linked to each till. Only the
+-- SHA-256 of the browser's device token is stored; one device per till.
+CREATE TABLE IF NOT EXISTS terminal_device (
+    token_hash CHAR(64) NOT NULL,
+    terminal_id INT UNSIGNED NOT NULL,
+    linked_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_seen_at DATETIME NULL,
+    linked_by_user_id INT UNSIGNED NULL,
+    PRIMARY KEY (token_hash),
+    UNIQUE KEY uk_terminal_device_terminal (terminal_id),
+    CONSTRAINT fk_terminal_device_terminal FOREIGN KEY (terminal_id) REFERENCES terminal (id) ON DELETE CASCADE
 ) ENGINE=InnoDB;

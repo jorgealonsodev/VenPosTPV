@@ -34,6 +34,8 @@ use VenPosTPV\Tests\Support\TestDatabase;
 final class OnlineExchangeMySqlIntegrationTest extends TestCase
 {
     private const SESSION_ID = 9401;
+    private const TERMINAL_ID = 9401;
+    private const LETTER = 'V';
     private const ORDER_ID = 940001;
 
     /** product id => tax-included price */
@@ -56,7 +58,9 @@ final class OnlineExchangeMySqlIntegrationTest extends TestCase
         $this->clean();
         $c = $this->connection;
         $c->executeStatement('SET FOREIGN_KEY_CHECKS = 0');
-        $c->insert('session', ['id' => self::SESSION_ID, 'terminal_id' => 1, 'user_id' => 1, 'opened_at' => '2026-11-03 09:00:00', 'opening_cash' => 100]);
+        // The new items are a local sale numbered with this till's letter (PRD D1).
+        $c->insert('terminal', ['id' => self::TERMINAL_ID, 'ps_shop_id' => 1, 'name' => 'Online exchanges', 'ticket_letter' => self::LETTER]);
+        $c->insert('session', ['id' => self::SESSION_ID, 'terminal_id' => self::TERMINAL_ID, 'user_id' => 1, 'opened_at' => '2026-11-03 09:00:00', 'opening_cash' => 100]);
         $c->executeStatement('SET FOREIGN_KEY_CHECKS = 1');
         foreach (self::PRICES as $id => $price) {
             $c->insert('catalog_product', ['id' => $id, 'name' => 'Producto ' . $id, 'price' => round($price / 1.21, 6), 'price_ttc' => $price, 'price_net' => round($price / 1.21, 6)]);
@@ -78,12 +82,16 @@ final class OnlineExchangeMySqlIntegrationTest extends TestCase
     private function clean(): void
     {
         $c = $this->connection;
+        $c->executeStatement('DELETE FROM outbox WHERE order_id IN (SELECT id FROM order_meta WHERE session_id = ?)', [self::SESSION_ID]);
+        $c->executeStatement('DELETE FROM order_meta WHERE session_id = ? AND ps_order_id IS NULL', [self::SESSION_ID]);
+        $c->executeStatement('DELETE FROM ticket_sequence WHERE letter = ?', [self::LETTER]);
         $c->executeStatement('DELETE FROM exchange WHERE ps_order_id BETWEEN 940000 AND 949999');
         $c->executeStatement('DELETE FROM refund WHERE ps_order_id BETWEEN 940000 AND 949999');
         $c->executeStatement('DELETE FROM credit_note_sequence');
         $c->executeStatement('DELETE FROM movement WHERE session_id = ?', [self::SESSION_ID]);
         $c->executeStatement('DELETE FROM order_meta WHERE ps_order_id BETWEEN 940000 AND 949999 OR ps_order_id BETWEEN 990000 AND 999999');
         $c->executeStatement('DELETE FROM session WHERE id = ?', [self::SESSION_ID]);
+        $c->executeStatement('DELETE FROM terminal WHERE id = ?', [self::TERMINAL_ID]);
         $c->executeStatement('DELETE FROM catalog_stock WHERE id_product BETWEEN 940000 AND 949999');
         $c->executeStatement('DELETE FROM catalog_product WHERE id BETWEEN 940000 AND 949999');
     }
@@ -159,6 +167,8 @@ final class OnlineExchangeMySqlIntegrationTest extends TestCase
         $this->assertTrue($result['refund']['online']);
         $this->assertSame('refund', $this->refundPayloads[0]['target_state'], 'nothing owed: no pending web refund');
         $this->assertSame(15.0, $result['sale']['payable']);
+        $this->assertNull($result['sale']['ps_order_id'], 'the new items are a local sale, uploaded later');
+        $this->assertSame([], $this->orderPayloads);
         $this->assertEquals([['type' => 'sale', 'amount' => '15.00']], $this->movements(), 'only the balance enters the drawer');
     }
 

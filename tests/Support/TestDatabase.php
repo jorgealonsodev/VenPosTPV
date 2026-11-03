@@ -153,6 +153,8 @@ final class TestDatabase
         self::runMigration($connection, 'Version00000029AddStoreNameToTerminal');
         self::runMigration($connection, 'Version00000030AddTicketNumbering');
         self::runMigration($connection, 'Version00000031LocalFirstOrders');
+        self::runMigration($connection, 'Version00000032OfflineRefunds');
+        self::runMigration($connection, 'Version00000033TillDevices');
     }
 
     private static function applyInstallSchema(Connection $connection): void

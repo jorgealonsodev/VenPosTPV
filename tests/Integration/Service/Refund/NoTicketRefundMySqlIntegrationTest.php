@@ -8,6 +8,7 @@ use Doctrine\DBAL\Connection;
 use PHPUnit\Framework\TestCase;
 use VenPosTPV\Service\Cash\CashSessionService;
 use VenPosTPV\Service\Catalog\CatalogPriceResolver;
+use VenPosTPV\Service\Checkout\PsOrderClient;
 use VenPosTPV\Service\PrestaShop\CouponCreationService;
 use VenPosTPV\Service\PrestaShop\Exception\CouponCreationException;
 use VenPosTPV\Service\Print\TicketDataResolver;
@@ -17,12 +18,14 @@ use VenPosTPV\Service\Refund\OrderSearchService;
 use VenPosTPV\Service\Refund\PsRefundClient;
 use VenPosTPV\Service\Refund\PsRestockClient;
 use VenPosTPV\Service\Refund\RefundService;
+use VenPosTPV\Service\Sync\OutboxSync;
 use VenPosTPV\Tests\Support\TestDatabase;
 
 /**
  * Refunds without a ticket (R11, R12, R15): current catalog price, the method the
- * cashier chooses, restock in PrestaShop without an order, and the same
- * pending / numbering lifecycle as refunds with a ticket.
+ * cashier chooses, restock in PrestaShop without an order, and the same numbering
+ * as refunds with a ticket. Local first (PRD D1): the restock is queued in the
+ * outbox (upload() runs it); only a voucher needs PrestaShop at once (D3).
  */
 final class NoTicketRefundMySqlIntegrationTest extends TestCase
 {
@@ -78,6 +81,7 @@ final class NoTicketRefundMySqlIntegrationTest extends TestCase
     private function clean(): void
     {
         $c = $this->connection;
+        $c->executeStatement('DELETE FROM outbox');
         $c->executeStatement('DELETE FROM credit_note_sequence');
         $c->executeStatement('DELETE FROM refund_line');
         $c->executeStatement('DELETE FROM refund');
@@ -89,7 +93,17 @@ final class NoTicketRefundMySqlIntegrationTest extends TestCase
         $c->executeStatement('DELETE FROM catalog_product WHERE id IN (?, ?)', [self::SHIRT, self::SOCKS]);
     }
 
-    private function service(): RefundService
+    /** @return array{uploaded: int, retried: int, incidents: int, recovered: int} */
+    private function upload(int $minutesLater = 0): array
+    {
+        $orders = $this->createMock(PsOrderClient::class);
+        $orders->expects($this->never())->method('createReferencedOrder');
+        $at = new \DateTimeImmutable(sprintf('+%d minutes', $minutesLater + 1));
+
+        return (new OutboxSync($this->connection, $orders, null, fn (): \DateTimeImmutable => $at, $this->refundClient(), $this->restockClient()))->run();
+    }
+
+    private function refundClient(): PsRefundClient
     {
         $refundClient = $this->createMock(PsRefundClient::class);
         $refundClient->method('createRefund')->willReturnCallback(function (): array {
@@ -97,6 +111,11 @@ final class NoTicketRefundMySqlIntegrationTest extends TestCase
             throw new \LogicException('A refund without ticket must not create a PrestaShop credit slip');
         });
 
+        return $refundClient;
+    }
+
+    private function restockClient(): PsRestockClient
+    {
         $restock = $this->createMock(PsRestockClient::class);
         $restock->method('restock')->willReturnCallback(function (array $payload): array {
             $this->restockPayloads[] = $payload;
@@ -112,6 +131,11 @@ final class NoTicketRefundMySqlIntegrationTest extends TestCase
             ];
         });
 
+        return $restock;
+    }
+
+    private function service(): RefundService
+    {
         $coupons = $this->createMock(CouponCreationService::class);
         $coupons->method('create')->willReturnCallback(function (array $input, int $shop): array {
             $this->coupons[] = ['input' => $input, 'shop' => $shop];
@@ -129,11 +153,11 @@ final class NoTicketRefundMySqlIntegrationTest extends TestCase
 
         return new RefundService(
             new OrderSearchService($this->connection),
-            $refundClient,
+            $this->refundClient(),
             $this->connection,
             $cash,
             null,
-            $restock,
+            $this->restockClient(),
             $coupons,
             new CatalogPriceResolver($this->connection),
         );
@@ -192,7 +216,10 @@ final class NoTicketRefundMySqlIntegrationTest extends TestCase
         $this->assertSame('R' . $year . '-000001', $result['credit_note_number']);
         $this->assertFalse($result['saga_error']);
         $this->assertFalse($this->refundClientCalled);
+        $this->assertSame([], $this->restockPayloads, 'PrestaShop is not called during the request');
+        $this->assertSame(6, $this->stock(self::SHIRT, self::SHIRT_M), 'back in the local stock at once');
 
+        $this->assertSame(1, $this->upload()['uploaded']);
         $this->assertCount(1, $this->restockPayloads);
         $this->assertSame($this->refundRow()['request_id'], $this->restockPayloads[0]['request_id']);
         $this->assertSame([
@@ -219,10 +246,12 @@ final class NoTicketRefundMySqlIntegrationTest extends TestCase
         $service = $this->service();
 
         $service->processNoTicketRefund(1, 1, $this->lines(false, true), 'cash', 'defective');
+        $this->upload();
         $this->assertSame([self::SOCKS], array_column($this->restockPayloads[0]['lines'], 'id_product'));
         $this->assertSame(5, $this->stock(self::SHIRT, self::SHIRT_M));
 
         $result = $service->processNoTicketRefund(1, 1, $this->lines(false, false), 'cash', 'defective');
+        $this->assertSame(0, $this->upload()['uploaded'], 'nothing to restock: nothing is queued');
         $this->assertCount(1, $this->restockPayloads, 'nothing to restock: PrestaShop is not called');
         $this->assertSame('done', $this->connection->fetchOne('SELECT status FROM refund WHERE id = ?', [$result['refund_id']]));
         $this->assertSame(11, $this->stock(self::SOCKS, 0));
@@ -289,57 +318,64 @@ final class NoTicketRefundMySqlIntegrationTest extends TestCase
         $this->assertSame([], $this->movements());
     }
 
-    public function testVoucherServiceDownBeforeSendingKeepsTheRefundPendingAndRetryIssuesItOnce(): void
+    public function testVoucherWithPrestaShopUnreachableIsRefusedWithNothingBookedAndCashCanBeChosenInstead(): void
     {
         $service = $this->service();
         $this->couponFailures = [CouponCreationException::unavailable()];
 
-        $this->expectRefundError(0, fn () => $service->processNoTicketRefund(1, 1, $this->lines(), 'voucher', 'size'));
+        $e = $this->expectRefundError(RefundException::VOUCHER_UNAVAILABLE, fn () => $service->processNoTicketRefund(1, 1, $this->lines(), 'voucher', 'size'));
+
+        // PRD D3: the cashier is told and picks another tender.
+        $this->assertSame('Sin conexión con PrestaShop: el vale no se puede crear ahora. Elige efectivo o tarjeta.', $e->getMessage());
         $row = $this->refundRow();
-        $this->assertSame('pending', $row['status']);
-        $this->assertNull($row['voucher_requested_at'], 'nothing reached PrestaShop, so the voucher may be requested again');
+        $this->assertSame('failed', $row['status']);
+        $this->assertNull($row['credit_note_number'], 'no number is taken');
+        $this->assertNull($row['voucher_requested_at'], 'nothing reached PrestaShop');
+        $this->assertSame([], $this->movements());
+        $this->assertSame(5, $this->stock(self::SHIRT, self::SHIRT_M));
+        $this->assertSame(0, (int) $this->connection->fetchOne('SELECT COUNT(*) FROM outbox'));
+        $this->assertSame([], $service->pendingNoTicketRefunds());
 
-        $result = $service->retryPending(1, (int) $row['id']);
+        $result = $service->processNoTicketRefund(1, 1, $this->lines(), 'cash', 'size');
 
-        $this->assertCount(2, $this->coupons);
-        $this->assertSame('VALE2XYZ', $result['voucher_code']);
-        $this->assertSame($this->restockPayloads[0]['request_id'], $this->restockPayloads[1]['request_id'], 'the restock is replayed, not repeated');
-        $this->assertSame(6, $this->stock(self::SHIRT, self::SHIRT_M));
+        $this->assertSame(55.25, $result['cash_amount']);
+        $this->assertSame('R' . (new \DateTimeImmutable())->format('Y') . '-000001', $result['credit_note_number']);
+        $this->assertCount(1, $this->coupons, 'no voucher');
+        $this->assertSame(['55.25'], array_column($this->movements(), 'amount'));
     }
 
-    public function testPrestaShopDownBlocksTheRefundUntilAnExplicitRetryWithTheSameRequestId(): void
+    public function testRestockWithPrestaShopDownCompletesAtOnceAndIsRetriedWithTheSameRequestId(): void
     {
         $service = $this->service();
         $this->restockFailures = [RefundException::psUnavailable('timeout')];
 
-        $this->expectRefundError(0, fn () => $service->processNoTicketRefund(1, 1, $this->lines(), 'cash', 'size'));
-        $row = $this->refundRow();
-        $this->assertSame('pending', $row['status']);
-        $this->assertSame([], $this->movements());
-        $this->assertSame(5, $this->stock(self::SHIRT, self::SHIRT_M));
-        $this->assertSame([['id' => (int) $row['id'], 'total' => 55.25, 'method' => 'cash', 'created_at' => $row['created_at']]], array_map(
-            static fn (array $p): array => array_intersect_key($p, ['id' => 1, 'total' => 1, 'method' => 1, 'created_at' => 1]),
-            $service->pendingNoTicketRefunds()
-        ));
+        $result = $service->processNoTicketRefund(1, 1, $this->lines(), 'cash', 'size');
 
-        $result = $service->retryPending(1, (int) $row['id']);
-
-        $this->assertSame($this->restockPayloads[0]['request_id'], $this->restockPayloads[1]['request_id']);
-        $this->assertSame(55.25, $result['cash_amount']);
+        $this->assertSame('done', $this->refundRow()['status']);
         $this->assertSame(['55.25'], array_column($this->movements(), 'amount'));
         $this->assertSame(6, $this->stock(self::SHIRT, self::SHIRT_M));
-        $this->assertSame([], $service->pendingNoTicketRefunds());
+        $this->assertSame([], $service->pendingNoTicketRefunds(), 'nothing for the cashier to retry');
+
+        $this->assertSame(1, $this->upload()['retried']);
+        $this->assertSame(1, $this->upload(5)['uploaded']);
+
+        $this->assertSame($this->restockPayloads[0]['request_id'], $this->restockPayloads[1]['request_id']);
+        $this->assertSame($this->refundRow()['request_id'], $this->restockPayloads[0]['request_id']);
+        $this->assertSame(55.25, $result['cash_amount']);
+        $this->assertSame(['55.25'], array_column($this->movements(), 'amount'), 'cash moved once');
+        $this->assertSame(6, $this->stock(self::SHIRT, self::SHIRT_M), 'restocked locally once');
     }
 
-    public function testUnknownProductInPrestaShopFailsTheRefundWithNoEffects(): void
+    public function testUnknownProductInPrestaShopBecomesAnIncidentAndKeepsTheLocalRefund(): void
     {
         $this->restockFailures = [new RefundException('Product not found in PrestaShop', 404)];
+        $this->service()->processNoTicketRefund(1, 1, $this->lines(), 'cash', 'size');
 
-        $this->expectRefundError(404, fn () => $this->service()->processNoTicketRefund(1, 1, $this->lines(), 'cash', 'size'));
+        $this->assertSame(1, $this->upload()['incidents']);
 
-        $this->assertSame('failed', $this->refundRow()['status']);
-        $this->assertSame([], $this->movements());
-        $this->assertSame(5, $this->stock(self::SHIRT, self::SHIRT_M));
+        $this->assertSame('incident', $this->connection->fetchOne('SELECT status FROM outbox'));
+        $this->assertSame('done', $this->refundRow()['status']);
+        $this->assertSame(['55.25'], array_column($this->movements(), 'amount'));
     }
 
     public function testInvalidRequestsAreRejectedBeforeAnythingIsWritten(): void

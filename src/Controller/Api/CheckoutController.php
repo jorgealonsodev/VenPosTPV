@@ -73,6 +73,11 @@ class CheckoutController
         $paymentMethod = isset($body['payment_method']) && \is_string($body['payment_method']) ? $body['payment_method'] : '';
         $amountTendered = isset($body['amount_tendered']) ? (float) $body['amount_tendered'] : 0.0;
         $cartData = isset($body['cart_data']) && \is_array($body['cart_data']) ? $body['cart_data'] : [];
+        // One payment attempt: a retry or an offline replay of it returns the same sale.
+        $requestId = $body['request_id'] ?? null;
+        if ($requestId !== null && !\is_string($requestId)) {
+            return new JsonResponse(['error' => 'request_id must be a string', 'retry' => false], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
 
         if ($paymentMethod === '') {
             return new JsonResponse(
@@ -102,9 +107,10 @@ class CheckoutController
         }
 
         try {
-            $result = $this->checkoutService->createOrder($userId, $cartData, $paymentMethod, $amountTendered);
+            $result = $this->checkoutService->createOrder($userId, $cartData, $paymentMethod, $amountTendered, 0.0, $requestId);
 
-            $result['print_status'] = 'dispatched';
+            // A replayed sale was printed by the request that created it.
+            $result['print_status'] = !empty($result['replayed']) ? 'none' : 'dispatched';
 
             return new JsonResponse(['data' => $result], Response::HTTP_OK);
         } catch (NoOpenCashSessionException $e) {

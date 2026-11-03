@@ -109,19 +109,36 @@ class TicketDataResolver
             verificationUrl: $this->verificationService->buildVerificationUrl($token),
             ticketCode: $this->ticketCode((int) $row['terminal_id']),
             exchangeCredit: $exchangeCredit,
-            exchangeCreditNote: $exchangeCredit !== null && $psOrderId !== null ? $this->exchangeCreditNote($psOrderId) : null,
+            exchangeCreditNote: $exchangeCredit !== null ? $this->exchangeCreditNote($psOrderId, $orderId < 0 ? -$orderId : null) : null,
             legalName: $legalName,
             taxId: $taxId,
         );
     }
 
-    /** Number of the credit note whose credit paid this exchange sale, null when unknown. */
-    private function exchangeCreditNote(int $orderId): ?string
+    /**
+     * Number of the credit note whose credit paid this exchange sale, null when
+     * unknown: by the new sale's local id (V32) or, for older exchanges, its
+     * PrestaShop id.
+     */
+    private function exchangeCreditNote(?int $psOrderId, ?int $saleId): ?string
     {
-        $number = $this->connection->fetchOne(
-            'SELECT r.credit_note_number FROM exchange e JOIN refund r ON r.id = e.refund_id WHERE e.new_ps_order_id = ? ORDER BY e.id DESC LIMIT 1',
-            [$orderId]
-        );
+        $number = false;
+        if ($saleId === null && $psOrderId !== null) {
+            $id = $this->connection->fetchOne('SELECT id FROM order_meta WHERE ps_order_id = ?', [$psOrderId]);
+            $saleId = is_numeric($id) ? (int) $id : null;
+        }
+        if ($saleId !== null) {
+            $number = $this->connection->fetchOne(
+                'SELECT r.credit_note_number FROM exchange e JOIN refund r ON r.id = e.refund_id WHERE e.new_order_id = ? ORDER BY e.id DESC LIMIT 1',
+                [$saleId]
+            );
+        }
+        if (($number === false || $number === null) && $psOrderId !== null) {
+            $number = $this->connection->fetchOne(
+                'SELECT r.credit_note_number FROM exchange e JOIN refund r ON r.id = e.refund_id WHERE e.new_ps_order_id = ? ORDER BY e.id DESC LIMIT 1',
+                [$psOrderId]
+            );
+        }
 
         return \is_string($number) && $number !== '' ? $number : null;
     }
@@ -152,14 +169,15 @@ class TicketDataResolver
             return null;
         }
 
-        $withoutTicket = $refund['ps_order_id'] === null;
+        // The local sale (V32) also when it is not uploaded yet: no PrestaShop id then.
+        $saleId = isset($refund['order_id']) ? (int) $refund['order_id'] : null;
+        $withoutTicket = $refund['ps_order_id'] === null && $saleId === null;
         // An online order has no order_meta: its reference, date and line names were
         // stored with the refund, and the VAT comes from the catalog like without ticket.
         $online = !empty($refund['online']);
-        $order = $withoutTicket || $online ? false : $this->connection->fetchAssociative(
-            'SELECT payment_breakdown, created_at FROM order_meta WHERE ps_order_id = ?',
-            [(int) $refund['ps_order_id']]
-        );
+        $order = $withoutTicket || $online ? false : ($saleId !== null
+            ? $this->connection->fetchAssociative('SELECT payment_breakdown, created_at FROM order_meta WHERE id = ?', [$saleId])
+            : $this->connection->fetchAssociative('SELECT payment_breakdown, created_at FROM order_meta WHERE ps_order_id = ?', [(int) $refund['ps_order_id']]));
         $breakdown = $order !== false ? json_decode((string) $order['payment_breakdown'], true) : null;
         $breakdown = \is_array($breakdown) ? $breakdown : [];
         $saleLines = \is_array($breakdown['lines'] ?? null) ? array_values($breakdown['lines']) : [];

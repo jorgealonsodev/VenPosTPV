@@ -8,6 +8,8 @@ use Doctrine\DBAL\Connection;
 use PHPUnit\Framework\TestCase;
 use VenPosTPV\Service\Checkout\Exception\CheckoutException;
 use VenPosTPV\Service\Checkout\PsOrderClient;
+use VenPosTPV\Service\Refund\Exception\RefundException;
+use VenPosTPV\Service\Refund\PsRefundClient;
 use VenPosTPV\Service\Sync\Outbox;
 use VenPosTPV\Service\Sync\OutboxSync;
 use VenPosTPV\Tests\Support\TestDatabase;
@@ -30,6 +32,9 @@ final class OutboxSyncMySqlIntegrationTest extends TestCase
 
     /** @var list<\Throwable|array<string, mixed>> what the module answers, in order */
     private array $answers = [];
+
+    /** @var list<array<string, mixed>> refund requests the module received */
+    private array $refunds = [];
 
     protected function setUp(): void
     {
@@ -97,7 +102,18 @@ final class OutboxSyncMySqlIntegrationTest extends TestCase
             return $answer;
         });
 
-        return new OutboxSync($connection ?? $this->connection, $client, null, fn (): \DateTimeImmutable => $this->now);
+        $refundClient = $this->createMock(PsRefundClient::class);
+        $refundClient->method('createRefund')->willReturnCallback(function (array $payload): array {
+            $this->refunds[] = $payload;
+            $answer = array_shift($this->answers);
+            if ($answer instanceof \Throwable) {
+                throw $answer;
+            }
+
+            return ['order_slip_id' => 8800 + \count($this->refunds), 'refunded_amount' => 10.0, 'refunded_lines' => [], 'restock_failed' => [], 'replayed' => false];
+        });
+
+        return new OutboxSync($connection ?? $this->connection, $client, null, fn (): \DateTimeImmutable => $this->now, $refundClient);
     }
 
     /** @return array{order_id: int, reference: string, total_paid: float, replayed: bool} */
@@ -224,29 +240,56 @@ final class OutboxSyncMySqlIntegrationTest extends TestCase
         $this->assertCount(2, $this->sent);
     }
 
-    public function testOperationsOfOneSaleUploadInOrderSaleFirst(): void
+    public function testARefundOfASaleNotUploadedYetIsSentAfterItWithThePrestaShopOrderIdOfTheSale(): void
     {
         $id = $this->seedSale('Q26000107');
-        $this->connection->transactional(fn (): string => (new Outbox($this->connection))->enqueueAfter('refund', $id, ['request_id' => 'r1']));
+        $refundPayload = ['request_id' => 'r1-refund-of-q107', 'refund_type' => 'partial', 'reason' => 'size',
+            'lines' => [['id_product' => self::PRODUCT, 'id_product_attribute' => 0, 'quantity' => 1, 'amount' => 10.0, 'restock' => true]]];
+        $this->connection->transactional(fn (): string => (new Outbox($this->connection))->enqueueAfter(Outbox::TYPE_REFUND, $id, $refundPayload, 'r1-refund-of-q107'));
         $this->assertSame(2, (int) $this->outbox($id, 2)['sequence']);
+        $this->assertSame('r1-refund-of-q107', $this->outbox($id, 2)['request_id'], 'the refund keeps its own idempotency key');
         $this->answers = [CheckoutException::psUnavailable('Connection refused')];
 
         $this->sync()->run();
 
         $this->assertCount(1, $this->sent, 'only the sale is tried');
-        $this->assertSame(0, (int) $this->outbox($id, 2)['attempts'], 'the refund waits behind its sale');
+        $this->assertSame([], $this->refunds, 'the refund waits behind its sale');
+        $this->assertSame(0, (int) $this->outbox($id, 2)['attempts']);
         $this->assertSame('pending', $this->outbox($id, 2)['status']);
 
         $this->now = $this->now->modify('+1 minute');
-        $this->sync()->run();
+        $this->answers = [$this->created(7107, 'Q26000107')];
+        $counts = $this->sync()->run();
 
+        $this->assertSame(2, $counts['uploaded']);
         $this->assertSame('done', $this->outbox($id)['status']);
-        // Refund uploads are T5: the row is reached only after its sale is done.
-        $refund = $this->outbox($id, 2);
-        $this->assertSame(1, (int) $refund['attempts']);
-        $this->assertSame('incident', $refund['status']);
-        $this->assertSame("Uploading 'refund' operations is not supported yet", $refund['last_error']);
-        $this->assertCount(2, $this->sent, 'the refund never reaches the order endpoint');
+        $this->assertSame('done', $this->outbox($id, 2)['status']);
+        $this->assertCount(1, $this->refunds);
+        // PRD S2/D2: the sale's PrestaShop id is known only now, and is what the slip uses.
+        $this->assertSame(['ps_order_id' => 7107] + $refundPayload, $this->refunds[0]);
+    }
+
+    public function testARefundRejectedByPrestaShopBecomesAnIncidentAndABusyOrderIsRetried(): void
+    {
+        $id = $this->seedSale('Q26000109');
+        $this->connection->executeStatement('UPDATE order_meta SET ps_order_id = 7109, synced = 1 WHERE id = ?', [$id]);
+        $this->connection->executeStatement("UPDATE outbox SET status = 'done' WHERE order_id = ?", [$id]);
+        foreach (['r-busy-0109', 'r-bad-0109'] as $requestId) {
+            $this->connection->transactional(fn (): string => (new Outbox($this->connection))->enqueueAfter(Outbox::TYPE_REFUND, $id, ['request_id' => $requestId, 'lines' => []], $requestId));
+        }
+        $this->answers = [RefundException::conflict('Another refund for this order is in progress')];
+
+        $this->assertSame(1, $this->sync()->run()['retried']);
+        $this->assertSame('pending', $this->outbox($id, 2)['status']);
+        $this->assertSame(0, (int) $this->outbox($id, 3)['attempts'], 'the next refund waits for the busy one');
+
+        $this->now = $this->now->modify('+2 minutes');
+        $this->answers = [['order_slip_id' => 1, 'refunded_amount' => 0.0, 'refunded_lines' => [], 'restock_failed' => [], 'replayed' => true], RefundException::validationFailed('PS validation failed')];
+        $counts = $this->sync()->run();
+
+        $this->assertSame(['uploaded' => 1, 'retried' => 0, 'incidents' => 1, 'recovered' => 0], $counts);
+        $this->assertSame('incident', $this->outbox($id, 3)['status']);
+        $this->assertSame([7109, 7109, 7109], array_column($this->refunds, 'ps_order_id'));
     }
 
     public function testAWorkerNeverUploadsARowAnotherWorkerHolds(): void

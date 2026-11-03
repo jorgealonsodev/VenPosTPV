@@ -12,13 +12,41 @@ use VenPosTPV\Service\Exchange\ExchangeService;
 use VenPosTPV\Service\Print\PrinterService;
 use VenPosTPV\Service\Refund\CreditNoteHandOver;
 use VenPosTPV\Service\Refund\Exception\RefundException;
+use VenPosTPV\Service\Refund\OrderSearchService;
 use VenPosTPV\Tests\Support\SessionRequest;
 
 final class ExchangeControllerTest extends TestCase
 {
-    private function controller(ExchangeService $service, ?PrinterService $printer = null): ExchangeController
+    private function controller(ExchangeService $service, ?PrinterService $printer = null, ?OrderSearchService $orderSearch = null): ExchangeController
     {
-        return new ExchangeController($service, new CreditNoteHandOver($printer ?? $this->createMock(PrinterService::class)));
+        return new ExchangeController($service, new CreditNoteHandOver($printer ?? $this->createMock(PrinterService::class)), $orderSearch ?? $this->createMock(OrderSearchService::class));
+    }
+
+    public function testExchangeOfASaleNotUploadedYetIsNamedByItsLocalIdOrReference(): void
+    {
+        foreach ([['order_id' => 12], ['reference' => 'A26000012']] as $body) {
+            $orderSearch = $this->createMock(OrderSearchService::class);
+            $orderSearch->expects($this->once())->method('findSaleId')->with($body['order_id'] ?? 0, $body['reference'] ?? '')->willReturn(12);
+            $service = $this->createMock(ExchangeService::class);
+            $service->expects($this->once())->method('processExchange')
+                ->with(1, 0, [], '', '', [], '', 0.0, false, 0, 12, 'card')
+                ->willReturn($this->exchangeResult(['refund_id' => 8, 'cash_amount' => 0.0, 'saga_error' => false], ['order_id' => 13, 'ps_order_id' => null, 'reference' => 'A26000013']));
+
+            $response = $this->controller($service, null, $orderSearch)->exchange(SessionRequest::json($body + ['voucher_fallback' => 'card'], ['user_id' => 1]));
+
+            $this->assertSame(Response::HTTP_OK, $response->getStatusCode());
+        }
+    }
+
+    public function testVoucherPrestaShopCannotCreateIsA503ForExchangesToo(): void
+    {
+        $service = $this->createMock(ExchangeService::class);
+        $service->method('closeWithVoucher')->willThrowException(RefundException::voucherUnavailable());
+
+        $response = $this->controller($service)->closeWithVoucher(SessionRequest::json([], ['user_id' => 1, 'shop_id' => 1]), 3);
+
+        $this->assertSame(Response::HTTP_SERVICE_UNAVAILABLE, $response->getStatusCode());
+        $this->assertSame('voucher_unavailable', json_decode((string) $response->getContent(), true)['code']);
     }
 
     /** @return array<string, mixed> */

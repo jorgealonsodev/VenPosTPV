@@ -21,9 +21,16 @@ use VenPosTPV\Service\Refund\VoucherIssuer;
  * checkout, a negative one is refunded by the original sale's tender split, and the
  * credit itself never moves cash.
  *
+ * Both halves of an exchange of a TPV sale are local first (PRD venta-local-primero
+ * D1, D2): the return is a local refund whose PrestaShop part waits in the outbox
+ * behind the returned sale, and the new items are a local sale uploaded like any
+ * other, so an exchange works offline and on a sale not uploaded yet. Only a voucher
+ * needs PrestaShop at once (D3); the returned sale is named by its local id
+ * (order_id) or, for compatibility, its PrestaShop id.
+ *
  * Order and recovery. Everything that can be checked locally (reason, window,
- * quantities, catalog prices, stock, payment) is checked before PrestaShop is
- * called. The refund goes first, because the credit must exist before goods leave
+ * quantities, catalog prices, stock, payment) is checked before anything is
+ * written. The refund goes first, because the credit must exist before goods leave
  * on it. The exchange row is written in the same transaction as the pending refund,
  * so whatever happens next it is resumable with retry():
  *  - pending:     the refund's outcome is unknown (PrestaShop down); retry() resends
@@ -84,6 +91,8 @@ class ExchangeService
         float $amountTendered,
         bool $cardConfirmed,
         int $shopId = 0,
+        int $orderId = 0,
+        ?string $voucherFallback = null,
     ): array {
         try {
             $newTotal = $this->checkoutService->quoteCart($newCartData);
@@ -102,12 +111,13 @@ class ExchangeService
                 $reasonText,
                 $cardConfirmed,
                 $newTotal,
-                function (array $reserved) use ($reservation, $psOrderId, $userId, $newTotal, $newCartData, $paymentMethod, $amountTendered): void {
+                function (array $reserved) use ($reservation, $userId, $newTotal, $newCartData, $paymentMethod, $amountTendered): void {
                     $balance = round($newTotal - $reserved['credit'], 2);
                     [$method, $tendered] = $this->assertBalanceCovered($balance, $paymentMethod, $amountTendered, $newCartData);
                     $this->conn->insert('exchange', [
                         'status' => 'pending',
-                        'ps_order_id' => $psOrderId,
+                        'ps_order_id' => $reserved['ps_order_id'],
+                        'order_id' => $reserved['order_id'],
                         'refund_id' => $reserved['refund_id'],
                         'user_id' => $userId,
                         'credit' => $reserved['credit'],
@@ -122,6 +132,8 @@ class ExchangeService
                     $reservation['exchange_id'] = (int) $this->conn->lastInsertId();
                 },
                 $shopId,
+                $orderId,
+                $voucherFallback,
             );
         } catch (RefundException $e) {
             $exchangeId = (int) $reservation['exchange_id'];
@@ -268,15 +280,17 @@ class ExchangeService
             );
         } catch (\Throwable $e) {
             // The credit stays open on the exchange; the refund is done and paid once.
+            // The new sale is local (no coupon in an exchange): a failure rolled it back,
+            // so it definitely does not exist.
             $this->conn->update('exchange', ['error_message' => mb_substr($e->getMessage(), 0, 1000)], ['id' => $exchange['id']]);
-            $unknown = !($e instanceof CheckoutException && $e->getCode() === 422);
 
-            return $this->result($exchange, 'credit_open', $refund, null, $e->getMessage(), $unknown);
+            return $this->result($exchange, 'credit_open', $refund, null, $e->getMessage(), false);
         }
 
         $this->conn->update('exchange', [
             'status' => 'done',
             'new_ps_order_id' => $sale['ps_order_id'],
+            'new_order_id' => $sale['order_id'] ?? null,
             'new_reference' => mb_substr($sale['reference'], 0, 32),
             'error_message' => null,
             'completed_at' => (new \DateTimeImmutable())->format('Y-m-d H:i:s'),

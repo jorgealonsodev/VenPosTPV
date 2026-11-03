@@ -218,10 +218,53 @@ final class LocalFirstCheckoutMySqlIntegrationTest extends TestCase
 
         $this->assertNothingStored();
         $this->assertSame(0, $this->lastNumber(), 'the rolled back number is given back');
-        $this->assertSame(0, (int) $this->connection->fetchOne('SELECT COUNT(*) FROM outbox o LEFT JOIN order_meta m ON m.id = o.order_id WHERE m.id IS NULL'));
+        // No upload of the rolled back sale was left behind.
+        $this->assertSame(0, (int) $this->connection->fetchOne("SELECT COUNT(*) FROM outbox WHERE type = 'sale' AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.reference')) = ?", [$this->code(1)]));
 
         $result = $this->service()->createOrder(1, $this->cart(), 'card', 12.10);
         $this->assertSame($this->code(1), $result['reference'], 'the next sale takes the same number: no gap');
+    }
+
+    public function testRepeatedRequestIdReturnsTheSameSaleWithoutASecondNumberMovementOrUpload(): void
+    {
+        $service = $this->service();
+        $first = $service->createOrder(1, $this->cart() + ['cash_amount' => self::PRICE], 'cash', 20.0, 0.0, 'attempt-0001-abcd');
+
+        // The browser retries, or replays the request it queued when the network dropped.
+        $again = $this->service()->createOrder(1, $this->cart() + ['cash_amount' => self::PRICE], 'cash', 20.0, 0.0, 'attempt-0001-abcd');
+
+        $this->assertFalse($first['replayed']);
+        $this->assertTrue($again['replayed']);
+        foreach (['order_id', 'ps_order_id', 'reference', 'synced', 'total', 'change_due', 'payment_method', 'terminal_id'] as $key) {
+            $this->assertSame($first[$key], $again[$key], $key);
+        }
+        $this->assertSame(1, (int) $this->connection->fetchOne('SELECT COUNT(*) FROM order_meta WHERE session_id = ?', [self::SESSION_ID]));
+        $this->assertSame(1, $this->lastNumber(), 'no second ticket number');
+        $this->assertSame(1, (int) $this->connection->fetchOne('SELECT COUNT(*) FROM movement WHERE session_id = ?', [self::SESSION_ID]), 'no second cash movement');
+        $this->assertSame(1, (int) $this->connection->fetchOne('SELECT COUNT(*) FROM outbox WHERE order_id = ?', [$first['order_id']]), 'no second upload');
+        $this->assertSame(4, $this->stock(), 'stock lowered once');
+        $this->assertCount(1, $this->dispatched, 'printed once');
+        $this->assertSame(1, $this->drawerOpens, 'the drawer opened once');
+        $this->assertSame('attempt-0001-abcd', $this->connection->fetchOne('SELECT request_id FROM order_meta WHERE id = ?', [$first['order_id']]));
+    }
+
+    public function testCheckoutWithoutRequestIdStillCreatesASaleEachTimeAndABadOneIsRejected(): void
+    {
+        $service = $this->service();
+
+        $first = $service->createOrder(1, $this->cart(), 'card', 12.10);
+        $second = $service->createOrder(1, $this->cart(), 'card', 12.10);
+
+        $this->assertArrayNotHasKey('replayed', $first, 'the answer is as before');
+        $this->assertNotSame($first['order_id'], $second['order_id']);
+        $this->assertSame($this->code(2), $second['reference']);
+        try {
+            $service->createOrder(1, $this->cart(), 'card', 12.10, 0.0, 'bad id!');
+            $this->fail('an invalid request_id is refused');
+        } catch (CheckoutException $e) {
+            $this->assertSame(422, $e->getCode());
+        }
+        $this->assertSame(2, $this->lastNumber());
     }
 
     public function testStockZeroOrLessWarnsPerLineAndStillSells(): void
@@ -290,8 +333,11 @@ final class LocalFirstCheckoutMySqlIntegrationTest extends TestCase
         $this->assertSame($this->code(1), $found[0]['reference']);
         $this->assertSame(1, $found[0]['lines'][0]['refundable_qty']);
         $this->assertSame($result['order_id'], $search->getOrderByReference($this->code(1))['order_id']);
-        $this->assertTrue($search->isUnsyncedSale($result['order_id'], ''));
-        $this->assertTrue($search->isUnsyncedSale(0, $this->code(1)));
+        // The refund screen names a sale not uploaded yet by its local id or ticket code (PRD D1).
+        $this->assertSame($result['order_id'], $search->findSaleId($result['order_id'], ''));
+        $this->assertSame($result['order_id'], $search->findSaleId(0, strtolower($this->code(1))));
+        $this->assertNull($search->findSaleId(0, 'Z99999999'));
+        $this->assertSame($result['order_id'], $search->getOrderById($result['order_id'])['order_id']);
 
         $cash = new CashSessionService($c, $this->createMock(TerminalService::class), new RequestStack());
         $report = $cash->getXReport(1);

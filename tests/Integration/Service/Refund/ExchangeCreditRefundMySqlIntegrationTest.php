@@ -9,6 +9,7 @@ use PHPUnit\Framework\TestCase;
 use Symfony\Component\HttpFoundation\RequestStack;
 use VenPosTPV\Service\Cash\CashSessionService;
 use VenPosTPV\Service\Cash\TerminalService;
+use VenPosTPV\Service\Checkout\PsOrderClient;
 use VenPosTPV\Service\PrestaShop\CouponCreationService;
 use VenPosTPV\Service\PrestaShop\Exception\CouponCreationException;
 use VenPosTPV\Service\Print\TicketDataResolver;
@@ -17,13 +18,15 @@ use VenPosTPV\Service\Refund\Exception\RefundException;
 use VenPosTPV\Service\Refund\OrderSearchService;
 use VenPosTPV\Service\Refund\PsRefundClient;
 use VenPosTPV\Service\Refund\RefundService;
+use VenPosTPV\Service\Sync\OutboxSync;
 use VenPosTPV\Tests\Support\TestDatabase;
 
 /**
  * T7b (L26): goods of a sale paid (partly) with exchange credit. The refund splits
  * by the sale's tender {cash, card, exchange_credit}; the money shares go back as
  * always and the credit share becomes a PrestaShop voucher (1 year, partial use),
- * so cash that never entered the drawer for that sale is never paid out.
+ * so cash that never entered the drawer for that sale is never paid out. The voucher
+ * needs PrestaShop at once (PRD D3); the slip is queued behind the sale (upload()).
  */
 final class ExchangeCreditRefundMySqlIntegrationTest extends TestCase
 {
@@ -71,6 +74,7 @@ final class ExchangeCreditRefundMySqlIntegrationTest extends TestCase
     private function clean(): void
     {
         $c = $this->connection;
+        $c->executeStatement('DELETE FROM outbox WHERE order_id IN (SELECT id FROM order_meta WHERE ps_order_id >= 940000 AND ps_order_id < 950000)');
         $c->executeStatement('DELETE FROM refund_line WHERE refund_id IN (SELECT id FROM refund WHERE ps_order_id >= 940000 AND ps_order_id < 950000)');
         $c->executeStatement('DELETE FROM refund WHERE ps_order_id >= 940000 AND ps_order_id < 950000');
         $c->executeStatement('DELETE FROM credit_note_sequence');
@@ -101,9 +105,17 @@ final class ExchangeCreditRefundMySqlIntegrationTest extends TestCase
         ]);
     }
 
-    private function service(): RefundService
+    /** Runs the outbox once, as the minute task does. */
+    private function upload(): void
     {
-        $c = $this->connection;
+        $orders = $this->createMock(PsOrderClient::class);
+        $orders->expects($this->never())->method('createReferencedOrder');
+        $at = new \DateTimeImmutable('+1 minute');
+        (new OutboxSync($this->connection, $orders, null, fn (): \DateTimeImmutable => $at, $this->refundClient()))->run();
+    }
+
+    private function refundClient(): PsRefundClient
+    {
         $refundClient = $this->createMock(PsRefundClient::class);
         $refundClient->method('createRefund')->willReturnCallback(function (array $payload): array {
             $this->refundPayloads[] = $payload;
@@ -117,6 +129,12 @@ final class ExchangeCreditRefundMySqlIntegrationTest extends TestCase
             ];
         });
 
+        return $refundClient;
+    }
+
+    private function service(): RefundService
+    {
+        $c = $this->connection;
         $coupons = $this->createMock(CouponCreationService::class);
         $coupons->method('create')->willReturnCallback(function (array $input, int $shop): array {
             $this->coupons[] = ['input' => $input, 'shop' => $shop];
@@ -131,7 +149,7 @@ final class ExchangeCreditRefundMySqlIntegrationTest extends TestCase
 
         $cash = new CashSessionService($c, $this->createMock(TerminalService::class), new RequestStack());
 
-        return new RefundService(new OrderSearchService($c), $refundClient, $c, $cash, null, null, $coupons);
+        return new RefundService(new OrderSearchService($c), $this->refundClient(), $c, $cash, null, null, $coupons);
     }
 
     /** @return array<int, array{type: string, amount: string}> */
@@ -196,6 +214,7 @@ final class ExchangeCreditRefundMySqlIntegrationTest extends TestCase
         $this->assertSame('55.00', (string) $row['voucher_amount']);
         $this->assertSame('CRED1XYZ', $row['voucher_code']);
         $this->assertSame(651, (int) $row['voucher_cart_rule_id']);
+        $this->upload();
         $this->assertArrayNotHasKey('voucher_shop_id', $this->refundPayloads[0], 'PrestaShop receives the usual refund payload');
 
         $totals = $this->totals();
@@ -259,7 +278,8 @@ final class ExchangeCreditRefundMySqlIntegrationTest extends TestCase
         $retry = $this->expectRefundError(409, fn () => $service->retryPending(1, (int) $row['id']));
         $this->assertStringContainsString('never created twice automatically', $retry->getMessage());
         $this->assertCount(1, $this->coupons, 'no second voucher');
-        $this->assertSame($this->refundPayloads[0]['request_id'], $this->refundPayloads[1]['request_id'], 'the slip is replayed, not repeated');
+        $this->upload();
+        $this->assertSame([], $this->refundPayloads, 'nothing is queued for PrestaShop while the voucher is unknown');
         $this->assertSame('pending', $this->refundRow()['status']);
         $this->assertSame([], $this->movements());
     }
@@ -285,7 +305,32 @@ final class ExchangeCreditRefundMySqlIntegrationTest extends TestCase
         $this->assertSame([], $this->coupons);
         $this->assertNull($this->refundRow()['voucher_amount']);
         $this->assertEquals([['type' => 'refund', 'amount' => '55.00']], $this->movements());
+        $this->upload();
         $this->assertSame(['ps_order_id', 'request_id', 'refund_type', 'reason', 'lines'], array_keys($this->refundPayloads[0]));
+    }
+
+    public function testVoucherShareWithPrestaShopUnreachableFailsCleanlyAndCanBePaidInCashInstead(): void
+    {
+        $this->seedSale(['cash' => 15.0, 'card' => 0.0, 'exchange_credit' => 40.0], 55.0, 3);
+        $service = $this->service();
+        $this->couponFailures = [CouponCreationException::unavailable()];
+
+        $e = $this->expectRefundError(RefundException::VOUCHER_UNAVAILABLE, fn () => $service->processRefund(1, self::ORDER_ID, $this->one(), 'size', '', false, 1));
+
+        $this->assertSame('Sin conexión con PrestaShop: el vale no se puede crear ahora. Elige efectivo o tarjeta.', $e->getMessage());
+        $this->assertSame('failed', $this->refundRow()['status']);
+        $this->assertNull($this->refundRow()['credit_note_number']);
+        $this->assertSame([], $this->movements(), 'nothing is paid');
+        $this->assertSame(0, (int) $this->connection->fetchOne("SELECT COUNT(*) FROM outbox o JOIN order_meta m ON m.id = o.order_id WHERE m.ps_order_id = ?", [self::ORDER_ID]));
+
+        // The cashier chooses cash for the voucher share (PRD D3).
+        $result = $service->processRefund(1, self::ORDER_ID, $this->one(), 'size', '', false, 1, 'cash');
+
+        $this->assertSame(18.33, $result['cash_amount'], '5.00 cash share + 13.33 instead of the voucher');
+        $this->assertNull($result['voucher_code']);
+        $this->assertCount(1, $this->coupons, 'no second voucher attempt');
+        $this->assertEquals([['type' => 'refund', 'amount' => '18.33']], $this->movements());
+        $this->assertNull($this->refundRow()['voucher_amount']);
     }
 
     public function testCreditNoteShowsTheCashPartAndTheVoucherLine(): void
