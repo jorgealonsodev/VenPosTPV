@@ -18,6 +18,8 @@ pub enum PairError {
     TooManyAttempts,
     #[error("No se puede conectar con el TPV. Revisa la dirección y la conexión a Internet.")]
     Unreachable(#[source] ApiError),
+    #[error("Para cambiar de TPV, vuelve a ejecutar el instalador como administrador")]
+    OtherServer,
     #[error("{0}")]
     Api(ApiError),
     #[error("{0}")]
@@ -60,6 +62,26 @@ pub fn strict_code(code: &str) -> Result<PairingCode, PairError> {
     } else {
         Err(PairError::InvalidCode)
     }
+}
+
+/// Where the local channel (tray) may pair (E11): HTTPS only, with no localhost
+/// exception unless `allow_http_localhost` (tests), and only the TPV the agent
+/// is already paired with, if any: moving to another TPV needs an administrator.
+/// Returns the normalized URL.
+pub fn local_channel_server(
+    server: &str,
+    current: Option<&str>,
+    allow_http_localhost: bool,
+) -> Result<String, PairError> {
+    let server = crate::config::validate_server_url(server).map_err(PairError::InvalidUrl)?;
+    if !allow_http_localhost && !server.starts_with("https://") {
+        return Err(PairError::InvalidUrl(ConfigError::InsecureUrl(server)));
+    }
+    let current = current.map(|c| crate::config::validate_server_url(c).unwrap_or_else(|_| c.to_owned()));
+    if current.is_some_and(|c| !c.eq_ignore_ascii_case(&server)) {
+        return Err(PairError::OtherServer);
+    }
+    Ok(server)
 }
 
 /// Validates the URL, redeems the code at `POST /pair` and stores the key.

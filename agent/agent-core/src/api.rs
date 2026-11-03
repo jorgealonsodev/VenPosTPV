@@ -168,6 +168,9 @@ struct JobsBody {
     jobs: Vec<serde_json::Value>,
     #[serde(default)]
     poll_after_ms: Option<u64>,
+    /// Server clock (Unix ms) when the body was written.
+    #[serde(default)]
+    server_time_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -176,7 +179,9 @@ pub struct JobsResponse {
     /// Entries that did not parse; logged and left to expire on the server.
     pub malformed: usize,
     pub poll_after_ms: Option<u64>,
-    /// Server `Date` header, used to correct clock skew for `expires_at`.
+    /// Server clock, used to correct clock skew for `expires_at`: the body's
+    /// `server_time_ms` when present (a streamed long poll sends its `Date`
+    /// header up to 20 s before the body), else the `Date` header.
     pub server_date_ms: Option<i64>,
 }
 
@@ -358,7 +363,7 @@ impl ApiClient {
             .call()
             .map_err(transport)?;
         let retry_after = retry_after(&resp);
-        let server_date_ms = resp
+        let header_date_ms = resp
             .headers()
             .get("date")
             .and_then(|v| v.to_str().ok())
@@ -382,7 +387,7 @@ impl ApiClient {
             jobs,
             malformed,
             poll_after_ms: body.poll_after_ms,
-            server_date_ms,
+            server_date_ms: body.server_time_ms.or(header_date_ms),
         })
     }
 

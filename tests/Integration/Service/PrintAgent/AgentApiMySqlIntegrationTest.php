@@ -12,6 +12,7 @@ use Symfony\Component\HttpFoundation\RequestStack;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpFoundation\Session\Session;
 use Symfony\Component\HttpFoundation\Session\Storage\MockArraySessionStorage;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 use VenPosTPV\Controller\Api\AgentApiController;
 use VenPosTPV\Controller\Api\PrintAgentController;
 use VenPosTPV\Service\Print\EscPosTicketBuilder;
@@ -21,6 +22,7 @@ use VenPosTPV\Service\Print\TicketPdfGenerator;
 use VenPosTPV\Service\PrintAgent\AgentRegistry;
 use VenPosTPV\Service\PrintAgent\AgentReleasePolicy;
 use VenPosTPV\Service\PrintAgent\DrawerAudit;
+use VenPosTPV\Service\PrintAgent\LongPollLink;
 use VenPosTPV\Service\PrintAgent\PrintJobQueue;
 use VenPosTPV\Service\PrintAgent\RateLimiter;
 use VenPosTPV\Tests\Support\TestDatabase;
@@ -66,9 +68,51 @@ final class AgentApiMySqlIntegrationTest extends TestCase
         }
     }
 
-    private function api(?AgentReleasePolicy $releases = null): AgentApiController
+    private function api(?AgentReleasePolicy $releases = null, ?LongPollLink $link = null): AgentApiController
     {
-        return new AgentApiController($this->registry, $this->queue, new RateLimiter($this->connection, $this->clock), $releases ?? new AgentReleasePolicy(), $this->clock);
+        return new AgentApiController($this->registry, $this->queue, new RateLimiter($this->connection, $this->clock), $releases ?? new AgentReleasePolicy(), $this->clock, $link ?? self::link());
+    }
+
+    /**
+     * A long poll's client: each second of the wait asks `$onSecond` (with the second
+     * number) whether the client is still there; it writes the space like the real one
+     * but does not flush the test's output buffer.
+     *
+     * @param (callable(int): bool)|null $onSecond
+     */
+    private static function link(?callable $onSecond = null): LongPollLink
+    {
+        return new class ($onSecond) extends LongPollLink {
+            private int $second = 0;
+
+            /** @param (callable(int): bool)|null $onSecond */
+            public function __construct(private $onSecond)
+            {
+            }
+
+            public function hold(): void
+            {
+            }
+
+            public function alive(): bool
+            {
+                echo ' ';
+
+                return $this->onSecond === null || ($this->onSecond)(++$this->second);
+            }
+        };
+    }
+
+    /** The body as the client receives it (a long poll streams it). */
+    private static function content(Response $response): string
+    {
+        if (!$response instanceof StreamedResponse) {
+            return (string) $response->getContent();
+        }
+        ob_start();
+        $response->sendContent();
+
+        return (string) ob_get_clean();
     }
 
     private function pos(?AgentReleasePolicy $releases = null): PrintAgentController
@@ -105,7 +149,7 @@ final class AgentApiMySqlIntegrationTest extends TestCase
     /** @return array<string, mixed> */
     private static function body(Response $response): array
     {
-        return json_decode((string) $response->getContent(), true, 512, JSON_THROW_ON_ERROR);
+        return json_decode(self::content($response), true, 512, JSON_THROW_ON_ERROR);
     }
 
     private function code(int $till): string
@@ -181,22 +225,53 @@ final class AgentApiMySqlIntegrationTest extends TestCase
         $this->assertSame('pairing_code_invalid', self::body($again)['code']);
     }
 
-    public function testAnExpiredCodeFailsAndFiveFailuresVoidTheCode(): void
+    public function testAnExpiredCodeFails(): void
     {
         $expired = $this->code($this->tillA);
         $this->clock->sleep(600);
         $this->assertSame(422, $this->api()->pair($this->agentRequest('POST', '/p', null, ['code' => $expired, 'hostname' => 'h', 'os' => 'o', 'version' => '1.0.0']))->getStatusCode(), 'expired after 10 minutes');
+    }
+
+    public function testFailuresFromAnywhereVoidTheLiveCodesOnlyAt20InTenMinutes(): void
+    {
+        $fail = function (int $n, string $net): void {
+            for ($i = 0; $i < $n; ++$i) {
+                // Different IPs, so the per-IP limit (5 per minute) does not stop them.
+                $response = $this->api()->pair($this->agentRequest('POST', '/p', null, ['code' => 'abcdef', 'hostname' => 'h', 'os' => 'o', 'version' => '1.0.0'], [], $net . $i));
+                $this->assertSame(422, $response->getStatusCode());
+            }
+        };
+        $pair = fn (string $code, string $ip): int => $this->api()->pair($this->agentRequest('POST', '/p', null, ['code' => $code, 'hostname' => 'h', 'os' => 'o', 'version' => '1.0.0'], [], $ip))->getStatusCode();
+
+        $fail(10, '10.1.0.');
+        $this->clock->sleep(601);
+        $code = $this->code($this->tillA);
+        $fail(9, '10.3.0.');
+        $this->assertSame(201, $pair($code, '10.2.0.1'), 'E7: 5 failures no longer void the code, and those of 10 minutes ago do not count');
 
         $code = $this->code($this->tillB);
+        $fail(10, '10.4.0.');
+        $this->assertSame(201, $pair($this->code($this->tillA), '10.2.0.3'), '19 failures in 10 minutes: still not voided');
+        $fail(1, '10.5.0.');
+        $this->assertSame(422, $pair($code, '10.2.0.2'), 'the 20th failure in 10 minutes voids every live code');
+    }
+
+    public function testTwentyFailuresInTenMinutesFromAllIpsVoidTheLiveCodes(): void
+    {
+        $code = $this->code($this->tillB);
         $wrong = $code === '000000' ? '000001' : '000000';
-        for ($i = 0; $i < 5; ++$i) {
-            // Different IPs, so the per-IP limit does not hide the code's own limit.
+        for ($i = 0; $i < 20; ++$i) {
             $response = $this->api()->pair($this->agentRequest('POST', '/p', null, ['code' => $wrong, 'hostname' => 'h', 'os' => 'o', 'version' => '1.0.0'], [], '10.1.0.' . $i));
             $this->assertSame(422, $response->getStatusCode());
+            $this->clock->sleep(25);
         }
+
         $response = $this->api()->pair($this->agentRequest('POST', '/p', null, ['code' => $code, 'hostname' => 'h', 'os' => 'o', 'version' => '1.0.0'], [], '10.2.0.1'));
-        $this->assertSame(422, $response->getStatusCode(), '5 failures void the code (E7)');
+        $this->assertSame(422, $response->getStatusCode(), '20 failures in 10 minutes void the code (E7)');
         $this->assertSame(0, (int) $this->connection->fetchOne('SELECT COUNT(*) FROM print_agent WHERE terminal_id = ?', [$this->tillB]));
+
+        $fresh = $this->code($this->tillB);
+        $this->assertSame(201, $this->api()->pair($this->agentRequest('POST', '/p', null, ['code' => $fresh, 'hostname' => 'h', 'os' => 'o', 'version' => '1.0.0'], [], '10.2.0.2'))->getStatusCode(), 'a code made afterwards works');
     }
 
     public function testPairingAllowsFiveAttemptsPerMinuteAndIp(): void
@@ -265,7 +340,8 @@ final class AgentApiMySqlIntegrationTest extends TestCase
         $this->assertMatchesRegularExpression('/\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d\z/', self::body($response)['jobs'][0]['expires_at'], 'RFC 3339');
         $this->assertTrue($response->headers->hasCacheControlDirective('no-store'));
         $body = self::body($response);
-        $this->assertSame(['jobs', 'poll_after_ms'], array_keys($body));
+        $this->assertSame(['jobs', 'poll_after_ms', 'server_time_ms'], array_keys($body));
+        $this->assertSame($this->clock->now()->getTimestamp() * 1000, $body['server_time_ms']);
         $this->assertSame([$jobA], array_column($body['jobs'], 'id'), 'E4: only its own till');
         $this->assertSame(['id', 'type', 'target', 'payload_b64', 'sha256', 'claim_token', 'expires_at'], array_keys($body['jobs'][0]));
         $this->assertSame("\x1B@A\x80", base64_decode($body['jobs'][0]['payload_b64'], true));
@@ -322,6 +398,97 @@ final class AgentApiMySqlIntegrationTest extends TestCase
         $this->assertSame(20, $this->clock->now()->getTimestamp() - $start, 'wait is capped at 20 s');
         $this->assertSame(0, $body['poll_after_ms']);
         $this->assertSame(2000, self::body($this->api()->jobs($this->agentRequest('GET', '/j', $key, null, ['wait' => '0'])))['poll_after_ms']);
+    }
+
+    public function testAWaitingLongPollStreamsSpacesThenValidJsonAndClaimsWithA30SecondLease(): void
+    {
+        $key = $this->pairAgent($this->tillA);
+        $start = $this->clock->now()->getTimestamp();
+        $job = 0;
+        $link = self::link(function (int $second) use (&$job): bool {
+            if ($second === 3) {
+                $job = $this->queue->enqueue($this->tillA, 'ticket', 'T', 'sale');
+            }
+
+            return true;
+        });
+
+        $response = $this->api(null, $link)->jobs($this->agentRequest('GET', '/j', $key, null, ['wait' => '20']));
+
+        $this->assertInstanceOf(StreamedResponse::class, $response);
+        $this->assertSame(200, $response->getStatusCode());
+        $this->assertSame('application/json', $response->headers->get('Content-Type'));
+        $this->assertSame('no', $response->headers->get('X-Accel-Buffering'));
+        $this->assertTrue($response->headers->hasCacheControlDirective('no-store'));
+        $this->assertSame($start, $response->getDate()?->getTimestamp());
+        $content = self::content($response);
+        $this->assertStringStartsWith('   {', $content, 'one space per second of the wait, then the JSON');
+        $body = json_decode($content, true, 512, JSON_THROW_ON_ERROR);
+        $this->assertSame([$job], array_column($body['jobs'], 'id'));
+        $this->assertSame(0, $body['poll_after_ms']);
+        $this->assertSame(($start + 3) * 1000, $body['server_time_ms'], 'the clock when the body is written');
+        $this->assertSame(
+            ['claimed', '2026-11-03 10:00:33'],
+            array_values($this->connection->fetchAssociative('SELECT status, lease_until FROM print_job WHERE id = ?', [$job])),
+            'a long poll claim has a 30 s lease'
+        );
+    }
+
+    public function testAJobFoundAtOnceByALongPollIsAPlainAnswerWithA30SecondLease(): void
+    {
+        $key = $this->pairAgent($this->tillA);
+        $job = $this->queue->enqueue($this->tillA, 'ticket', 'T', 'sale');
+
+        $response = $this->api()->jobs($this->agentRequest('GET', '/j', $key, null, ['wait' => '20']));
+
+        $this->assertNotInstanceOf(StreamedResponse::class, $response);
+        $this->assertSame([$job], array_column(self::body($response)['jobs'], 'id'));
+        $this->assertSame('2026-11-03 10:00:30', $this->connection->fetchOne('SELECT lease_until FROM print_job WHERE id = ?', [$job]));
+        $short = $this->queue->enqueue($this->tillA, 'ticket', 'T2', 'sale');
+        $this->api()->jobs($this->agentRequest('GET', '/j', $key, null, ['wait' => '0']));
+        $this->assertSame('2026-11-03 10:01:00', $this->connection->fetchOne('SELECT lease_until FROM print_job WHERE id = ?', [$short]), 'a short poll keeps 60 s');
+    }
+
+    public function testAnAgentThatHasGoneDuringTheWaitClaimsNothing(): void
+    {
+        $key = $this->pairAgent($this->tillA);
+        $job = 0;
+        $link = self::link(function (int $second) use (&$job): bool {
+            if ($second === 2) {
+                $job = $this->queue->enqueue($this->tillA, 'ticket', 'T', 'sale');
+            }
+
+            // The job arrives in the same second the dead connection is noticed.
+            return $second < 2;
+        });
+
+        $content = self::content($this->api(null, $link)->jobs($this->agentRequest('GET', '/j', $key, null, ['wait' => '20'])));
+
+        $this->assertSame('  ', $content, 'no body for a client that has gone');
+        $this->assertSame(
+            ['pending', null, null],
+            array_values($this->connection->fetchAssociative('SELECT status, claim_token, claimed_at FROM print_job WHERE id = ?', [$job])),
+            'the job stays in the queue for the POS to see the agent is not connected (C1)'
+        );
+    }
+
+    public function testAKeyRevokedDuringTheWaitGetsNothingAndThen401(): void
+    {
+        $key = $this->pairAgent($this->tillA);
+        $link = self::link(function (int $second): bool {
+            if ($second === 2) {
+                $this->queue->enqueue($this->tillA, 'ticket', 'T', 'sale');
+                $this->registry->revoke($this->tillA);
+            }
+
+            return true;
+        });
+
+        $body = self::body($this->api(null, $link)->jobs($this->agentRequest('GET', '/j', $key, null, ['wait' => '20'])));
+
+        $this->assertSame([], $body['jobs']);
+        $this->assertSame(1, (int) $this->connection->fetchOne("SELECT COUNT(*) FROM print_job WHERE terminal_id = ? AND status = 'pending'", [$this->tillA]));
+        $this->assertSame(401, $this->api()->jobs($this->agentRequest('GET', '/j', $key))->getStatusCode());
     }
 
     public function testRevokingCutsTheAgentAtOnceAndPairingAgainReplacesTheKey(): void

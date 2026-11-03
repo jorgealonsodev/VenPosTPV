@@ -252,6 +252,90 @@ final class PrintJobQueueMySqlIntegrationTest extends TestCase
         $this->assertSame(500, mb_strlen($row['error']), 'error text cut to 500 characters (E8)');
     }
 
+    public function testADoneAfterAnEarlierFailureClearsTheOldError(): void
+    {
+        $id = $this->queue->enqueue($this->tillA, 'ticket', 'T', 'sale');
+        $token = $this->queue->claim($this->tillA)[0]['claim_token'];
+        $this->assertSame('pending', $this->queue->complete($this->tillA, $id, $token, 'failed', 'spooler_unavailable', 'Spooler down'));
+        $this->clock->sleep(2);
+        $token = $this->queue->claim($this->tillA)[0]['claim_token'];
+
+        $this->assertSame('done', $this->queue->complete($this->tillA, $id, $token, 'done'));
+
+        $row = $this->connection->fetchAssociative('SELECT status, attempts, error_code, error FROM print_job WHERE id = ?', [$id]);
+        $this->assertSame(['done', 1, null, null], [$row['status'], (int) $row['attempts'], $row['error_code'], $row['error']], 'a printed job shows no error');
+        $this->assertSame([null, null], [$this->queue->find($id)['error_code'], $this->queue->find($id)['error']]);
+    }
+
+    public function testADoneJustAfterExpiryIsAcceptedForTicketsAndLabelsButNotTheDrawer(): void
+    {
+        $ticket = $this->queue->enqueue($this->tillA, 'ticket', 'T', 'sale');
+        $label = $this->queue->enqueue($this->tillA, 'label', 'L', 'label');
+        $drawer = $this->queue->enqueue($this->tillA, 'drawer', null, 'drawer');
+        $tokens = array_column($this->queue->claim($this->tillA), 'claim_token', 'id');
+        $this->connection->executeStatement('UPDATE print_job SET expires_at = ? WHERE id = ?', ['2026-11-03 10:00:10', $label]);
+
+        // The ticket expires at 10:02:00; it printed and the answer arrives 30 s later.
+        $this->clock->sleep(150);
+        $this->queue->resolveDue($this->tillA);
+        $this->assertSame('expired', $this->connection->fetchOne('SELECT status FROM print_job WHERE id = ?', [$ticket]));
+        $this->assertSame('done', $this->queue->complete($this->tillA, $ticket, $tokens[$ticket], 'done'), 'T6: it did print');
+        $this->assertSame('done', $this->queue->complete($this->tillA, $ticket, $tokens[$ticket], 'done'), 'repeated');
+        $this->assertNotNull($this->connection->fetchOne('SELECT finished_at FROM print_job WHERE id = ?', [$ticket]));
+
+        try {
+            $this->queue->complete($this->tillA, $drawer, $tokens[$drawer], 'done');
+            $this->fail('the drawer keeps strict expiry');
+        } catch (PrintJobException $e) {
+            $this->assertSame([410, 'job_expired'], [$e->httpStatus, $e->errorCode]);
+        }
+        try {
+            $this->queue->complete($this->tillA, $ticket + 1000, $tokens[$ticket], 'done');
+            $this->fail('unknown job');
+        } catch (PrintJobException $e) {
+            $this->assertSame(404, $e->httpStatus);
+        }
+        // The label expired at 10:00:10: 140 s ago, past the 30 s grace.
+        try {
+            $this->queue->complete($this->tillA, $label, $tokens[$label], 'done');
+            $this->fail('past the grace');
+        } catch (PrintJobException $e) {
+            $this->assertSame(410, $e->httpStatus);
+        }
+        try {
+            $this->queue->complete($this->tillA, $ticket, 'another-token', 'done');
+            $this->fail('another token');
+        } catch (PrintJobException $e) {
+            $this->assertContains($e->httpStatus, [409, 410]);
+        }
+    }
+
+    public function testADoneWithinTheGraceAfterExpiryWithoutAnySweepIsAccepted(): void
+    {
+        $label = $this->queue->enqueue($this->tillA, 'label', 'L', 'label');
+        $token = $this->queue->claim($this->tillA)[0]['claim_token'];
+        $this->connection->executeStatement('UPDATE print_job SET expires_at = ? WHERE id = ?', ['2026-11-03 10:00:30', $label]);
+        $this->queue->extend($this->tillA, $label, $token);
+        $this->clock->sleep(55);
+
+        $this->assertSame('done', $this->queue->complete($this->tillA, $label, $token, 'done'), '25 s after expiry, still claimed');
+        $this->clock->sleep(10);
+        $this->assertSame('done', $this->queue->complete($this->tillA, $label, $token, 'done'), 'repeated after the grace answers what the first did');
+    }
+
+    public function testALongPollClaimHasAShorterLease(): void
+    {
+        $id = $this->queue->enqueue($this->tillA, 'ticket', 'T', 'sale');
+        $token = $this->queue->claim($this->tillA, PrintJobQueue::CLAIM_LIMIT, PrintJobQueue::LONG_POLL_LEASE_SECONDS)[0]['claim_token'];
+        $this->assertSame('2026-11-03 10:00:30', $this->connection->fetchOne('SELECT lease_until FROM print_job WHERE id = ?', [$id]));
+
+        $this->clock->sleep(30);
+        $again = $this->queue->claim($this->tillA);
+        $this->assertSame([$id], array_column($again, 'id'), 'back in the queue after 30 s');
+        $this->assertNotSame($token, $again[0]['claim_token']);
+        $this->assertSame('2026-11-03 10:01:30', $this->connection->fetchOne('SELECT lease_until FROM print_job WHERE id = ?', [$id]), 'a short poll keeps 60 s');
+    }
+
     public function testNoRetryPastTheExpiry(): void
     {
         $id = $this->queue->enqueue($this->tillA, 'drawer', null, 'drawer');

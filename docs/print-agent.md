@@ -44,6 +44,8 @@ También puedes volver a abrir el instalador (no borra nada) y escribir el códi
 
 Para pasar el agente a otra caja o si en el icono pone «Vuelve a conectar el agente», genera un código nuevo y empareja otra vez desde el icono → **Conectar con el TPV…**.
 
+Desde el icono solo se empareja por `https://` y con el mismo TPV al que ya está conectado el agente. Para cambiar de TPV sale «Para cambiar de TPV, vuelve a ejecutar el instalador como administrador».
+
 ## Elegir o cambiar las impresoras
 
 Haz clic con el botón derecho en el icono → **Elegir impresoras** → **Tickets** o **Etiquetas**, y marca la impresora. Para comprobarla: botón derecho → **Imprimir prueba**.
@@ -96,6 +98,8 @@ El script copia el programa a `/usr/local/bin`, crea el usuario `venpos-agent` (
    - `TPV_AGENT_LATEST_VERSION` y `TPV_AGENT_DOWNLOAD_URL`: última versión y su enlace de descarga (admite `{os}`, `{arch}` y `{version}`). Ajustes muestra «Hay una versión nueva».
 4. Apache y PHP deben pasar la cabecera `Authorization` a PHP (con CGI: `CGIPassAuth On`, o `RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]`).
 5. Plesk: `max_execution_time` ≥ 35 s (la escucha larga dura hasta 20 s) y `pm.max_children` ≥ número de cajas + 6.
+6. Plesk pone nginx delante de Apache: sin más, todas las peticiones llegan desde el proxy y los límites de intentos (por IP) y la «última IP» del agente verían la IP del proxy. Pon `TRUSTED_PROXIES=127.0.0.1,::1` en el entorno del servidor (ver `env.example`): Symfony toma entonces la IP real de `X-Forwarded-For` y el esquema de `X-Forwarded-Proto` solo cuando la petición viene de esos proxies. Vacío o sin definir (por defecto) no se confía en ningún proxy. Tras cambiar la configuración, vacía la caché (`php bin/console cache:clear`).
+7. La escucha larga envía un espacio por segundo mientras espera (cabecera `X-Accel-Buffering: no` para que nginx no lo retenga) para notar enseguida que el agente se ha parado y no recoger trabajos hacia una conexión muerta. Si el proxy retiene la respuesta igualmente, la reserva de 30 s devuelve el trabajo a la cola y la caja avisa a los 15 s.
 
 La limpieza del historial (contenido a las 24 h, trabajos a los 30 días) la hace la tarea de cada minuto `tpv:sync:outbox`. El registro de aperturas del cajón (`drawer_audit`) no se borra nunca.
 
@@ -106,7 +110,7 @@ Todas las rutas cuelgan de `/api/agent/v1/`. Solo aceptan `Authorization: Bearer
 | Método | Ruta | Petición | Respuesta | Códigos |
 |---|---|---|---|---|
 | POST | `/api/agent/v1/pair` | `{code, hostname, os, version}` | `{key, terminal_id, terminal_name}` | 201; 422 `pairing_code_invalid`; 429 `rate_limited` |
-| GET | `/api/agent/v1/jobs?wait=0..20` | — | `{jobs:[{id, type, target, payload_b64, sha256, claim_token, expires_at}], poll_after_ms}` | 200; 401 `agent_key_invalid`; 426 `agent_update_required`; 429 |
+| GET | `/api/agent/v1/jobs?wait=0..20` | — | `{jobs:[{id, type, target, payload_b64, sha256, claim_token, expires_at}], poll_after_ms, server_time_ms}` | 200; 401 `agent_key_invalid`; 426 `agent_update_required`; 429 |
 | POST | `/api/agent/v1/jobs/{id}/result` | `{claim_token, status: done\|failed, error_code?, error?}` | `{status}` | 200 (también repetido, y `failed` + `error_code: job_expired` → `{"status": "expired"}`); 404 `job_not_found`; 409 `claim_stale`; 410 `job_expired` |
 | POST | `/api/agent/v1/jobs/{id}/extend` | `{claim_token}` | `{lease_until}` | 200; 404; 409 `claim_stale`; 410 |
 | PUT | `/api/agent/v1/status` | `{version, hostname, printers:[{target, name, state, detail}]}` | — | 204; 401 |
@@ -118,7 +122,7 @@ Cualquier ruta puede responder 401 `agent_key_invalid` («Vuelve a conectar el a
 
 - Un administrador genera en Ajustes → Cajas un código de 6 cifras (10 minutos, un solo uso, uno vivo por caja: generar otro anula el anterior).
 - El agente lo envía a `pair` y recibe su clave: 256 bits en base64url sin relleno (43 caracteres). El TPV solo guarda su sha256; del código, solo un HMAC.
-- Emparejar admite 5 intentos por minuto y por IP. Cada fallo cuenta contra los códigos vivos; con 5 fallos un código queda anulado.
+- Emparejar admite 5 intentos por minuto y por IP (después, 429). Los fallos de todas las IP se cuentan juntos: con 20 fallos en 10 minutos se anulan todos los códigos vivos de todas las cajas y hay que generar otro.
 - Emparejar de nuevo la caja sustituye la clave anterior, que deja de valer al momento. «Desconectar» en Ajustes también.
 
 ### Trabajos
@@ -127,8 +131,10 @@ Cualquier ruta puede responder 401 `agent_key_invalid` («Vuelve a conectar el a
 - `payload_b64`: los bytes exactos para la impresora (el mismo ESC/POS que hoy), en base64. Un trabajo `drawer` no lleva datos: `payload_b64` es `""` y `sha256` el de la cadena vacía; el pulso `ESC p` lo genera el agente.
 - `sha256`: huella de los bytes decodificados.
 - Caducidad (`expires_at`): cajón 15 s, ticket 2 min, etiquetas 24 h. Lo caducado no se entrega ni se imprime.
-- `jobs` espera hasta `wait` segundos (máximo 20), mirando cada segundo, y devuelve hasta 5 tickets o cajones y como mucho una etiqueta, en orden de creación, para que un ticket nuevo nunca espere detrás de un lote de etiquetas. Con trabajos o tras una espera larga, `poll_after_ms` es 0; con `wait=0` y nada pendiente, 2000.
-- Cada recogida lleva un `claim_token` y una reserva de 60 s. Sin confirmar en ese tiempo, el trabajo vuelve a la cola con otro `claim_token`, y el anterior recibe 409 `claim_stale`. `extend` alarga la reserva otros 60 s para lotes largos.
+- `jobs` espera hasta `wait` segundos (máximo 20), mirando cada segundo, y devuelve hasta 5 tickets o cajones y como mucho un trabajo de etiquetas, en orden de creación, para que un ticket nuevo nunca espere detrás de un lote de etiquetas. Un trabajo de etiquetas lleva como mucho 10 etiquetas (una tira con su corte): 200 etiquetas son 20 trabajos. Con trabajos o tras una espera larga, `poll_after_ms` es 0; con `wait=0` y nada pendiente, 2000. La respuesta lleva también `server_time_ms`, la hora del servidor (Unix, ms) al escribirla, que el agente usa en lugar de `Date`.
+- Si no hay nada al llegar, la escucha larga responde 200 en el acto y envía un espacio por segundo mientras espera; después, el JSON (los espacios iniciales son JSON válido). Si el agente se ha ido, termina sin recoger nada. Una clave desconectada mientras espera recibe `{"jobs": []}` y 401 en la siguiente petición.
+- Cada recogida lleva un `claim_token` y una reserva de 60 s (30 s si se recoge en una escucha larga). Sin confirmar en ese tiempo, el trabajo vuelve a la cola con otro `claim_token`, y el anterior recibe 409 `claim_stale`. `extend` alarga la reserva 60 s para lotes largos.
+- Un `done` con su `claim_token` que llega hasta 30 s después de `expires_at` se acepta para tickets y etiquetas (sí se imprimieron); el cajón mantiene su caducidad estricta (410). Un `done` borra el error de un intento fallido anterior.
 - `result` es idempotente: repetir la misma confirmación devuelve el mismo `status`. Un `failed` se reintenta a los 2, 5 y 15 s si no pasa de su caducidad; mientras tanto la respuesta es `{"status": "pending"}`, y al agotar los reintentos, `{"status": "failed"}`. `error` se recorta a 500 caracteres; `error_code` es `[a-z0-9_]{1,64}` (otro valor se guarda como `unknown`).
 - Si el agente no imprime un trabajo porque ya caducó, lo confirma como `failed` con `error_code: job_expired`: se acepta (200, `{"status": "expired"}`) y no se reintenta.
 - `printers[].state` en `status`: `ready`, `paused`, `offline`, `error`, `not_found`, `not_configured` o `unknown` (otro valor se guarda como `unknown`).

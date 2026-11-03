@@ -60,6 +60,10 @@ pub struct ServerState {
     pub dedupe_file: Option<PathBuf>,
     pub dedupe_had_id_at_ack: Vec<bool>,
     pub pair_code: Option<String>,
+    /// Written before the `GET /jobs` JSON, like the spaces of a streamed long poll.
+    pub jobs_prefix: String,
+    /// When set, `GET /jobs` carries `server_time_ms` = local now + this offset.
+    pub server_time_offset: Option<i64>,
 }
 
 pub struct FakeServer {
@@ -181,7 +185,16 @@ fn handle(mut conn: TcpStream, st: &Arc<Mutex<ServerState>>) {
     std::thread::sleep(delay);
     let date =
         httpdate::fmt_http_date(UNIX_EPOCH + Duration::from_millis(u64::try_from(now_ms() + date_offset).unwrap()));
-    let text = json_body.map(|b| b.to_string()).unwrap_or_default();
+    let mut text = json_body.map(|b| b.to_string()).unwrap_or_default();
+    if method == "GET" && path.starts_with("/api/agent/v1/jobs") && status == 200 {
+        let s = st.lock().unwrap();
+        if let Some(offset) = s.server_time_offset {
+            let mut v: Value = serde_json::from_str(&text).unwrap();
+            v["server_time_ms"] = json!(now_ms() + offset);
+            text = v.to_string();
+        }
+        text = format!("{}{text}", s.jobs_prefix);
+    }
     let reason = match status {
         200 => "OK",
         201 => "Created",

@@ -17,6 +17,8 @@ fn handler(dir: &std::path::Path, printer: Arc<MockPrinter>) -> Handler {
             key_store: KeyStore::new(dir.join("key")),
             proxy: ProxyMode::None,
             restart: Some(Shutdown::new()),
+            // The fake TPV speaks plain HTTP on 127.0.0.1; the service never allows it.
+            allow_http_localhost: true,
         }),
         printer,
         config: Arc::new(RwLock::new(Config {
@@ -254,6 +256,77 @@ fn pair_reports_a_rejected_code_or_an_unreachable_server_in_spanish() {
     assert!(!dir.join("key").exists());
     assert!(!dir.join("config.json").exists());
     assert!(!restart_of(&h).take_restart());
+}
+
+const CHANGE_TPV: &str = "Para cambiar de TPV, vuelve a ejecutar el instalador como administrador";
+
+#[test]
+fn the_service_refuses_plain_http_over_the_local_channel_even_on_localhost() {
+    let server = FakeServer::start();
+    server.st().pair_code = Some("482913".into());
+    let dir = temp_dir("ipc-pair-http");
+    let mut h = handler(&dir, MockPrinter::new());
+    h.pairing.as_mut().unwrap().allow_http_localhost = false;
+
+    for url in [
+        server.url.clone(),
+        "http://localhost:8080".into(),
+        "http://[::1]".into(),
+    ] {
+        let r = h.handle_line(&pair_line(&url, "482913"));
+        assert!(!r.ok, "{url}");
+        assert_eq!(
+            r.error.as_deref(),
+            Some("La dirección del TPV no es válida: tiene que empezar por https://"),
+            "{url}"
+        );
+    }
+
+    assert!(server.requests("POST", "/api/agent/v1/pair").is_empty());
+    assert!(!dir.join("key").exists());
+    assert!(!restart_of(&h).take_restart());
+}
+
+#[test]
+fn pairing_to_another_tpv_from_the_local_channel_is_refused() {
+    let server = FakeServer::start();
+    server.st().pair_code = Some("482913".into());
+    let dir = temp_dir("ipc-pair-other");
+    let h = handler(&dir, MockPrinter::new());
+    h.config.write().unwrap().server_url = Some("https://tpv.tienda.example".into());
+    h.config.write().unwrap().terminal_id = Some(1);
+
+    let r = h.handle_line(&pair_line(&server.url, "482913"));
+
+    assert!(!r.ok);
+    assert_eq!(r.error.as_deref(), Some(CHANGE_TPV));
+    assert!(
+        server.requests("POST", "/api/agent/v1/pair").is_empty(),
+        "no request to the other TPV"
+    );
+    assert!(!dir.join("key").exists());
+    assert_eq!(
+        h.config.read().unwrap().server_url.as_deref(),
+        Some("https://tpv.tienda.example"),
+        "still paired to the first TPV"
+    );
+    assert!(!restart_of(&h).take_restart());
+}
+
+#[test]
+fn pairing_again_with_the_same_tpv_from_the_local_channel_works() {
+    let server = FakeServer::start();
+    server.st().pair_code = Some("482913".into());
+    let dir = temp_dir("ipc-pair-same");
+    let h = handler(&dir, MockPrinter::new());
+    h.config.write().unwrap().server_url = Some(server.url.clone());
+    h.config.write().unwrap().terminal_id = Some(1);
+
+    let r = h.handle_line(&pair_line(&format!("{}/", server.url), "482913"));
+
+    assert!(r.ok, "{r:?}");
+    assert_eq!(h.config.read().unwrap().terminal_id, Some(3));
+    assert_eq!(KeyStore::new(dir.join("key")).load().unwrap().unwrap().expose(), KEY);
 }
 
 #[test]

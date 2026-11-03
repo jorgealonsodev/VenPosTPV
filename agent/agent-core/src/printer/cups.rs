@@ -5,6 +5,14 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::process::{Command, Stdio};
 
+/// A CUPS command with the C locale: its messages are parsed in English, and
+/// under es_ES `lpstat` would answer in Spanish and the state would be unknown.
+pub fn command(program: &str) -> Command {
+    let mut c = Command::new(program);
+    c.env("LC_ALL", "C").env("LANG", "C").env_remove("LANGUAGE");
+    c
+}
+
 /// Arguments for `lp`; the queue was validated (no leading `-`, no spaces).
 pub fn print_argv(queue: &str, title: &str) -> Vec<OsString> {
     ["-d", queue, "-o", "raw", "-t", title, "--", "-"]
@@ -14,7 +22,7 @@ pub fn print_argv(queue: &str, title: &str) -> Vec<OsString> {
 }
 
 pub fn print(queue: &str, title: &str, data: &[u8]) -> Result<Option<String>, PrintError> {
-    let mut child = Command::new("lp")
+    let mut child = command("lp")
         .args(print_argv(queue, title))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -53,7 +61,7 @@ pub fn cancel(request_id: &str) {
     if request_id.starts_with('-') {
         return;
     }
-    let _ = Command::new("cancel")
+    let _ = command("cancel")
         .arg(request_id)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -62,7 +70,7 @@ pub fn cancel(request_id: &str) {
 }
 
 pub fn status(queue: &str) -> QueueStatus {
-    match Command::new("lpstat")
+    match command("lpstat")
         .args(["-p", queue, "-l"])
         .stdin(Stdio::null())
         .output()
@@ -127,7 +135,7 @@ pub fn parse_lpstat_e(stdout: &str) -> Vec<String> {
 }
 
 pub fn list() -> Vec<InstalledPrinter> {
-    let Ok(out) = Command::new("lpstat").arg("-e").stdin(Stdio::null()).output() else {
+    let Ok(out) = command("lpstat").arg("-e").stdin(Stdio::null()).output() else {
         return Vec::new();
     };
     parse_lpstat_e(&String::from_utf8_lossy(&out.stdout))
@@ -178,6 +186,43 @@ mod tests {
         assert_eq!(parse_lpstat_p(true, off2, "").state, PrinterState::Offline);
         let missing = "lpstat: Invalid destination name in list \"Nope\".\n";
         assert_eq!(parse_lpstat_p(false, "", missing).state, PrinterState::NotFound);
+    }
+
+    #[test]
+    fn cups_commands_run_with_the_c_locale() {
+        for program in ["lp", "lpstat", "cancel"] {
+            let c = command(program);
+            let envs: Vec<(String, Option<String>)> = c
+                .get_envs()
+                .map(|(k, v)| {
+                    (
+                        k.to_string_lossy().into_owned(),
+                        v.map(|v| v.to_string_lossy().into_owned()),
+                    )
+                })
+                .collect();
+            assert!(
+                envs.contains(&("LC_ALL".into(), Some("C".into()))),
+                "{program}: {envs:?}"
+            );
+            assert!(envs.contains(&("LANG".into(), Some("C".into()))), "{program}: {envs:?}");
+            assert!(envs.contains(&("LANGUAGE".into(), None)), "{program}: {envs:?}");
+            assert_eq!(c.get_program(), program);
+        }
+    }
+
+    #[test]
+    fn english_lpstat_output_maps_to_ready_paused_and_not_found() {
+        // What lpstat prints under LC_ALL=C for the TM-T20 queue.
+        let idle = "printer EPSON_TM-T20II is idle.  enabled since Tue Nov  3 18:02:11 2026\n";
+        assert_eq!(parse_lpstat_p(true, idle, "").state, PrinterState::Ready);
+        let disabled = "printer EPSON_TM-T20II disabled since Tue Nov  3 18:05:40 2026 -\n\treason unknown\n";
+        let paused = parse_lpstat_p(true, disabled, "");
+        assert_eq!(paused.state, PrinterState::Paused);
+        let missing = "lpstat: Invalid destination name in list \"EPSON_TM-T20\".\n";
+        assert_eq!(parse_lpstat_p(false, "", missing).state, PrinterState::NotFound);
+        let missing2 = "lpstat: The printer or class does not exist.\n";
+        assert_eq!(parse_lpstat_p(false, "", missing2).state, PrinterState::NotFound);
     }
 
     #[test]

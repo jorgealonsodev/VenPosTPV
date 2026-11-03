@@ -21,7 +21,8 @@ use VenPosTPV\Service\PrintAgent\PrintJobQueue;
 
 /**
  * docs/prd/agente-impresion.md L8, L9, T2, T7, T8, AC5: a till with the print agent
- * gets `label` jobs (target `label`) of at most 500 labels, at most 100 per line;
+ * gets `label` jobs (target `label`) of at most 10 labels, one strip with its cut
+ * each (L6, amended), at most 100 per line;
  * other tills print straight to their printer, like tickets. When the agent is not
  * connected the labels are held until the till answers "¿Imprimirlas?".
  */
@@ -106,13 +107,31 @@ final class LabelPrintServiceTest extends TestCase
         self::assertSame([], $this->sent);
     }
 
-    public function testMoreThanFiveHundredLabelsAreSplitIntoSeveralJobs(): void
+    public function testLabelsAreSplitIntoStripsOfTenEachWithItsOwnCut(): void
     {
-        $result = $this->service(self::AGENT)->print(3, self::items(100, 100, 100, 100, 100, 100, 50), null);
+        $result = $this->service(self::AGENT)->print(3, self::items(100, 100), null);
 
-        self::assertSame(['500', '150'], array_map(static fn (array $job): string => (string) $job[4], $this->enqueued));
-        self::assertSame([501, 502], $result['jobs']);
-        self::assertSame(650, $result['labels']);
+        self::assertCount(20, $this->enqueued, '200 labels: 20 jobs (L6, AC14)');
+        self::assertSame(array_fill(0, 20, '10'), array_map(static fn (array $job): string => (string) $job[4], $this->enqueued));
+        foreach ($this->enqueued as $job) {
+            self::assertSame(1, substr_count((string) $job[2], "\x1DV\x41\x00"), 'one cut per strip');
+            self::assertSame(10, substr_count((string) $job[2], "\x1Dk\x43\x0C841234567890"));
+        }
+        self::assertSame(range(501, 520), $result['jobs']);
+        self::assertSame(200, $result['labels']);
+
+        $this->enqueued = [];
+        $this->service(self::AGENT)->print(3, self::items(25), null);
+        self::assertSame(['10', '10', '5'], array_map(static fn (array $job): string => (string) $job[4], $this->enqueued));
+    }
+
+    public function testAPrinterWithoutTheAgentAlsoGetsStripsOfTen(): void
+    {
+        $result = $this->service(self::SYSTEM)->print(3, self::items(25), null);
+
+        self::assertSame('printed', $result['print_status']);
+        self::assertCount(3, $this->sent);
+        self::assertSame([10, 10, 5], array_map(static fn (string $bytes): int => substr_count($bytes, "\x1Dk\x43\x0C841234567890"), $this->sent));
     }
 
     public function testMoreThanAHundredOnOneLineIsRefused(): void

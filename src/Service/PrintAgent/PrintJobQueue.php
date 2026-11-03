@@ -21,14 +21,25 @@ use VenPosTPV\Service\Print\OrderPrintedMarker;
  * - The agent claims jobs of its own till with one conditional UPDATE in priority
  *   (ticket and drawer before labels, T7) and id order, like the outbox: two agents
  *   or two requests never get the same job. Each claim has a `claim_token` and a
- *   60 s lease; an unconfirmed lease returns the job to the queue (T4).
+ *   60 s lease (30 s from a long poll); an unconfirmed lease returns the job to the
+ *   queue (T4).
  * - Confirming is idempotent. A failed job is retried after 2, 5 and 15 s while it
- *   has not expired (T5). Expiry: drawer 15 s, ticket 2 min, labels 24 h (T6).
+ *   has not expired (T5). Expiry: drawer 15 s, ticket 2 min, labels 24 h (T6). A
+ *   "done" with a valid claim up to 30 s after expiry is accepted for tickets and
+ *   labels (they did print); the drawer keeps strict expiry. "done" clears the error
+ *   of an earlier failed attempt.
  * - Error texts are cut to 500 characters (E8).
  */
 class PrintJobQueue
 {
     public const LEASE_SECONDS = 60;
+    /**
+     * Lease of a claim made by a long poll: a stopped agent's last poll may claim into
+     * a dead connection, so its jobs come back sooner (the agent can still extend).
+     */
+    public const LONG_POLL_LEASE_SECONDS = 30;
+    /** A "done" this long after expiry is still accepted for tickets and labels: it did print (T6). */
+    public const DONE_GRACE_SECONDS = 30;
     public const MAX_PAYLOAD_BYTES = 1048576;
     public const CLAIM_LIMIT = 5;
     public const TYPES = ['ticket', 'drawer', 'label'];
@@ -97,13 +108,13 @@ class PrintJobQueue
      *
      * @return list<array{id: int, type: string, target: string, payload_b64: string, sha256: string, claim_token: string, expires_at: string}>
      */
-    public function claim(int $terminalId, int $limit = self::CLAIM_LIMIT): array
+    public function claim(int $terminalId, int $limit = self::CLAIM_LIMIT, int $leaseSeconds = self::LEASE_SECONDS): array
     {
         // Two polls of the same till may deadlock on the queue index; InnoDB undoes
         // one statement and it is simply tried again.
         for ($attempt = 1; ; ++$attempt) {
             try {
-                return $this->claimOnce($terminalId, $limit);
+                return $this->claimOnce($terminalId, $limit, max(1, min(self::LEASE_SECONDS, $leaseSeconds)));
             } catch (DeadlockException|LockWaitTimeoutException $e) {
                 if ($attempt >= self::CLAIM_ATTEMPTS) {
                     return [];
@@ -116,13 +127,13 @@ class PrintJobQueue
     /**
      * @return list<array{id: int, type: string, target: string, payload_b64: string, sha256: string, claim_token: string, expires_at: string}>
      */
-    private function claimOnce(int $terminalId, int $limit): array
+    private function claimOnce(int $terminalId, int $limit, int $leaseSeconds): array
     {
         $this->resolveDue($terminalId);
 
         $now = $this->now();
         $token = bin2hex(random_bytes(16));
-        $params = [$token, $this->at(self::LEASE_SECONDS), $now, $terminalId, $now, $now];
+        $params = [$token, $this->at($leaseSeconds), $now, $terminalId, $now, $now];
         $sql = "UPDATE print_job SET status = 'claimed', claim_token = ?, lease_until = ?, claimed_at = ?
                 WHERE terminal_id = ? AND status = 'pending' AND expires_at > ? AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
                 AND %s ORDER BY priority, id LIMIT %d";
@@ -182,6 +193,16 @@ class PrintJobQueue
             // The agent did not print a job it found expired (T6): it reports it as
             // failed with error_code job_expired, which is accepted, not refused.
             $agentSaysExpired = $status === 'failed' && $errorCode === 'job_expired';
+            $now = $this->now();
+            // A ticket or label confirmed "done" with its claim shortly after expiry did
+            // print (T6); the drawer keeps strict expiry.
+            $lateDone = $status === 'done' && $tokenMatches && $job['type'] !== 'drawer'
+                && $this->at(-self::DONE_GRACE_SECONDS) <= (string) $job['expires_at'];
+            if ($job['status'] === 'expired' && $lateDone) {
+                $this->markDone($job, $now);
+
+                return 'done';
+            }
             if ($job['status'] === 'expired') {
                 if ($agentSaysExpired) {
                     return 'expired';
@@ -191,8 +212,7 @@ class PrintJobQueue
             if ($job['status'] !== 'claimed' || !$tokenMatches) {
                 throw PrintJobException::claimStale();
             }
-            $now = $this->now();
-            if ($agentSaysExpired || (string) $job['expires_at'] <= $now) {
+            if ($agentSaysExpired || ((string) $job['expires_at'] <= $now && !$lateDone)) {
                 $this->expireJob($jobId);
                 if ($agentSaysExpired) {
                     return 'expired';
@@ -201,11 +221,7 @@ class PrintJobQueue
             }
 
             if ($status === 'done') {
-                $this->connection->executeStatement(
-                    "UPDATE print_job SET status = 'done', finished_at = ?, lease_until = NULL, next_attempt_at = NULL WHERE id = ?",
-                    [$now, $jobId]
-                );
-                $this->afterFinished($job, 'done');
+                $this->markDone($job, $now);
 
                 return 'done';
             }
@@ -405,6 +421,20 @@ class PrintJobQueue
         }
 
         return $job;
+    }
+
+    /**
+     * Done: delivered (T3). An earlier failed attempt's error no longer applies.
+     *
+     * @param array<string, mixed> $job
+     */
+    private function markDone(array $job, string $now): void
+    {
+        $this->connection->executeStatement(
+            "UPDATE print_job SET status = 'done', finished_at = ?, lease_until = NULL, next_attempt_at = NULL, error_code = NULL, error = NULL WHERE id = ?",
+            [$now, (int) $job['id']]
+        );
+        $this->afterFinished($job, 'done');
     }
 
     private function expireJob(int $jobId): void

@@ -836,7 +836,7 @@ const SettingsModal = {
                                 <label style="display:flex; align-items:center; gap:10px; min-height:44px; font-size:14px; color:var(--text); cursor:pointer;">
                                     <input type="checkbox" v-model="terminal.label_cut_each" style="width:20px; height:20px;">
                                     Cortar cada etiqueta
-                                    <span style="font-size:12px; color:var(--text3);">(si no, salen en una tira con un solo corte)</span>
+                                    <span style="font-size:12px; color:var(--text3);">(si no, salen en tiras de hasta 10 con un corte por tira)</span>
                                 </label>
                                 <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
                                     <button type="button" class="tpv-btn" @click="printTestLabel" style="min-height:44px;">Imprimir etiqueta de prueba</button>

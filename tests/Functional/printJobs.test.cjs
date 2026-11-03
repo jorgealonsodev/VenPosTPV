@@ -61,17 +61,27 @@ async function testNotPickedUpIn15SecondsIsOffline() {
     assert.equal(store.ticket.job.problem, true);
 }
 
-async function testAPickedUpJobIsNotOfflineAndAnUnreachableServerIs() {
+async function testAClaimedJobNotDoneIn15SecondsIsOfflineAndClearsWhenItPrints() {
+    // A stopped agent's last long poll may claim the job into a dead connection:
+    // claimed is not printed, so 15 s without "done" means not connected (C1).
     const { store, clock, job, jobs } = loadStore();
     job(12, { status: 'claimed', claimed_at: '2026-11-03T17:00:01+01:00' });
     store.trackResponse({ print_status: 'queued', print_job_id: 12 }, { kind: 'sale', saleId: 6 });
-    await clock.advance(16000);
-    assert.equal(message(store), 'Imprimiendo ticket…', 'the agent took it: still printing');
+    await clock.advance(14000);
+    assert.equal(message(store), 'Imprimiendo ticket…', 'still within 15 s');
+    await clock.advance(1000);
+    assert.equal(message(store), 'La impresora no está conectada', 'claimed but not done in 15 s');
+    assert.equal(store.ticket.job.problem, true);
+    assert.equal(store.canRetry(), false, 'C5: the job is not cancelled nor reprinted');
+    job(12, { status: 'done', claimed_at: '2026-11-03T17:00:01+01:00' });
+    await clock.advance(5000);
+    assert.equal(message(store), 'Ticket enviado', 'C5: it printed later, the notice clears');
+    assert.equal(store.ticket.job.problem, false);
 
     const other = loadStore();
     other.store.trackResponse({ print_status: 'queued', print_job_id: 99 }, { kind: 'sale', saleId: 6 });
     await other.clock.advance(15000);
-    assert.equal(message(other.store), 'La impresora no está conectada', 'no answer about the job counts as not picked up');
+    assert.equal(message(other.store), 'La impresora no está conectada', 'no answer about the job counts as not connected');
     assert.ok(jobs);
 }
 
@@ -211,7 +221,7 @@ async function testLabels() {
 (async () => {
     await testQueuedTicketShowsPrintingThenSent();
     await testNotPickedUpIn15SecondsIsOffline();
-    await testAPickedUpJobIsNotOfflineAndAnUnreachableServerIs();
+    await testAClaimedJobNotDoneIn15SecondsIsOfflineAndClearsWhenItPrints();
     await testFailedJobNamesTheReasonInSpanish();
     await testCheckoutThatCouldNotQueueIsAFailure();
     await testPdfDoesNotCancelThePendingTicket();

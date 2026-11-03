@@ -166,6 +166,46 @@ fn expiry_uses_the_server_clock_from_the_date_header() {
 }
 
 #[test]
+fn a_streamed_long_poll_with_leading_spaces_is_read() {
+    // The server writes one space per second of the wait before the JSON body.
+    let server = FakeServer::start();
+    let dir = temp_dir("leading-ws");
+    let printer = MockPrinter::new();
+    server.st().jobs_prefix = " ".repeat(20) + "\r\n\t";
+    server.add_job(34, "ticket", Some("ticket"), b"SALE", 120_000);
+    let mut r = rig(&server, Arc::clone(&printer), sys(), &dir, Timing::default());
+
+    let summary = r.runner.poll_once().unwrap();
+
+    assert_eq!(summary.outcomes[0].1, Outcome::Printed);
+    assert_eq!(printer.writes()[0].data, b"SALE");
+}
+
+#[test]
+fn expiry_prefers_the_server_time_in_the_body_over_a_stale_date_header() {
+    // A streamed long poll sends its Date header up to 20 s before the body; the
+    // body's server_time_ms is the clock when the jobs were claimed.
+    let server = FakeServer::start();
+    let dir = temp_dir("skew-body");
+    let printer = MockPrinter::new();
+    server.st().date_offset = 0;
+    server.st().server_time_offset = Some(3_600_000);
+    server.add_job(1, "ticket", Some("ticket"), b"warm-up", 7_200_000);
+    let mut r = rig(&server, Arc::clone(&printer), sys(), &dir, Timing::default());
+    r.runner.poll_once().unwrap();
+    server.add_job(35, "ticket", Some("ticket"), b"X", 1_800_000);
+
+    let summary = r.runner.poll_once().unwrap();
+
+    assert_eq!(
+        summary.outcomes[0].1,
+        Outcome::Expired,
+        "server_time_ms says it expired 30 min ago"
+    );
+    assert_eq!(printer.writes().len(), 1, "only the warm-up job");
+}
+
+#[test]
 fn network_cut_after_printing_gives_a_single_ticket() {
     // AC10: the acknowledgement is lost; the retry and the redelivery never reprint.
     let server = FakeServer::start();

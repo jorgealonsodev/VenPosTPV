@@ -103,6 +103,16 @@ fn pair_saves_the_key_privately_and_the_server_in_the_config() {
         );
         assert_eq!(std::fs::read_to_string(&key_path).unwrap(), KEY);
     }
+    // E10: on Windows the key is stored encrypted with machine-scope DPAPI.
+    #[cfg(windows)]
+    {
+        let stored = std::fs::read(&key_path).expect("the DPAPI key file exists after pairing");
+        assert!(!stored.is_empty());
+        assert!(
+            !stored.windows(KEY.len()).any(|w| w == KEY.as_bytes()),
+            "the key is not stored in clear"
+        );
+    }
     // Neither the key nor the code reach the terminal.
     let all = format!(
         "{}{}",

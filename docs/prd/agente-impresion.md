@@ -31,7 +31,7 @@ Para ello, un programa pequeño (el **agente**) se instala en el ordenador de ca
 | Caducidad | **Cajón 15 s, ticket 2 min, etiquetas 24 h** (al reconectar pregunta si imprimirlas). |
 | Etiquetas | **Precio + código de barras**: nombre, talla/color, precio actual con IVA (sin tachado), código y su texto. |
 | Tamaño en la TM-T20 | **Ancho fijo (72 mm), alto ajustable** (25–60 mm, 30 mm por defecto). Plantillas 50×30/40×25 y medidas a mano solo para impresoras de etiquetas. |
-| Varias etiquetas en la TM-T20 | **Una tira con línea de corte y un solo corte al final.** |
+| Varias etiquetas en la TM-T20 | **Tiras de 10 con corte** (2026-11-03, tras la verificación): hasta 10 etiquetas por tira, separadas por línea de puntos; cada tira con su corte. |
 | Compatibilidad | «Hazlo lo máximo compatible posible»: ESC/POS (TM-T20) en fase 1; ZPL (Zebra) y TSPL (TSC, Xprinter) en fase 2; impresoras con driver (Brother QL, Dymo) en fase 2. |
 | Origen de las etiquetas | **Ficha del producto y lista.** |
 | Código de barras | **EAN si existe y es válido; si no, la referencia en Code128.** |
@@ -86,7 +86,8 @@ Para ello, un programa pequeño (el **agente**) se instala en el ordenador de ca
 - **E4.** Cada clave vale para una sola caja: solo ve y confirma trabajos de su caja.
 - **E5.** Desconectar el agente en Ajustes invalida la clave al momento. Volver a emparejar revoca la anterior.
 - **E6.** La clave no caduca. Ajustes muestra la última fecha e IP de uso para detectar copias.
-- **E7.** Límites: emparejar admite 5 intentos por minuto y por IP; 5 fallos anulan el código. Una clave inválida recibe 429 tras 10 fallos por minuto y por IP.
+- **E7.** Límites: emparejar admite 5 intentos por minuto y por IP (después, 429). Los fallos de todas las IP se cuentan juntos: 20 fallos en 10 minutos anulan todos los códigos vivos de todas las cajas. Una clave inválida recibe 429 tras 10 fallos por minuto y por IP. Detrás del nginx de Plesk la IP es la real del cliente (`TRUSTED_PROXIES`).
+- **E7b.** Desde el icono (canal local) solo se empareja por HTTPS, sin excepción para localhost, y solo con el TPV al que ya está conectado el agente; otro TPV: «Para cambiar de TPV, vuelve a ejecutar el instalador como administrador».
 - **E8.** La clave, el código y la cabecera `Authorization` nunca aparecen en direcciones, registros ni pantallas. El texto de error de un trabajo se recorta a 500 caracteres.
 - **E9.** `/api/agent/v1/*` no usa sesión ni cookies (fuera del vínculo de equipo); solo acepta `Authorization: Bearer`.
 - **E10.** Clave guardada en Windows cifrada con DPAPI de ámbito de máquina en `%ProgramData%\VenPos Agent\`, con permisos solo para el servicio y Administradores; en Linux en `/etc/venpos-agent/key`, propietario el usuario de servicio `venpos-agent`, permisos 0600. El icono nunca lee la clave.
@@ -97,11 +98,11 @@ Para ello, un programa pequeño (el **agente**) se instala en el ordenador de ca
 - **T1.** Todo lo que hoy se imprime o abre el cajón se convierte en un trabajo de la caja que lo pide: ticket de venta, regalo, reimpresión, abono, prueba, cajón y etiquetas. El contenido de tickets es el mismo ESC/POS de hoy.
 - **T2.** Tipos: `ticket`, `drawer`, `label`. Destinos del agente: impresora de tickets e impresora de etiquetas (pueden ser la misma).
 - **T3.** «Hecho» significa entregado a la cola del sistema o al dispositivo. Si la impresora no informa de su estado, el TPV dice «Enviado», no «Impreso».
-- **T4.** Entrega al menos una vez: cada recogida lleva un `claim_token`; si no se confirma en 60 s, el trabajo vuelve a la cola (el agente puede pedir más tiempo para lotes largos). El agente guarda en disco los trabajos impresos de las últimas 24 h y nunca los repite. Confirmar es idempotente.
+- **T4.** Entrega al menos una vez: cada recogida lleva un `claim_token`; si no se confirma en 60 s (30 s si se recogió en una escucha larga), el trabajo vuelve a la cola (el agente puede pedir más tiempo para lotes largos). La escucha larga nota que el agente se ha ido (escribe un espacio por segundo) y entonces no recoge nada. El agente guarda en disco los trabajos impresos de las últimas 24 h y nunca los repite. Confirmar es idempotente.
 - **T5.** Un fallido se reintenta a los 2, 5 y 15 s, sin pasar su caducidad.
-- **T6.** Caducidad: cajón 15 s, ticket 2 min, etiquetas 24 h. Lo caducado no se imprime. Si un trabajo de cajón sigue en la cola del sistema pasados sus 15 s, el agente lo cancela.
-- **T7.** Prioridad: ticket y cajón pasan por delante de las etiquetas. Un lote de etiquetas se puede interrumpir entre etiqueta y etiqueta.
-- **T8.** El agente solo escribe en sus destinos configurados en el propio equipo; el servidor no puede elegir impresora, ruta ni dispositivo. El trabajo `drawer` no lleva datos: el pulso ESC p lo genera el agente. Límites: 1 MB por trabajo, 500 etiquetas por trabajo, una apertura de cajón cada 5 s.
+- **T6.** Caducidad: cajón 15 s, ticket 2 min, etiquetas 24 h. Lo caducado no se imprime. Un «hecho» de un ticket o una etiqueta con su `claim_token` hasta 30 s después de caducar se acepta (sí se imprimió); el cajón, no. Si un trabajo de cajón sigue en la cola del sistema pasados sus 15 s, el agente lo cancela.
+- **T7.** Prioridad: ticket y cajón pasan por delante de las etiquetas. Un lote de etiquetas se interrumpe entre tira y tira (10 etiquetas como mucho).
+- **T8.** El agente solo escribe en sus destinos configurados en el propio equipo; el servidor no puede elegir impresora, ruta ni dispositivo. El trabajo `drawer` no lleva datos: el pulso ESC p lo genera el agente. Límites: 1 MB por trabajo, 10 etiquetas por trabajo (L6), una apertura de cajón cada 5 s.
 - **T9.** Sin caja resuelta en la sesión no se crea el trabajo (400 `terminal_not_resolved`); nunca se usa la caja 1 por defecto.
 - **T10.** La reimpresión sale por la caja que la pide.
 - **T11.** El cajón solo se abre desde el TPV (venta en efectivo o mixto, o «Abrir cajón»). Cada apertura guarda usuario, caja, motivo (venta nº o botón) y resultado. Este registro no se borra con el historial.
@@ -109,7 +110,7 @@ Para ello, un programa pequeño (el **agente**) se instala en el ordenador de ca
 ### 5.3 En la caja
 - **C1.** La pantalla de cobro muestra «Imprimiendo ticket…» y después:
   - «Ticket impreso» o «Ticket enviado», según T3;
-  - «La impresora no está conectada», si el agente no lo recoge en 15 s;
+  - «La impresora no está conectada», si a los 15 s no está hecho (aunque se haya recogido);
   - «La impresora tiene un problema: sin papel» u otro motivo, si el trabajo falla.
 - **C2.** En los dos últimos casos hay dos botones grandes (mínimo 48 px): «Reintentar» y «Descargar PDF». Si se cierra el cobro antes, el aviso queda en la pantalla de venta con «Reimprimir último ticket».
 - **C3.** Si la apertura del cajón no se confirma en 5 s: «El cajón no se ha abierto. Ábrelo con la llave.» en ámbar, junto al cambio.
@@ -122,9 +123,9 @@ Para ello, un programa pequeño (el **agente**) se instala en el ordenador de ca
 - **L3.** Contenido: nombre del producto en un máximo de 2 líneas; combinación («M · Azul»); precio actual con IVA en grande («23,14 €»), ya con la oferta vigente y sin precio tachado; código de barras y su texto. Refleja el precio de la última sincronización.
 - **L4.** Código: el `ean13` de la combinación y, si no hay, el del producto. Se valida el dígito de control: 13 cifras EAN-13, 8 EAN-8, 12 UPC-A. Si no es válido o no existe, la referencia en Code128. Si el código no cabe con un módulo mínimo de 0,25 mm, o no hay ni EAN ni referencia, no se imprime y se avisa con el motivo.
 - **L5.** En la TM-T20: ancho completo (72 mm, 576 puntos a 203 ppp), alto configurable de 25 a 60 mm (30 mm por defecto).
-- **L6.** En la TM-T20 las etiquetas de un trabajo salen en una tira, separadas por una línea de puntos, con un solo corte al final. Opción «cortar cada etiqueta» desactivada por defecto.
+- **L6.** En la TM-T20, hasta 10 etiquetas por tira; cada tira con su corte. Cada trabajo es una tira: las etiquetas separadas por una línea de puntos y un corte al final (200 etiquetas, 20 tiras). Opción «cortar cada etiqueta» desactivada por defecto.
 - **L7.** ESC/POS: códigos con los comandos de la impresora y tabla de caracteres 16 (WPC1252) para «€», como el ticket.
-- **L8.** Límites: 100 por línea y 500 por trabajo; más se reparte en varios trabajos. Ajustes → Cajas: «Imprimir etiqueta de prueba».
+- **L8.** Límites: 100 por línea y 10 por trabajo (una tira, L6); más se reparte en varios trabajos. Ajustes → Cajas: «Imprimir etiqueta de prueba».
 - **L9.** Al reconectar con etiquetas pendientes, el TPV pregunta «Hay N etiquetas pendientes. ¿Imprimirlas?».
 - **L10 (fase 2).** ZPL (`^CI28`, `^BE`, `^BC`) y TSPL (`CODEPAGE 1252`, `BARCODE "EAN13"`/`"128"`, `SIZE`, `GAP`/`BLINE`, `DENSITY`), resolución 203 o 300 ppp, plantillas 50×30 y 40×25 y medidas a mano, con calibración inicial. Impresoras con driver (Brother QL, Dymo) mediante el driver del sistema.
 
@@ -179,7 +180,7 @@ Para ello, un programa pequeño (el **agente**) se instala en el ordenador de ca
 | Método | Ruta | Petición | Respuesta | Códigos |
 |---|---|---|---|---|
 | POST | `/api/agent/v1/pair` | `{code, hostname, os, version}` | `{key, terminal_id, terminal_name}` | 201; 422 `pairing_code_invalid`; 429 |
-| GET | `/api/agent/v1/jobs?wait=0..20` | — | `{jobs:[{id, type, target, payload_b64, sha256, claim_token, expires_at}], poll_after_ms}` | 200; 401 `agent_key_invalid`; 426 `agent_update_required`; 429 |
+| GET | `/api/agent/v1/jobs?wait=0..20` | — | `{jobs:[{id, type, target, payload_b64, sha256, claim_token, expires_at}], poll_after_ms, server_time_ms}` | 200; 401 `agent_key_invalid`; 426 `agent_update_required`; 429 |
 | POST | `/api/agent/v1/jobs/{id}/result` | `{claim_token, status: done\|failed, error_code?, error?}` | `{status}` | 200 (también repetido); 404; 409 `claim_stale`; 410 `job_expired` |
 | POST | `/api/agent/v1/jobs/{id}/extend` | `{claim_token}` | `{lease_until}` | 200; 409 |
 | PUT | `/api/agent/v1/status` | `{version, hostname, printers:[{target, name, state, detail}]}` | — | 204; 401 |
@@ -206,9 +207,9 @@ Para ello, un programa pequeño (el **agente**) se instala en el ordenador de ca
 
 - **AC1.** Con el agente de Linux en esta máquina en modo directo USB: una venta en efectivo imprime el ticket en la TM-T20 y abre el cajón en menos de 2 s.
 - **AC2.** Con el agente parado: la venta se cobra, a los 15 s se ofrece el PDF y el aviso del cajón aparece a los 5 s. Si el agente arranca al minuto, el ticket se imprime y el cajón no se abre; si arranca a los 3 minutos, no se imprime nada.
-- **AC3.** Emparejar con un código caducado, usado o tras 5 fallos falla; con uno válido funciona una sola vez. Desconectar en Ajustes corta el agente en la siguiente petición.
+- **AC3.** Emparejar con un código caducado, usado o tras 20 fallos en 10 minutos falla; con uno válido funciona una sola vez. Desconectar en Ajustes corta el agente en la siguiente petición.
 - **AC4.** Un agente de la caja A no puede ver ni confirmar trabajos de la caja B.
-- **AC5.** Imprimir 10 etiquetas de una camiseta M azul desde la ficha: salen en una tira con un solo corte, con su EAN (o la referencia en Code128) y el precio con IVA; la pistola de la tienda las lee.
+- **AC5.** Imprimir 10 etiquetas de una camiseta M azul desde la ficha: salen en una tira con un solo corte (11 serían dos tiras), con su EAN (o la referencia en Code128) y el precio con IVA; la pistola de la tienda las lee.
 - **AC6.** Etiquetas ESC/POS comprobadas con ficheros de referencia exactos en las pruebas. (Fase 2: ZPL y TSPL igual, y ZPL en un visor.)
 - **AC7.** Fase 1: con la cola de Windows o CUPS en pausa o sin impresora, Ajustes muestra el problema. Fase 2: sin papel en la TM-T20 en modo directo USB, Ajustes dice «Impresora sin papel» y el icono se pone rojo.
 - **AC8.** Fase 2: una actualización con firma inválida o versión anterior se rechaza; una válida se instala solo con la caja cerrada; si no arranca, vuelve a la anterior.

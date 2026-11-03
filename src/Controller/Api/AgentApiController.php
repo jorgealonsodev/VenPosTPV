@@ -9,10 +9,12 @@ use Symfony\Component\Clock\ClockInterface;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 use Symfony\Component\HttpKernel\Attribute\AsController;
 use Symfony\Component\Routing\Attribute\Route;
 use VenPosTPV\Service\PrintAgent\AgentRegistry;
 use VenPosTPV\Service\PrintAgent\AgentReleasePolicy;
+use VenPosTPV\Service\PrintAgent\LongPollLink;
 use VenPosTPV\Service\PrintAgent\PairingCodeInvalidException;
 use VenPosTPV\Service\PrintAgent\PrintJobException;
 use VenPosTPV\Service\PrintAgent\PrintJobQueue;
@@ -26,6 +28,11 @@ use VenPosTPV\Service\PrintAgent\RateLimiter;
  * `Cache-Control: no-store`. The key, the pairing code and the Authorization
  * header are never logged (E8). Every authenticated call records the agent's last
  * use and IP (S1).
+ *
+ * A long poll that finds nothing at once answers 200 straight away and streams:
+ * one space per second while it waits (so a client that has gone is noticed and
+ * no job is claimed into a dead connection), then the JSON body. Its claims get
+ * the 30 s lease of PrintJobQueue::LONG_POLL_LEASE_SECONDS.
  */
 #[AsController]
 final class AgentApiController
@@ -44,6 +51,7 @@ final class AgentApiController
         private readonly RateLimiter $limiter,
         private readonly AgentReleasePolicy $releases,
         private readonly ClockInterface $clock,
+        private readonly LongPollLink $link = new LongPollLink(),
     ) {
     }
 
@@ -89,26 +97,60 @@ final class AgentApiController
 
             $wait = filter_var($request->query->get('wait', '0'), \FILTER_VALIDATE_INT);
             $wait = $wait === false ? 0 : max(0, min(self::MAX_WAIT_SECONDS, $wait));
-            $deadline = $this->clock->now()->getTimestamp() + $wait;
+            $terminalId = $agent['terminal_id'];
+            $lease = $wait > 0 ? PrintJobQueue::LONG_POLL_LEASE_SECONDS : PrintJobQueue::LEASE_SECONDS;
 
-            while (true) {
-                $jobs = $this->jobs->claim($agent['terminal_id']);
-                if ($jobs !== [] || $this->clock->now()->getTimestamp() >= $deadline) {
-                    break;
-                }
-                $this->clock->sleep(1);
-                // A key revoked while waiting is cut at once (E5).
-                if (!$this->agents->isActive($agent['terminal_id'], $agent['key'])) {
-                    return $this->keyInvalid();
-                }
+            $jobs = $this->jobs->claim($terminalId, PrintJobQueue::CLAIM_LIMIT, $lease);
+            if ($jobs !== [] || $wait === 0) {
+                return $this->json($this->jobsBody($jobs, $wait));
             }
 
-            return $this->json([
-                'jobs' => $jobs,
-                // Ask again at once after jobs or a long poll; a short poll waits 2 s.
-                'poll_after_ms' => $jobs !== [] || $wait > 0 ? 0 : 2000,
+            $deadline = $this->clock->now()->getTimestamp() + $wait;
+            $key = $agent['key'];
+            $response = new StreamedResponse(function () use ($terminalId, $key, $lease, $wait, $deadline): void {
+                $this->link->hold();
+                $jobs = [];
+                while ($this->clock->now()->getTimestamp() < $deadline) {
+                    $this->clock->sleep(1);
+                    // The agent has gone: nothing is claimed into a dead connection.
+                    if (!$this->link->alive()) {
+                        return;
+                    }
+                    // A key revoked while waiting gets nothing; its next request gets 401 (E5).
+                    if (!$this->agents->isActive($terminalId, $key)) {
+                        break;
+                    }
+                    $jobs = $this->jobs->claim($terminalId, PrintJobQueue::CLAIM_LIMIT, $lease);
+                    if ($jobs !== []) {
+                        break;
+                    }
+                }
+                echo json_encode($this->jobsBody($jobs, $wait), \JSON_THROW_ON_ERROR);
+            }, Response::HTTP_OK, [
+                'Content-Type' => 'application/json',
+                // Plesk's nginx passes each space on at once, so it notices a client that has gone.
+                'X-Accel-Buffering' => 'no',
             ]);
+
+            return $this->stamped($response);
         });
+    }
+
+    /**
+     * @param list<array<string, mixed>> $jobs
+     *
+     * @return array{jobs: list<array<string, mixed>>, poll_after_ms: int, server_time_ms: int}
+     */
+    private function jobsBody(array $jobs, int $wait): array
+    {
+        return [
+            'jobs' => $jobs,
+            // Ask again at once after jobs or a long poll; a short poll waits 2 s.
+            'poll_after_ms' => $jobs !== [] || $wait > 0 ? 0 : 2000,
+            // The server clock when the body is written: the Date header of a streamed
+            // answer is up to 20 s older. The agent corrects its clock skew with it.
+            'server_time_ms' => (int) $this->clock->now()->format('Uv'),
+        ];
     }
 
     /** {claim_token, status: done|failed, error_code?, error?} → {status}. */

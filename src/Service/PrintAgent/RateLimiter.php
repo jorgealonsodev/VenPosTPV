@@ -48,6 +48,22 @@ class RateLimiter
         return is_numeric($count) ? (int) $count : 0;
     }
 
+    /**
+     * Events counted for this scope and subject in the windows of the last
+     * `$seconds` (whole minutes, the current one included). PrintRetention keeps an hour.
+     */
+    public function countWithin(string $scope, string $subject, int $seconds): int
+    {
+        $windows = max(1, intdiv($seconds, self::WINDOW_SECONDS));
+        $current = new \DateTimeImmutable($this->windowStart());
+        $count = $this->connection->fetchOne(
+            'SELECT COALESCE(SUM(count), 0) FROM rate_limit WHERE rate_key = ? AND window_start > ? AND window_start <= ?',
+            [$this->key($scope, $subject), $current->modify(sprintf('-%d seconds', $windows * self::WINDOW_SECONDS))->format('Y-m-d H:i:s'), $current->format('Y-m-d H:i:s')]
+        );
+
+        return is_numeric($count) ? (int) $count : 0;
+    }
+
     private function key(string $scope, string $subject): string
     {
         // The subject (an IP) is hashed so the key has a fixed length.

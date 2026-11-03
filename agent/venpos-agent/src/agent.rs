@@ -36,6 +36,7 @@ pub fn run(paths: &Paths, shutdown: &Arc<Shutdown>) -> Result<(), Failure> {
             key_store: KeyStore::new(paths.key_file.clone()),
             proxy: ProxyMode::System,
             restart: Some(Arc::clone(shutdown)),
+            allow_http_localhost: false,
         }),
         printer: Arc::clone(&printer),
         config: Arc::clone(&shared),

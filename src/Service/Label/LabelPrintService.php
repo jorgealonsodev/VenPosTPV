@@ -14,8 +14,10 @@ use VenPosTPV\Service\PrintAgent\TerminalNotResolvedException;
 /**
  * Prints labels on a till (docs/prd/agente-impresion.md L1-L9, T2, T7, T8).
  *
- * - At most 100 labels per line and 500 per job (L8, T8); more labels make several
- *   jobs, each one strip with a single cut (L6).
+ * - At most 100 labels per line (L8) and 10 per job: each job is one strip with
+ *   dotted separators and its own single cut (L6, amended "Tiras de 10 con corte"),
+ *   so a ticket waits at most one strip behind a long batch (T7, AC14): 200 labels
+ *   make 20 jobs. "Cortar cada etiqueta" still cuts every label.
  * - A till with the print agent gets `label` jobs (target `label`); the queue hands
  *   tickets and the drawer out first (T7). A job's `source_ref` is its label count.
  * - When the agent is not connected the jobs are created held: `pending` with
@@ -27,7 +29,8 @@ use VenPosTPV\Service\PrintAgent\TerminalNotResolvedException;
 class LabelPrintService
 {
     public const MAX_PER_LINE = 100;
-    public const MAX_PER_JOB = 500;
+    /** Labels per job, i.e. per strip with its cut (L6). */
+    public const LABELS_PER_JOB = 10;
     public const MAX_PER_REQUEST = 5000;
     public const SOURCE = 'label';
     public const TEST_SOURCE = 'label_test';
@@ -225,7 +228,7 @@ class LabelPrintService
     private function send(int $terminalId, PrinterConfig $config, array $labels, string $source, ?int $userId, bool $holdWhenOffline): array
     {
         $settings = $this->settings->forTerminal($terminalId);
-        $chunks = array_chunk($labels, self::MAX_PER_JOB);
+        $chunks = array_chunk($labels, self::LABELS_PER_JOB);
 
         if ($config->usesAgent()) {
             $hold = $holdWhenOffline && !$this->agents->statusOf($terminalId)['connected'];

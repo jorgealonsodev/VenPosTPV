@@ -283,6 +283,8 @@ fn pair_failure(e: PairError) -> Failure {
         PairError::TooManyAttempts => api_failure(ApiError::RateLimited { retry_after: None }),
         PairError::Unreachable(api) | PairError::Api(api) => api_failure(api),
         PairError::Key(k) => admin_hint(k),
+        // Only the local channel refuses another TPV; the CLI runs as administrator.
+        e @ PairError::OtherServer => Failure::new(ExitCode::Other, e.to_string()),
     }
 }
 

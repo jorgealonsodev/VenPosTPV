@@ -86,6 +86,10 @@ pub struct Pairing {
     pub proxy: ProxyMode,
     /// Restarted after a successful pairing so the job loop uses the new server and key.
     pub restart: Option<Arc<Shutdown>>,
+    /// Plain HTTP to localhost, for tests only: the service always sets `false`, so
+    /// the local channel only pairs over HTTPS (E11). The CLI keeps its own
+    /// localhost exception for development.
+    pub allow_http_localhost: bool,
 }
 
 pub struct Handler {
@@ -190,15 +194,21 @@ impl Handler {
     }
 
     /// Any local user who can open the channel may pair: the single-use
-    /// code from a TPV administrator is the authorization. Logged without
-    /// the code.
+    /// code from a TPV administrator is the authorization. Only over HTTPS and
+    /// only with the TPV already configured, if any (E11): changing TPV needs
+    /// the installer as administrator. Logged without the code.
     fn pair(&self, server: &str, code: &str) -> Response {
         let Some(p) = &self.pairing else {
             return Response::err("este agente no puede emparejarse desde el canal local");
         };
         tracing::info!("emparejado pedido desde el canal local");
+        let current = self.config.read().unwrap_or_else(|e| e.into_inner()).server_url.clone();
         let result = crate::pairing::strict_code(code)
-            .and_then(|code| crate::pairing::pair(server, &code, &self.hostname, p.proxy, &p.key_store));
+            .and_then(|code| {
+                crate::pairing::local_channel_server(server, current.as_deref(), p.allow_http_localhost)
+                    .map(|server| (code, server))
+            })
+            .and_then(|(code, server)| crate::pairing::pair(&server, &code, &self.hostname, p.proxy, &p.key_store));
         let paired = match result {
             Ok(paired) => paired,
             Err(e) => {

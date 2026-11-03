@@ -6,7 +6,7 @@
  *
  * - ticket: every second for 20 s, then every 5 s until the 2-minute life of a
  *   ticket (T6), so a ticket the agent prints late still clears the warning (C5).
- *   Not picked up in 15 s: "La impresora no está conectada". Failed: "La impresora
+ *   Not done in 15 s (claimed or not): "La impresora no está conectada". Failed: "La impresora
  *   tiene un problema: <motivo>". Done means handed to the queue or device (T3):
  *   "Ticket enviado", never "Ticket impreso", because the printer does not confirm.
  * - drawer: every second; not opened in 5 s: the amber "Ábrelo con la llave" warning.
@@ -167,11 +167,10 @@ const usePrintJobs = (function () {
                 return;
             }
 
-            if (pickedUp(remote)) {
-                if (job.phase === 'offline') setPhase(job, 'printing');
-            } else if (elapsed >= OFFLINE_MS) {
-                setPhase(job, 'offline');
-            }
+            // Not done in 15 s: not connected, even when claimed. A stopped agent's last
+            // long poll may claim it into a dead connection (C1). The job is left
+            // alone: if it prints later the notice clears (C5).
+            if (elapsed >= OFFLINE_MS) setPhase(job, 'offline');
             if (elapsed >= TICKET_LIFE_MS) {
                 if (job.phase === 'printing') setPhase(job, 'failed', reasonText('no_answer'));
                 return;

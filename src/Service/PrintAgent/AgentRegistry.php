@@ -16,19 +16,26 @@ use Symfony\Component\Clock\NativeClock;
  *   does not reveal it.
  * - The agent sends the code once: in one transaction the code is marked used and
  *   the till's key (256 random bits) is created; only its SHA-256 is stored (E3).
- *   Pairing again replaces the previous key (E5). A failed attempt counts against
- *   every live code, and 5 failures void a code (E7).
+ *   Pairing again replaces the previous key (E5). Failed attempts are counted
+ *   across all IPs: 20 in 10 minutes void every live code of every till (E7); the
+ *   per-IP limit (5 per minute, 429) is in AgentApiController.
  * - Each key belongs to one till (E4) and never expires (E6); revoking it cuts the
  *   agent at once (E5). Every authenticated call records the last use and IP (S1).
  */
 class AgentRegistry
 {
     public const CODE_TTL_SECONDS = 600;
-    public const MAX_CODE_FAILURES = 5;
+    /** E7: failed pairing attempts from all IPs within FAILURE_WINDOW_SECONDS that void the live codes. */
+    public const MAX_FAILURES = 20;
+    public const FAILURE_WINDOW_SECONDS = 600;
+    /** failed_attempts of a voided code. */
+    private const VOIDED = 255;
+    private const FAILURE_SCOPE = 'agent_pair_failure';
     public const CONNECTED_SECONDS = 90;
     private const KEY_PATTERN = '/\A[A-Za-z0-9_-]{43}\z/';
 
     private readonly ClockInterface $clock;
+    private readonly RateLimiter $failures;
 
     public function __construct(
         private readonly Connection $connection,
@@ -36,6 +43,7 @@ class AgentRegistry
         ?ClockInterface $clock = null,
     ) {
         $this->clock = $clock ?? new NativeClock();
+        $this->failures = new RateLimiter($connection, $this->clock);
     }
 
     /**
@@ -93,7 +101,7 @@ class AgentRegistry
                 'SELECT id, terminal_id, created_by_user_id FROM agent_pairing
                  WHERE code_hash = ? AND used_at IS NULL AND expires_at > ? AND failed_attempts < ?
                  ORDER BY id DESC LIMIT 1 FOR UPDATE',
-                [$this->codeHash($code), $now, self::MAX_CODE_FAILURES]
+                [$this->codeHash($code), $now, self::VOIDED]
             );
             if ($pairing === false) {
                 return null;
@@ -241,12 +249,19 @@ class AgentRegistry
         ];
     }
 
-    /** E7: a failed attempt counts against every live code; 5 failures void it. */
+    /**
+     * E7: failed attempts are counted across all IPs; at 20 within 10 minutes every
+     * live code of every till is voided (an administrator makes a new one).
+     */
     private function countFailure(): void
     {
+        $this->failures->hit(self::FAILURE_SCOPE, 'all');
+        if ($this->failures->countWithin(self::FAILURE_SCOPE, 'all', self::FAILURE_WINDOW_SECONDS) < self::MAX_FAILURES) {
+            return;
+        }
         $this->connection->executeStatement(
-            'UPDATE agent_pairing SET failed_attempts = failed_attempts + 1 WHERE used_at IS NULL AND expires_at > ? AND failed_attempts < 255',
-            [$this->clock->now()->format('Y-m-d H:i:s')]
+            'UPDATE agent_pairing SET failed_attempts = ? WHERE used_at IS NULL AND expires_at > ?',
+            [self::VOIDED, $this->clock->now()->format('Y-m-d H:i:s')]
         );
     }
 

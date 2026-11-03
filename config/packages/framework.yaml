@@ -1,0 +1,12 @@
+# Behind a reverse proxy (Plesk's nginx in front of Apache) every request comes
+# from the proxy. TRUSTED_PROXIES lists the proxies to trust, comma separated
+# (e.g. "127.0.0.1,::1"; Symfony also accepts "private_ranges" or "REMOTE_ADDR");
+# their X-Forwarded-For and X-Forwarded-Proto then give the real client IP and
+# scheme, which the print agent's rate limits and last IP use (PRD E6, E7).
+# Empty or unset (the default): no proxy is trusted, as before.
+parameters:
+    env(TRUSTED_PROXIES): ''
+
+framework:
+    trusted_proxies: '%env(TRUSTED_PROXIES)%'
+    trusted_headers: ['x-forwarded-for', 'x-forwarded-proto']
