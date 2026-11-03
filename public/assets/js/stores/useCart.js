@@ -89,9 +89,7 @@ const useCart = (function () {
     }
 
     function add(product) {
-        if (product.stock !== undefined && product.stock <= 0) {
-            return false;
-        }
+        // PRD V4: without local stock the sale is still allowed; the screen warns.
         // For combinations, use a compound key so each variant is a separate line
         const combinationId = product.selected_combination_id || 0;
         const idx = cart.lines.findIndex(l =>

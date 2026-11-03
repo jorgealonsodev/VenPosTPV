@@ -68,9 +68,8 @@ const SaleScreen = {
         }
 
         function addProduct(p) {
-            if (p.stock !== undefined && p.stock <= 0) {
-                notify('Sin stock disponible', 'var(--red)');
-                return;
+            if (p.stock !== undefined && p.stock !== null && p.stock <= 0) {
+                notify('Sin stock en el TPV: se vende igualmente', 'var(--orange)');
             }
             const combinationId = p.selected_combination_id || 0;
             const combination = combinationId && Array.isArray(p.combinations)

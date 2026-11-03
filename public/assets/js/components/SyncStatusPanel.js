@@ -132,16 +132,6 @@ const SyncStatusPanel = {
                     &#9888; Ver incidencias
                 </button>
 
-                <div style="display:flex; gap:10px;">
-                    <div style="flex:1; padding:10px; background:var(--surface2); border-radius:10px; text-align:center;">
-                        <div style="font-size:12px; color:var(--text3); margin-bottom:2px;">Pendientes</div>
-                        <div style="font-size:18px; font-weight:700; color:var(--text);">{{ data && data.pending_ops !== undefined ? data.pending_ops : '—' }}</div>
-                    </div>
-                    <div style="flex:1; padding:10px; background:var(--surface2); border-radius:10px; text-align:center;">
-                        <div style="font-size:12px; color:var(--text3); margin-bottom:2px;">En proceso</div>
-                        <div style="font-size:18px; font-weight:700; color:var(--text);">{{ data && data.queued_messages !== undefined ? data.queued_messages : '—' }}</div>
-                    </div>
-                </div>
             </div>
         </div>
     `

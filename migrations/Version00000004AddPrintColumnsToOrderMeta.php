@@ -22,6 +22,14 @@ final class Version00000004AddPrintColumnsToOrderMeta extends AbstractMigration
             'Migration can only be executed safely on MySQL/MariaDB.'
         );
 
+        // install.sql already creates these columns on fresh installs.
+        $hasColumn = (int) $this->connection->fetchOne(
+            "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'order_meta' AND COLUMN_NAME = 'print_attempts'"
+        ) > 0;
+        if ($hasColumn) {
+            return;
+        }
+
         $this->addSql('
             ALTER TABLE order_meta
             ADD COLUMN print_attempts INT UNSIGNED NOT NULL DEFAULT 0,

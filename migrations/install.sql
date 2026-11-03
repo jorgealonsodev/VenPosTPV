@@ -108,6 +108,8 @@ CREATE TABLE IF NOT EXISTS order_meta (
     user_id INT UNSIGNED NOT NULL,
     payment_breakdown JSON NOT NULL,
     printed TINYINT(1) NOT NULL DEFAULT 0,
+    print_attempts INT UNSIGNED NOT NULL DEFAULT 0,
+    printed_at DATETIME NULL,
     synced TINYINT(1) NOT NULL DEFAULT 1,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uk_order_meta_reference (reference),
