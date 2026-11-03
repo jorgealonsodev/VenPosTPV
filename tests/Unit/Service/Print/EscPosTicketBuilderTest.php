@@ -259,4 +259,35 @@ final class EscPosTicketBuilderTest extends TestCase
 
         self::assertStringNotContainsString("\x1dk\x49", $this->createBuilder()->build($ticket));
     }
+
+    private function withTicketCode(string $mode): TicketData
+    {
+        $t = $this->createTicketData();
+
+        return new TicketData(
+            orderId: $t->orderId, reference: $t->reference, storeName: $t->storeName, storeAddress: $t->storeAddress,
+            ticketHeader: $t->ticketHeader, ticketFooter: $t->ticketFooter, ticketLogo: $t->ticketLogo, ticketWidthPx: $t->ticketWidthPx,
+            date: $t->date, cashierName: $t->cashierName, lines: $t->lines, subtotal: $t->subtotal, tax: $t->tax, total: $t->total,
+            paymentMethod: $t->paymentMethod, amountTendered: $t->amountTendered, changeDue: $t->changeDue, verificationUrl: $t->verificationUrl,
+            ticketCode: $mode,
+        );
+    }
+
+    public function testTicketCodeSettingChoosesBarcodeQrOrBoth(): void
+    {
+        $qr = "\x1d(k";
+        $barcode = "\x1dk";
+
+        $barcodeOnly = $this->createBuilder()->build($this->withTicketCode('barcode'));
+        $this->assertStringContainsString($barcode, $barcodeOnly);
+        $this->assertStringNotContainsString($qr, $barcodeOnly);
+
+        $qrOnly = $this->createBuilder()->build($this->withTicketCode('qr'));
+        $this->assertStringContainsString($qr, $qrOnly);
+        $this->assertStringNotContainsString($barcode, $qrOnly);
+
+        $both = $this->createBuilder()->build($this->withTicketCode('both'));
+        $this->assertStringContainsString($qr, $both);
+        $this->assertStringContainsString($barcode, $both);
+    }
 }

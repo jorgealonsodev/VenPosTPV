@@ -96,6 +96,7 @@ const SettingsModal = {
                     ticket_logo: terminal.value.ticket_logo,
                     ticket_width_px: terminal.value.ticket_width_px,
                 };
+                if (terminal.value.ticket_code) payload.ticket_code = terminal.value.ticket_code;
                 if (terminal.value.refund_window_days != null && terminal.value.refund_window_days !== '') {
                     payload.refund_window_days = Number(terminal.value.refund_window_days);
                 }
@@ -535,6 +536,17 @@ const SettingsModal = {
                                     <input v-model.number="terminal.ticket_width_px" type="number" min="100" max="600" placeholder="302 (80mm)"
                                         style="width:100%; max-width:200px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box;">
                                     <div style="font-size:12px; color:var(--text3); margin-top:4px;">Deja vacío para usar 80mm por defecto</div>
+                                </div>
+
+                                <div>
+                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Código del ticket</label>
+                                    <select v-model="terminal.ticket_code"
+                                        style="width:100%; max-width:320px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; cursor:pointer; box-sizing:border-box;">
+                                        <option value="barcode">Código de barras</option>
+                                        <option value="qr">Código QR</option>
+                                        <option value="both">Ambos</option>
+                                    </select>
+                                    <div style="font-size:12px; color:var(--text3); margin-top:4px;">Lo que se imprime al pie del ticket para escanearlo en devoluciones. Los lectores láser normales solo leen el código de barras.</div>
                                 </div>
 
                                 <div>

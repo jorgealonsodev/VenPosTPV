@@ -261,4 +261,29 @@ final class TicketPdfGeneratorTest extends TestCase
 
         self::assertSame('', $capturedContext['barcodePath'] ?? null);
     }
+
+    public function testPdfOnlyEmbedsTheChosenTicketCode(): void
+    {
+        $base = $this->createTicketData();
+        foreach (['barcode' => [false, true], 'qr' => [true, false], 'both' => [true, true]] as $mode => [$wantQr, $wantBarcode]) {
+            $context = null;
+            $twig = $this->createMock(\Twig\Environment::class);
+            $twig->method('render')->willReturnCallback(function (string $template, array $ctx) use (&$context): string {
+                $context = $ctx;
+
+                return '<html></html>';
+            });
+            $ticket = new TicketData(
+                orderId: $base->orderId, reference: 'REF-CODE', storeName: $base->storeName, storeAddress: $base->storeAddress,
+                ticketHeader: '', ticketFooter: '', ticketLogo: null, ticketWidthPx: null, date: $base->date, cashierName: $base->cashierName,
+                lines: $base->lines, subtotal: $base->subtotal, tax: $base->tax, total: $base->total, paymentMethod: $base->paymentMethod,
+                amountTendered: $base->amountTendered, changeDue: $base->changeDue, verificationUrl: $base->verificationUrl, ticketCode: $mode,
+            );
+
+            (new TicketPdfGenerator($twig))->generate($ticket);
+
+            $this->assertSame($wantQr, $context['qrPath'] !== '', $mode . ' qr');
+            $this->assertSame($wantBarcode, $context['barcodePath'] !== '', $mode . ' barcode');
+        }
+    }
 }

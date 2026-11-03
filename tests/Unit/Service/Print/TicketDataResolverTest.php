@@ -151,4 +151,20 @@ final class TicketDataResolverTest extends TestCase
         self::assertNotNull($result);
         self::assertSame('Cajero', $result->cashierName);
     }
+
+    public function testTicketCodeComesFromTheTerminalAndDefaultsToBarcode(): void
+    {
+        $order = ['ps_order_id' => 42, 'terminal_id' => 7, 'user_id' => 5, 'payment_breakdown' => json_encode(['reference' => 'R1', 'total' => 1.0, 'lines' => []]), 'created_at' => '2024-01-15 14:30:00'];
+        foreach ([['qr', 'qr'], ['both', 'both'], [false, 'barcode'], ['nonsense', 'barcode']] as [$stored, $expected]) {
+            $conn = $this->createMock(Connection::class);
+            $conn->method('fetchAssociative')->willReturnCallback(fn (string $sql) => str_contains($sql, 'FROM order_meta') ? $order : false);
+            $conn->method('fetchOne')->willReturnCallback(fn (string $sql) => str_contains($sql, 'ticket_code') ? $stored : false);
+            $verification = $this->createMock(TicketVerificationService::class);
+            $verification->method('buildVerificationUrl')->willReturn('http://v');
+
+            $ticket = (new TicketDataResolver($conn, $verification, 'Tienda', ''))->resolve(42);
+
+            $this->assertSame($expected, $ticket->ticketCode);
+        }
+    }
 }

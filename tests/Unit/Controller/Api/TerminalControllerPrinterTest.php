@@ -89,4 +89,15 @@ final class TerminalControllerPrinterTest extends TestCase
 
         $this->assertSame('Epson_TM-T20II', $data['printer_queue']);
     }
+
+    public function testTicketCodeSettingIsValidatedAndSaved(): void
+    {
+        [$controller, $updates] = $this->controllerCapturingUpdates();
+
+        $this->assertSame(Response::HTTP_UNPROCESSABLE_ENTITY, $controller->update(1, SessionRequest::json(['ticket_code' => 'datamatrix'], self::ADMIN))->getStatusCode());
+        $controller->update(1, SessionRequest::json(['ticket_code' => 'qr'], self::ADMIN));
+
+        $this->assertCount(1, $updates);
+        $this->assertSame('qr', $updates[0]['ticket_code']);
+    }
 }

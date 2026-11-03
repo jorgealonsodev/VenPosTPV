@@ -77,6 +77,7 @@ class TicketDataResolver
             amountTendered: $amountTendered,
             changeDue: $changeDue,
             verificationUrl: $this->verificationService->buildVerificationUrl($token),
+            ticketCode: $this->ticketCode((int) $row['terminal_id']),
         );
     }
 
@@ -180,6 +181,7 @@ class TicketDataResolver
             amountTendered: 0.0,
             changeDue: 0.0,
             verificationUrl: $this->verificationService->buildVerificationUrl($token),
+            ticketCode: $this->ticketCode((int) $refund['terminal_id']),
             creditNote: new CreditNoteInfo(
                 number: $number,
                 rectifiesReference: $withoutTicket ? 'Sin ticket' : $reference,
@@ -233,6 +235,14 @@ class TicketDataResolver
         $taxShare = is_numeric($ttc) && is_numeric($net) && (float) $ttc > 0 ? max(0.0, 1 - (float) $net / (float) $ttc) : 0.0;
 
         return [$name, $taxShare];
+    }
+
+    /** The terminal's choice of scan code; Code128 by default (1D scanners cannot read QR). */
+    private function ticketCode(int $terminalId): string
+    {
+        $mode = $this->connection->fetchOne('SELECT ticket_code FROM terminal WHERE id = ?', [$terminalId]);
+
+        return \in_array($mode, ['barcode', 'qr', 'both'], true) ? $mode : 'barcode';
     }
 
     private function cashierName(int $userId): string

@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS terminal (
     ticket_footer TEXT NULL,
     ticket_logo MEDIUMTEXT NULL,
     ticket_width_px INT NULL,
+    ticket_code VARCHAR(10) NOT NULL DEFAULT 'barcode',
     stock_sync_interval_seconds INT UNSIGNED NOT NULL DEFAULT 60,
     stock_push_interval_seconds INT UNSIGNED NOT NULL DEFAULT 0,
     refund_window_days INT UNSIGNED NOT NULL DEFAULT 30,

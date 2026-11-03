@@ -144,6 +144,7 @@ final class TestDatabase
         self::runMigration($connection, 'Version00000019CreateRefundTables');
         self::runMigration($connection, 'Version00000020CreateCreditNoteNumbering');
         self::runMigration($connection, 'Version00000021AddRefundWindowToTerminal');
+        self::runMigration($connection, 'Version00000025AddTicketCodeToTerminal');
         self::runMigration($connection, 'Version00000022AddVoucherToRefund');
     }
 

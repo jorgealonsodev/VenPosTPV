@@ -22,10 +22,10 @@ class TicketPdfGenerator
         // Images are embedded as data: URIs, never written to disk: the web server
         // user may not be allowed to write in the project, and then the QR, the
         // barcode and the logo silently disappeared from the PDF.
-        $qrPath = $this->qrDataUri($ticketData->verificationUrl);
+        $qrPath = $ticketData->showsQr() ? $this->qrDataUri($ticketData->verificationUrl) : '';
 
         // Code128 of the sale reference (sale and gift tickets only, not credit notes)
-        $barcodePath = $ticketData->creditNote === null ? $this->barcodeDataUri($ticketData->reference) : '';
+        $barcodePath = $ticketData->creditNote === null && $ticketData->showsBarcode() ? $this->barcodeDataUri($ticketData->reference) : '';
 
         $logoPath = '';
         if ($ticketData->ticketLogo !== null && preg_match('/^data:image\/(png|jpe?g|gif);base64,[A-Za-z0-9+\/=\s]+$/', $ticketData->ticketLogo)) {

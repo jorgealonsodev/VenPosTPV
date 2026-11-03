@@ -31,7 +31,7 @@ final class TerminalController
         }
 
         $row = $this->connection->fetchAssociative(
-            'SELECT id, ps_shop_id, name, printer_config, scanner_config, hotkeys, dataphone_mode, printer_type, store_address, ticket_header, ticket_footer, ticket_logo, ticket_width_px, stock_sync_interval_seconds, stock_push_interval_seconds, refund_window_days, active, created_at, updated_at FROM terminal WHERE id = ?',
+            'SELECT id, ps_shop_id, name, printer_config, scanner_config, hotkeys, dataphone_mode, printer_type, store_address, ticket_header, ticket_footer, ticket_logo, ticket_width_px, stock_sync_interval_seconds, stock_push_interval_seconds, refund_window_days, ticket_code, active, created_at, updated_at FROM terminal WHERE id = ?',
             [$id]
         );
 
@@ -161,6 +161,14 @@ final class TerminalController
                 return new JsonResponse(['error' => 'Intervalo de push no válido (0-3600)'], Response::HTTP_UNPROCESSABLE_ENTITY);
             }
             $fields['stock_push_interval_seconds'] = $seconds;
+        }
+
+        if (isset($body['ticket_code'])) {
+            $code = (string) $body['ticket_code'];
+            if (!\in_array($code, ['barcode', 'qr', 'both'], true)) {
+                return new JsonResponse(['error' => 'Código del ticket no válido'], Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
+            $fields['ticket_code'] = $code;
         }
 
         if (isset($body['refund_window_days'])) {

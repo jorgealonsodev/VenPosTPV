@@ -29,6 +29,18 @@ final class TicketData
         public readonly float $changeDue,
         public readonly string $verificationUrl,
         public readonly ?CreditNoteInfo $creditNote = null,
+        // Which scan code the ticket carries: 'barcode' (Code128), 'qr' or 'both'.
+        public readonly string $ticketCode = 'both',
     ) {
+    }
+
+    public function showsBarcode(): bool
+    {
+        return $this->ticketCode === 'barcode' || $this->ticketCode === 'both';
+    }
+
+    public function showsQr(): bool
+    {
+        return $this->ticketCode === 'qr' || $this->ticketCode === 'both';
     }
 }
