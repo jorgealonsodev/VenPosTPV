@@ -306,7 +306,7 @@ const SaleScreen = {
                         <icon name="coupon" :size="13" /> Crear cupón
                     </button>
                     <button v-if="session.role === 'admin'" @click="showSettings = true"
-                        title="Ajustes: empleados, terminal, impresora y datos del ticket"
+                        title="Ajustes: tienda, cajas, empleados y sincronización"
                         style="min-height:44px; display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;">
                         <span aria-hidden="true" style="font-size:15px; line-height:1;">⚙</span> Ajustes
                     </button>

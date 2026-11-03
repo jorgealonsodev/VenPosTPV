@@ -1,7 +1,8 @@
 /**
  * SettingsModal — Settings page with sidebar navigation (admin only).
- * Sections: Empleados, Terminal, Impresora, Sincronización.
- * Keeps all existing employee CRUD and terminal config APIs intact.
+ * Sections: Tienda (shop data, the same on every till), Cajas (each till's name,
+ * letter, printer and dataphone, which computer it is on, create a till),
+ * Empleados, Sincronización.
  */
 const SettingsModal = {
     emits: ['close'],
@@ -82,7 +83,50 @@ const SettingsModal = {
             }
         }
 
-        async function saveTerminal() {
+        // Shop data: saved on every till of the shop, so every till prints the same ticket header.
+        const SHOP_FIELDS = ['store_name', 'legal_name', 'tax_id', 'store_address', 'ticket_header', 'ticket_footer', 'ticket_logo', 'refund_window_days', 'ticket_code'];
+
+        function errorText(e, fallback) {
+            const match = /^HTTP (\d+): ([\s\S]*)$/.exec((e && e.message) || '');
+            if (match) {
+                try { return JSON.parse(match[2]).error || fallback; } catch (err) { return fallback; }
+            }
+            return e?.response?.data?.error || fallback;
+        }
+
+        function flash(text) {
+            success.value = text;
+            setTimeout(() => { success.value = ''; }, 2000);
+        }
+
+        async function saveShop() {
+            if (!terminal.value) return;
+            terminalSaving.value = true;
+            terminalError.value = '';
+            try {
+                const payload = {};
+                SHOP_FIELDS.forEach((field) => {
+                    const value = terminal.value[field];
+                    if (field === 'refund_window_days') {
+                        if (value != null && value !== '') payload[field] = Number(value);
+                    } else if (field === 'ticket_code') {
+                        if (value) payload[field] = value;
+                    } else if (field === 'ticket_logo') {
+                        payload[field] = value ?? null;
+                    } else {
+                        payload[field] = value ?? '';
+                    }
+                });
+                await ApiClient.terminalUpdate(terminal.value.id, payload);
+                flash('Datos de la tienda guardados en todas las cajas');
+            } catch (e) {
+                terminalError.value = errorText(e, 'Error al guardar los datos de la tienda');
+            } finally {
+                terminalSaving.value = false;
+            }
+        }
+
+        async function saveTill() {
             if (!terminal.value) return;
             terminalSaving.value = true;
             terminalError.value = '';
@@ -90,38 +134,106 @@ const SettingsModal = {
                 const payload = {
                     dataphone_mode: terminal.value.dataphone_mode,
                     printer_type: terminal.value.printer_type,
-                    store_address: terminal.value.store_address,
-                    store_name: terminal.value.store_name ?? '',
-                    legal_name: terminal.value.legal_name ?? '',
-                    tax_id: terminal.value.tax_id ?? '',
-                    ticket_header: terminal.value.ticket_header,
-                    ticket_footer: terminal.value.ticket_footer,
-                    ticket_logo: terminal.value.ticket_logo,
                     ticket_width_px: terminal.value.ticket_width_px,
                 };
-                if (terminal.value.ticket_code) payload.ticket_code = terminal.value.ticket_code;
-                // Only sent when set: a terminal without a letter can still save its other settings.
+                // Only sent when set: a till without a letter can still save its other settings.
                 const ticketLetter = String(terminal.value.ticket_letter ?? '').trim();
                 if (ticketLetter !== '') payload.ticket_letter = ticketLetter.toUpperCase();
-                if (terminal.value.refund_window_days != null && terminal.value.refund_window_days !== '') {
-                    payload.refund_window_days = Number(terminal.value.refund_window_days);
-                }
                 if (terminal.value.name != null) payload.name = terminal.value.name;
                 if (terminal.value.printer_ip != null) payload.printer_ip = terminal.value.printer_ip;
                 if (terminal.value.printer_port != null) payload.printer_port = terminal.value.printer_port;
                 if (terminal.value.printer_queue != null) payload.printer_queue = terminal.value.printer_queue;
 
                 await ApiClient.terminalUpdate(terminal.value.id, payload);
-                success.value = 'Configuración guardada';
-                setTimeout(() => { success.value = ''; }, 2000);
-                // Refresh session values so PaymentModal picks them up immediately
-                useSession.session.dataphoneMode = terminal.value.dataphone_mode;
-                useSession.session.printerType = terminal.value.printer_type;
+                flash('Caja guardada');
+                // This computer's till: PaymentModal picks the new values up at once.
+                if (terminal.value.id === useSession.session.terminalId) {
+                    useSession.session.dataphoneMode = terminal.value.dataphone_mode;
+                    useSession.session.printerType = terminal.value.printer_type;
+                }
+                await loadTills();
             } catch (e) {
-                terminalError.value = e?.response?.data?.error || 'Error al guardar configuración';
+                terminalError.value = errorText(e, 'Error al guardar la caja');
             } finally {
                 terminalSaving.value = false;
             }
+        }
+
+        // Cajas: every till of the shop and the computer it is on.
+        const tills = Vue.ref([]);
+        const tillsError = Vue.ref('');
+        const confirmMoveId = Vue.ref(null);
+        const newTill = Vue.reactive({ name: '', ticket_letter: '' });
+        const creatingTill = Vue.ref(false);
+
+        async function loadTills() {
+            tillsError.value = '';
+            try {
+                const resp = await ApiClient.get('/api/device');
+                tills.value = (resp && resp.data && resp.data.tills) || [];
+            } catch (e) {
+                tillsError.value = errorText(e, 'Error al cargar las cajas');
+            }
+        }
+
+        async function editTill(till) {
+            terminalLoading.value = true;
+            terminalError.value = '';
+            try {
+                const resp = await ApiClient.terminalGet(till.id);
+                terminal.value = resp.data || null;
+            } catch (e) {
+                terminalError.value = 'Error al cargar la caja';
+            } finally {
+                terminalLoading.value = false;
+            }
+        }
+
+        // "Pasar la caja a este equipo": the other computer is unlinked.
+        async function moveTillHere(till) {
+            if (till.device && !till.this_device && confirmMoveId.value !== till.id) {
+                confirmMoveId.value = till.id;
+                return false;
+            }
+            tillsError.value = '';
+            try {
+                const resp = await ApiClient.post('/api/device/link', { terminal_id: till.id, move: true });
+                useSession.rememberDeviceToken(resp && resp.data && resp.data.token);
+                confirmMoveId.value = null;
+                // The whole POS now works on another till: start again from it.
+                if (window.location && typeof window.location.reload === 'function') window.location.reload();
+                return true;
+            } catch (e) {
+                tillsError.value = errorText(e, 'No se pudo pasar la caja a este equipo');
+                return false;
+            }
+        }
+
+        async function createTill() {
+            tillsError.value = '';
+            const name = String(newTill.name || '').trim();
+            const letter = String(newTill.ticket_letter || '').trim().toUpperCase();
+            if (!name) { tillsError.value = 'Indica el nombre de la caja'; return false; }
+            if (!/^[A-Z]$/.test(letter)) { tillsError.value = 'La letra de caja debe ser una letra de la A a la Z'; return false; }
+            creatingTill.value = true;
+            try {
+                await ApiClient.post('/api/terminal', { name, ticket_letter: letter });
+                newTill.name = '';
+                newTill.ticket_letter = '';
+                flash('Caja creada');
+                await loadTills();
+                return true;
+            } catch (e) {
+                tillsError.value = errorText(e, 'Error al crear la caja');
+                return false;
+            } finally {
+                creatingTill.value = false;
+            }
+        }
+
+        function tillSeen(till) {
+            const seen = till.device && (till.device.last_seen_at || till.device.linked_at);
+            return seen ? String(seen).slice(0, 16) : '';
         }
 
         const logoError = Vue.ref('');
@@ -182,7 +294,7 @@ const SettingsModal = {
             syncError.value = '';
             try {
                 const seconds = parseInt(syncInterval.value, 10);
-                await ApiClient.terminalUpdate(terminal.value.id, { stock_sync_interval_seconds: seconds });
+                await ApiClient.terminalUpdate(useSession.session.terminalId || terminal.value.id, { stock_sync_interval_seconds: seconds });
                 useSession.session.stockSyncIntervalSeconds = seconds;
                 useSession.startStockSyncTimer();
                 success.value = 'Intervalo PS → TPV guardado';
@@ -200,7 +312,7 @@ const SettingsModal = {
             syncError.value = '';
             try {
                 const seconds = parseInt(syncPushInterval.value, 10);
-                await ApiClient.terminalUpdate(terminal.value.id, { stock_push_interval_seconds: seconds });
+                await ApiClient.terminalUpdate(useSession.session.terminalId || terminal.value.id, { stock_push_interval_seconds: seconds });
                 useSession.session.stockPushIntervalSeconds = seconds;
                 useSession.startStockPushTimer();
                 success.value = 'Intervalo TPV → PS guardado';
@@ -312,6 +424,7 @@ const SettingsModal = {
         Vue.onMounted(() => {
             loadEmployees();
             loadTerminal();
+            loadTills();
             loadSystemPrinters();
         });
 
@@ -322,7 +435,8 @@ const SettingsModal = {
             showCreateForm, createForm, createError, creating, handleCreate,
             editingId, editForm, editError, saving, startEdit, cancelEdit, handleSave,
             handleDeactivate, handleUnlock,
-            terminal, terminalLoading, terminalSaving, terminalError, saveTerminal,
+            terminal, terminalLoading, terminalSaving, terminalError, saveShop, saveTill,
+            tills, tillsError, confirmMoveId, newTill, creatingTill, loadTills, editTill, moveTillHere, createTill, tillSeen,
             handleLogoUpload, handleLogoDrop, handleLogoPaste, logoError, logoDragOver, removeLogo,
             syncInterval, syncPushInterval, syncSaving, syncPushSaving, syncError,
             syncNowRunning, syncLastResult,
@@ -356,17 +470,17 @@ const SettingsModal = {
                             onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=activeSection === 'empleados' ? 'var(--surface2)' : 'transparent'">
                             <icon name="user" :size="18"></icon> Empleados
                         </button>
-                        <button @click="activeSection = 'terminal'"
+                        <button @click="activeSection = 'tienda'"
                             style="min-height:48px; padding:0 16px; background:transparent; border:none; border-left:3px solid transparent; color:var(--text2); font-family:inherit; font-size:14px; text-align:left; cursor:pointer; display:flex; align-items:center; gap:10px; transition:background .15s;"
-                            :style="activeSection === 'terminal' ? 'background:var(--surface2); border-left-color:var(--green); color:var(--text); font-weight:600;' : ''"
-                            onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=activeSection === 'terminal' ? 'var(--surface2)' : 'transparent'">
-                            <icon name="cashier" :size="18"></icon> Terminal
+                            :style="activeSection === 'tienda' ? 'background:var(--surface2); border-left-color:var(--green); color:var(--text); font-weight:600;' : ''"
+                            onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=activeSection === 'tienda' ? 'var(--surface2)' : 'transparent'">
+                            <icon name="print" :size="18"></icon> Tienda
                         </button>
-                        <button @click="activeSection = 'impresora'"
+                        <button @click="activeSection = 'cajas'"
                             style="min-height:48px; padding:0 16px; background:transparent; border:none; border-left:3px solid transparent; color:var(--text2); font-family:inherit; font-size:14px; text-align:left; cursor:pointer; display:flex; align-items:center; gap:10px; transition:background .15s;"
-                            :style="activeSection === 'impresora' ? 'background:var(--surface2); border-left-color:var(--green); color:var(--text); font-weight:600;' : ''"
-                            onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=activeSection === 'impresora' ? 'var(--surface2)' : 'transparent'">
-                            <icon name="print" :size="18"></icon> Impresora
+                            :style="activeSection === 'cajas' ? 'background:var(--surface2); border-left-color:var(--green); color:var(--text); font-weight:600;' : ''"
+                            onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=activeSection === 'cajas' ? 'var(--surface2)' : 'transparent'">
+                            <icon name="cashier" :size="18"></icon> Cajas
                         </button>
                         <button @click="activeSection = 'sincronizacion'"
                             style="min-height:48px; padding:0 16px; background:transparent; border:none; border-left:3px solid transparent; color:var(--text2); font-family:inherit; font-size:14px; text-align:left; cursor:pointer; display:flex; align-items:center; gap:10px; transition:background .15s;"
@@ -480,79 +594,48 @@ const SettingsModal = {
                             </div>
                         </div>
 
-                        <!-- ==================== TERMINAL ==================== -->
-                        <div v-if="activeSection === 'terminal'">
-                            <div style="font-size:13px; font-weight:600; color:var(--text); margin-bottom:16px;">🖥 Configuración del terminal</div>
+                        <!-- ==================== TIENDA ==================== -->
+                        <div v-if="activeSection === 'tienda'">
+                            <div style="font-size:13px; font-weight:600; color:var(--text); margin-bottom:6px;">🏬 Datos de la tienda</div>
+                            <div style="font-size:12px; color:var(--text3); margin-bottom:16px;">Son los mismos en todas las cajas: se guardan en todas a la vez y todas imprimen el mismo ticket.</div>
                             <div v-if="terminalLoading" style="color:var(--text3); font-size:13px;">Cargando...</div>
-                            <div v-else-if="!terminal" style="color:var(--text3); font-size:13px;">No hay terminal activo.</div>
+                            <div v-else-if="!terminal" style="color:var(--text3); font-size:13px;">Este equipo no tiene caja asignada.</div>
                             <div v-else style="display:flex; flex-direction:column; gap:16px;">
                                 <div>
-                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Nombre del terminal</label>
-                                    <input v-model="terminal.name" type="text" placeholder="Terminal principal"
-                                        style="width:100%; max-width:320px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box;">
+                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Nombre de la tienda</label>
+                                    <input v-model="terminal.store_name" type="text" maxlength="120" placeholder="Moda Centro"
+                                        style="width:100%; max-width:420px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box;">
+                                    <div style="font-size:12px; color:var(--text3); margin-top:4px;">Nombre en grande arriba del ticket. Vacío: se usa la razón social.</div>
                                 </div>
                                 <div>
-                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Modo datáfono</label>
-                                    <select v-model="terminal.dataphone_mode"
-                                        style="width:100%; max-width:320px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; cursor:pointer; box-sizing:border-box;">
-                                        <option value="integrated">Integrado</option>
-                                        <option value="independent">Independiente</option>
-                                    </select>
-                                    <div style="font-size:12px; color:var(--text3); margin-top:4px;">Independiente: el cobro se hace manualmente fuera del TPV</div>
+                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Razón social</label>
+                                    <input v-model="terminal.legal_name" type="text" maxlength="120" placeholder="Mi Tienda Moda SL"
+                                        style="width:100%; max-width:420px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box;">
+                                    <div style="font-size:12px; color:var(--text3); margin-top:4px;">Nombre fiscal del titular. Se imprime en tickets y abonos si es distinto del nombre de la tienda.</div>
                                 </div>
                                 <div>
-                                    <button @click="saveTerminal" :disabled="terminalSaving"
-                                        style="padding:8px 20px; border-radius:9px; border:none; background:var(--green); color:#000; font-family:inherit; font-size:13px; font-weight:600; cursor:pointer;"
-                                        :style="terminalSaving ? 'opacity:0.6; cursor:not-allowed;' : ''">
-                                        {{ terminalSaving ? 'Guardando...' : 'Guardar' }}
-                                    </button>
-                                </div>
-                                <div v-if="terminalError" style="color:var(--red); font-size:12px;">{{ terminalError }}</div>
-                            </div>
-                        </div>
-
-                        <!-- ==================== IMPRESORA ==================== -->
-                        <div v-if="activeSection === 'impresora'">
-                            <div style="font-size:13px; font-weight:600; color:var(--text); margin-bottom:16px;">🖨 Configuración de impresora</div>
-                            <div v-if="terminalLoading" style="color:var(--text3); font-size:13px;">Cargando...</div>
-                            <div v-else-if="!terminal" style="color:var(--text3); font-size:13px;">No hay terminal activo.</div>
-                            <div v-else style="display:flex; flex-direction:column; gap:16px;">
-                                <div>
-                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Tipo de impresora</label>
-                                    <select v-model="terminal.printer_type"
-                                        style="width:100%; max-width:320px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; cursor:pointer; box-sizing:border-box;">
-                                        <option value="none">Sin impresora</option>
-                                        <option value="pdf">PDF</option>
-                                        <option value="escpos">ESC/POS (red)</option>
-                                        <option value="system">Impresora del sistema (USB)</option>
-                                    </select>
-                                </div>
-                                <div v-if="terminal.printer_type === 'system'">
-                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Impresora instalada en este equipo</label>
-                                    <select v-model="terminal.printer_queue"
-                                        style="width:100%; max-width:320px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; cursor:pointer; box-sizing:border-box;">
-                                        <option value="" disabled>Elige una impresora</option>
-                                        <option v-for="q in systemPrinters" :key="q" :value="q">{{ q }}</option>
-                                    </select>
-                                    <div style="font-size:12px; color:var(--text3); margin-top:4px;">Imprime el ticket directamente (con corte y apertura del cajón). Solo funciona si el TPV corre en el mismo ordenador que la impresora.</div>
-                                    <div v-if="systemPrinters.length === 0" style="font-size:12px; color:var(--red); margin-top:4px;">No se encuentran impresoras instaladas en este equipo.</div>
-                                </div>
-                                <template v-if="terminal.printer_type === 'escpos'">
-                                    <div>
-                                        <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Dirección IP</label>
-                                    <input v-model="terminal.printer_ip" type="text" placeholder="192.168.1.100"
-                                        style="width:100%; max-width:280px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box;">
+                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">NIF</label>
+                                    <input v-model="terminal.tax_id" type="text" maxlength="16" autocapitalize="characters" placeholder="B12345674"
+                                        style="width:100%; max-width:200px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box; text-transform:uppercase;">
+                                    <div style="font-size:12px; color:var(--text3); margin-top:4px;">Obligatorio en la factura simplificada. Se comprueba la letra o cifra de control.</div>
                                 </div>
                                 <div>
-                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Puerto</label>
-                                    <input v-model="terminal.printer_port" type="number" placeholder="9100"
-                                        style="width:100%; max-width:140px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box;">
+                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Dirección de la tienda</label>
+                                    <textarea v-model="terminal.store_address" rows="2" placeholder="Calle Principal 123, 28001 Madrid"
+                                        style="width:100%; max-width:420px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box; resize:vertical;"></textarea>
+                                    <div style="font-size:12px; color:var(--text3); margin-top:4px;">Se imprime debajo del nombre de la tienda en el ticket.</div>
                                 </div>
-                                </template>
-
-                                <!-- Ticket content fields -->
-                                <div style="border-top:1px solid var(--border); padding-top:16px; margin-top:8px;">
-                                    <div style="font-size:13px; font-weight:600; color:var(--text); margin-bottom:12px;">🧾 Contenido del ticket</div>
+                                <div>
+                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Encabezado del ticket</label>
+                                    <textarea v-model="terminal.ticket_header" rows="4" placeholder="www.tutienda.com&#10;Gracias por visitarnos"
+                                        style="width:100%; max-width:420px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box; resize:vertical;"></textarea>
+                                    <div style="font-size:12px; color:var(--text3); margin-top:4px;">Texto libre multi-línea que aparecerá en la cabecera del ticket.</div>
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Footer del ticket</label>
+                                    <textarea v-model="terminal.ticket_footer" rows="4" placeholder="Cambios en 30 días con ticket&#10;Gracias por su compra"
+                                        style="width:100%; max-width:420px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box; resize:vertical;"></textarea>
+                                    <div style="font-size:12px; color:var(--text3); margin-top:4px;">Texto libre multi-línea al final del ticket.</div>
                                 </div>
 
                                 <div>
@@ -583,13 +666,6 @@ const SettingsModal = {
                                 </div>
 
                                 <div>
-                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Ancho del ticket (px)</label>
-                                    <input v-model.number="terminal.ticket_width_px" type="number" min="100" max="600" placeholder="302 (80mm)"
-                                        style="width:100%; max-width:200px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box;">
-                                    <div style="font-size:12px; color:var(--text3); margin-top:4px;">Deja vacío para usar 80mm por defecto</div>
-                                </div>
-
-                                <div>
                                     <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Código del ticket</label>
                                     <select v-model="terminal.ticket_code"
                                         style="width:100%; max-width:320px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; cursor:pointer; box-sizing:border-box;">
@@ -608,22 +684,67 @@ const SettingsModal = {
                                 </div>
 
                                 <div>
-                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Nombre de la tienda</label>
-                                    <input v-model="terminal.store_name" type="text" maxlength="120" placeholder="Moda Centro"
-                                        style="width:100%; max-width:420px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box;">
-                                    <div style="font-size:12px; color:var(--text3); margin-top:4px;">Nombre en grande arriba del ticket. Vacío: se usa la razón social.</div>
+                                    <button @click="saveShop" :disabled="terminalSaving"
+                                        style="padding:8px 20px; border-radius:9px; border:none; background:var(--green); color:#000; font-family:inherit; font-size:13px; font-weight:600; cursor:pointer;"
+                                        :style="terminalSaving ? 'opacity:0.6; cursor:not-allowed;' : ''">
+                                        {{ terminalSaving ? 'Guardando...' : 'Guardar' }}
+                                    </button>
                                 </div>
-                                <div>
-                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Razón social</label>
-                                    <input v-model="terminal.legal_name" type="text" maxlength="120" placeholder="Mi Tienda Moda SL"
-                                        style="width:100%; max-width:420px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box;">
-                                    <div style="font-size:12px; color:var(--text3); margin-top:4px;">Nombre fiscal del titular. Se imprime en tickets y abonos si es distinto del nombre de la tienda.</div>
+                                <div v-if="terminalError" style="color:var(--red); font-size:12px;">{{ terminalError }}</div>
+                            </div>
+                        </div>
+
+                        <!-- ==================== CAJAS ==================== -->
+                        <div v-if="activeSection === 'cajas'">
+                            <div style="font-size:13px; font-weight:600; color:var(--text); margin-bottom:6px;">🖥 Cajas</div>
+                            <div style="font-size:12px; color:var(--text3); margin-bottom:12px;">Cada ordenador trabaja con una caja: su cajón, su impresora, su datáfono y su letra de ticket. La impresión la hace el servidor: una segunda caja necesita una impresora de red o compartida con el servidor.</div>
+                            <div v-if="tillsError" style="color:var(--red); font-size:12px; margin-bottom:8px;">{{ tillsError }}</div>
+                            <div style="display:flex; flex-direction:column; gap:8px; margin-bottom:16px;">
+                                <div v-for="till in tills" :key="till.id"
+                                    style="border:1px solid var(--border); border-radius:10px; padding:10px 12px; display:flex; flex-direction:column; gap:6px;"
+                                    :style="terminal && terminal.id === till.id ? 'border-color:var(--green-dim);' : ''">
+                                    <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;">
+                                        <div style="min-width:0;">
+                                            <div style="font-size:14px; font-weight:600; color:var(--text);">{{ till.name }} <span style="font-family:'IBM Plex Mono'; color:var(--text3);">({{ till.ticket_letter || '—' }})</span></div>
+                                            <div style="font-size:12px; color:var(--text3);">
+                                                Impresora: {{ till.printer_type }} · Datáfono: {{ till.dataphone_mode === 'independent' ? 'independiente' : 'integrado' }} ·
+                                                {{ till.this_device ? 'Este equipo' : (till.device ? 'Otro equipo, visto ' + tillSeen(till) : 'Sin equipo') }}
+                                            </div>
+                                        </div>
+                                        <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                                            <button @click="editTill(till)"
+                                                style="min-height:36px; padding:4px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;">Editar</button>
+                                            <button v-if="!till.this_device" @click="moveTillHere(till)"
+                                                style="min-height:36px; padding:4px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text); cursor:pointer; font-family:inherit; font-size:12px; font-weight:600;">Pasar la caja a este equipo</button>
+                                        </div>
+                                    </div>
+                                    <div v-if="confirmMoveId === till.id" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; border-top:1px solid var(--border); padding-top:6px;">
+                                        <div style="font-size:12px; color:var(--text2);">Está en otro equipo; aquel quedará sin caja.</div>
+                                        <button @click="moveTillHere(till)"
+                                            style="min-height:36px; padding:4px 12px; border-radius:8px; border:none; background:var(--green); color:#000; cursor:pointer; font-family:inherit; font-size:12px; font-weight:700;">Pasar la caja a este equipo</button>
+                                        <button @click="confirmMoveId = null"
+                                            style="min-height:36px; padding:4px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;">Cancelar</button>
+                                    </div>
                                 </div>
+                            </div>
+
+                            <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:20px;">
+                                <input v-model="newTill.name" type="text" maxlength="64" placeholder="Nombre de la nueva caja"
+                                    style="flex:1; min-width:160px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box;">
+                                <input v-model="newTill.ticket_letter" type="text" maxlength="1" autocapitalize="characters" placeholder="Letra"
+                                    style="width:72px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box; text-transform:uppercase;">
+                                <button @click="createTill" :disabled="creatingTill"
+                                    style="padding:8px 16px; border-radius:9px; border:none; background:var(--green); color:#000; font-family:inherit; font-size:13px; font-weight:600; cursor:pointer;">Crear caja</button>
+                            </div>
+
+                            <div v-if="terminalLoading" style="color:var(--text3); font-size:13px;">Cargando...</div>
+                            <div v-else-if="!terminal" style="color:var(--text3); font-size:13px;">Elige una caja para editarla.</div>
+                            <div v-else style="display:flex; flex-direction:column; gap:16px; border-top:1px solid var(--border); padding-top:16px;">
+                                <div style="font-size:13px; font-weight:600; color:var(--text);">Editar {{ terminal.name }}</div>
                                 <div>
-                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">NIF</label>
-                                    <input v-model="terminal.tax_id" type="text" maxlength="16" autocapitalize="characters" placeholder="B12345674"
-                                        style="width:100%; max-width:200px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box; text-transform:uppercase;">
-                                    <div style="font-size:12px; color:var(--text3); margin-top:4px;">Obligatorio en la factura simplificada. Se comprueba la letra o cifra de control.</div>
+                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Nombre de la caja</label>
+                                    <input v-model="terminal.name" type="text" placeholder="Caja 1"
+                                        style="width:100%; max-width:320px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box;">
                                 </div>
                                 <div>
                                     <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Letra de caja</label>
@@ -632,26 +753,56 @@ const SettingsModal = {
                                     <div style="font-size:12px; color:var(--text3); margin-top:4px;">Primera letra del número de ticket (A26000123). Cada caja tiene la suya.</div>
                                 </div>
                                 <div>
-                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Dirección de la tienda</label>
-                                    <textarea v-model="terminal.store_address" rows="2" placeholder="Calle Principal 123, 28001 Madrid"
-                                        style="width:100%; max-width:420px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box; resize:vertical;"></textarea>
-                                    <div style="font-size:12px; color:var(--text3); margin-top:4px;">Se imprime debajo del nombre de la tienda en el ticket.</div>
+                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Modo datáfono</label>
+                                    <select v-model="terminal.dataphone_mode"
+                                        style="width:100%; max-width:320px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; cursor:pointer; box-sizing:border-box;">
+                                        <option value="integrated">Integrado</option>
+                                        <option value="independent">Independiente</option>
+                                    </select>
+                                    <div style="font-size:12px; color:var(--text3); margin-top:4px;">Independiente: el cobro se hace manualmente fuera del TPV</div>
                                 </div>
                                 <div>
-                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Encabezado del ticket</label>
-                                    <textarea v-model="terminal.ticket_header" rows="4" placeholder="www.tutienda.com&#10;Gracias por visitarnos"
-                                        style="width:100%; max-width:420px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box; resize:vertical;"></textarea>
-                                    <div style="font-size:12px; color:var(--text3); margin-top:4px;">Texto libre multi-línea que aparecerá en la cabecera del ticket.</div>
+                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Tipo de impresora</label>
+                                    <select v-model="terminal.printer_type"
+                                        style="width:100%; max-width:320px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; cursor:pointer; box-sizing:border-box;">
+                                        <option value="none">Sin impresora</option>
+                                        <option value="pdf">PDF</option>
+                                        <option value="escpos">ESC/POS (red)</option>
+                                        <option value="system">Impresora del sistema (USB)</option>
+                                    </select>
+                                </div>
+                                <div v-if="terminal.printer_type === 'system'">
+                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Impresora instalada en el servidor del TPV</label>
+                                    <select v-model="terminal.printer_queue"
+                                        style="width:100%; max-width:320px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; cursor:pointer; box-sizing:border-box;">
+                                        <option value="" disabled>Elige una impresora</option>
+                                        <option v-for="q in systemPrinters" :key="q" :value="q">{{ q }}</option>
+                                    </select>
+                                    <div style="font-size:12px; color:var(--text3); margin-top:4px;">Imprime el ticket directamente (con corte y apertura del cajón). La imprime el servidor del TPV: tiene que estar instalada (USB o compartida) en ese ordenador.</div>
+                                    <div v-if="systemPrinters.length === 0" style="font-size:12px; color:var(--red); margin-top:4px;">No se encuentran impresoras instaladas en el servidor del TPV.</div>
+                                </div>
+                                <template v-if="terminal.printer_type === 'escpos'">
+                                    <div>
+                                        <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Dirección IP</label>
+                                    <input v-model="terminal.printer_ip" type="text" placeholder="192.168.1.100"
+                                        style="width:100%; max-width:280px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box;">
                                 </div>
                                 <div>
-                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Footer del ticket</label>
-                                    <textarea v-model="terminal.ticket_footer" rows="4" placeholder="Cambios en 30 días con ticket&#10;Gracias por su compra"
-                                        style="width:100%; max-width:420px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box; resize:vertical;"></textarea>
-                                    <div style="font-size:12px; color:var(--text3); margin-top:4px;">Texto libre multi-línea al final del ticket.</div>
+                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Puerto</label>
+                                    <input v-model="terminal.printer_port" type="number" placeholder="9100"
+                                        style="width:100%; max-width:140px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box;">
+                                </div>
+                                </template>
+
+                                <div>
+                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Ancho del ticket (px)</label>
+                                    <input v-model.number="terminal.ticket_width_px" type="number" min="100" max="600" placeholder="302 (80mm)"
+                                        style="width:100%; max-width:200px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box;">
+                                    <div style="font-size:12px; color:var(--text3); margin-top:4px;">Deja vacío para usar 80mm por defecto</div>
                                 </div>
 
                                 <div>
-                                    <button @click="saveTerminal" :disabled="terminalSaving"
+                                    <button @click="saveTill" :disabled="terminalSaving"
                                         style="padding:8px 20px; border-radius:9px; border:none; background:var(--green); color:#000; font-family:inherit; font-size:13px; font-weight:600; cursor:pointer;"
                                         :style="terminalSaving ? 'opacity:0.6; cursor:not-allowed;' : ''">
                                         {{ terminalSaving ? 'Guardando...' : 'Guardar' }}

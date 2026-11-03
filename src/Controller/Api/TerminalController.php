@@ -18,6 +18,18 @@ use VenPosTPV\Service\Print\SystemPrintQueue;
 #[AsController]
 final class TerminalController
 {
+    /**
+     * Shop data (S10 "Tienda"): the same on every till, so each till prints the same
+     * header. Stored on every terminal row of the shop rather than in a new table:
+     * TicketDataResolver reads them per terminal (terminalPresentation) and keeps
+     * working unchanged. Everything else (name, letter, printer, dataphone, ticket
+     * width, sync intervals) belongs to one till ("Cajas").
+     */
+    private const SHOP_FIELDS = [
+        'store_name', 'store_address', 'legal_name', 'tax_id',
+        'ticket_header', 'ticket_footer', 'ticket_logo', 'refund_window_days', 'ticket_code',
+    ];
+
     public function __construct(
         private readonly Connection $connection,
         private readonly SystemPrintQueue $systemPrintQueue,
@@ -70,7 +82,7 @@ final class TerminalController
             return $this->unauthorized();
         }
 
-        $row = $this->connection->fetchAssociative('SELECT id FROM terminal WHERE id = ?', [$id]);
+        $row = $this->connection->fetchAssociative('SELECT id, ps_shop_id FROM terminal WHERE id = ?', [$id]);
         if (!$row) {
             return new JsonResponse(['error' => 'Terminal no encontrado'], Response::HTTP_NOT_FOUND);
         }
@@ -213,16 +225,86 @@ final class TerminalController
             $fields['active'] = $body['active'] ? 1 : 0;
         }
 
+        $shopFields = array_intersect_key($fields, array_flip(self::SHOP_FIELDS));
+        $tillFields = array_diff_key($fields, $shopFields);
+
         if ($fields) {
+            $this->connection->beginTransaction();
             try {
-                $this->connection->update('terminal', $fields, ['id' => $id]);
+                if ($shopFields) {
+                    $this->connection->update('terminal', $shopFields, ['ps_shop_id' => (int) ($row['ps_shop_id'] ?? 0)]);
+                }
+                if ($tillFields) {
+                    $this->connection->update('terminal', $tillFields, ['id' => $id]);
+                }
+                $this->connection->commit();
             } catch (UniqueConstraintViolationException) {
+                $this->connection->rollBack();
+
                 // Another terminal took the same letter between the check and the update.
                 return $this->letterInUse();
+            } catch (\Throwable $e) {
+                $this->connection->rollBack();
+
+                throw $e;
             }
         }
 
         return new JsonResponse(['data' => ['updated' => true]]);
+    }
+
+    /**
+     * New till ("Cajas" > "Crear caja"): name and its own letter; the shop data is
+     * copied from the shop's tills so the new one prints the same ticket header.
+     */
+    #[Route('/terminal', methods: ['POST'])]
+    public function create(Request $request): JsonResponse
+    {
+        if (!$this->isAdmin($request)) {
+            return $this->unauthorized();
+        }
+        if ($request->getContentTypeFormat() !== 'json') {
+            return new JsonResponse(['error' => 'Se espera un cuerpo JSON'], Response::HTTP_UNSUPPORTED_MEDIA_TYPE);
+        }
+
+        $body = json_decode((string) $request->getContent(), true);
+        $body = \is_array($body) ? $body : [];
+        $name = trim((string) ($body['name'] ?? ''));
+        if ($name === '' || mb_strlen($name) > 64) {
+            return new JsonResponse(['error' => 'Indica el nombre de la caja (hasta 64 caracteres)'], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+        $letter = strtoupper(trim((string) ($body['ticket_letter'] ?? '')));
+        if (!preg_match('/^[A-Z]$/', $letter)) {
+            return new JsonResponse(['error' => 'La letra de caja debe ser una letra de la A a la Z'], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+        if ($this->letterUsedByAnotherTerminal($letter, 0)) {
+            return $this->letterInUse();
+        }
+
+        $shopId = (int) ($request->getSession()->get('shop_id') ?? 0);
+        $shopId = $shopId > 0 ? $shopId : 1;
+        $shop = $this->connection->fetchAssociative(
+            'SELECT ' . implode(', ', self::SHOP_FIELDS) . ' FROM terminal WHERE ps_shop_id = ? AND active = 1 ORDER BY id LIMIT 1',
+            [$shopId]
+        );
+
+        $now = (new \DateTimeImmutable())->format('Y-m-d H:i:s');
+        $fields = ['ps_shop_id' => $shopId, 'name' => $name, 'ticket_letter' => $letter, 'active' => 1, 'created_at' => $now, 'updated_at' => $now];
+        if (\is_array($shop)) {
+            foreach (self::SHOP_FIELDS as $field) {
+                if (\array_key_exists($field, $shop) && $shop[$field] !== null) {
+                    $fields[$field] = $shop[$field];
+                }
+            }
+        }
+
+        try {
+            $this->connection->insert('terminal', $fields);
+        } catch (UniqueConstraintViolationException) {
+            return $this->letterInUse();
+        }
+
+        return new JsonResponse(['data' => ['id' => (int) $this->connection->lastInsertId()]], Response::HTTP_CREATED);
     }
 
     // -------------------------------------------------------------------------

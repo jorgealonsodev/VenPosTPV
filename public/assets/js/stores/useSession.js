@@ -3,12 +3,19 @@
  */
 const useSession = (function () {
     const STORAGE_KEY = 'venpostpv_session';
+    // Copy of this computer's device token (S10). The cookie is HttpOnly; this copy
+    // only lets the page put the cookie back if the browser cleared it.
+    const DEVICE_KEY = 'venpostpv_device_token';
     const session = Vue.reactive({
         user: null,
         cashierName: 'Cajero',
         role: 'cashier',
         sessionId: null,
         terminalId: null,
+        terminalName: null,
+        ticketLetter: null,
+        // false: this computer has no till yet; the POS shows the link screen.
+        deviceLinked: true,
         openingCash: 0,
         cashOpenedAt: null,
         cashTotals: null,
@@ -49,7 +56,15 @@ const useSession = (function () {
                 // A persisted screen is never authority for the cash boundary.
                 // Only hydrateCashSession may transition an authenticated user to sale.
                 session.screen = 'cashOpen';
+                if (s.device_linked === false) {
+                    session.deviceLinked = false;
+                    session.terminalId = null;
+                    session.screen = 'deviceLink';
+                }
             }
+            if (s.terminal_name) session.terminalName = s.terminal_name;
+            if (s.ticket_letter) session.ticketLetter = s.ticket_letter;
+            if (s.device_token) rememberDeviceToken(s.device_token);
             if (s.cashier_name) session.cashierName = s.cashier_name;
             if (s.store_name) session.storeName = s.store_name;
             if (s.dataphone_mode) session.dataphoneMode = s.dataphone_mode;
@@ -62,6 +77,35 @@ const useSession = (function () {
             }
         }
         applyTheme();
+    }
+
+    function rememberDeviceToken(token) {
+        try {
+            if (token) localStorage.setItem(DEVICE_KEY, String(token));
+        } catch (e) { /* storage unavailable: the cookie still works */ }
+    }
+
+    function forgetDeviceToken() {
+        try {
+            if (typeof localStorage.removeItem === 'function') localStorage.removeItem(DEVICE_KEY);
+        } catch (e) { /* ignore */ }
+    }
+
+    // The cookie is gone but this browser kept the token: put the cookie back and
+    // reload, so the computer goes straight to its till again.
+    async function restoreDeviceCookie() {
+        let token = null;
+        try { token = localStorage.getItem(DEVICE_KEY); } catch (e) { token = null; }
+        if (!token) return false;
+        try {
+            await ApiClient.post('/api/device/restore', { token });
+        } catch (e) {
+            // 404: the till was moved to another computer; keep the link screen.
+            if (e && e.message && e.message.indexOf('HTTP 404') === 0) forgetDeviceToken();
+            return false;
+        }
+        if (window.location && typeof window.location.reload === 'function') window.location.reload();
+        return true;
     }
 
     function save() {
@@ -116,6 +160,8 @@ const useSession = (function () {
     }
 
     async function hydrateCashSession() {
+        // Without a till there is no drawer to ask for (the API answers 409).
+        if (!session.deviceLinked) return null;
         const generation = ++cashHydrationGeneration;
 
         try {
@@ -249,7 +295,7 @@ const useSession = (function () {
         await ApiClient.cashClose(countedCash);
         session.screen = 'cashOpen';
         session.sessionId = null;
-        session.terminalId = null;
+        // terminalId stays: it is this computer's till, not the closed session's.
         session.cashOpenedAt = null;
         session.openingCash = 0;
         session.cashTotals = null;
@@ -307,6 +353,7 @@ const useSession = (function () {
     window.addEventListener('offline', () => { session.online = false; });
 
     load();
+    if (session.user && !session.deviceLinked) restoreDeviceCookie();
     hydrateCashSession();
 
     return {
@@ -316,6 +363,8 @@ const useSession = (function () {
         closeCash,
         hydrateCashSession,
         refreshCashTotals,
+        rememberDeviceToken,
+        restoreDeviceCookie,
         toggleTheme,
         logout,
         save,

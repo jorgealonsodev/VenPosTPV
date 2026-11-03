@@ -15,8 +15,9 @@ final class TerminalControllerRefundWindowTest extends TestCase
     public function testRefundWindowIsSavedWithinRange(): void
     {
         $conn = $this->createMock(Connection::class);
-        $conn->expects($this->once())->method('update')->with('terminal', ['refund_window_days' => 45], ['id' => 1]);
-        $conn->method('fetchAssociative')->willReturn(['id' => 1, 'refund_window_days' => 45]);
+        // S10: the refund window is shop data, saved on every till of the shop.
+        $conn->expects($this->once())->method('update')->with('terminal', ['refund_window_days' => 45], ['ps_shop_id' => 1]);
+        $conn->method('fetchAssociative')->willReturn(['id' => 1, 'ps_shop_id' => 1, 'refund_window_days' => 45]);
 
         $response = (new TerminalController($conn, $this->createMock(\VenPosTPV\Service\Print\SystemPrintQueue::class)))->update(1, SessionRequest::json(['refund_window_days' => 45], ['user_id' => 1, 'role' => 'admin']));
 

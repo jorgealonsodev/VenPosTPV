@@ -8,7 +8,10 @@
  */
 const LoginScreen = {
     setup() {
-        const tab = Vue.ref('employee'); // 'admin' | 'employee'
+        // ?admin=1: sent here from "Este equipo no tiene caja asignada" to log in as administrator.
+        const wantsAdmin = typeof URLSearchParams === 'function' && window.location
+            && new URLSearchParams(window.location.search || '').get('admin') === '1';
+        const tab = Vue.ref(wantsAdmin ? 'admin' : 'employee'); // 'admin' | 'employee'
         const theme = Vue.ref('dark');
 
         function toggleTheme() {

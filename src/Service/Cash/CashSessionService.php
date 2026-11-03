@@ -6,6 +6,8 @@ namespace VenPosTPV\Service\Cash;
 
 use Doctrine\DBAL\Connection;
 use VenPosTPV\Service\Cash\Exception\NoOpenCashSessionException;
+use VenPosTPV\Service\Device\DeviceContext;
+use VenPosTPV\Service\Device\DeviceNotLinkedException;
 use Symfony\Component\HttpFoundation\RequestStack;
 
 class CashSessionService
@@ -21,7 +23,7 @@ class CashSessionService
     public function openSession(int $userId, float $openingCash): array
     {
         $shopId = $this->requireShopId();
-        $terminalId = $this->terminalService->resolveForShop($shopId);
+        $terminalId = $this->deviceTerminalId() ?? $this->terminalService->resolveForShop($shopId);
 
         return $this->connection->transactional(function () use ($userId, $openingCash, $terminalId): array {
             $active = $this->connection->fetchOne(
@@ -358,30 +360,19 @@ class CashSessionService
      */
     private function lockCurrentSession(): ?array
     {
-        $request = $this->requestStack->getCurrentRequest();
-        $sessionId = 0;
-        if ($request && $request->hasSession()) {
-            $sessionId = (int) ($request->getSession()->get('cash_session_id') ?? 0);
-        }
-        if ($sessionId <= 0) {
-            $sessionId = isset($_SESSION['cash_session_id']) ? (int) $_SESSION['cash_session_id'] : 0;
-        }
+        $deviceTerminalId = $this->deviceTerminalId();
+        $sessionId = $this->cachedSessionId();
         if ($sessionId > 0) {
             $session = $this->connection->fetchAssociative(
                 'SELECT id, terminal_id, opened_at, opening_cash FROM session WHERE id = ? AND closed_at IS NULL FOR UPDATE',
                 [$sessionId]
             );
-            if ($session !== false) {
+            if ($session !== false && ($deviceTerminalId === null || (int) $session['terminal_id'] === $deviceTerminalId)) {
                 return $session;
             }
         }
 
-        $terminalId = 0;
-        try {
-            $terminalId = $this->terminalService->resolveForShop($this->requireShopId());
-        } catch (\Throwable) {
-            // No shop or terminal context: fall through to the shop-wide lookup.
-        }
+        $terminalId = $deviceTerminalId ?? $this->fallbackTerminalId();
 
         if ($terminalId > 0) {
             $session = $this->connection->fetchAssociative(
@@ -392,6 +383,11 @@ class CashSessionService
             if ($session !== false) {
                 return $session;
             }
+        }
+
+        if ($deviceTerminalId !== null) {
+            // A linked computer only ever works on its own till's drawer.
+            return null;
         }
 
         $session = $this->connection->fetchAssociative(
@@ -419,14 +415,8 @@ class CashSessionService
                    FROM session s
                    LEFT JOIN user u ON u.id = s.user_id ';
 
-        $request = $this->requestStack->getCurrentRequest();
-        $sessionId = 0;
-        if ($request && $request->hasSession()) {
-            $sessionId = (int) ($request->getSession()->get('cash_session_id') ?? 0);
-        }
-        if ($sessionId <= 0) {
-            $sessionId = isset($_SESSION['cash_session_id']) ? (int) $_SESSION['cash_session_id'] : 0;
-        }
+        $deviceTerminalId = $this->deviceTerminalId();
+        $sessionId = $this->cachedSessionId();
 
         if ($sessionId > 0) {
             $session = $this->connection->fetchAssociative(
@@ -434,17 +424,12 @@ class CashSessionService
                 [$sessionId]
             );
 
-            if ($session !== false) {
+            if ($session !== false && ($deviceTerminalId === null || (int) $session['terminal_id'] === $deviceTerminalId)) {
                 return $session;
             }
         }
 
-        $terminalId = 0;
-        try {
-            $terminalId = $this->terminalService->resolveForShop($this->requireShopId());
-        } catch (\Throwable) {
-            // No shop or terminal context: fall through to the shop-wide lookup.
-        }
+        $terminalId = $deviceTerminalId ?? $this->fallbackTerminalId();
 
         if ($terminalId > 0) {
             $session = $this->connection->fetchAssociative(
@@ -457,6 +442,11 @@ class CashSessionService
 
                 return $session;
             }
+        }
+
+        if ($deviceTerminalId !== null) {
+            // A linked computer only ever works on its own till's drawer.
+            return null;
         }
 
         $session = $this->connection->fetchAssociative(
@@ -473,6 +463,50 @@ class CashSessionService
         $this->cacheSession((int) $session['terminal_id'], (int) $session['id'], (string) $session['opened_at'], (float) $session['opening_cash']);
 
         return $session;
+    }
+
+    /**
+     * The till of the computer behind this request (S10). Null only when the request
+     * did not pass DeviceListener (CLI, tests): then the shop's first till is used.
+     * A browser without a linked till is refused, never sent to terminal 1.
+     */
+    private function deviceTerminalId(): ?int
+    {
+        $request = $this->requestStack->getCurrentRequest();
+        if ($request === null || !$request->attributes->has(DeviceContext::ATTRIBUTE)) {
+            return null;
+        }
+
+        $terminalId = $request->attributes->get(DeviceContext::ATTRIBUTE);
+        if (!\is_int($terminalId) || $terminalId <= 0) {
+            throw new DeviceNotLinkedException();
+        }
+
+        return $terminalId;
+    }
+
+    private function fallbackTerminalId(): int
+    {
+        try {
+            return $this->terminalService->resolveForShop($this->requireShopId());
+        } catch (\Throwable) {
+            // No shop or terminal context: fall through to the shop-wide lookup.
+            return 0;
+        }
+    }
+
+    private function cachedSessionId(): int
+    {
+        $request = $this->requestStack->getCurrentRequest();
+        $sessionId = 0;
+        if ($request && $request->hasSession()) {
+            $sessionId = (int) ($request->getSession()->get('cash_session_id') ?? 0);
+        }
+        if ($sessionId <= 0) {
+            $sessionId = isset($_SESSION['cash_session_id']) ? (int) $_SESSION['cash_session_id'] : 0;
+        }
+
+        return $sessionId;
     }
 
     private function rejectExistingTransaction(): void

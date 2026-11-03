@@ -59,7 +59,7 @@ const CashOpenScreen = {
                     <icon :name="session.theme === 'dark' ? 'sun' : 'moon'" :size="13" />
                 </button>
                 <button v-if="session.role === 'admin'" @click="showSettings = true"
-                    title="Ajustes: empleados, terminal, impresora y datos del ticket"
+                    title="Ajustes: tienda, cajas, empleados y sincronización"
                     style="min-height:44px; display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;">
                     <span aria-hidden="true" style="font-size:15px; line-height:1;">⚙</span> Ajustes
                 </button>
@@ -75,6 +75,7 @@ const CashOpenScreen = {
                     <div style="font-size:11px; color:var(--text3); letter-spacing:0.12em; text-transform:uppercase; margin-bottom:6px;">Apertura de caja</div>
                     <div style="font-size:22px; font-weight:600;">Buenos días, {{ (cashierName || 'Cajero').split(' ')[0] }}</div>
                 </div>
+                <div v-if="session.terminalName" style="font-size:13px; color:var(--text2);">Caja de este equipo: <strong style="color:var(--text);">{{ session.terminalName }}</strong><span v-if="session.ticketLetter" style="font-family:'IBM Plex Mono'; color:var(--text3);"> ({{ session.ticketLetter }})</span></div>
                 <div style="font-size:13px; color:var(--text2);">Indica el saldo inicial de la caja antes de comenzar la jornada.</div>
 
                 <div>

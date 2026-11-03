@@ -1,6 +1,6 @@
 /**
  * VenPosTPV Vue 3 App Entry
- * Screen routing: login → cashOpen → sale
+ * Screen routing: login → (deviceLink when this computer has no till) → cashOpen → sale
  */
 const { createApp, ref, computed, watch, reactive } = Vue;
 
@@ -38,6 +38,7 @@ const app = createApp({
     template: `
         <div style="width:100vw; height:100vh; overflow:hidden; position:relative;">
             <login-screen v-if="session.screen === 'login'" :store-name="session.storeName" @login="onLogin" />
+            <device-link-screen v-else-if="session.screen === 'deviceLink'" />
             <cash-open-screen v-else-if="session.screen === 'cashOpen'" :cashier-name="session.cashierName" @open="onOpenCash" />
             <sale-screen v-else-if="session.screen === 'sale'" :cashier-name="session.cashierName" :store-name="session.storeName" @cash-close="onCashClose" />
         </div>
@@ -47,6 +48,7 @@ const app = createApp({
 app.component('icon', Icon);
 app.component('numpad', Numpad);
 app.component('login-screen', LoginScreen);
+app.component('device-link-screen', DeviceLinkScreen);
 app.component('cash-open-screen', CashOpenScreen);
 app.component('sale-screen', SaleScreen);
 app.component('catalog-panel', CatalogPanel);
