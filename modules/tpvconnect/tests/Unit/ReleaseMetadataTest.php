@@ -18,7 +18,7 @@ class ReleaseMetadataTest extends TestCase
         $php = (string) file_get_contents($moduleRoot . '/tpvconnect.php');
         $xml = (string) file_get_contents($moduleRoot . '/config.xml');
 
-        self::assertSame('0.6.0', $this->declaredPhpVersion($php));
+        self::assertSame('0.6.1', $this->declaredPhpVersion($php));
         self::assertSame($this->declaredPhpVersion($php), $this->declaredXmlVersion($xml));
         self::assertTrue(version_compare($this->declaredPhpVersion($php), '0.1.0', '>'));
     }
@@ -117,6 +117,7 @@ class ReleaseMetadataTest extends TestCase
     {
         $changelog = (string) file_get_contents(dirname(__DIR__, 2) . '/CHANGELOG.md');
 
+        self::assertStringContainsString("## 0.6.1\n", $changelog);
         self::assertStringContainsString("## 0.6.0\n", $changelog);
     }
 }

@@ -25,6 +25,20 @@ class CouponCheckoutException extends RuntimeException
 }
 
 /**
+ * The order cannot be built from this request and retrying it unchanged will not
+ * help (PrestaShop rejects the temporary address, the cart refuses a product). The
+ * endpoint answers 422, which the TPV treats as definitive: an incident to correct,
+ * not an upload retried forever.
+ */
+class TpvOrderBuildException extends RuntimeException
+{
+    public function getHttpStatus(): int
+    {
+        return 422;
+    }
+}
+
+/**
  * Builds the module's carts and binds a native CartRule preview to one cart.
  *
  * This deliberately delegates eligibility and consumption to PrestaShop:
@@ -215,7 +229,19 @@ class CouponCheckout
         return $encoded . '.' . hash_hmac('sha256', $encoded, $secret);
     }
 
-    /** Shared cart construction for ordinary orders and coupon previews. */
+    /** Placeholder for countries that need an identification number; passes Validate::isDniLite. */
+    public const TEMPORARY_ADDRESS_DNI = 'TPV';
+
+    /**
+     * Shared cart construction for ordinary orders and coupon previews.
+     *
+     * The customer's first address is used when there is one. Otherwise a temporary
+     * address is created in the shop's default country, with a dni placeholder only
+     * when that country needs an identification number (PrestaShop refuses the
+     * address without one: "Address->dni is empty").
+     *
+     * @throws TpvOrderBuildException 422: the address or a product is refused
+     */
     public function buildCart(array $data): Cart
     {
         $idCustomer = (int) $data['id_customer'];
@@ -241,6 +267,15 @@ class CouponCheckout
             $address->city = 'TPV';
             $address->id_country = (int) Configuration::get('PS_COUNTRY_DEFAULT');
             $address->alias = 'tpv_temp_' . time();
+            $dni = $this->temporaryAddressDni((int) $address->id_country);
+            if ($dni !== null) {
+                $address->dni = $dni;
+            }
+            // Validated first, so a refused field is a 422 and never a 500 from add().
+            $valid = $address->validateFields(false, true);
+            if ($valid !== true) {
+                throw new TpvOrderBuildException('Temporary address is invalid: ' . (is_string($valid) ? $valid : 'refused by PrestaShop'));
+            }
             if (!$address->add()) {
                 throw new RuntimeException('Temporary address could not be created');
             }
@@ -253,10 +288,16 @@ class CouponCheckout
 
         foreach ($data['products'] as $product) {
             if (!$cart->updateQty((int) $product['quantity'], (int) $product['id_product'], (int) ($product['id_product_attribute'] ?? 0))) {
-                throw new RuntimeException('Product could not be added to cart');
+                throw new TpvOrderBuildException(sprintf('Product could not be added to cart: %d', (int) $product['id_product']));
             }
         }
         return $cart;
+    }
+
+    /** The dni the temporary address needs in that country; null when it needs none. */
+    protected function temporaryAddressDni(int $idCountry): ?string
+    {
+        return Address::dniRequired($idCountry) ? self::TEMPORARY_ADDRESS_DNI : null;
     }
 
     private function verifyQuote(mixed $token): array

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.1
+
+- `POST /module/tpvconnect/orders` for a customer without an address (a customer created at the TPV): the temporary address now gets the placeholder `dni` `TPV` when the shop's default country needs an identification number (Spain does). Before, PrestaShop refused it ("Address->dni is empty") and the endpoint answered 500, which the TPV retried forever. Countries without that requirement get the same address as before; a customer with an address keeps using its first one.
+- Order build failures that retrying cannot fix answer 422 `{"error": "Order validation failed", "details": "..."}` instead of 500: an address PrestaShop would refuse (`Temporary address is invalid: ...`) and a product the cart refuses (`Product could not be added to cart: <id_product>`). The TPV turns a 422 into an incident to correct and retry. Other failures stay 500.
+- No upgrade script: nothing to migrate; PrestaShop records the new version.
+
 ## 0.6.0
 
 - `POST /module/tpvconnect/orders` accepts an optional `reference`: the TPV ticket code, `^[A-Z]\d{8}$` (terminal letter, 2-digit year, 6 digits, e.g. `A26000123`). Any other value, `null` and `""` included, is a 422 (`details.reference`). Without `reference` the endpoint behaves exactly as before.

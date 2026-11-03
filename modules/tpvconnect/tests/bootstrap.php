@@ -84,6 +84,14 @@ if (!class_exists('CouponTestState', false)) {
         public static int $ordersCreated = 0;
         public static int $locksReleased = 0;
         public static int $stockQuantity = 999;
+        /** What Customer::getAddresses() answers. */
+        public static array $customerAddresses = [];
+        /** Countries whose need_identification_number is 1. */
+        public static array $dniRequiredCountries = [];
+        /** Addresses add() stored, in order. */
+        public static array $addedAddresses = [];
+        /** Product ids Cart::updateQty() refuses. */
+        public static array $unavailableProducts = [];
 
         public static function reset(): void
         {
@@ -102,6 +110,10 @@ if (!class_exists('CouponTestState', false)) {
             self::$ordersCreated = 0;
             self::$locksReleased = 0;
             self::$stockQuantity = 999;
+            self::$customerAddresses = [['id_address' => 1]];
+            self::$dniRequiredCountries = [];
+            self::$addedAddresses = [];
+            self::$unavailableProducts = [];
             Context::$context = new Context();
             Context::$context->language = (object) ['id' => 1];
             Context::$context->shop = (object) ['id' => 1];
@@ -149,7 +161,7 @@ if (!class_exists('Customer', false)) {
         public string $secure_key = 'test-secure-key';
         public bool $loaded = true;
         public function __construct(int $id = 0) { $this->id = $id; }
-        public function getAddresses(int $idLang): array { return [['id_address' => 1]]; }
+        public function getAddresses(int $idLang): array { return CouponTestState::$customerAddresses; }
     }
 }
 if (!class_exists('Currency', false)) {
@@ -166,7 +178,31 @@ if (!class_exists('Address', false)) {
         public string $city = '';
         public int $id_country = 0;
         public string $alias = '';
-        public function add(): bool { $this->id = CouponTestState::$nextAddressId++; return true; }
+        public mixed $dni = null;
+        public bool $deleted = false;
+        public static function dniRequired($idCountry): bool { return in_array((int) $idCountry, CouponTestState::$dniRequiredCountries, true); }
+        /** Native ObjectModel::validateFields() with Address::validateField()'s dni rule. */
+        public function validateFields($die = true, $errorReturn = false): bool|string
+        {
+            $message = true;
+            if ($this->dni !== null && $this->dni !== '' && !Validate::isDniLite($this->dni)) {
+                $message = 'Property Address->dni is not valid';
+            } elseif (!$this->deleted && static::dniRequired($this->id_country) && ($this->dni === null || $this->dni === '')) {
+                $message = 'Property Address->dni is empty.';
+            }
+            if ($message !== true && $die) {
+                throw new RuntimeException($message);
+            }
+            return $message === true ? true : ($errorReturn ? $message : false);
+        }
+        public function add(): bool
+        {
+            // Native add() runs validateFields() and throws when a field is invalid.
+            $this->validateFields();
+            $this->id = CouponTestState::$nextAddressId++;
+            CouponTestState::$addedAddresses[] = clone $this;
+            return true;
+        }
     }
 }
 
@@ -203,6 +239,9 @@ if (!class_exists('Cart', false)) {
         }
         public function updateQty(int $quantity, int $idProduct, int $idProductAttribute = 0): bool
         {
+            if (in_array($idProduct, CouponTestState::$unavailableProducts, true)) {
+                return false;
+            }
             // Native Cart::getProducts exposes cart_quantity; quantity is stock.
             $this->products[] = [
                 'id_product' => $idProduct,
@@ -307,7 +346,12 @@ if (!class_exists('Order', false)) {
     }
 }
 if (!class_exists('Validate', false)) {
-    class Validate { public static function isLoadedObject(object $object): bool { return ($object->loaded ?? true) === true; } }
+    class Validate
+    {
+        public static function isLoadedObject(object $object): bool { return ($object->loaded ?? true) === true; }
+        /** Native Validate::isDniLite (PrestaShop 8.1). */
+        public static function isDniLite($dni): bool { return empty($dni) || (bool) preg_match('/^[0-9A-Za-z-.]{1,16}$/U', (string) $dni); }
+    }
 }
 
 if (!class_exists('OrderState', false)) {

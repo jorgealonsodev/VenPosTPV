@@ -75,6 +75,8 @@ class TpvconnectOrdersModuleFrontController extends ModuleFrontController
             $this->jsonResponse(['error' => $e->getMessage(), 'details' => $e->getDetails()], $e->getHttpCode());
         } catch (CouponCheckoutException $e) {
             $this->jsonResponse(['error' => 'Coupon checkout failed', 'details' => $e->getMessage()], $e->getHttpStatus());
+        } catch (TpvOrderBuildException $e) {
+            $this->jsonResponse(['error' => 'Order validation failed', 'details' => $e->getMessage()], $e->getHttpStatus());
         } catch (Exception $e) {
             $this->jsonResponse(['error' => 'Order creation failed', 'details' => $e->getMessage()], 500);
         }
