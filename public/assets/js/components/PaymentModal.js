@@ -50,12 +50,18 @@ const PaymentModal = {
             return id;
         }
 
+        // `icon` names an <icon> line icon (Icon.js), not an emoji.
         const methods = [
-            { id: 'cash', label: 'Efectivo', icon: '💵' },
-            { id: 'card', label: 'Tarjeta', icon: '💳' },
-            { id: 'mixed', label: 'Mixto', icon: '🔀' },
-            { id: 'voucher', label: 'Vale regalo', icon: '🎁' },
+            { id: 'cash', label: 'Efectivo', icon: 'cash' },
+            { id: 'card', label: 'Tarjeta', icon: 'card' },
+            { id: 'mixed', label: 'Mixto', icon: 'split' },
+            { id: 'voucher', label: 'Vale regalo', icon: 'gift' },
         ];
+        // Keypad keys, emitting the same tokens appendNum() always received from <numpad>.
+        const keypadKeys = ['7', '8', '9', '4', '5', '6', '1', '2', '3', 'decimal', '0', 'backspace'];
+        const quickAmounts = ['10', '20', '50', '100'];
+        /** Display-only Spanish amount: 68.78 -> "68,78 €". Internal values stay numbers. */
+        const eur = (n) => (Number(n) || 0).toFixed(2).replace('.', ',') + ' €';
 
         const cashParsed = Vue.computed(() => {
             return parseFloat(cashInput.value.replace(',', '.')) || 0;
@@ -366,188 +372,184 @@ const PaymentModal = {
             cashInput.value = props.total.toFixed(2).replace('.', ',');
         }
 
-        return { method, cashInput, card1, card2, step, errorMsg, errorRetry, lastOrderId, lastSaleId, methods, cashParsed, change, cardParsed, card2Parsed, dataphoneMode, printerType, voucherCode, voucherPreview, voucherBusy, voucherError, voucherTender, voucherCashInput, voucherPayable, voucherDiscount, voucherGross, voucherCashParsed, voucherChange, voucherReconciliationRequired, couponOffline, chargeWithoutCoupon, completedTotal, completedChange, doneTotal, doneChange, isSubmitting, canConfirm, handleConfirm, retryCheckout, returnToSelection, appendNum, exacto, downloadTicket, applyVoucher, invalidateVoucher };
+        return { method, cashInput, card1, card2, step, errorMsg, errorRetry, lastOrderId, lastSaleId, methods, cashParsed, change, cardParsed, card2Parsed, dataphoneMode, printerType, voucherCode, voucherPreview, voucherBusy, voucherError, voucherTender, voucherCashInput, voucherPayable, voucherDiscount, voucherGross, voucherCashParsed, voucherChange, voucherReconciliationRequired, couponOffline, chargeWithoutCoupon, completedTotal, completedChange, doneTotal, doneChange, isSubmitting, canConfirm, handleConfirm, retryCheckout, returnToSelection, appendNum, exacto, downloadTicket, applyVoucher, invalidateVoucher, keypadKeys, quickAmounts, eur };
     },
     template: `
         <div class="modal-backdrop" @click.self="$emit('close')">
             <!-- Done state -->
-            <div v-if="step === 'done'" style="background:var(--surface); border:1px solid var(--green-dim); border-radius:24px; padding:56px; text-align:center; display:flex; flex-direction:column; align-items:center; gap:16px;">
-                <div style="width:72px; height:72px; border-radius:50%; background:var(--green); display:flex; align-items:center; justify-content:center;">
-                    <icon name="check" :size="36" />
+            <div v-if="step === 'done'" class="pay-result">
+                <div class="pay-result-badge pay-result-badge-ok">
+                    <icon name="check" :size="32" />
                 </div>
-                <div style="font-size:24px; font-weight:700;">Cobro completado</div>
-                <div style="font-family:'IBM Plex Mono'; font-size:32px; color:var(--green);">{{ Number(doneTotal).toFixed(2) }}€</div>
-                <div v-if="(method === 'cash' || (method === 'voucher' && voucherTender === 'cash')) && doneChange > 0" style="color:var(--text2);">
-                    Cambio: <span style="color:var(--amber); font-weight:600; font-family:'IBM Plex Mono';">{{ Number(doneChange).toFixed(2) }}€</span>
+                <div class="pay-result-title">Cobro completado</div>
+                <div class="pay-result-amount">{{ eur(doneTotal) }}</div>
+                <div v-if="(method === 'cash' || (method === 'voucher' && voucherTender === 'cash')) && doneChange > 0" class="pay-result-change">
+                    Cambio: <span class="pay-num" style="color:var(--amber); font-weight:700;">{{ eur(doneChange) }}</span>
                 </div>
                 <div v-if="printerType !== 'none'" style="color:var(--text3); font-size:13px;">
                     {{ printerType === 'escpos' ? 'Ticket enviado a impresora' : 'Abriendo ticket PDF...' }}
                 </div>
-                <button v-if="(lastSaleId || lastOrderId) && printerType === 'pdf'" @click="downloadTicket"
-                    style="margin-top:8px; padding:10px 20px; border-radius:10px; border:1px solid var(--green-dim); background:var(--green-bg); color:var(--green); cursor:pointer; font-weight:600;">
-                    Descargar ticket PDF
+                <button v-if="(lastSaleId || lastOrderId) && printerType === 'pdf'" @click="downloadTicket" class="tpv-btn" style="margin-top:8px;">
+                    <icon name="print" :size="18" /> Descargar ticket PDF
                 </button>
             </div>
 
             <!-- Error state -->
-            <div v-else-if="step === 'error'" style="background:var(--surface); border:1px solid var(--red); border-radius:24px; padding:48px; text-align:center; display:flex; flex-direction:column; align-items:center; gap:16px; max-width:420px;">
-                <div style="width:64px; height:64px; border-radius:50%; background:var(--red-bg); display:flex; align-items:center; justify-content:center;">
-                    <icon name="close" :size="28" style="color:var(--red);" />
+            <div v-else-if="step === 'error'" class="pay-result pay-result-error">
+                <div class="pay-result-badge pay-result-badge-error">
+                    <icon name="close" :size="28" />
                 </div>
-                <div style="font-size:20px; font-weight:700; color:var(--red);">Error en el cobro</div>
-                <div style="color:var(--text2); font-size:14px;">{{ errorMsg }}</div>
-                <div style="display:flex; gap:12px; margin-top:8px;">
-                    <button v-if="couponOffline" @click="chargeWithoutCoupon"
-                        style="padding:12px 24px; border-radius:10px; border:1px solid var(--green-dim); background:var(--green-bg); color:var(--green); cursor:pointer; font-weight:600;">
+                <div class="pay-result-title" style="color:var(--red);">Error en el cobro</div>
+                <div style="color:var(--text2); font-size:14px; line-height:1.45;">{{ errorMsg }}</div>
+                <div style="display:flex; flex-wrap:wrap; justify-content:center; gap:8px; margin-top:8px;">
+                    <button v-if="couponOffline" @click="chargeWithoutCoupon" class="tpv-btn tpv-btn-primary">
                         Cobrar sin cupón
                     </button>
-                    <button v-if="errorRetry" @click="retryCheckout"
-                        style="padding:12px 24px; border-radius:10px; border:1px solid var(--green-dim); background:var(--green-bg); color:var(--green); cursor:pointer; font-weight:600;">
+                    <button v-if="errorRetry" @click="retryCheckout" class="tpv-btn tpv-btn-primary">
                         Reintentar
                     </button>
-                    <button @click="returnToSelection"
-                        style="padding:12px 24px; border-radius:10px; border:1px solid var(--border); background:var(--surface2); color:var(--text2); cursor:pointer;">
+                    <button @click="returnToSelection" class="tpv-btn">
                         Volver
                     </button>
                 </div>
             </div>
 
             <!-- Select state -->
-            <div v-else style="background:var(--surface); border:1px solid var(--border); border-radius:24px; width:680px; max-height:90vh; overflow:auto; display:flex; flex-direction:column; gap:0;">
+            <div v-else class="pay-modal">
                 <!-- Header -->
-                <div style="padding:24px 28px 20px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between;">
-                    <div>
-                        <div style="font-size:12px; color:var(--text3); text-transform:uppercase; letter-spacing:0.1em;">Cobrar ticket</div>
-                        <div style="font-size:28px; font-weight:700; font-family:'IBM Plex Mono'; margin-top:2px;">{{ Number(total).toFixed(2) }}€</div>
-                    </div>
-                    <button @click="$emit('close')" style="background:var(--surface2); border:none; border-radius:8px; width:36px; height:36px; cursor:pointer; color:var(--text2); display:flex; align-items:center; justify-content:center;">
-                        <icon name="close" :size="16" />
+                <div class="pay-head">
+                    <div class="pay-title">Cobrar ticket</div>
+                    <div class="pay-total pay-num">{{ eur(total) }}</div>
+                    <button @click="$emit('close')" class="pay-close" aria-label="Cerrar">
+                        <icon name="close" :size="20" />
                     </button>
                 </div>
 
-                <div style="display:flex; gap:0;">
-                    <!-- Left: methods + numpad -->
-                    <div style="flex:0 0 280px; padding:20px 24px; border-right:1px solid var(--border); display:flex; flex-direction:column; gap:16px;">
-                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
-                            <button v-for="pm in methods" :key="pm.id" @click="method = pm.id"
-                                style="padding:12px 10px; border-radius:10px; border:1px solid; cursor:pointer; font-family:inherit; font-size:12px; display:flex; flex-direction:column; align-items:center; gap:4px; transition:all .1s;"
-                                :style="{ borderColor: method === pm.id ? 'var(--green-dim)' : 'var(--border)', background: method === pm.id ? 'var(--green-bg)' : 'var(--surface2)', color: method === pm.id ? 'var(--green)' : 'var(--text2)', fontWeight: method === pm.id ? 600 : 400 }">
-                                <span style="font-size:18px;">{{ pm.icon }}</span>
-                                {{ pm.label }}
+                <!-- Payment method -->
+                <div class="pay-methods" role="radiogroup" aria-label="Método de pago">
+                    <button v-for="pm in methods" :key="pm.id" @click="method = pm.id"
+                        class="pay-method" :class="{ 'is-selected': method === pm.id }"
+                        role="radio" :aria-checked="method === pm.id ? 'true' : 'false'">
+                        <icon :name="pm.icon" :size="22" />
+                        <span>{{ pm.label }}</span>
+                        <span v-if="method === pm.id" class="pay-method-mark"><icon name="check" :size="13" /></span>
+                    </button>
+                </div>
+
+                <div class="pay-body">
+                    <!-- Left: keypad -->
+                    <div v-if="method === 'cash' || method === 'mixed'" class="pay-left">
+                        <div class="pay-keypad">
+                            <button v-for="k in keypadKeys" :key="k" class="pay-key" @click="appendNum(k)"
+                                :aria-label="k === 'backspace' ? 'Borrar' : (k === 'decimal' ? 'Coma decimal' : null)">
+                                <icon v-if="k === 'backspace'" name="backspace" :size="24" />
+                                <template v-else>{{ k === 'decimal' ? ',' : k }}</template>
                             </button>
                         </div>
-
-                        <template v-if="method === 'cash' || method === 'mixed'">
-                            <numpad
-                                :presets="[{value:'10',label:'10€'},{value:'20',label:'20€'},{value:'50',label:'50€'},{value:'100',label:'100€'}]"
-                                :preset-columns="2"
-                                @input="appendNum"
-                            />
-                            <button v-if="method === 'cash'" @click="exacto"
-                                style="padding:10px 16px; border-radius:8px; border:1px solid var(--green-dim); background:var(--green-bg); color:var(--green); cursor:pointer; font-family:inherit; font-size:13px; font-weight:600;">
-                                Exacto
+                        <div class="pay-quick">
+                            <button v-for="q in quickAmounts" :key="q" class="tpv-btn pay-quick-btn" @click="appendNum('preset:' + q)">
+                                {{ q }} €
                             </button>
-                        </template>
+                        </div>
+                        <button v-if="method === 'cash'" @click="exacto" class="tpv-btn pay-exact">
+                            Exacto
+                        </button>
                     </div>
 
                     <!-- Right: details -->
-                    <div style="flex:1; padding:20px 24px; display:flex; flex-direction:column; gap:16px;">
+                    <div class="pay-right">
                         <template v-if="method === 'cash'">
                             <div>
-                                <div style="font-size:11px; color:var(--text3); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:8px;">Entrega cliente</div>
-                                <div style="background:var(--surface2); border:1px solid var(--border2); border-radius:10px; padding:14px 16px; font-family:'IBM Plex Mono'; font-size:26px; font-weight:500; min-height:56px; color: cashInput ? 'var(--text)' : 'var(--text3)';">
+                                <div class="tpv-label" style="margin-bottom:8px;">Entrega cliente</div>
+                                <div class="pay-display pay-num" :class="{ 'is-empty': !cashInput }">
                                     {{ cashInput || '0,00' }} €
                                 </div>
                             </div>
-                            <div v-if="cashParsed >= total" style="background:var(--amber-bg); border:1px solid var(--amber); border-radius:10px; padding:12px 16px;">
-                                <div style="font-size:11px; color:var(--amber); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:4px;">Cambio a devolver</div>
-                                <div style="font-family:'IBM Plex Mono'; font-size:28px; font-weight:700; color:var(--amber);">{{ Number(change).toFixed(2) }}€</div>
+                            <div v-if="cashParsed >= total" class="pay-figure">
+                                <span class="pay-figure-label">Cambio a devolver</span>
+                                <span class="pay-figure-value pay-num" style="color:var(--amber);">{{ eur(change) }}</span>
                             </div>
-                            <div v-else-if="cashParsed > 0" style="background:var(--red-bg); border:1px solid var(--red); border-radius:10px; padding:12px 16px;">
-                                <div style="font-size:11px; color:var(--red); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:4px;">Falta por cubrir</div>
-                                <div style="font-family:'IBM Plex Mono'; font-size:28px; font-weight:700; color:var(--red);">{{ (total - cashParsed).toFixed(2) }}€</div>
+                            <div v-else-if="cashParsed > 0" class="pay-figure">
+                                <span class="pay-figure-label">Falta por cubrir</span>
+                                <span class="pay-figure-value pay-num" style="color:var(--red);">{{ eur(total - cashParsed) }}</span>
                             </div>
                         </template>
 
                         <template v-if="method === 'card'">
-                            <div style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; text-align:center;">
-                                <div style="font-size:48px;">💳</div>
+                            <div class="pay-card">
+                                <div class="pay-card-icon"><icon name="card" :size="32" /></div>
                                 <template v-if="dataphoneMode === 'independent'">
-                                    <div style="font-size:16px; font-weight:600;">Tarjeta (independiente)</div>
-                                    <div style="color:var(--text3); font-size:13px;">El cobro se realiza manualmente fuera del TPV</div>
+                                    <div style="font-size:17px; font-weight:600;">Tarjeta (independiente)</div>
+                                    <div style="color:var(--text2); font-size:14px;">El cobro se realiza manualmente fuera del TPV</div>
                                 </template>
                                 <template v-else>
-                                    <div style="font-size:16px; font-weight:600;">Esperando datáfono…</div>
-                                    <div style="color:var(--text3); font-size:13px;">Pase, introduce o aproxime la tarjeta en el terminal</div>
+                                    <div style="font-size:17px; font-weight:600;">Esperando datáfono…</div>
+                                    <div style="color:var(--text2); font-size:14px;">Pase, introduce o aproxime la tarjeta en el terminal</div>
                                 </template>
-                                <div style="font-family:'IBM Plex Mono'; font-size:22px; color:var(--blue); margin-top:8px;">{{ Number(total).toFixed(2) }}€</div>
+                                <div class="pay-num" style="font-size:28px; font-weight:700; margin-top:4px;">{{ eur(total) }}</div>
                             </div>
                         </template>
 
                         <template v-if="method === 'voucher'">
                             <div style="flex:1; display:flex; flex-direction:column; gap:12px;">
-                                <div style="font-size:13px; color:var(--text2);">Cupón de descuento PrestaShop</div>
+                                <div class="tpv-label">Cupón de descuento PrestaShop</div>
                                 <div style="display:flex; gap:8px;">
                                     <input v-model="voucherCode" @keyup.enter="applyVoucher" placeholder="CÓDIGO DEL CUPÓN"
-                                        :disabled="voucherBusy"
-                                        style="flex:1; background:var(--surface2); border:1px solid var(--border2); border-radius:10px; padding:13px 16px; color:var(--text); font-family:'IBM Plex Mono'; font-size:17px; outline:none; letter-spacing:0.05em;" />
-                                    <button @click="applyVoucher" :disabled="voucherBusy"
-                                        style="padding:0 14px; border-radius:10px; border:1px solid var(--green-dim); background:var(--green-bg); color:var(--green); font-weight:600; cursor:pointer;">
+                                        :disabled="voucherBusy" class="tpv-input"
+                                        style="flex:1; font-family:'IBM Plex Mono', monospace; font-size:17px; letter-spacing:0.05em;" />
+                                    <button @click="applyVoucher" :disabled="voucherBusy" class="tpv-btn">
                                         {{ voucherBusy ? 'Validando…' : 'Validar y aplicar' }}
                                     </button>
                                 </div>
-                                <div v-if="voucherError" style="color:var(--red); font-size:12px;">{{ voucherError }}</div>
-                                <button v-if="couponOffline" @click="chargeWithoutCoupon"
-                                    style="padding:10px 14px; border-radius:10px; border:1px solid var(--green-dim); background:var(--green-bg); color:var(--green); font-weight:600; cursor:pointer;">
+                                <div v-if="voucherError" style="color:var(--red); font-size:13px;">{{ voucherError }}</div>
+                                <button v-if="couponOffline" @click="chargeWithoutCoupon" class="tpv-btn tpv-btn-primary">
                                     Cobrar sin cupón
                                 </button>
-                                <div v-if="voucherPreview" style="background:var(--green-bg); border:1px solid var(--green-dim); border-radius:10px; padding:12px; display:flex; flex-direction:column; gap:7px;">
-                                    <div style="font-size:12px; color:var(--text2);">Cupón aplicado como descuento; no es saldo ni medio de pago.</div>
-                                    <div style="display:flex; justify-content:space-between;"><span>Bruto</span><strong>{{ voucherGross.toFixed(2) }}€</strong></div>
-                                    <div style="display:flex; justify-content:space-between; color:var(--green);"><span>Descuento cupón</span><strong>-{{ voucherDiscount.toFixed(2) }}€</strong></div>
-                                    <div style="display:flex; justify-content:space-between; font-family:'IBM Plex Mono'; font-size:18px;"><span>Resta por cobrar</span><strong>{{ voucherPayable.toFixed(2) }}€</strong></div>
-                                    <div style="display:flex; gap:8px; margin-top:4px;">
-                                        <button @click="voucherTender = 'cash'" :style="{ flex:1, padding:'8px', borderRadius:'8px', border:'1px solid var(--border)', background:voucherTender === 'cash' ? 'var(--green-bg)' : 'var(--surface2)', color:'var(--text)', cursor:'pointer' }">Efectivo</button>
-                                        <button @click="voucherTender = 'card'" :style="{ flex:1, padding:'8px', borderRadius:'8px', border:'1px solid var(--border)', background:voucherTender === 'card' ? 'var(--green-bg)' : 'var(--surface2)', color:'var(--text)', cursor:'pointer' }">Tarjeta</button>
+                                <div v-if="voucherPreview" class="pay-voucher">
+                                    <div style="font-size:13px; color:var(--text2);">Cupón aplicado como descuento; no es saldo ni medio de pago.</div>
+                                    <div class="pay-row"><span>Bruto</span><strong class="pay-num">{{ eur(voucherGross) }}</strong></div>
+                                    <div class="pay-row" style="color:var(--green);"><span>Descuento cupón</span><strong class="pay-num">-{{ eur(voucherDiscount) }}</strong></div>
+                                    <div class="pay-row pay-row-total"><span>Resta por cobrar</span><strong class="pay-num">{{ eur(voucherPayable) }}</strong></div>
+                                    <div class="tpv-chip-grid cols-2" style="margin-top:4px;">
+                                        <button @click="voucherTender = 'cash'" class="tpv-chip" :class="{ 'is-selected': voucherTender === 'cash' }">
+                                            Efectivo
+                                            <span v-if="voucherTender === 'cash'" class="tpv-chip-mark"><icon name="check" :size="16" /></span>
+                                        </button>
+                                        <button @click="voucherTender = 'card'" class="tpv-chip" :class="{ 'is-selected': voucherTender === 'card' }">
+                                            Tarjeta
+                                            <span v-if="voucherTender === 'card'" class="tpv-chip-mark"><icon name="check" :size="16" /></span>
+                                        </button>
                                     </div>
                                     <template v-if="voucherTender === 'cash'">
-                                        <input v-model="voucherCashInput" inputmode="decimal" placeholder="0,00"
-                                            style="background:var(--surface2); border:1px solid var(--border2); border-radius:8px; padding:10px; color:var(--text); font-family:'IBM Plex Mono';" />
-                                        <div v-if="voucherCashParsed < voucherPayable" style="color:var(--red); font-size:12px;">Faltan {{ (voucherPayable - voucherCashParsed).toFixed(2) }}€</div>
-                                        <div v-else-if="voucherChange > 0" style="color:var(--amber); font-size:12px;">Cambio: {{ voucherChange.toFixed(2) }}€</div>
+                                        <input v-model="voucherCashInput" inputmode="decimal" placeholder="0,00" class="tpv-input pay-num" style="font-size:18px;" />
+                                        <div v-if="voucherCashParsed < voucherPayable" style="color:var(--red); font-size:13px;">Faltan {{ eur(voucherPayable - voucherCashParsed) }}</div>
+                                        <div v-else-if="voucherChange > 0" style="color:var(--amber); font-size:13px;">Cambio: {{ eur(voucherChange) }}</div>
                                     </template>
                                 </div>
-                                <div v-else style="font-size:12px; color:var(--text3);">Valida el código para obtener el descuento y el importe pendiente. Se invalida si cambia el carrito o cliente.</div>
+                                <div v-else style="font-size:13px; color:var(--text2); line-height:1.45;">Valida el código para obtener el descuento y el importe pendiente. Se invalida si cambia el carrito o cliente.</div>
                             </div>
                         </template>
 
                         <template v-if="method === 'mixed'">
-                            <div style="flex:1; display:flex; flex-direction:column; gap:12px;">
-                                <div style="font-size:12px; color:var(--text3); text-transform:uppercase; letter-spacing:0.1em;">
-                                    Total: <span style="font-family:'IBM Plex Mono'; color:var(--text);">{{ Number(total).toFixed(2) }}€</span>
+                            <div style="flex:1; display:flex; flex-direction:column; gap:14px;">
+                                <div>
+                                    <div class="tpv-label" style="margin-bottom:8px;">Efectivo</div>
+                                    <input v-model="card2" placeholder="0,00" inputmode="decimal" class="tpv-input pay-display pay-num" />
                                 </div>
                                 <div>
-                                    <div style="font-size:12px; color:var(--text2); margin-bottom:6px;">Efectivo</div>
-                                    <input v-model="card2" placeholder="0,00" inputmode="decimal"
-                                        style="width:100%; background:var(--surface2); border:1px solid var(--border2); border-radius:10px; padding:12px 16px; font-family:'IBM Plex Mono'; font-size:20px; color:var(--text); outline:none;" />
+                                    <div class="tpv-label" style="margin-bottom:8px;">Tarjeta</div>
+                                    <div class="pay-display pay-display-readonly pay-num">{{ card1 || '0,00' }} €</div>
                                 </div>
-                                <div>
-                                    <div style="font-size:12px; color:var(--text2); margin-bottom:6px;">Tarjeta</div>
-                                    <div style="width:100%; background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:12px 16px; font-family:'IBM Plex Mono'; font-size:20px; color:var(--text2);">
-                                        {{ card1 || '0,00' }} €
-                                    </div>
-                                </div>
-                                <div style="font-size:12px; font-family:'IBM Plex Mono';"
+                                <div class="pay-covered pay-num"
                                     :style="{ color: (cardParsed + card2Parsed) >= total ? 'var(--green)' : 'var(--red)' }">
-                                    Total cubierto: {{ (cardParsed+card2Parsed).toFixed(2) }}€ {{ (cardParsed+card2Parsed) >= total ? '✓' : '(faltan ' + (total - cardParsed - card2Parsed).toFixed(2) + '€)' }}
+                                    <icon v-if="(cardParsed + card2Parsed) >= total" name="check" :size="16" />
+                                    Total cubierto: {{ eur(cardParsed + card2Parsed) }}{{ (cardParsed + card2Parsed) >= total ? '' : ' (faltan ' + eur(total - cardParsed - card2Parsed) + ')' }}
                                 </div>
                             </div>
                         </template>
 
-                        <button @click="handleConfirm" :disabled="!canConfirm()"
-                            style="margin-top:auto; padding:16px; border-radius:12px; border:none; font-family:inherit; font-size:16px; font-weight:700; transition:all .15s;"
-                            :style="{ background: canConfirm() ? 'var(--green)' : 'var(--surface3)', color: canConfirm() ? '#000' : 'var(--text3)', cursor: canConfirm() ? 'pointer' : 'default' }">
-                            {{ isSubmitting ? 'Procesando…' : (method === 'voucher' ? 'Cobrar ' + voucherPayable.toFixed(2) + '€ tras cupón' : (method === 'card' ? (dataphoneMode === 'independent' ? 'Registrar cobro con tarjeta' : 'Confirmar cobro con tarjeta') : 'Cobrar ' + Number(total).toFixed(2) + '€')) }}
+                        <button @click="handleConfirm" :disabled="!canConfirm()" class="pay-confirm">
+                            {{ isSubmitting ? 'Procesando…' : (method === 'voucher' ? 'Cobrar ' + eur(voucherPayable) + ' tras cupón' : (method === 'card' ? (dataphoneMode === 'independent' ? 'Registrar cobro con tarjeta' : 'Confirmar cobro con tarjeta') : 'Cobrar ' + eur(total))) }}
                         </button>
                     </div>
                 </div>

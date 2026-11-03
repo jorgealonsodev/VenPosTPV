@@ -475,3 +475,184 @@ html, body, #app {
 .tpv-spin svg { animation: tpv-spin 0.9s linear infinite; }
 .tpv-spin:disabled { cursor: progress; opacity: 0.8; }
 @media (prefers-reduced-motion: reduce) { .tpv-spin svg { animation: none; } }
+
+/* ── Payment modal ("Cobrar ticket") ───────────────────────────────
+   Calm POS layout: neutral surfaces, one primary action. Only guarded token
+   pairs are used (text/text2 on surface/surface2, --green/--amber/--red on
+   --surface, --border2 on surface/surface2, white on --primary), so the
+   theme contrast guard covers this block in both themes. */
+.pay-num { font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; }
+.pay-modal {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    width: 760px;
+    max-width: calc(100vw - 32px);
+    max-height: 92vh;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.35);
+}
+.pay-head { display: flex; align-items: center; gap: 16px; padding: 18px 20px 18px 24px; border-bottom: 1px solid var(--border); }
+.pay-title { flex: 1; font-size: 17px; font-weight: 600; color: var(--text); }
+.pay-total { font-size: 30px; font-weight: 700; color: var(--text); letter-spacing: -0.01em; }
+.pay-close {
+    width: 48px; height: 48px; flex-shrink: 0;
+    border-radius: 10px; border: 1px solid var(--border2);
+    background: var(--surface); color: var(--text2);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+}
+
+/* Method selector: neutral tiles; the selected one gets a green border, green icon and a check. */
+.pay-methods { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 16px 24px 0; }
+.pay-method {
+    position: relative;
+    min-height: 56px;
+    padding: 8px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--border2);
+    background: var(--surface);
+    color: var(--text2);
+    font-family: inherit;
+    font-size: 15px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    cursor: pointer;
+    touch-action: manipulation;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    transition: border-color .1s, color .1s;
+}
+.pay-method.is-selected {
+    border-color: var(--green);
+    box-shadow: inset 0 0 0 1px var(--green);
+    color: var(--text);
+    font-weight: 600;
+}
+.pay-method.is-selected > svg { color: var(--green); }
+.pay-method-mark {
+    position: absolute; top: 6px; right: 6px;
+    width: 20px; height: 20px; border-radius: 50%;
+    background: var(--primary); color: var(--on-primary);
+    display: flex; align-items: center; justify-content: center;
+}
+
+.pay-body { display: flex; min-height: 440px; }
+.pay-left { flex: 0 0 312px; padding: 16px 20px 20px 24px; border-right: 1px solid var(--border); display: flex; flex-direction: column; gap: 10px; }
+.pay-right { flex: 1; min-width: 0; padding: 16px 24px 20px; display: flex; flex-direction: column; gap: 16px; }
+
+/* Keypad: quiet keys, tabular numerals, a clear pressed state. */
+.pay-keypad { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.pay-key {
+    height: 60px;
+    border-radius: 10px;
+    border: 1px solid var(--border2);
+    background: var(--surface2);
+    color: var(--text);
+    font-family: 'IBM Plex Mono', monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 22px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    touch-action: manipulation;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    transition: background .1s, transform .1s ease-out;
+}
+.pay-key:active { background: var(--surface3); transform: scale(0.97); }
+.pay-quick { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.pay-quick-btn { padding: 0 4px; font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; font-size: 15px; font-weight: 500; }
+.pay-exact { width: 100%; }
+.pay-quick-btn:active:not(:disabled), .pay-exact:active:not(:disabled) { background: var(--surface3); }
+@media (hover: hover) {
+    .pay-method:hover:not(.is-selected) { background: var(--surface2); }
+    .pay-key:hover { background: var(--surface3); }
+    .pay-close:hover { background: var(--surface2); color: var(--text); }
+}
+
+/* Amounts on the right */
+.pay-display {
+    width: 100%;
+    min-height: 64px;
+    padding: 0 18px;
+    border-radius: 10px;
+    border: 1px solid var(--border2);
+    background: var(--surface2);
+    color: var(--text);
+    font-size: 30px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    text-align: right;
+}
+.pay-display.is-empty { color: var(--text3); }
+.pay-display-readonly { background: var(--surface); color: var(--text2); border-style: dashed; }
+.pay-figure { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 4px 2px 0; }
+.pay-figure-label { color: var(--text2); font-size: 15px; font-weight: 600; }
+.pay-figure-value { font-size: 30px; font-weight: 700; }
+.pay-covered { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600; }
+.pay-card { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; text-align: center; }
+.pay-card-icon { width: 72px; height: 72px; border-radius: 50%; background: var(--surface2); color: var(--text2); display: flex; align-items: center; justify-content: center; margin-bottom: 6px; }
+.pay-voucher { border: 1px solid var(--border); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 8px; background: var(--surface); }
+.pay-row { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; }
+.pay-row-total { font-size: 18px; border-top: 1px solid var(--border); padding-top: 8px; }
+
+/* The one primary action; disabled stays readable (text2 on surface2 >= 4.5:1). */
+.pay-confirm {
+    margin-top: auto;
+    min-height: 64px;
+    padding: 0 20px;
+    border-radius: 12px;
+    border: 1px solid var(--primary);
+    background: var(--primary);
+    color: var(--on-primary);
+    font-family: inherit;
+    font-size: 18px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    transition: transform .1s ease-out, filter .1s;
+}
+.pay-confirm:active:not(:disabled) { transform: scale(0.98); }
+.pay-confirm:disabled { background: var(--surface2); border-color: var(--border); color: var(--text2); cursor: not-allowed; }
+@media (hover: hover) { .pay-confirm:hover:not(:disabled) { filter: brightness(1.08); } }
+.pay-method:focus-visible, .pay-key:focus-visible, .pay-close:focus-visible, .pay-confirm:focus-visible {
+    outline: 3px solid var(--green);
+    outline-offset: 2px;
+}
+
+/* Done / error cards */
+.pay-result {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+    padding: 48px 56px; max-width: 460px; text-align: center;
+    display: flex; flex-direction: column; align-items: center; gap: 14px;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.35);
+}
+.pay-result-error { border-color: var(--red); }
+.pay-result-badge { width: 64px; height: 64px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+.pay-result-badge-ok { background: var(--primary); color: var(--on-primary); }
+.pay-result-badge-error { background: var(--red-bg); color: var(--red); }
+.pay-result-title { font-size: 22px; font-weight: 700; }
+.pay-result-amount { font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; font-size: 34px; font-weight: 700; color: var(--text); }
+.pay-result-change { color: var(--text2); font-size: 16px; }
+
+@media (prefers-reduced-motion: reduce) {
+    .pay-method, .pay-key, .pay-confirm { transition: none; }
+    .pay-key:active, .pay-confirm:active:not(:disabled) { transform: none; }
+}
+@media (max-width: 760px) {
+    .pay-methods { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .pay-body { flex-direction: column; min-height: 0; }
+    .pay-left { flex: none; border-right: none; border-bottom: 1px solid var(--border); padding-right: 24px; }
+}
