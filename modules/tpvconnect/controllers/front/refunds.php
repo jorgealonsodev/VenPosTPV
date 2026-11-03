@@ -53,7 +53,11 @@ class TpvconnectRefundsModuleFrontController extends ModuleFrontController
         // Validation, quantity/amount caps, idempotency and restock live in
         // RefundProcessor so they can be tested without a shop.
         try {
-            $processor = new RefundProcessor(new PsRefundGateway(), (int) Configuration::get('TPV_OS_REFUND'));
+            $processor = new RefundProcessor(
+                new PsRefundGateway(),
+                (int) Configuration::get('TPV_OS_REFUND'),
+                (int) Configuration::get('TPV_OS_REFUND_PENDING'),
+            );
             $result = $processor->process($data);
             $this->jsonResponse($result, $result['replayed'] ? 200 : 201);
         } catch (RefundRequestException $e) {

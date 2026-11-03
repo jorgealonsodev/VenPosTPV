@@ -18,7 +18,7 @@ class ReleaseMetadataTest extends TestCase
         $php = (string) file_get_contents($moduleRoot . '/tpvconnect.php');
         $xml = (string) file_get_contents($moduleRoot . '/config.xml');
 
-        self::assertSame('0.4.0', $this->declaredPhpVersion($php));
+        self::assertSame('0.5.0', $this->declaredPhpVersion($php));
         self::assertSame($this->declaredPhpVersion($php), $this->declaredXmlVersion($xml));
         self::assertTrue(version_compare($this->declaredPhpVersion($php), '0.1.0', '>'));
     }
@@ -76,5 +76,26 @@ class ReleaseMetadataTest extends TestCase
 
         self::assertTrue(upgrade_module_0_4_0(new \Module()));
         self::assertSame($before, \Configuration::$values);
+    }
+
+    public function test_0_5_0_upgrade_creates_the_pending_web_refund_state_once_and_keeps_the_rest(): void
+    {
+        $moduleRoot = dirname(__DIR__, 2);
+        \OrderState::$states = [43 => ['name' => [1 => 'Devolución TPV']], 44 => [], 45 => []];
+        \Configuration::$values = ['TPVCONNECT_SSO_SECRET' => 'existing-secret', 'TPV_OS_PAID' => 44, 'TPV_OS_REFUND' => 43, 'TPV_OS_PENDING_SYNC' => 45];
+
+        require_once $moduleRoot . '/upgrade/upgrade-0.5.0.php';
+
+        self::assertTrue(upgrade_module_0_5_0(new \Module()));
+        $pendingId = (int) \Configuration::$values['TPV_OS_REFUND_PENDING'];
+        self::assertGreaterThan(45, $pendingId);
+        self::assertSame('Devuelto en tienda – reembolso pendiente', \OrderState::$states[$pendingId]['name'][1]);
+        self::assertSame(['TPVCONNECT_SSO_SECRET' => 'existing-secret', 'TPV_OS_PAID' => 44, 'TPV_OS_REFUND' => 43, 'TPV_OS_PENDING_SYNC' => 45], array_diff_key(\Configuration::$values, ['TPV_OS_REFUND_PENDING' => true]));
+
+        // Running it again (or reinstalling) reuses the state instead of adding another.
+        $count = \count(\OrderState::$states);
+        self::assertTrue(upgrade_module_0_5_0(new \Module()));
+        self::assertSame($count, \count(\OrderState::$states));
+        self::assertSame($pendingId, (int) \Configuration::$values['TPV_OS_REFUND_PENDING']);
     }
 }

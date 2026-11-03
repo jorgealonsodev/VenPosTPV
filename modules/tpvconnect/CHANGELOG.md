@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.0
+
+- Adds `POST /module/tpvconnect/orderlookup` (HMAC, rate limited) with `{"id_order": 77}` or `{"reference": "XKBKNABJK"}`: returns every matching order with its date, customer, whether the TPV created it, current state, delivery date (first state flagged as delivered, `null` when never delivered) and lines with the refundable quantity left after credit slips and the paid total per line (order discounts prorated by line total to the cent, remainder on the heaviest line, free shipping excluded). 404 when no order matches, 422 for an invalid body.
+- Refunds accept an optional `target_state`: `refund` (default, unchanged) or `web_refund_pending`, which sets the new order state "Devuelto en tienda – reembolso pendiente" (`TPV_OS_REFUND_PENDING`) and leaves a private order note with `web_refund_amount` for the office. 422 before any slip when the state is not installed.
+- The upgrade creates the new order state once; existing settings, secrets and states are kept.
+- Additive contract: deploy before the TPV online-order refunds change.
+
 ## 0.4.0
 
 - Adds `POST /module/tpvconnect/restock` (HMAC, rate limited) for TPV refunds without a ticket: adds each returned quantity as a delta to the live stock of the exact product combination, with no order or credit slip.

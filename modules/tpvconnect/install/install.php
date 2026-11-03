@@ -65,6 +65,19 @@ class TpvConnectInstaller
                     'pt' => 'Reembolso TPV',
                 ],
             ],
+            // Online orders returned at the shop: the TPV paid nothing back and the
+            // office refunds from the back office.
+            'TPV_OS_REFUND_PENDING' => [
+                'color' => '#FF8C00',
+                'paid' => false,
+                'logable' => false,
+                'names' => [
+                    'es' => 'Devuelto en tienda – reembolso pendiente',
+                    'en' => 'Returned in store – refund pending',
+                    'fr' => 'Retourné en boutique – remboursement en attente',
+                    'pt' => 'Devolvido na loja – reembolso pendente',
+                ],
+            ],
             'TPV_OS_PENDING_SYNC' => [
                 'color' => '#FFD700',
                 'paid' => false,
@@ -252,6 +265,7 @@ class TpvConnectInstaller
             'TPV_OS_PAID',
             'TPV_OS_REFUND',
             'TPV_OS_PENDING_SYNC',
+            'TPV_OS_REFUND_PENDING',
             'TPVCONNECT_WS_KEY_ID',
             'TPVCONNECT_ANONYMOUS_CUSTOMER_ID',
         ];

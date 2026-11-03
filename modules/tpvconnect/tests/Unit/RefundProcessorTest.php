@@ -27,6 +27,9 @@ final class FakeRefundGateway implements RefundGateway
     public ?string $failStateWith = null;
     /** @var array<int, string> */
     public array $rememberLog = [];
+    /** @var array<int, array{int, string}> */
+    public array $notes = [];
+    public ?string $failNoteWith = null;
 
     public function loadOrder(int $orderId): ?array
     {
@@ -62,6 +65,14 @@ final class FakeRefundGateway implements RefundGateway
             throw new \RuntimeException($this->failStateWith);
         }
         $this->states[] = [$orderId, $stateId];
+    }
+
+    public function addPrivateNote(int $orderId, string $text): void
+    {
+        if ($this->failNoteWith !== null) {
+            throw new \RuntimeException($this->failNoteWith);
+        }
+        $this->notes[] = [$orderId, $text];
     }
 
     public function findProcessedRequest(string $requestId): ?array
@@ -293,5 +304,66 @@ final class RefundProcessorTest extends TestCase
         $this->assertSame(501, $replay['order_slip_id']);
         $this->assertCount(1, $this->gateway->slips, 'no second credit slip');
         $this->assertSame('Interrupted before restock was confirmed', $replay['restock_failed'][0]['error'] ?? null, 'restock outcome reported as unknown');
+    }
+
+    public function testTpvRefundsKeepTheRefundStateAndLeaveNoNote(): void
+    {
+        (new RefundProcessor($this->gateway, 9, 12))->process($this->request());
+
+        $this->assertSame([[10, 9]], $this->gateway->states);
+        $this->assertSame([], $this->gateway->notes);
+    }
+
+    public function testOnlineRefundSetsThePendingWebRefundStateAndNotesTheAmountForTheOffice(): void
+    {
+        $result = (new RefundProcessor($this->gateway, 9, 12))->process($this->request(['target_state' => 'web_refund_pending', 'web_refund_amount' => 27.0]));
+
+        $this->assertSame(501, $result['order_slip_id']);
+        $this->assertSame(27.0, $this->gateway->slips[0]['amount']);
+        $this->assertSame([[10, 12]], $this->gateway->states);
+        $this->assertSame([[10, 'Devuelto en tienda (TPV): reembolso pendiente desde la web de 27.00 €']], $this->gateway->notes);
+    }
+
+    public function testOnlineExchangeWithNothingOwedUsesTheRefundStateWithoutNote(): void
+    {
+        (new RefundProcessor($this->gateway, 9, 12))->process($this->request(['target_state' => 'refund', 'web_refund_amount' => 0]));
+
+        $this->assertSame([[10, 9]], $this->gateway->states);
+        $this->assertSame([], $this->gateway->notes);
+    }
+
+    public function testUnknownTargetStateIsRejectedBeforeAnySlip(): void
+    {
+        try {
+            (new RefundProcessor($this->gateway, 9, 12))->process($this->request(['target_state' => 'paid']));
+            $this->fail('Expected rejection');
+        } catch (RefundRequestException $e) {
+            $this->assertSame(422, $e->getHttpCode());
+            $this->assertArrayHasKey('target_state', $e->getDetails());
+        }
+        $this->assertSame([], $this->gateway->slips);
+    }
+
+    public function testPendingWebRefundStateMustBeInstalledBeforeAnySlip(): void
+    {
+        try {
+            (new RefundProcessor($this->gateway, 9, 0))->process($this->request(['target_state' => 'web_refund_pending', 'web_refund_amount' => 27.0]));
+            $this->fail('Expected rejection');
+        } catch (RefundRequestException $e) {
+            $this->assertSame(422, $e->getHttpCode());
+            $this->assertArrayHasKey('target_state', $e->getDetails());
+        }
+        $this->assertSame([], $this->gateway->slips);
+        $this->assertSame(1, $this->gateway->locksReleased);
+    }
+
+    public function testAFailingNoteNeverFailsTheRefund(): void
+    {
+        $this->gateway->failNoteWith = 'messages table locked';
+
+        $result = (new RefundProcessor($this->gateway, 9, 12))->process($this->request(['target_state' => 'web_refund_pending', 'web_refund_amount' => 27.0]));
+
+        $this->assertFalse($result['replayed']);
+        $this->assertSame([[10, 12]], $this->gateway->states);
     }
 }

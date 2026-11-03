@@ -297,11 +297,45 @@ if (!class_exists('Validate', false)) {
     class Validate { public static function isLoadedObject(object $object): bool { return ($object->loaded ?? true) === true; } }
 }
 
+if (!class_exists('OrderState', false)) {
+    /** Order states by id; add() appends one, so tests can see what an installer created. */
+    class OrderState
+    {
+        /** @var array<int, array<string, mixed>> */
+        public static array $states = [];
+        public ?int $id = null;
+        public string $color = '';
+        public bool $paid = false;
+        public bool $logable = false;
+        public string $module_name = '';
+        /** @var array<int, string> */
+        public array $name = [];
+        public bool $loaded = false;
+        public function __construct(int $id = 0)
+        {
+            if ($id > 0 && isset(self::$states[$id])) { $this->id = $id; $this->loaded = true; }
+        }
+        public function add(): bool
+        {
+            $this->id = (self::$states === [] ? 0 : max(array_keys(self::$states))) + 1;
+            self::$states[$this->id] = ['name' => $this->name, 'color' => $this->color, 'module_name' => $this->module_name];
+            $this->loaded = true;
+            return true;
+        }
+    }
+}
+if (!class_exists('Language', false)) {
+    class Language { public static function getIdByIso(string $iso): int|false { return $iso === 'es' ? 1 : false; } }
+}
+
 require_once __DIR__ . '/../classes/SsoToken.php';
 require_once __DIR__ . '/../install/install.php';
 require_once __DIR__ . '/../classes/CouponCheckout.php';
 if (is_file(__DIR__ . '/../classes/RefundProcessor.php')) {
     require_once __DIR__ . '/../classes/RefundProcessor.php';
+}
+if (is_file(__DIR__ . '/../classes/OrderLookupProcessor.php')) {
+    require_once __DIR__ . '/../classes/OrderLookupProcessor.php';
 }
 if (is_file(__DIR__ . '/../classes/RestockProcessor.php')) {
     require_once __DIR__ . '/../classes/RestockProcessor.php';

@@ -59,6 +59,9 @@ interface RefundGateway
 
     public function setOrderState(int $orderId, int $stateId): void;
 
+    /** Leaves a private (back-office only) message on the order. */
+    public function addPrivateNote(int $orderId, string $text): void;
+
     /** @return array<string, mixed>|null */
     public function findProcessedRequest(string $requestId): ?array;
 
@@ -79,14 +82,23 @@ interface RefundGateway
  * per line, adds the goods back to the live stock of the exact combination.
  * A request_id makes a retried request return the first result instead of
  * refunding twice.
+ *
+ * target_state chooses the order state set afterwards: "refund" (default, TPV
+ * sales: the till paid the money back) or "web_refund_pending" (online orders: the
+ * TPV paid nothing and the office refunds web_refund_amount from the back office,
+ * which is also left as a private note on the order).
  */
 class RefundProcessor
 {
     private const AMOUNT_TOLERANCE = 0.01;
 
+    public const TARGET_REFUND = 'refund';
+    public const TARGET_WEB_REFUND_PENDING = 'web_refund_pending';
+
     public function __construct(
         private readonly RefundGateway $gateway,
         private readonly int $refundStateId,
+        private readonly int $pendingWebRefundStateId = 0,
     ) {
     }
 
@@ -102,6 +114,8 @@ class RefundProcessor
         $lines = $this->validate($data);
         $orderId = (int) $data['ps_order_id'];
         $requestId = (string) $data['request_id'];
+        $webRefundPending = ($data['target_state'] ?? self::TARGET_REFUND) === self::TARGET_WEB_REFUND_PENDING;
+        $webRefundAmount = round((float) ($data['web_refund_amount'] ?? 0), 2);
 
         $lock = 'tpvconnect_refund_' . $orderId;
         if (!$this->gateway->acquireLock($lock)) {
@@ -120,6 +134,9 @@ class RefundProcessor
             }
 
             $matched = $this->matchLines($order, $lines);
+            if ($webRefundPending && $this->pendingWebRefundStateId <= 0) {
+                throw new RefundRequestException(422, 'Validation failed', ['target_state' => 'The "Devuelto en tienda – reembolso pendiente" state is not installed; upgrade the module']);
+            }
 
             $productList = [];
             $amount = 0.0;
@@ -185,8 +202,16 @@ class RefundProcessor
                 ];
             }
 
-            if ($this->refundStateId > 0) {
-                $this->gateway->setOrderState($orderId, $this->refundStateId);
+            $stateId = $webRefundPending ? $this->pendingWebRefundStateId : $this->refundStateId;
+            if ($stateId > 0) {
+                $this->gateway->setOrderState($orderId, $stateId);
+            }
+            if ($webRefundPending && $webRefundAmount > 0) {
+                try {
+                    $this->gateway->addPrivateNote($orderId, sprintf('Devuelto en tienda (TPV): reembolso pendiente desde la web de %.2f €', $webRefundAmount));
+                } catch (Throwable) {
+                    // Informative only: the state already tells the office a refund is due.
+                }
             }
 
             $result = [
@@ -219,6 +244,15 @@ class RefundProcessor
         $requestId = $data['request_id'] ?? null;
         if (!is_string($requestId) || !preg_match('/^[A-Za-z0-9_-]{8,64}$/', $requestId)) {
             $errors['request_id'] = 'Required, 8-64 characters [A-Za-z0-9_-]';
+        }
+
+        $target = $data['target_state'] ?? self::TARGET_REFUND;
+        if (!in_array($target, [self::TARGET_REFUND, self::TARGET_WEB_REFUND_PENDING], true)) {
+            $errors['target_state'] = 'Must be "refund" or "web_refund_pending"';
+        }
+        $webAmount = $data['web_refund_amount'] ?? 0;
+        if (!is_int($webAmount) && !is_float($webAmount) || !is_finite((float) $webAmount) || (float) $webAmount < 0) {
+            $errors['web_refund_amount'] = 'Must be a number >= 0';
         }
 
         $lines = [];
@@ -384,6 +418,21 @@ class PsRefundGateway implements RefundGateway
         $history->id_order = $orderId;
         $history->changeIdOrderState($stateId, $orderId);
         $history->addWithemail();
+    }
+
+    public function addPrivateNote(int $orderId, string $text): void
+    {
+        $order = new Order($orderId);
+        $message = new Message();
+        $message->id_order = $orderId;
+        $message->id_cart = (int) $order->id_cart;
+        $message->id_customer = (int) $order->id_customer;
+        $message->id_employee = 0;
+        $message->message = $text;
+        $message->private = true;
+        if (!$message->add()) {
+            throw new RuntimeException('Could not add the order note');
+        }
     }
 
     public function findProcessedRequest(string $requestId): ?array

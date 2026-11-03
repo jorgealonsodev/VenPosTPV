@@ -24,7 +24,7 @@ class Tpvconnect extends PaymentModule
     {
         $this->name = 'tpvconnect';
         $this->tab = 'administration';
-        $this->version = '0.4.0';
+        $this->version = '0.5.0';
         $this->author = 'VenPosTPV';
         $this->need_instance = 1;
         $this->bootstrap = true;
