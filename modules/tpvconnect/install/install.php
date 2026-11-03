@@ -20,6 +20,14 @@ class TpvConnectInstaller
     private const TECHNICAL_CUSTOMER_FIRSTNAME = 'VenPosTPV';
     private const TECHNICAL_CUSTOMER_LASTNAME = 'Cliente';
 
+    /** Hooks the module listens to; registered on install and by upgrades. */
+    public const HOOKS = [
+        'displayBackOfficeHeader',
+        'actionAdminControllerSetMedia',
+        // Gives TPV orders the ticket code as reference (web orders are untouched).
+        'actionGenerateDocumentReference',
+    ];
+
     private Module $module;
 
     public function __construct(Module $module)
@@ -33,6 +41,21 @@ class TpvConnectInstaller
             && $this->createOrderStates()
             && $this->createAnonymousCustomer()
             && $this->setConfigurationDefaults();
+    }
+
+    /**
+     * Register every module hook. registerHook() is idempotent, so upgrades can
+     * run it again to add hooks introduced by a new version.
+     */
+    public function registerHooks(): bool
+    {
+        foreach (self::HOOKS as $hook) {
+            if (!$this->module->registerHook($hook)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**

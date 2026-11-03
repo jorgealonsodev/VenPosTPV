@@ -33,7 +33,20 @@ if (!class_exists('Configuration', false)) {
 }
 
 if (!class_exists('Module', false)) {
-    class Module {}
+    class Module
+    {
+        /** @var list<string> hooks registered through registerHook(), in order */
+        public array $registeredHooks = [];
+        public function registerHook(string|array $hookName, ?array $shopList = null): bool
+        {
+            foreach ((array) $hookName as $hook) { $this->registeredHooks[] = $hook; }
+            return true;
+        }
+        public function unregisterHook(string $hookName, ?array $shopList = null): bool { return true; }
+    }
+}
+if (!class_exists('PaymentModule', false)) {
+    class PaymentModule extends Module {}
 }
 
 if (!function_exists('pSQL')) {
@@ -340,3 +353,7 @@ if (is_file(__DIR__ . '/../classes/OrderLookupProcessor.php')) {
 if (is_file(__DIR__ . '/../classes/RestockProcessor.php')) {
     require_once __DIR__ . '/../classes/RestockProcessor.php';
 }
+if (is_file(__DIR__ . '/../classes/ReferencedOrderCreator.php')) {
+    require_once __DIR__ . '/../classes/ReferencedOrderCreator.php';
+}
+require_once __DIR__ . '/../tpvconnect.php';

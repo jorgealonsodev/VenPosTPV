@@ -12,19 +12,15 @@ if (!defined('_PS_VERSION_')) {
 
 require_once __DIR__ . '/install/install.php';
 require_once __DIR__ . '/classes/SsoToken.php';
+require_once __DIR__ . '/classes/ReferencedOrderCreator.php';
 
 class Tpvconnect extends PaymentModule
 {
-    private const HOOKS = [
-        'displayBackOfficeHeader',
-        'actionAdminControllerSetMedia',
-    ];
-
     public function __construct()
     {
         $this->name = 'tpvconnect';
         $this->tab = 'administration';
-        $this->version = '0.5.0';
+        $this->version = '0.6.0';
         $this->author = 'VenPosTPV';
         $this->need_instance = 1;
         $this->bootstrap = true;
@@ -46,14 +42,8 @@ class Tpvconnect extends PaymentModule
             return false;
         }
 
-        foreach (self::HOOKS as $hook) {
-            if (!$this->registerHook($hook)) {
-                return false;
-            }
-        }
-
         $installer = new TpvConnectInstaller($this);
-        if (!$installer->run()) {
+        if (!$installer->registerHooks() || !$installer->run()) {
             return false;
         }
 
@@ -73,7 +63,7 @@ class Tpvconnect extends PaymentModule
 
         $this->uninstallTab();
 
-        foreach (self::HOOKS as $hook) {
+        foreach (TpvConnectInstaller::HOOKS as $hook) {
             $this->unregisterHook($hook);
         }
 
@@ -165,6 +155,16 @@ class Tpvconnect extends PaymentModule
         return $this->context->smarty->fetch(
             _PS_MODULE_DIR_ . $this->name . '/views/templates/admin/bo_header.tpl'
         );
+    }
+
+    /**
+     * Order::generateReference() asks this hook first. Only an order this module
+     * is creating in this request (the TPV's ticket code) gets a reference here;
+     * anything else gets '' and keeps PrestaShop's own reference.
+     */
+    public function hookActionGenerateDocumentReference(array $params): string
+    {
+        return TpvOrderReference::claim((string) ($params['type'] ?? ''));
     }
 
     public function hookActionAdminControllerSetMedia(array $params): void

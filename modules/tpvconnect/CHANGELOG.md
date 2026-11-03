@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.0
+
+- `POST /module/tpvconnect/orders` accepts an optional `reference`: the TPV ticket code, `^[A-Z]\d{8}$` (terminal letter, 2-digit year, 6 digits, e.g. `A26000123`). Any other value, `null` and `""` included, is a 422 (`details.reference`). Without `reference` the endpoint behaves exactly as before.
+- The order is created with exactly that reference through the `actionGenerateDocumentReference` hook, which answers only for the order this request is creating; web orders keep PrestaShop's own references.
+- The reference is the idempotency key: under a per-reference MySQL lock, if an order with it already exists, that order is returned (HTTP 200, same fields plus `"replayed": true`) and nothing is created; a fresh create answers 201 with `"replayed": false`. A concurrent request with the same reference waits for the lock and then replays, or gets 409 when the first one is still running after 10 s. Also applies to coupon checkouts.
+- The upgrade registers the new hook; existing settings, secrets and states are kept.
+- Additive contract: deploy before the TPV local-first sales change.
+
 ## 0.5.0
 
 - Adds `POST /module/tpvconnect/orderlookup` (HMAC, rate limited) with `{"id_order": 77}` or `{"reference": "XKBKNABJK"}`: returns every matching order with its date, customer, whether the TPV created it, current state, delivery date (first state flagged as delivered, `null` when never delivered) and lines with the refundable quantity left after credit slips and the paid total per line (order discounts prorated by line total to the cent, remainder on the heaviest line, free shipping excluded). 404 when no order matches, 422 for an invalid body.

@@ -12,6 +12,7 @@ if (!defined('_PS_VERSION_')) {
 
 require_once _PS_MODULE_DIR_ . 'tpvconnect/classes/SsoToken.php';
 require_once _PS_MODULE_DIR_ . 'tpvconnect/classes/CouponCheckout.php';
+require_once _PS_MODULE_DIR_ . 'tpvconnect/classes/ReferencedOrderCreator.php';
 
 /**
  * Front controller for order creation endpoint.
@@ -50,7 +51,11 @@ class TpvconnectOrdersModuleFrontController extends ModuleFrontController
             $this->jsonResponse(['error' => 'Validation failed', 'details' => ['body' => 'Invalid JSON']], 422);
         }
 
-        $errors = array_merge($this->validateInput($data), CouponCheckout::validateCouponRequest($data));
+        $errors = array_merge(
+            $this->validateInput($data),
+            CouponCheckout::validateCouponRequest($data),
+            ReferencedOrderCreator::validateRequest($data)
+        );
         if (!empty($errors)) {
             $this->jsonResponse(['error' => 'Validation failed', 'details' => $errors], 422);
         }
@@ -61,8 +66,13 @@ class TpvconnectOrdersModuleFrontController extends ModuleFrontController
                 $this->jsonResponse($checkout->preview($data), 200);
             }
 
-            $result = $this->createOrder($data, $secret);
-            $this->jsonResponse($result, 201);
+            // An optional TPV reference is the order's reference and its
+            // idempotency key: a retry replays the existing order (200).
+            $creator = new ReferencedOrderCreator(new PsReferencedOrderGateway());
+            $result = $creator->create($data, fn (): array => $this->createOrder($data, $secret));
+            $this->jsonResponse($result, ($result['replayed'] ?? false) === true ? 200 : 201);
+        } catch (ReferencedOrderException $e) {
+            $this->jsonResponse(['error' => $e->getMessage(), 'details' => $e->getDetails()], $e->getHttpCode());
         } catch (CouponCheckoutException $e) {
             $this->jsonResponse(['error' => 'Coupon checkout failed', 'details' => $e->getMessage()], $e->getHttpStatus());
         } catch (Exception $e) {
