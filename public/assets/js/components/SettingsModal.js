@@ -126,6 +126,18 @@ const SettingsModal = {
             }
         }
 
+        const labelTestStatus = Vue.ref('');
+        async function printTestLabel() {
+            if (!terminal.value) return;
+            labelTestStatus.value = 'Imprimiendo etiqueta de prueba…';
+            try {
+                await ApiClient.labelTest(terminal.value.id);
+                labelTestStatus.value = 'Etiqueta de prueba enviada';
+            } catch (e) {
+                labelTestStatus.value = errorText(e, 'No se pudo imprimir la etiqueta de prueba');
+            }
+        }
+
         async function saveTill() {
             if (!terminal.value) return;
             terminalSaving.value = true;
@@ -143,6 +155,9 @@ const SettingsModal = {
                 if (terminal.value.printer_ip != null) payload.printer_ip = terminal.value.printer_ip;
                 if (terminal.value.printer_port != null) payload.printer_port = terminal.value.printer_port;
                 if (terminal.value.printer_queue != null) payload.printer_queue = terminal.value.printer_queue;
+                // Labels on this till's printer (PRD L5/L6).
+                if (terminal.value.label_height_mm != null && terminal.value.label_height_mm !== '') payload.label_height_mm = Number(terminal.value.label_height_mm);
+                if (terminal.value.label_cut_each != null) payload.label_cut_each = !!terminal.value.label_cut_each;
 
                 await ApiClient.terminalUpdate(terminal.value.id, payload);
                 flash('Caja guardada');
@@ -436,6 +451,7 @@ const SettingsModal = {
         });
 
         return {
+            labelTestStatus, printTestLabel,
             systemPrinters,
             employees, loading, error, success,
             activeSection,
@@ -810,6 +826,22 @@ const SettingsModal = {
                                 </template>
 
                                 <print-agent-panel v-if="terminal.printer_type === 'agent'" :key="'print-agent-' + terminal.id" :terminal-id="terminal.id" :terminal-name="terminal.name" />
+
+                                <div>
+                                    <label for="label-height-mm" style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Alto de etiqueta (mm)</label>
+                                    <input id="label-height-mm" v-model.number="terminal.label_height_mm" type="number" min="25" max="60" placeholder="30"
+                                        style="width:100%; max-width:140px; min-height:44px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box;">
+                                    <div style="font-size:12px; color:var(--text3); margin-top:4px;">Entre 25 y 60 mm. En la TM-T20 la etiqueta ocupa todo el ancho del papel.</div>
+                                </div>
+                                <label style="display:flex; align-items:center; gap:10px; min-height:44px; font-size:14px; color:var(--text); cursor:pointer;">
+                                    <input type="checkbox" v-model="terminal.label_cut_each" style="width:20px; height:20px;">
+                                    Cortar cada etiqueta
+                                    <span style="font-size:12px; color:var(--text3);">(si no, salen en una tira con un solo corte)</span>
+                                </label>
+                                <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+                                    <button type="button" class="tpv-btn" @click="printTestLabel" style="min-height:44px;">Imprimir etiqueta de prueba</button>
+                                    <span v-if="labelTestStatus" style="font-size:13px; color:var(--text2);" role="status">{{ labelTestStatus }}</span>
+                                </div>
 
                                 <div>
                                     <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Ancho del ticket (px)</label>
