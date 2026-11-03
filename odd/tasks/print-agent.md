@@ -16,7 +16,7 @@ T1 | S2 | delegated (parallel with T4) | done | 1631c49: V37 (print_job, print_a
 T2 | S3 | delegated (parallel with T3) | in progress | POS UX: payment modal states, drawer warning, offline banner, Ajustes Cajas pairing/status/history/version.
 T3 | S4 | delegated (parallel with T2) | in progress | Labels: ESC/POS generation, preview, product sheet + Etiquetas screen.
 T4 | S5 | delegated (parallel with T1) | Rust agent: service, client, printing (Windows RAW / CUPS / direct), dedupe, IPC, Windows tray, CLI.
-T5 | S6 | delegated | in progress | NSIS installer, GitHub Actions Windows workflow, Linux binary packaging.
+T5 | S6 | delegated | done | e459c3f: NSIS installer (connect page, printers page, silent /SERVER /CODE /PRINTER /LABELPRINTER /TESTPRINT /PURGE), GitHub Actions windows-latest + ubuntu-latest workflow (Generic/Text Only file printer, exact bytes via test-print --bytes-file, service RUNNING, reinstall, uninstall), Linux install.sh, owner guide. Verified locally under wine (makensis portable 3.10, silent install/uninstall); real Windows only in CI (needs push). Open: pairing from the tray (PRD I1) not built — guide says reopen the installer.
 T6 | S7 | pending | Live acceptance + independent verifier.
 
 ## Log
