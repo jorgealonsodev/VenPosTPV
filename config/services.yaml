@@ -148,6 +148,7 @@ services:
     VenPosTPV\Controller\App\DevLoginController:
         arguments:
             $basePath: '%app.base_path%'
+            $environment: '%kernel.environment%'
     VenPosTPV\Controller\App\PosController:
         arguments:
             $basePath: '%app.base_path%'

@@ -24,8 +24,8 @@ if (!class_exists(Dotenv::class)) {
 
 $input = new ArgvInput();
 
-$env = $input->getParameterOption(['--env', '-e'], $_SERVER['APP_ENV'] ?? 'dev', true);
-$debug = (bool) ($_SERVER['APP_DEBUG'] ?? true);
+$env = $input->getParameterOption(['--env', '-e'], $_SERVER['APP_ENV'] ?? 'prod', true);
+$debug = (bool) ($_SERVER['APP_DEBUG'] ?? false);
 
 $kernel = new Kernel($env, $debug);
 

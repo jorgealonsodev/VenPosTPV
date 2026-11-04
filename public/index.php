@@ -12,7 +12,8 @@ if (file_exists(__DIR__ . '/../.env')) {
     (new Dotenv())->bootEnv(__DIR__ . '/../.env');
 }
 
-$kernel = new Kernel($_SERVER['APP_ENV'] ?? 'dev', (bool) ($_SERVER['APP_DEBUG'] ?? true));
+// Without .env (not installed yet) boot as production, never as dev.
+$kernel = new Kernel($_SERVER['APP_ENV'] ?? 'prod', (bool) ($_SERVER['APP_DEBUG'] ?? false));
 $request = Request::createFromGlobals();
 $response = $kernel->handle($request);
 $response->send();
