@@ -96,11 +96,17 @@ class SyncStatusControllerTest extends TestCase
         $this->assertSame(Response::HTTP_UNAUTHORIZED, $response->getStatusCode());
     }
 
-    public function testSyncNowRunsCatalogSyncForLoggedInUser(): void
+    /**
+     * The POS calls this every minute. A full catalog sync asks PrestaShop for the
+     * price of every product and combination: minutes on a real catalog, so every
+     * PHP worker ended up busy and the TPV hung. The browser only refreshes stock;
+     * the full catalog is the nightly task (tpv:catalog:sync --full).
+     */
+    public function testSyncNowRefreshesStockAndNeverTheFullCatalog(): void
     {
         $catalog = $this->createMock(CatalogSyncService::class);
-        $catalog->expects($this->once())->method('syncAll')
-            ->willReturn(['products' => 1, 'combinations' => 0, 'combination_attributes' => 0, 'stock' => 1, 'categories' => 1, 'ttc_prices' => 1]);
+        $catalog->expects($this->never())->method('syncAll');
+        $catalog->expects($this->once())->method('syncStock')->willReturn(['stock' => 7]);
         $controller = new SyncStatusController(
             $this->createMock(SyncStatusService::class),
             $catalog,
@@ -112,13 +118,29 @@ class SyncStatusControllerTest extends TestCase
         $this->assertSame(Response::HTTP_OK, $response->getStatusCode());
         $data = json_decode((string) $response->getContent(), true, 512, JSON_THROW_ON_ERROR);
         $this->assertTrue($data['data']['queued']);
-        $this->assertSame(1, $data['data']['counts']['products']);
+        $this->assertSame(['stock' => 7], $data['data']['counts']);
+    }
+
+    public function testSyncNowReleasesTheSessionBeforeCallingPrestaShop(): void
+    {
+        // Other requests of the same till wait on a held session; free it first.
+        $request = $this->requestWithUser(5);
+        $catalog = $this->createMock(CatalogSyncService::class);
+        $catalog->expects($this->once())->method('syncStock')->willReturnCallback(function () use ($request): array {
+            $this->assertFalse($request->getSession()->isStarted(), 'the session must be saved and closed before the slow work');
+
+            return ['stock' => 1];
+        });
+        $controller = new SyncStatusController($this->createMock(SyncStatusService::class), $catalog, $this->createMock(StockPushService::class));
+
+        $controller->syncNow($request);
     }
 
     public function testManualSyncUploadsPendingOperationsNowEvenWhenTheCatalogFails(): void
     {
         $catalog = $this->createMock(CatalogSyncService::class);
-        $catalog->method('syncAll')->willThrowException(new \RuntimeException('PrestaShop down'));
+        $catalog->expects($this->never())->method('syncAll');
+        $catalog->method('syncStock')->willThrowException(new \RuntimeException('PrestaShop down'));
         $outbox = $this->createMock(OutboxSync::class);
         $outbox->expects($this->once())->method('makePendingDue')->willReturn(2);
         $outbox->expects($this->once())->method('run')->willReturn(['uploaded' => 2, 'retried' => 0, 'incidents' => 0, 'recovered' => 0]);
@@ -153,11 +175,11 @@ class SyncStatusControllerTest extends TestCase
 
     /** @param array<string, mixed>|null $body */
     #[\PHPUnit\Framework\Attributes\DataProvider('timerBodies')]
-    public function testTimerSyncUploadsOnlyDueRowsAndStillSyncsTheCatalog(?array $body): void
+    public function testTimerSyncUploadsOnlyDueRowsAndStillSyncsTheStock(?array $body): void
     {
         $catalog = $this->createMock(CatalogSyncService::class);
-        $catalog->expects($this->once())->method('syncAll')
-            ->willReturn(['products' => 1, 'combinations' => 0, 'combination_attributes' => 0, 'stock' => 1, 'categories' => 1, 'ttc_prices' => 1]);
+        $catalog->expects($this->never())->method('syncAll');
+        $catalog->expects($this->once())->method('syncStock')->willReturn(['stock' => 1]);
         $outbox = $this->createMock(OutboxSync::class);
         $outbox->expects($this->never())->method('makePendingDue');
         $outbox->expects($this->once())->method('run')->willReturn(['uploaded' => 1, 'retried' => 0, 'incidents' => 0, 'recovered' => 0]);
@@ -168,7 +190,7 @@ class SyncStatusControllerTest extends TestCase
         $this->assertSame(Response::HTTP_OK, $response->getStatusCode());
         $data = json_decode((string) $response->getContent(), true, 512, JSON_THROW_ON_ERROR);
         $this->assertSame(1, $data['data']['outbox']['uploaded']);
-        $this->assertSame(1, $data['data']['counts']['products']);
+        $this->assertSame(1, $data['data']['counts']['stock']);
         $this->assertNull($data['data']['catalog_error']);
     }
 

@@ -62,6 +62,10 @@ class SyncStatusController
             return new JsonResponse(['error' => 'Unauthorized'], Response::HTTP_UNAUTHORIZED);
         }
 
+        // Nothing below reads the session: free its lock now, so the till's other
+        // requests do not wait for PrestaShop.
+        $session->save();
+
         // Pending sales and refunds go first: they matter more than the catalog.
         // Only the header button ({"manual": true}) retries every pending row now; the
         // POS timer calls this endpoint every minute and must keep the growing wait
@@ -74,8 +78,12 @@ class SyncStatusController
             $outbox = $this->outboxSync->run(50);
         }
 
+        // Stock only. The full catalog asks PrestaShop for the price of every product
+        // and combination, which takes minutes on a real shop: run from the browser
+        // every minute it filled every PHP worker and hung the TPV. It is the nightly
+        // task (tpv:catalog:sync --full).
         try {
-            $counts = $this->catalogSyncService->syncAll();
+            $counts = $this->catalogSyncService->syncStock();
             $catalogError = null;
         } catch (\Throwable $e) {
             if ($this->outboxSync === null) {
