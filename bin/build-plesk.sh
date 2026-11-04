@@ -33,6 +33,7 @@ rm -rf "$WORK/mod/modules/tpvconnect/tests"
 rm -f "$APP/public/php85.cgi" "$APP/public/assets/.gitkeep"
 cp deploy/plesk/public.htaccess "$APP/public/.htaccess"
 cp deploy/plesk/root.htaccess "$APP/.htaccess"
+cp deploy/plesk/root-install.php "$APP/install.php"
 cp docs/despliegue-plesk.md "$APP/LEEME-PLESK.md"
 mkdir -p "$APP/var/cache" "$APP/var/log"
 

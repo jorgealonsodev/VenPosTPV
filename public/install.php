@@ -62,6 +62,7 @@ if ($installer->isLocked()) {
     // Only a finished install deletes this file; a dev checkout with .env keeps it.
     if (is_file($projectDir . '/' . \VenPosTPV\Service\Install\WebInstaller::LOCK_FILE)) {
         @unlink(__FILE__);
+        @unlink($projectDir . '/install.php');
     }
     http_response_code(404);
     page('El TPV ya está instalado', '<p>Este instalador ya no se puede usar. Si quieres reinstalar, borra el archivo <code>.env</code> y <code>var/install.lock</code> y vuelve a subir <code>public/install.php</code>.</p>');
@@ -131,6 +132,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
 
             if ($errors === []) {
                 $deleted = @unlink(__FILE__);
+                @unlink($projectDir . '/install.php'); // stub of a root-folder install
                 $root = $projectDir;
                 $php = '/opt/plesk/php/' . PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION . '/bin/php';
                 $cron = "cd {$root} && {$php} bin/console tpv:sync:outbox --env=prod\n"

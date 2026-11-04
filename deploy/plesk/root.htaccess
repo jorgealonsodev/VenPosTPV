@@ -5,6 +5,8 @@
 <IfModule mod_rewrite.c>
     RewriteEngine On
     RewriteRule ^public/ - [L]
+    # The installer stub in this folder (removed once the TPV is installed).
+    RewriteRule ^install\.php$ - [L]
     RewriteRule ^(.*)$ public/$1 [L]
 </IfModule>
 <IfModule !mod_rewrite.c>
