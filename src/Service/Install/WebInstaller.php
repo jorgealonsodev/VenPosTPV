@@ -214,25 +214,29 @@ final class WebInstaller
     }
 
     /**
-     * Writes .env atomically, then the lock, then removes the one-time key.
+     * Writes .env (never over an existing one), then the lock, then removes the
+     * one-time key.
      *
      * @param array<string, string> $values
      */
     public function finish(array $values): void
     {
         $env = $this->projectDir . '/.env';
-        $tmp = $env . '.tmp-' . bin2hex(random_bytes(4));
-        if (@file_put_contents($tmp, $this->envWriter->render($values), LOCK_EX) === false) {
-            throw new InstallException('No se pudo escribir el archivo .env: revisa los permisos de la carpeta del TPV.');
-        }
-        @chmod($tmp, 0600);
-        // link() fails when .env already exists, unlike rename(), which would replace it.
-        $linked = @link($tmp, $env);
-        @unlink($tmp);
-        if (!$linked) {
+        $content = $this->envWriter->render($values);
+        // Mode 'x' fails when .env already exists, so a concurrent install never
+        // replaces it; it needs nothing a shared host may disable (unlike link()).
+        $handle = @fopen($env, 'x');
+        if ($handle === false) {
             throw new InstallException(is_file($env)
                 ? 'Ya existe un archivo .env: el TPV ya está instalado. Para reinstalar, sigue los pasos de docs/despliegue-plesk.md.'
                 : 'No se pudo crear el archivo .env: revisa los permisos de la carpeta del TPV.');
+        }
+        @chmod($env, 0600);
+        $written = @fwrite($handle, $content);
+        @fclose($handle);
+        if ($written !== \strlen($content)) {
+            @unlink($env);
+            throw new InstallException('No se pudo escribir el archivo .env: revisa el espacio y los permisos de la carpeta del TPV.');
         }
 
         $lockDir = \dirname($this->projectDir . '/' . self::LOCK_FILE);
