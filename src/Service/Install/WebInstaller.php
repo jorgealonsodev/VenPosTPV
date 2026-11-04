@@ -19,7 +19,10 @@ use Doctrine\Migrations\MigratorConfiguration;
  */
 final class WebInstaller
 {
-    public const KEY_FILE = 'INSTALL_KEY.txt';
+    // No extension: nginx may serve .txt and other static files straight from the
+    // document root, without passing through .htaccess.
+    public const KEY_FILE = 'INSTALL_KEY';
+    public const ROOT_HTACCESS_MARKER = '# VenPosTPV: forward-to-public';
     public const LOCK_FILE = 'var/install.lock';
     private const MIGRATIONS_TABLE = 'doctrine_migration_versions';
 
@@ -32,6 +35,28 @@ final class WebInstaller
     public function isLocked(): bool
     {
         return is_file($this->projectDir . '/.env') || is_file($this->projectDir . '/' . self::LOCK_FILE);
+    }
+
+    /**
+     * The web server may serve public/ itself, or this folder when its .htaccess
+     * forwards every request into public/ (deploy/plesk/root.htaccess). Anything
+     * else could expose .env, vendor/ or the install key.
+     */
+    public function isSafeDocumentRoot(string $documentRoot): bool
+    {
+        $docRoot = realpath($documentRoot);
+        if ($documentRoot === '' || $docRoot === false) {
+            return false;
+        }
+        if ($docRoot === realpath($this->projectDir . '/public')) {
+            return true;
+        }
+        if ($docRoot !== realpath($this->projectDir)) {
+            return false;
+        }
+        $htaccess = @file_get_contents($this->projectDir . '/.htaccess');
+
+        return \is_string($htaccess) && str_starts_with($htaccess, self::ROOT_HTACCESS_MARKER);
     }
 
     /**

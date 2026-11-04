@@ -1,9 +1,11 @@
-# Safety net: the document root must be public/. If it still points at this
-# folder, refuse everything outside public/ so .env, vendor/ and src/ are
-# never served.
+# VenPosTPV: forward-to-public
+# The subdomain's document root can stay on this folder: every request is
+# served from public/ internally, so .env, vendor/, src/ and var/ are never
+# reachable from the web. (The installer checks the first line of this file.)
 <IfModule mod_rewrite.c>
     RewriteEngine On
-    RewriteRule !^public/ - [F,L]
+    RewriteRule ^public/ - [L]
+    RewriteRule ^(.*)$ public/$1 [L]
 </IfModule>
 <IfModule !mod_rewrite.c>
     Require all denied

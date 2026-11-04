@@ -11,11 +11,11 @@ El paquete `venpostpv-plesk.zip` lleva el TPV con sus dependencias y un instalad
 
 ## Pasos
 
-1. Sube `venpostpv-plesk.zip` a la carpeta del subdominio con el **Administrador de archivos** y extráelo. Queda una carpeta `venpostpv/`.
-2. **Hosting y DNS → Configuración de hosting → Raíz del documento**: pon `venpostpv/public`.
+1. Sube `venpostpv-plesk.zip` a la carpeta del subdominio con el **Administrador de archivos**, extráelo ahí mismo y borra el zip. No hace falta cambiar la raíz del documento: el `.htaccess` del paquete sirve la aplicación desde dentro y deja fuera de la web `.env`, `vendor/` y `src/`.
+2. (Opcional) Si prefieres, la raíz del documento también puede ser la carpeta `public` del paquete.
 3. **Configuración de PHP** del subdominio: versión 8.4 o superior, `max_execution_time` = 35 como mínimo y `pm.max_children` ≥ número de cajas + 6.
-4. Abre `https://tu-subdominio/install.php`. La primera visita crea `venpostpv/INSTALL_KEY.txt`. Ábrelo en el Administrador de archivos y copia la clave en el formulario.
-5. Rellena la base de datos, el usuario administrador, la tienda y PrestaShop. Pulsa **Instalar**: el instalador prueba la conexión, crea las tablas, escribe `venpostpv/.env`, se bloquea y borra `install.php`.
+4. Abre `https://tu-subdominio/install.php`. La primera visita crea el archivo `INSTALL_KEY` en la carpeta del subdominio. Ábrelo en el Administrador de archivos y copia la clave en el formulario.
+5. Rellena la base de datos, el usuario administrador, la tienda y PrestaShop. Pulsa **Instalar**: el instalador prueba la conexión, crea las tablas, escribe `.env`, se bloquea y borra `install.php`.
 6. Crea las tareas programadas que muestra la página final (**Tareas programadas → Añadir tarea**):
    - cada minuto: `tpv:sync:outbox` (sube las ventas a PrestaShop y limpia el historial de impresión) y `tpv:catalog:sync --stock-only`;
    - cada noche: `tpv:catalog:sync --full` y `tpv:customers:sync`. Ejecuta el catálogo completo una vez al terminar con «Ejecutar ahora».

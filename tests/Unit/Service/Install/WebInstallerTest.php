@@ -22,10 +22,11 @@ final class WebInstallerTest extends TestCase
 
     protected function tearDown(): void
     {
-        foreach (['.env', WebInstaller::KEY_FILE, WebInstaller::LOCK_FILE] as $f) {
+        foreach (['.env', WebInstaller::KEY_FILE, WebInstaller::LOCK_FILE, '.htaccess'] as $f) {
             @unlink($this->dir . '/' . $f);
         }
         @rmdir($this->dir . '/var');
+        @rmdir($this->dir . '/public');
         @rmdir($this->dir);
     }
 
@@ -145,6 +146,29 @@ final class WebInstallerTest extends TestCase
 
         $this->expectException(InstallException::class);
         (new WebInstaller($this->dir))->assertDatabaseUsable($conn);
+    }
+
+    public function testDocumentRootMayBePublicOrTheProjectWhenItsHtaccessForwardsToPublic(): void
+    {
+        mkdir($this->dir . '/public');
+        $installer = new WebInstaller($this->dir);
+
+        self::assertTrue($installer->isSafeDocumentRoot($this->dir . '/public'));
+        self::assertFalse($installer->isSafeDocumentRoot($this->dir), 'without the forwarding .htaccess, .env and vendor/ would be served');
+        self::assertFalse($installer->isSafeDocumentRoot(''));
+        self::assertFalse($installer->isSafeDocumentRoot(sys_get_temp_dir()));
+
+        file_put_contents($this->dir . '/.htaccess', "# something else\nOptions -Indexes\n");
+        self::assertFalse($installer->isSafeDocumentRoot($this->dir));
+
+        copy(\dirname(__DIR__, 4) . '/deploy/plesk/root.htaccess', $this->dir . '/.htaccess');
+        self::assertTrue($installer->isSafeDocumentRoot($this->dir));
+    }
+
+    public function testTheInstallKeyFileHasNoStaticFileExtension(): void
+    {
+        // nginx may serve .txt and other static extensions without passing through .htaccess.
+        self::assertSame('', pathinfo(WebInstaller::KEY_FILE, PATHINFO_EXTENSION));
     }
 
     public function testForeignDatabaseIsRefusedAndEmptyOrOwnDatabaseAccepted(): void

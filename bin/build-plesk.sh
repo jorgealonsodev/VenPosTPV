@@ -40,7 +40,8 @@ mkdir -p "$APP/var/cache" "$APP/var/log"
     --no-dev --optimize-autoloader --no-interaction --no-progress --quiet)
 
 rm -f "$DIST/venpostpv-plesk.zip" "$DIST/tpvconnect.zip"
-(cd "$WORK" && zip -qr "$DIST/venpostpv-plesk.zip" venpostpv)
+# No top folder: extracted straight into the subdomain folder, it is ready.
+(cd "$APP" && zip -qr "$DIST/venpostpv-plesk.zip" .)
 (cd "$WORK/mod/modules" && zip -qr "$DIST/tpvconnect.zip" tpvconnect)
 
 DIRTY="$(git status --porcelain -- bin/console config migrations public src templates composer.json composer.lock modules/tpvconnect | grep -v "tests/" || true)"

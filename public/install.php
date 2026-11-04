@@ -7,7 +7,7 @@ declare(strict_types=1);
  *
  * Asks for the database and shop settings, runs the migrations and writes
  * ../.env. It only runs while ../.env does not exist, needs the one-time key
- * from ../INSTALL_KEY.txt and, when it finishes, locks itself and tries to
+ * from ../INSTALL_KEY and, when it finishes, locks itself and tries to
  * delete this file.
  */
 
@@ -76,10 +76,10 @@ if (!$isHttps && !$isLocal) {
     page('Instalación del TPV', '<p class="err">Abre el instalador con <strong>https://</strong>. Las contraseñas no deben viajar sin cifrar. En Plesk: <em>Certificados SSL/TLS</em> → Let\'s Encrypt para el subdominio.</p>');
 }
 
-$docRoot = realpath((string) ($_SERVER['DOCUMENT_ROOT'] ?? ''));
-if ($docRoot === false || $docRoot !== realpath(__DIR__)) {
-    page('Instalación del TPV', '<p class="err">La raíz del documento del subdominio debe ser la carpeta <code>public</code> del TPV: <code>'
-        . h((string) realpath(__DIR__)) . '</code>. Ahora es <code>' . h($docRoot === false ? (string) ($_SERVER['DOCUMENT_ROOT'] ?? '') : $docRoot) . '</code>. En Plesk: <em>Hosting y DNS → Configuración de hosting → Raíz del documento</em>.</p>');
+if (!$installer->isSafeDocumentRoot((string) ($_SERVER['DOCUMENT_ROOT'] ?? ''))) {
+    page('Instalación del TPV', '<p class="err">La raíz del documento del subdominio debe ser la carpeta del TPV (<code>'
+        . h((string) realpath($projectDir)) . '</code>) con su archivo <code>.htaccess</code>, o su carpeta <code>public</code>. Ahora es <code>'
+        . h((string) ($_SERVER['DOCUMENT_ROOT'] ?? '')) . '</code>. Extrae el zip directamente en la carpeta del subdominio, sin cambiar nada más.</p>');
 }
 
 try {
@@ -107,7 +107,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
 
     if (!$installer->checkInstallKey((string) ($_POST['install_key'] ?? ''))) {
         usleep(500000);
-        $errors[] = 'La clave de instalación no es correcta. Está en el archivo INSTALL_KEY.txt de la carpeta del TPV (fuera de public/).';
+        $errors[] = 'La clave de instalación no es correcta. Está en el archivo INSTALL_KEY de la carpeta del subdominio (ábrelo con el Administrador de archivos de Plesk).';
     } else {
         $result = $installer->validate($_POST);
         $errors = $result['errors'];
@@ -158,7 +158,7 @@ $errHtml = $errors === [] ? '' : '<div class="err"><strong>Revisa esto:</strong>
 
 page('Instalación del TPV', $errHtml . '<form method="post" autocomplete="off">'
     . '<h2>Clave de instalación</h2>'
-    . '<label>Clave <small>— está en <code>INSTALL_KEY.txt</code>, en la carpeta del TPV (Administrador de archivos de Plesk)</small></label>'
+    . '<label>Clave <small>— está en el archivo <code>INSTALL_KEY</code> de la carpeta del subdominio (Administrador de archivos de Plesk)</small></label>'
     . '<input name="install_key" required>'
     . '<h2>Base de datos del TPV</h2><p><small>Créala vacía en Plesk (<em>Bases de datos → Añadir base de datos</em>). No uses la de PrestaShop.</small></p>'
     . '<div class="row"><div><label>Servidor</label><input name="db_host" value="' . $v('db_host') . '" required></div>'
