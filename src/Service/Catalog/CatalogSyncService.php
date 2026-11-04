@@ -18,7 +18,6 @@ class CatalogSyncService
         private readonly Connection $connection,
         private readonly SyncLogRepository $syncLogRepo,
         private readonly string $psShopUrl = '',
-        private readonly string $psApiKey = ''
     ) {
     }
 
@@ -76,17 +75,16 @@ class CatalogSyncService
             );
 
             $psShopUrl = $this->psShopUrl;
-            $psApiKey = $this->psApiKey;
             $productPrices = $authoritativePrices['products'];
             $productCount = $this->batchInsert(
                 'catalog_product',
                 $products,
-                static function (array $prod) use ($psShopUrl, $psApiKey, $productPrices): array {
+                static function (array $prod) use ($psShopUrl, $productPrices): array {
                     $name = PrestaShopApiClient::extractTranslations($prod['name'] ?? '', '1');
                     $imageId = (int) ($prod['id_default_image'] ?? 0);
                     $imageUrl = null;
                     if ($imageId > 0 && $psShopUrl !== '') {
-                        $imageUrl = rtrim($psShopUrl, '/') . '/api/images/products/' . $prod['id'] . '/' . $imageId . '?ws_key=' . $psApiKey;
+                        $imageUrl = self::publicImageUrl($psShopUrl, $imageId);
                     }
 
                     return [
@@ -338,6 +336,15 @@ class CatalogSyncService
     private function truncateTable(string $table): void
     {
         $this->connection->executeStatement("DELETE FROM `{$table}`");
+    }
+
+    /**
+     * The shop's public thumbnail (img/p/1/2/3/123-home_default.jpg). The webservice
+     * URL needs ?ws_key=, and the catalog reaches every till browser.
+     */
+    private static function publicImageUrl(string $shopUrl, int $imageId): string
+    {
+        return rtrim($shopUrl, '/') . '/img/p/' . implode('/', str_split((string) $imageId)) . '/' . $imageId . '-home_default.jpg';
     }
 
     /**

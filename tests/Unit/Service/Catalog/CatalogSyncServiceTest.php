@@ -281,6 +281,27 @@ final class CatalogSyncServiceTest extends TestCase
         $this->assertSame(2, $result['ttc_prices'], 'products and combinations with a resolved price are counted');
     }
 
+    public function testProductImageUrlsArePublicAndNeverCarryTheApiKey(): void
+    {
+        // The catalog goes to every till browser: the webservice key must not.
+        $conn = $this->createCapturingConnection();
+        $apiClient = $this->createMockApiClient();
+        $apiClient->method('getProducts')->willReturn([
+            ['id' => 1, 'name' => 'Product 1', 'reference' => 'REF001', 'ean13' => '', 'price' => 10.0, 'active' => 1, 'id_default_image' => 123],
+            ['id' => 2, 'name' => 'Product 2', 'reference' => 'REF002', 'ean13' => '', 'price' => 10.0, 'active' => 1, 'id_default_image' => 0],
+        ]);
+        $apiClient->method('getCombinations')->willReturn([]);
+        $apiClient->method('getStockAvailables')->willReturn([]);
+
+        (new CatalogSyncService($apiClient, $conn, $this->createMockSyncLogRepo(), 'https://shop.example.com/'))->syncAll();
+
+        $params = $this->capturedParamsForTable('catalog_product');
+        $this->assertContains('https://shop.example.com/img/p/1/2/3/123-home_default.jpg', $params);
+        foreach ($params as $value) {
+            $this->assertStringNotContainsString('ws_key', (string) $value);
+        }
+    }
+
     public function testSyncAllStoresTheTaxExcludedPriceWithReductionsApplied(): void
     {
         $conn = $this->createCapturingConnection();

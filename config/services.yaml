@@ -121,7 +121,6 @@ services:
             $connection: '@doctrine.dbal.tpv_connection'
             $syncLogRepo: '@VenPosTPV\Service\Sync\SyncLogRepository'
             $psShopUrl: '%ps.api.url%'
-            $psApiKey: '%ps.api.key%'
 
     # Twig
     Twig\Loader\LoaderInterface:
