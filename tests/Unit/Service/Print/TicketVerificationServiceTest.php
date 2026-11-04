@@ -45,7 +45,8 @@ final class TicketVerificationServiceTest extends TestCase
 
     public function testVerifyExpiredTokenThrowsException(): void
     {
-        $service = new TicketVerificationService('test-secret-key-123', 'https://example.com');
+        $secret = str_repeat('k', 64);
+        $service = new TicketVerificationService($secret, 'https://example.com');
 
         // Create an expired token manually
         $expiredPayload = [
@@ -55,10 +56,30 @@ final class TicketVerificationServiceTest extends TestCase
             'iat' => time() - 172800, // 2 days ago
             'exp' => time() - 86400, // 1 day ago (expired)
         ];
-        $token = \Firebase\JWT\JWT::encode($expiredPayload, 'test-secret-key-123', 'HS256');
+        $token = \Firebase\JWT\JWT::encode($expiredPayload, $secret, 'HS256');
 
         $this->expectException(\Firebase\JWT\ExpiredException::class);
         $service->verifyToken($token);
+    }
+
+    public function testALongSecretSignsExactlyAsBeforeSoPrintedTicketsStayValid(): void
+    {
+        $secret = bin2hex(random_bytes(32)); // what the installer writes as APP_SECRET
+        $token = (new TicketVerificationService($secret, 'https://example.com'))->generateToken(['order_id' => 7, 'reference' => 'R7', 'total' => 1.0]);
+
+        $decoded = (array) \Firebase\JWT\JWT::decode($token, new \Firebase\JWT\Key($secret, 'HS256'));
+        self::assertSame(7, $decoded['order_id']);
+    }
+
+    public function testAShortSecretStillSignsAndVerifiesTickets(): void
+    {
+        // php-jwt 7 refuses HS256 keys under 32 bytes; a short APP_SECRET must not stop printing.
+        $service = new TicketVerificationService('short', 'https://example.com');
+        $token = $service->generateToken(['order_id' => 8, 'reference' => 'R8', 'total' => 2.0]);
+
+        self::assertSame(8, $service->verifyToken($token)['order_id']);
+        $this->expectException(\Firebase\JWT\SignatureInvalidException::class);
+        (new TicketVerificationService('other', 'https://example.com'))->verifyToken($token);
     }
 
     public function testVerifyTamperedTokenThrowsException(): void

@@ -16,7 +16,10 @@ class TicketVerificationService
         string $secret,
         string $appUrl,
     ) {
-        $this->secret = $secret;
+        // php-jwt 7 refuses HS256 keys under 32 bytes. A secret that long (the
+        // installer writes 64) is used as is, so printed tickets stay valid; a
+        // shorter one is stretched with SHA-256 instead of breaking printing.
+        $this->secret = \strlen($secret) >= 32 ? $secret : hash('sha256', $secret, true);
         $this->appUrl = rtrim($appUrl, '/');
     }
 
