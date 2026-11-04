@@ -8,6 +8,8 @@ use Doctrine\DBAL\Connection;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpFoundation\Session\Session;
+use Symfony\Component\HttpFoundation\Session\Storage\MockArraySessionStorage;
 use VenPosTPV\Controller\App\SsoController;
 use VenPosTPV\Service\Db\ConnectionManagerInterface;
 use VenPosTPV\Service\Sso\Exception\ExpiredTokenException;
@@ -208,14 +210,44 @@ class SsoControllerTest extends TestCase
             ->method('getTpvConnection')
             ->willReturn($conn);
 
+        $session = new Session(new MockArraySessionStorage());
+        $session->start();
+        $session->set('cart', ['lines' => [['sku' => 'A1']]]);
+        $session->set('cash_opened_at', '2026-11-03 09:00:00');
+        $session->set('opening_cash', 50.0);
+        $idBefore = $session->getId();
+
         $controller = $this->createController($verifier, $connManager);
         $request = new Request(['token' => 'valid_token']);
+        $request->setSession($session);
         $response = $controller->index($request);
 
         $this->assertSame(Response::HTTP_FOUND, $response->getStatusCode());
         $this->assertSame('/tpv/app/pos', $response->headers->get('Location'));
-        $this->assertSame('cashier', $_SESSION['role']);
-        $this->assertSame(7, $_SESSION['user_id']);
+        // R4: PosController reads the Symfony session, so the login must land there.
+        $this->assertSame(7, $session->get('user_id'));
+        $this->assertSame('Test User', $session->get('cashier_name'));
+        $this->assertSame('cashier', $session->get('role'));
+        $this->assertSame(42, $session->get('ps_employee_id'));
+        $this->assertSame(3, $session->get('shop_id'));
+        $this->assertIsInt($session->get('authenticated_at'));
+        $this->assertTrue($session->has('terminal_id'));
+        $this->assertNull($session->get('terminal_id'));
+        $this->assertTrue($session->has('cash_session_id'));
+        $this->assertNull($session->get('cash_session_id'));
+        $this->assertFalse($session->has('cash_opened_at'));
+        $this->assertFalse($session->has('opening_cash'));
+        // R4/R6: a new session id, and the cart survives (D2: migrate, not invalidate).
+        $this->assertNotSame($idBefore, $session->getId());
+        $this->assertSame(['lines' => [['sku' => 'A1']]], $session->get('cart'));
+        // Nothing is written to the native $_SESSION behind Symfony's back.
+        $this->assertArrayNotHasKey('user_id', $_SESSION ?? []);
+        $this->assertArrayNotHasKey('role', $_SESSION ?? []);
+    }
+
+    protected function setUp(): void
+    {
+        unset($_SESSION['role'], $_SESSION['user_id'], $_SESSION['shop_id']);
     }
 
     protected function tearDown(): void

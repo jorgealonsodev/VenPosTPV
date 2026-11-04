@@ -73,21 +73,23 @@ class SsoController
             );
         }
 
-        if (session_status() !== PHP_SESSION_ACTIVE) {
-            session_start();
-        }
+        // R4: the POS reads the Symfony session (its attribute bag), so the login is
+        // written there, with the framework's cookie flags. R6/D2: a fresh session id
+        // that keeps the existing data (the cart) instead of starting from scratch.
+        $session = $request->getSession();
+        $session->start();
+        $session->migrate(true);
 
-        session_regenerate_id(true);
-
-        $_SESSION['user_id'] = (int) $user['id'];
-        $_SESSION['cashier_name'] = (string) $user['name'];
-        $_SESSION['role'] = (string) $user['role'];
-        $_SESSION['ps_employee_id'] = $payload['employee_id'];
-        $_SESSION['shop_id'] = $payload['shop_id'];
-        $_SESSION['authenticated_at'] = time();
-        $_SESSION['terminal_id'] = null;
-        $_SESSION['cash_session_id'] = null;
-        unset($_SESSION['cash_opened_at'], $_SESSION['opening_cash']);
+        $session->set('user_id', (int) $user['id']);
+        $session->set('cashier_name', (string) $user['name']);
+        $session->set('role', (string) $user['role']);
+        $session->set('ps_employee_id', $payload['employee_id']);
+        $session->set('shop_id', $payload['shop_id']);
+        $session->set('authenticated_at', time());
+        $session->set('terminal_id', null);
+        $session->set('cash_session_id', null);
+        $session->remove('cash_opened_at');
+        $session->remove('opening_cash');
 
         $conn->executeStatement(
             'UPDATE user SET last_login_at = NOW() WHERE id = ?',
