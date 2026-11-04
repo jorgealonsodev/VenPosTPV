@@ -16,7 +16,7 @@ El paquete `venpostpv-plesk.zip` lleva el TPV con sus dependencias y un instalad
 3. **Configuración de PHP** del subdominio: versión 8.4 o superior, `max_execution_time` = 35 como mínimo y `pm.max_children` ≥ número de cajas + 6.
 4. Abre `https://tu-subdominio/install.php`. La primera visita crea el archivo `INSTALL_KEY` en la carpeta del subdominio. Ábrelo en el Administrador de archivos y copia la clave en el formulario.
 5. Rellena la base de datos, el usuario administrador, la tienda y PrestaShop. Pulsa **Instalar**: el instalador prueba la conexión, crea las tablas, escribe `.env`, se bloquea y borra `install.php`.
-6. Crea las tareas programadas que muestra la página final (**Tareas programadas → Añadir tarea**):
+6. Crea las tareas programadas que muestra la página final (**Tareas programadas → Añadir tarea → Ejecutar un script PHP**: ruta `bin/console` del TPV, la versión de PHP del subdominio y la orden en «Con argumentos». «Ejecutar un comando» falla en muchos Plesk porque no encuentra `/opt/plesk/php`):
    - cada minuto: `tpv:sync:outbox` (sube las ventas a PrestaShop y limpia el historial de impresión) y `tpv:catalog:sync --stock-only`;
    - cada noche: `tpv:catalog:sync --full` y `tpv:customers:sync`. Ejecuta el catálogo completo una vez al terminar con «Ejecutar ahora».
 7. En el módulo TPV Connect, pon como URL del TPV la del subdominio. Si no pusiste el secreto SSO en el instalador, cópialo en `SSO_SHARED_SECRET` del `.env`.

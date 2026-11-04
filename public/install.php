@@ -38,7 +38,7 @@ function page(string $title, string $body): never
         . 'button{margin-top:20px;padding:10px 18px;border:0;border-radius:6px;background:#1f6feb;color:#fff;font:inherit;font-weight:600;cursor:pointer}'
         . '.err{background:#fdecea;border:1px solid #f5c2bd;color:#8a1c12;padding:10px 14px;border-radius:6px}'
         . '.ok{background:#e8f6ec;border:1px solid #b9e2c4;color:#165c2b;padding:10px 14px;border-radius:6px}'
-        . 'code,pre{background:#f0f2f5;border-radius:4px;padding:2px 5px;font-size:13px}pre{padding:10px;overflow-x:auto;white-space:pre-wrap;word-break:break-all}'
+        . 'table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:4px 6px;border-bottom:1px solid #e3e5ea;font-size:14px}code,pre{background:#f0f2f5;border-radius:4px;padding:2px 5px;font-size:13px}pre{padding:10px;overflow-x:auto;white-space:pre-wrap;word-break:break-all}'
         . '</style></head><body><main><h1>' . h($title) . '</h1>' . $body . '</main></body></html>';
     exit;
 }
@@ -134,18 +134,23 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 $deleted = @unlink(__FILE__);
                 @unlink($projectDir . '/install.php'); // stub of a root-folder install
                 $root = $projectDir;
-                $php = '/opt/plesk/php/' . PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION . '/bin/php';
-                $cron = "cd {$root} && {$php} bin/console tpv:sync:outbox --env=prod\n"
-                    . "cd {$root} && {$php} bin/console tpv:catalog:sync --stock-only --env=prod";
-                $nightly = "cd {$root} && {$php} bin/console tpv:catalog:sync --full --env=prod\n"
-                    . "cd {$root} && {$php} bin/console tpv:customers:sync --env=prod";
+                // "Ejecutar un comando" runs in a chrooted shell on many Plesk hosts,
+                // where /opt/plesk/php does not exist; "Ejecutar un script PHP"
+                // picks the PHP version itself. Its path is relative to the webspace.
+                $script = preg_match('#^/var/www/vhosts/[^/]+/(.+)$#', $root, $m) === 1 ? $m[1] . '/bin/console' : $root . '/bin/console';
+                $phpVersion = PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION;
+                $task = static fn (string $when, string $args): string => '<tr><td>' . $when . '</td><td><code>' . h($args) . '</code></td></tr>';
                 $tpvUrl = $result['values']['TPV_URL'];
                 page('TPV instalado', '<p class="ok">Base de datos preparada (' . (int) $executed . ' migraciones aplicadas) y configuración guardada en <code>.env</code>.</p>'
                     . ($deleted ? '' : '<p class="err">No se pudo borrar <code>public/install.php</code>. Bórralo a mano; de todas formas ya está bloqueado.</p>')
-                    . '<h2>1. Tareas programadas</h2><p>En Plesk: <em>Tareas programadas → Añadir tarea → Ejecutar un comando</em>.</p>'
-                    . '<p><strong>Cada minuto</strong> (<code>* * * * *</code>), una tarea por línea:</p><pre>' . h($cron) . '</pre>'
-                    . '<p><strong>Cada noche</strong> (<code>0 3 * * *</code>). Ejecuta también ahora la primera una vez con «Ejecutar ahora» para cargar el catálogo:</p><pre>' . h($nightly) . '</pre>'
-                    . '<p><small>Si tu PHP no está en esa ruta, cámbiala por la que muestra Plesk para PHP ' . h(PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION) . '.</small></p>'
+                    . '<h2>1. Tareas programadas</h2><p>En Plesk: <em>Tareas programadas → Añadir tarea → <strong>Ejecutar un script PHP</strong></em>. '
+                    . 'Ruta del script: <code>' . h($script) . '</code>, PHP <strong>' . h($phpVersion) . '</strong>, en «Con argumentos» lo de la tabla y notificar solo errores. Cuatro tareas:</p>'
+                    . '<table><tr><th>Ejecutar</th><th>Con argumentos</th></tr>'
+                    . $task('Estilo cron <code>* * * * *</code>', 'tpv:sync:outbox --env=prod')
+                    . $task('Estilo cron <code>* * * * *</code>', 'tpv:catalog:sync --stock-only --env=prod')
+                    . $task('Diariamente 03:00', 'tpv:catalog:sync --full --env=prod')
+                    . $task('Diariamente 03:30', 'tpv:customers:sync --env=prod')
+                    . '</table><p>En la tarea del catálogo completo pulsa también «Ejecutar ahora» para cargar los productos.</p>'
                     . '<h2>2. PHP del subdominio</h2><p><code>max_execution_time</code> = 35 como mínimo y <code>pm.max_children</code> ≥ número de cajas + 6.</p>'
                     . '<h2>3. PrestaShop</h2><p>En el módulo <strong>TPV Connect</strong>, pon como URL del TPV <code>' . h($tpvUrl) . '</code>'
                     . ($result['values']['SSO_SHARED_SECRET'] === '' ? ' y copia su secreto SSO en <code>SSO_SHARED_SECRET</code> del archivo <code>.env</code>.' : '.') . '</p>'
