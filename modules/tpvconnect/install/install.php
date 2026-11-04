@@ -181,15 +181,14 @@ class TpvConnectInstaller
             Configuration::deleteByName('TPVCONNECT_ANONYMOUS_CUSTOMER_ID');
         }
 
-        $existingByEmail = Customer::customerExists(self::TECHNICAL_CUSTOMER_EMAIL, true, false);
-        if ($existingByEmail) {
-            $customerId = (int) Customer::getByEmail(self::TECHNICAL_CUSTOMER_EMAIL)->id;
-            if ($customerId > 0) {
-                Configuration::updateValue('TPVCONNECT_ANONYMOUS_CUSTOMER_ID', $customerId);
-                $this->ensureCustomerAddress($customerId);
+        // With $returnId, customerExists() gives the id itself (getByEmail() is
+        // an instance method: calling it statically is an Error on PHP 8).
+        $customerId = (int) Customer::customerExists(self::TECHNICAL_CUSTOMER_EMAIL, true, false);
+        if ($customerId > 0) {
+            Configuration::updateValue('TPVCONNECT_ANONYMOUS_CUSTOMER_ID', $customerId);
+            $this->ensureCustomerAddress($customerId);
 
-                return true;
-            }
+            return true;
         }
 
         $customer = new Customer();
