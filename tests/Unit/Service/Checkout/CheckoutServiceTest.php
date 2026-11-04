@@ -864,6 +864,79 @@ final class CheckoutServiceTest extends TestCase
         ], 'mixed', 50.0);
     }
 
+    public function testMixedPaymentCashAboveTotalBooksOnlyThePayable(): void
+    {
+        $client = $this->createMock(PsOrderClient::class);
+        $conn = $this->createMock(Connection::class);
+
+        $this->localTransaction($conn);
+        $conn->method('fetchOne')->willReturn(10);
+        $conn->method('insert')->willReturn(1);
+        $conn->method('executeStatement')->willReturn(1);
+
+        $cashSessionService = $this->createMock(CashSessionService::class);
+        $cashSessionService->method('requireOpenSession')->willReturn([
+            'session_id' => 12,
+            'terminal_id' => 3,
+            'shop_id' => 1,
+            'user_id' => 1,
+        ]);
+        $cashSessionService->expects($this->once())
+            ->method('recordMovementInTransaction')
+            ->with(12, 'sale', 70.0, 'Checkout sale', null, self::LOCAL_ORDER_ID);
+
+        $service = $this->createService(client: $client, conn: $conn, cashSessionService: $cashSessionService);
+
+        $service->createOrder(1, [
+            'lines' => [
+                ['product_id' => 1, 'qty' => 1, 'price' => 70.0],
+            ],
+            'total' => 70.0,
+            'cash_amount' => 1000000,
+        ], 'mixed', 1000000.0);
+    }
+
+    /** @return iterable<string, array{mixed}> */
+    public static function invalidMixedCashAmounts(): iterable
+    {
+        yield 'negative' => [-20];
+        yield 'infinite' => [INF];
+        yield 'not a number' => [NAN];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('invalidMixedCashAmounts')]
+    public function testMixedPaymentNegativeCashIsRejected(mixed $cashAmount): void
+    {
+        $client = $this->createMock(PsOrderClient::class);
+        $conn = $this->createMock(Connection::class);
+        $conn->method('fetchOne')->willReturn(10);
+        $conn->expects($this->never())->method('transactional');
+
+        $cashSessionService = $this->createMock(CashSessionService::class);
+        $cashSessionService->method('requireOpenSession')->willReturn([
+            'session_id' => 12,
+            'terminal_id' => 3,
+            'shop_id' => 1,
+            'user_id' => 1,
+        ]);
+        $cashSessionService->expects($this->never())->method('recordMovementInTransaction');
+
+        $service = $this->createService(client: $client, conn: $conn, cashSessionService: $cashSessionService);
+
+        try {
+            $service->createOrder(1, [
+                'lines' => [
+                    ['product_id' => 1, 'qty' => 1, 'price' => 70.0],
+                ],
+                'total' => 70.0,
+                'cash_amount' => $cashAmount,
+            ], 'mixed', 70.0);
+            $this->fail('A negative or non-finite cash amount must be rejected');
+        } catch (CheckoutException $e) {
+            $this->assertSame(422, $e->getCode());
+        }
+    }
+
     public function testMixedPaymentWithoutCashAmountDoesNotCreateCashMovement(): void
     {
         $client = $this->createMock(PsOrderClient::class);

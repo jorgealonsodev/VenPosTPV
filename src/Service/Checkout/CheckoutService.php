@@ -1133,8 +1133,12 @@ class CheckoutService
 
         if ($paymentMethod === 'mixed') {
             $cashAmount = isset($cartData['cash_amount']) ? (float) $cartData['cash_amount'] : 0.0;
+            if (!is_finite($cashAmount) || $cashAmount < 0) {
+                throw CheckoutException::psValidationFailed('cash_amount must be a finite amount of zero or more');
+            }
 
-            return round(max(0.0, $cashAmount), 2);
+            // Cash above the total is change handed back: the drawer keeps only what was charged.
+            return round(min($cashAmount, max(0.0, $total)), 2);
         }
 
         return 0.0;

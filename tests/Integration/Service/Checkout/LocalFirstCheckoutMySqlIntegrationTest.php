@@ -310,6 +310,35 @@ final class LocalFirstCheckoutMySqlIntegrationTest extends TestCase
         $this->assertSame(TicketNumberer::MAX_NUMBER, $this->lastNumber());
     }
 
+    public function testMixedSaleWithCashAboveTheTotalBooksOnlyThePayableInTheDrawer(): void
+    {
+        // PaymentModal.js sends the cash handed over; anything above the total is change.
+        $result = $this->service()->createOrder(1, $this->cart(2) + ['cash_amount' => 1e6], 'mixed', 1e6);
+        $c = $this->connection;
+
+        $this->assertEquals(
+            [['type' => 'sale', 'amount' => '24.20']],
+            $c->fetchAllAssociative('SELECT type, amount FROM movement WHERE session_id = ?', [self::SESSION_ID])
+        );
+        $breakdown = json_decode((string) $c->fetchOne('SELECT payment_breakdown FROM order_meta WHERE id = ?', [$result['order_id']]), true);
+        $this->assertEquals(['cash' => 24.2, 'card' => 0.0], $breakdown['tender']);
+
+        $report = (new CashSessionService($c, $this->createMock(TerminalService::class), new RequestStack()))->getXReport(1);
+        $this->assertSame(124.2, $report['expected_cash'], 'opening 100 + the 24.20 charged');
+    }
+
+    public function testMixedSaleWithNegativeCashIsA422AndStoresNothing(): void
+    {
+        try {
+            $this->service()->createOrder(1, $this->cart(2) + ['cash_amount' => -20], 'mixed', 24.2);
+            $this->fail('A negative cash amount must be rejected');
+        } catch (CheckoutException $e) {
+            $this->assertSame(422, $e->getCode());
+        }
+        $this->assertNothingStored();
+        $this->assertSame(0, $this->lastNumber());
+    }
+
     public function testUnsyncedSaleIsPrintedSearchedByReferenceAndCountedInTheCashReport(): void
     {
         $result = $this->service()->createOrder(1, $this->cart() + ['cash_amount' => 12.10], 'cash', 20.0);
