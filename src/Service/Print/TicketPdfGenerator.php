@@ -41,8 +41,10 @@ class TicketPdfGenerator
         ]);
 
         $options = new Options();
-        $options->setIsRemoteEnabled(true);
-        $options->setChroot($this->projectDir());
+        // Logo, QR and barcode are all data: URIs, so nothing else may be loaded:
+        // no remote URLs and no local files (the project holds .env).
+        $options->setIsRemoteEnabled(false);
+        $options->setAllowedProtocols(['data://' => ['rules' => []]]);
         $dompdf = new Dompdf($options);
         $dompdf->loadHtml($html, 'UTF-8');
         $dompdf->setPaper([0, 0, 226.77, 841.89]); // 80mm width in points
@@ -73,10 +75,5 @@ class TicketPdfGenerator
         } catch (\Throwable) {
             return '';
         }
-    }
-
-    private function projectDir(): string
-    {
-        return dirname(__DIR__, 3);
     }
 }

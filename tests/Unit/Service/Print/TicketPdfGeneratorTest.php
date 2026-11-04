@@ -137,6 +137,28 @@ final class TicketPdfGeneratorTest extends TestCase
         }
     }
 
+    public function testTicketHtmlCannotPullLocalFilesIntoThePdf(): void
+    {
+        // Only data: URIs are legitimate; a file path inside the project must not be embedded.
+        $file = $this->projectDir() . '/var/tpv_probe_' . bin2hex(random_bytes(4)) . '.png';
+        file_put_contents($file, base64_decode(substr($this->createLogoDataUri(), \strlen('data:image/png;base64,'))));
+        $pdfPath = tempnam(sys_get_temp_dir(), 'tpv_pdf_');
+
+        try {
+            $twig = new Environment(new \Twig\Loader\ArrayLoader([
+                'ticket/print.html.twig' => '<html><body><img src="' . $file . '"><img src="file://' . $file . '"></body></html>',
+            ]));
+            file_put_contents($pdfPath, (new TicketPdfGenerator($twig))->generate($this->createTicketData()));
+
+            exec('pdfimages -list ' . escapeshellarg($pdfPath), $pdfImages, $exitCode);
+            self::assertSame(0, $exitCode);
+            self::assertSame(0, $this->embeddedImageCount($pdfImages));
+        } finally {
+            @unlink($file);
+            @unlink($pdfPath);
+        }
+    }
+
     /** @return string[] */
     private function temporaryAssetPaths(): array
     {
