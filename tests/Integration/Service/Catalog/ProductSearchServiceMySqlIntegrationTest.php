@@ -72,6 +72,21 @@ final class ProductSearchServiceMySqlIntegrationTest extends TestCase
         }
     }
 
+    public function testPagesWithAnOffsetCoverTheCategoryWithoutRepeats(): void
+    {
+        // The sale screen shows 50 products and loads the next ones on scroll.
+        $service = $this->createServiceOrSkip();
+        $all = array_column($service->search(null, self::CAT_ACTIVE_ID, 20), 'id');
+
+        $paged = [];
+        for ($offset = 0; $offset < \count($all) + 1; ++$offset) {
+            $paged = array_merge($paged, array_column($service->search(null, self::CAT_ACTIVE_ID, 1, $offset), 'id'));
+        }
+
+        $this->assertSame($all, $paged);
+        $this->assertSame([], $service->search(null, self::CAT_ACTIVE_ID, 20, \count($all)));
+    }
+
     public function testFindByIdReturnsCombinationAndCombinationStock(): void
     {
         $service = $this->createServiceOrSkip();

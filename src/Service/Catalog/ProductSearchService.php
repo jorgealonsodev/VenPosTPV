@@ -24,7 +24,7 @@ class ProductSearchService
      *
      * @return array<int, array<string, mixed>>
      */
-    public function search(?string $query, ?int $categoryId, int $limit = 50): array
+    public function search(?string $query, ?int $categoryId, int $limit = 50, int $offset = 0): array
     {
         $qb = $this->connection->createQueryBuilder()
             ->select([
@@ -44,6 +44,7 @@ class ProductSearchService
             ->leftJoin('p', 'catalog_stock', 's', 's.id_product = p.id AND s.id_product_attribute = 0')
             ->where('p.active = 1')
             ->setMaxResults($limit);
+        $qb->setFirstResult(max(0, $offset));
 
         if ($query !== null && $query !== '') {
             $qb->andWhere(
@@ -60,7 +61,9 @@ class ProductSearchService
                 ->setParameter('cat', $categoryId);
         }
 
+        // The id breaks ties so pages never repeat or skip products with the same name.
         $qb->orderBy('p.name', 'ASC');
+        $qb->addOrderBy('p.id', 'ASC');
 
         $results = $qb->executeQuery()->fetchAllAssociative();
 

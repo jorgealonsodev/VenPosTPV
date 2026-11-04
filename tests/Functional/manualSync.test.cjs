@@ -59,7 +59,7 @@ function testThePageLoadsTheNewVersions() {
     assert.match(page, /js\/api\.js\?v=2026110[3-9]-/);
     assert.doesNotMatch(page, /js\/api\.js\?v=20261103-sync-visibility-v1"/);
     // Later tasks bump SaleScreen again; it only has to be newer than before the manual flag.
-    assert.match(page, /SaleScreen\.js\?v=20261103-/);
+    assert.match(page, /SaleScreen\.js\?v=2026110[3-9]-/);
     assert.doesNotMatch(page, /SaleScreen\.js\?v=20261103-sync-manual-v2"/);
 }
 

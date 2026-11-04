@@ -29,11 +29,14 @@ class ProductController
         $q = $request->query->get('q');
         $category = $request->query->get('category');
         $limit = (int) $request->query->get('limit', '50');
+        // Paging: the sale screen asks for the next products when the list scrolls to its end.
+        $offset = (int) $request->query->get('offset', '0');
 
         $results = $this->productSearch->search(
             is_string($q) ? $q : null,
             is_numeric($category) ? (int) $category : null,
-            max(1, min(100, $limit))
+            max(1, min(100, $limit)),
+            max(0, $offset)
         );
 
         return new JsonResponse(['data' => $results]);

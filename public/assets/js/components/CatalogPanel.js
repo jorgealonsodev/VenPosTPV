@@ -3,7 +3,7 @@
  */
 const CatalogPanel = {
     props: ['catalog', 'listView', 'lastAdded'],
-    emits: ['setSearch', 'setCategory', 'addProduct', 'toggleView', 'notify'],
+    emits: ['setSearch', 'setCategory', 'addProduct', 'toggleView', 'notify', 'loadMore'],
     components: { CombinationsModal, LabelPrintModal },
     data() {
         return {
@@ -52,6 +52,13 @@ const CatalogPanel = {
             this.labelProduct = product;
             this.showCombinationsModal = false;
             this.combinationsProduct = null;
+        },
+        // Near the end of the list, ask for the next 50 products.
+        onProductsScroll(event) {
+            const el = event.currentTarget;
+            if (el.scrollTop + el.clientHeight >= el.scrollHeight - 300) {
+                this.$emit('loadMore');
+            }
         },
         onLabelNotify(text, color) {
             this.$emit('notify', text, color);
@@ -117,7 +124,7 @@ const CatalogPanel = {
             </div>
 
             <!-- Products -->
-            <div style="flex:1; overflow-y:auto; padding:12px; -webkit-overflow-scrolling:touch; touch-action:pan-y; min-height:0;">
+            <div @scroll="onProductsScroll" style="flex:1; overflow-y:auto; padding:12px; -webkit-overflow-scrolling:touch; touch-action:pan-y; min-height:0;">
                 <div v-if="catalog.products.length === 0 && !catalog.loading" style="text-align:center; color:var(--text3); margin-top:48px; font-size:14px;">
                     Sin resultados
                 </div>
@@ -168,6 +175,13 @@ const CatalogPanel = {
                         <span v-else-if="stockTag(p.stock) === 'stock-low'" style="font-size:10px; background:var(--amber-bg); color:var(--amber); padding:2px 7px; border-radius:4px; font-weight:600; flex-shrink:0;">BAJO</span>
                         <span v-else-if="stockTag(p.stock) === 'no-stock'" style="font-size:10px; background:var(--red-bg); color:var(--red); padding:2px 7px; border-radius:4px; font-weight:600; flex-shrink:0;">AGOTADO</span>
                         <span style="font-family:'IBM Plex Mono'; font-size:14px; font-weight:600; color:var(--text); flex-shrink:0;">€{{ Number(p.price).toFixed(2) }}</span>
+                    </button>
+                </div>
+
+                <div v-if="catalog.hasMore && !catalog.loading" style="text-align:center; margin:14px 0 4px;">
+                    <button @click="$emit('loadMore')" :disabled="catalog.loadingMore"
+                        style="padding:10px 18px; border-radius:10px; border:1px solid var(--border); background:var(--surface); color:var(--text2); font-family:inherit; font-size:13px; cursor:pointer;">
+                        {{ catalog.loadingMore ? 'Cargando…' : 'Ver más productos' }}
                     </button>
                 </div>
             </div>
