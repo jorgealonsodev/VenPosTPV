@@ -47,7 +47,6 @@ const ApiClient = (function () {
         if (response.status === 401) {
             const isAuthFlow = path === '/api/auth/login'
                 || path === '/api/auth/employee-lookup'
-                || path === '/api/auth/employees-public'
                 // an expired or forged ticket token is not a lost session
                 || path.indexOf('/api/ticket/verify?') === 0;
 
@@ -60,7 +59,12 @@ const ApiClient = (function () {
         if (!response.ok) {
             const text = await response.text();
             // HTTP errors are NOT network failures — never queue them
-            return Promise.reject(new Error('HTTP ' + response.status + ': ' + text));
+            const error = new Error('HTTP ' + response.status + ': ' + text);
+            // The status and the parsed JSON body (null when it is not JSON) let callers
+            // tell apart e.g. a locked account (403 {locked:true}) or a rate limit (429).
+            error.status = response.status;
+            try { error.body = JSON.parse(text); } catch (e) { error.body = null; }
+            return Promise.reject(error);
         }
         return response.json();
     }

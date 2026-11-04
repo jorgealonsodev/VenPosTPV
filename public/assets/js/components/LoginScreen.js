@@ -3,9 +3,12 @@
  * Employee flow:
  *   Step 1: Enter name or code → lookup via /api/auth/employee-lookup
  *   Step 2: PIN keypad → submit login
- * On 3 failed PINs: account locked → show message.
+ * On 3 failed PINs: account locked → show message (the login answers 403 {locked:true}).
+ * Too many attempts from this computer (429): ask to wait.
  * On success: redirect to /app/pos.
  */
+const TOO_MANY_ATTEMPTS = 'Demasiados intentos. Espera un poco y vuelve a probar.';
+
 const LoginScreen = {
     setup() {
         // ?admin=1: sent here from "Este equipo no tiene caja asignada" to log in as administrator.
@@ -52,7 +55,7 @@ const LoginScreen = {
                 });
                 window.location.href = (window.TPV_BASE || '') + '/app/pos';
             } catch (err) {
-                adminError.value = 'Credenciales incorrectas';
+                adminError.value = err?.status === 429 ? TOO_MANY_ATTEMPTS : 'Credenciales incorrectas';
             } finally {
                 adminLoading.value = false;
             }
@@ -82,17 +85,13 @@ const LoginScreen = {
             empSearchLoading.value = true;
             try {
                 const resp = await ApiClient.post('/api/auth/employee-lookup', { query: q });
-                const emp = resp.data;
-                if (emp.locked) {
-                    empSearchError.value = 'Cuenta bloqueada. Contacta al administrador para desbloquearla.';
-                    return;
-                }
-                selectedEmployee.value = emp;
+                // { id, name } only: a locked account is reported after the PIN (403 locked).
+                selectedEmployee.value = resp.data;
                 pin.value = '';
                 pinError.value = '';
                 pinLocked.value = false;
             } catch (err) {
-                empSearchError.value = 'Empleado no encontrado';
+                empSearchError.value = err?.status === 429 ? TOO_MANY_ATTEMPTS : 'Empleado no encontrado';
             } finally {
                 empSearchLoading.value = false;
             }
@@ -136,10 +135,13 @@ const LoginScreen = {
                 });
                 window.location.href = (window.TPV_BASE || '') + '/app/pos';
             } catch (err) {
-                const body = err?.response ? await err.response.json().catch(() => ({})) : {};
-                if (body?.locked) {
+                const body = err?.body || {};
+                if (body.locked) {
                     pinLocked.value = true;
                     pinError.value = 'Cuenta bloqueada. Contacta al administrador para desbloquearla.';
+                } else if (err?.status === 429) {
+                    pinError.value = TOO_MANY_ATTEMPTS;
+                    pinShake.value = true;
                 } else {
                     pinError.value = 'PIN incorrecto';
                     pinShake.value = true;

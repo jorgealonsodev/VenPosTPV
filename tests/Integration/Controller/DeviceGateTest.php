@@ -64,7 +64,7 @@ final class DeviceGateTest extends TestCase
 
     public function testLoginDeviceAndCatalogApisStayReachableWithoutATill(): void
     {
-        foreach (['/api/auth/login', '/api/device', '/api/device/link', '/api/device/restore', '/api/catalog/search', '/api/health', '/api/terminals'] as $path) {
+        foreach (['/api/auth/login', '/api/auth/employee-lookup', '/api/device', '/api/device/link', '/api/device/restore', '/api/catalog/search', '/api/health', '/api/terminals'] as $path) {
             $event = $this->dispatch($this->listener(null), $this->request('GET', $path, ['user_id' => 1], false));
 
             $this->assertFalse($event->hasResponse(), $path);
