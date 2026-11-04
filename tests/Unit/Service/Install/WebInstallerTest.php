@@ -7,6 +7,7 @@ namespace VenPosTPV\Tests\Unit\Service\Install;
 use Doctrine\DBAL\DriverManager;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Dotenv\Dotenv;
+use VenPosTPV\Service\Install\InstallException;
 use VenPosTPV\Service\Install\WebInstaller;
 
 final class WebInstallerTest extends TestCase
@@ -117,6 +118,33 @@ final class WebInstallerTest extends TestCase
         self::assertFileDoesNotExist($this->dir . '/' . WebInstaller::KEY_FILE);
         self::assertSame(0600, fileperms($this->dir . '/.env') & 0777);
         self::assertSame($values, (new Dotenv())->parse((string) file_get_contents($this->dir . '/.env')));
+    }
+
+    public function testFinishNeverOverwritesAnEnvThatAppearedMeanwhile(): void
+    {
+        $installer = new WebInstaller($this->dir);
+        $installer->ensureInstallKey();
+        file_put_contents($this->dir . '/.env', "APP_SECRET=keep\n");
+
+        try {
+            $installer->finish($installer->validate($this->validInput())['values']);
+            self::fail('An existing .env must not be replaced.');
+        } catch (InstallException $e) {
+            self::assertStringContainsString('.env', $e->getMessage());
+        }
+
+        self::assertSame("APP_SECRET=keep\n", file_get_contents($this->dir . '/.env'));
+        self::assertSame([], glob($this->dir . '/.env.tmp-*'));
+        self::assertFileExists($this->dir . '/' . WebInstaller::KEY_FILE);
+    }
+
+    public function testInstallerErrorsAreInstallExceptions(): void
+    {
+        $conn = DriverManager::getConnection(['driver' => 'pdo_sqlite', 'memory' => true]);
+        $conn->executeStatement('CREATE TABLE ps_orders (id INTEGER)');
+
+        $this->expectException(InstallException::class);
+        (new WebInstaller($this->dir))->assertDatabaseUsable($conn);
     }
 
     public function testForeignDatabaseIsRefusedAndEmptyOrOwnDatabaseAccepted(): void

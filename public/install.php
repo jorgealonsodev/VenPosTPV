@@ -77,14 +77,14 @@ if (!$isHttps && !$isLocal) {
 }
 
 $docRoot = realpath((string) ($_SERVER['DOCUMENT_ROOT'] ?? ''));
-if ($docRoot !== false && $docRoot !== realpath(__DIR__)) {
+if ($docRoot === false || $docRoot !== realpath(__DIR__)) {
     page('Instalación del TPV', '<p class="err">La raíz del documento del subdominio debe ser la carpeta <code>public</code> del TPV: <code>'
-        . h((string) realpath(__DIR__)) . '</code>. Ahora es <code>' . h($docRoot) . '</code>. En Plesk: <em>Hosting y DNS → Configuración de hosting → Raíz del documento</em>.</p>');
+        . h((string) realpath(__DIR__)) . '</code>. Ahora es <code>' . h($docRoot === false ? (string) ($_SERVER['DOCUMENT_ROOT'] ?? '') : $docRoot) . '</code>. En Plesk: <em>Hosting y DNS → Configuración de hosting → Raíz del documento</em>.</p>');
 }
 
 try {
     $installer->ensureInstallKey();
-} catch (\RuntimeException $e) {
+} catch (\VenPosTPV\Service\Install\InstallException $e) {
     page('Instalación del TPV', '<p class="err">' . h($e->getMessage()) . '</p>');
 }
 
@@ -113,6 +113,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         $errors = $result['errors'];
         if ($errors === []) {
             set_time_limit(300);
+            $executed = 0;
             try {
                 $conn = $installer->connect($result['values']);
                 $installer->assertDatabaseUsable($conn);
@@ -120,8 +121,12 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 $installer->finish($result['values']);
             } catch (\Doctrine\DBAL\Exception\ConnectionException $e) {
                 $errors[] = 'No se pudo conectar con la base de datos: revisa servidor, puerto, nombre, usuario y contraseña.';
-            } catch (\Throwable $e) {
+            } catch (\VenPosTPV\Service\Install\InstallException $e) {
                 $errors[] = $e->getMessage();
+            } catch (\Throwable $e) {
+                error_log('TPV installer: ' . $e::class . ': ' . $e->getMessage());
+                $errors[] = 'La instalación falló. El detalle está en el registro de errores de PHP (Plesk: Registros del subdominio). '
+                    . 'Si se crearon tablas, vacía la base de datos antes de volver a intentarlo.';
             }
 
             if ($errors === []) {

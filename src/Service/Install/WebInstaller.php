@@ -46,7 +46,7 @@ final class WebInstaller
         }
         $key = strtoupper(bin2hex(random_bytes(10)));
         if (@file_put_contents($file, $key . "\n", LOCK_EX) === false) {
-            throw new \RuntimeException('No se pudo crear ' . self::KEY_FILE . ': revisa los permisos de la carpeta del TPV.');
+            throw new InstallException('No se pudo crear ' . self::KEY_FILE . ': revisa los permisos de la carpeta del TPV.');
         }
         @chmod($file, 0600);
     }
@@ -179,7 +179,7 @@ final class WebInstaller
     {
         $tables = $conn->createSchemaManager()->listTableNames();
         if ($tables !== [] && !\in_array(self::MIGRATIONS_TABLE, $tables, true)) {
-            throw new \RuntimeException(sprintf(
+            throw new InstallException(sprintf(
                 'La base de datos ya tiene %d tablas y no son del TPV. Usa una base de datos vacía, creada solo para el TPV.',
                 \count($tables)
             ));
@@ -223,12 +223,16 @@ final class WebInstaller
         $env = $this->projectDir . '/.env';
         $tmp = $env . '.tmp-' . bin2hex(random_bytes(4));
         if (@file_put_contents($tmp, $this->envWriter->render($values), LOCK_EX) === false) {
-            throw new \RuntimeException('No se pudo escribir el archivo .env: revisa los permisos de la carpeta del TPV.');
+            throw new InstallException('No se pudo escribir el archivo .env: revisa los permisos de la carpeta del TPV.');
         }
         @chmod($tmp, 0600);
-        if (!@rename($tmp, $env)) {
-            @unlink($tmp);
-            throw new \RuntimeException('No se pudo crear el archivo .env.');
+        // link() fails when .env already exists, unlike rename(), which would replace it.
+        $linked = @link($tmp, $env);
+        @unlink($tmp);
+        if (!$linked) {
+            throw new InstallException(is_file($env)
+                ? 'Ya existe un archivo .env: el TPV ya está instalado. Para reinstalar, sigue los pasos de docs/despliegue-plesk.md.'
+                : 'No se pudo crear el archivo .env: revisa los permisos de la carpeta del TPV.');
         }
 
         $lockDir = \dirname($this->projectDir . '/' . self::LOCK_FILE);
