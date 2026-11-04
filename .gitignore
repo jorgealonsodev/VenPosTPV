@@ -35,3 +35,7 @@ Thumbs.db
 
 # Plesk packages (bin/build-plesk.sh)
 /dist/
+
+# Strix
+strix_runs
+/.env.check
