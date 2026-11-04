@@ -31,6 +31,7 @@ use VenPosTPV\Tests\Support\TestDatabase;
 final class ExchangeCreditRefundMySqlIntegrationTest extends TestCase
 {
     private const SESSION_ID = 9302;
+    private const NEXT_SESSION_ID = 9303;
     private const ORDER_ID = 940001;
     private const PRODUCT = 940005;
 
@@ -44,6 +45,9 @@ final class ExchangeCreditRefundMySqlIntegrationTest extends TestCase
 
     /** @var array<int, \Throwable|null> */
     private array $couponFailures = [];
+
+    /** @var (callable(): void)|null runs while PrestaShop creates the voucher */
+    private $duringCoupon = null;
 
     protected function setUp(): void
     {
@@ -78,9 +82,10 @@ final class ExchangeCreditRefundMySqlIntegrationTest extends TestCase
         $c->executeStatement('DELETE FROM refund_line WHERE refund_id IN (SELECT id FROM refund WHERE ps_order_id >= 940000 AND ps_order_id < 950000)');
         $c->executeStatement('DELETE FROM refund WHERE ps_order_id >= 940000 AND ps_order_id < 950000');
         $c->executeStatement('DELETE FROM credit_note_sequence');
-        $c->executeStatement('DELETE FROM movement WHERE session_id = ?', [self::SESSION_ID]);
+        $c->executeStatement('DELETE FROM movement WHERE session_id IN (?, ?)', [self::SESSION_ID, self::NEXT_SESSION_ID]);
         $c->executeStatement('DELETE FROM order_meta WHERE ps_order_id >= 940000 AND ps_order_id < 950000');
-        $c->executeStatement('DELETE FROM session WHERE id = ?', [self::SESSION_ID]);
+        $c->executeStatement('DELETE FROM z_report WHERE session_id IN (?, ?)', [self::SESSION_ID, self::NEXT_SESSION_ID]);
+        $c->executeStatement('DELETE FROM session WHERE id IN (?, ?)', [self::SESSION_ID, self::NEXT_SESSION_ID]);
         $c->executeStatement('DELETE FROM catalog_stock WHERE id_product = ?', [self::PRODUCT]);
         $c->executeStatement('DELETE FROM catalog_product WHERE id = ?', [self::PRODUCT]);
     }
@@ -138,6 +143,9 @@ final class ExchangeCreditRefundMySqlIntegrationTest extends TestCase
         $coupons = $this->createMock(CouponCreationService::class);
         $coupons->method('create')->willReturnCallback(function (array $input, int $shop): array {
             $this->coupons[] = ['input' => $input, 'shop' => $shop];
+            if ($this->duringCoupon !== null) {
+                ($this->duringCoupon)();
+            }
             $failure = array_shift($this->couponFailures);
             if ($failure !== null) {
                 throw $failure;
@@ -282,6 +290,48 @@ final class ExchangeCreditRefundMySqlIntegrationTest extends TestCase
         $this->assertSame([], $this->refundPayloads, 'nothing is queued for PrestaShop while the voucher is unknown');
         $this->assertSame('pending', $this->refundRow()['status']);
         $this->assertSame([], $this->movements());
+    }
+
+    public function testVoucherIssuedAfterCloseDoesNotCompleteInTheClosedSession(): void
+    {
+        $this->seedSale(['cash' => 15.0, 'card' => 0.0, 'exchange_credit' => 40.0], 55.0, 3);
+        $c = $this->connection;
+        $cash = new CashSessionService($c, $this->createMock(TerminalService::class), new RequestStack());
+        // The drawer is closed while PrestaShop is still creating the voucher.
+        $this->duringCoupon = function () use ($cash): void {
+            $this->duringCoupon = null;
+            $cash->closeSession(1, 100.0);
+        };
+        $service = $this->service();
+
+        $this->expectRefundError(409, fn () => $service->processRefund(1, self::ORDER_ID, $this->one(), 'size', '', false, 1));
+
+        $row = $this->refundRow();
+        $this->assertSame('pending', $row['status']);
+        $this->assertSame('CRED1XYZ', $row['voucher_code'], 'the voucher exists and is kept');
+        $this->assertNull($row['credit_note_number']);
+        $this->assertSame([], $this->movements(), 'nothing is booked in the closed session');
+        $this->assertSame('100.00', (string) $c->fetchOne('SELECT expected_cash FROM session WHERE id = ?', [self::SESSION_ID]));
+        $zTotals = (string) $c->fetchOne('SELECT totals FROM z_report WHERE session_id = ?', [self::SESSION_ID]);
+
+        // Next session: the retry completes it there without a second voucher.
+        $c->executeStatement('SET FOREIGN_KEY_CHECKS = 0');
+        $c->insert('session', ['id' => self::NEXT_SESSION_ID, 'terminal_id' => 1, 'user_id' => 1, 'opened_at' => '2026-11-03 18:00:00', 'opening_cash' => 50]);
+        $c->executeStatement('SET FOREIGN_KEY_CHECKS = 1');
+        $_SESSION['cash_session_id'] = self::NEXT_SESSION_ID;
+        $result = $service->retryPending(1, (int) $row['id']);
+
+        $this->assertSame(5.0, $result['cash_amount']);
+        $this->assertCount(1, $this->coupons, 'no second voucher');
+        $done = $this->refundRow();
+        $this->assertSame('done', $done['status']);
+        $this->assertSame(self::NEXT_SESSION_ID, (int) $done['session_id']);
+        $this->assertEquals(
+            [['type' => 'refund', 'amount' => '5.00']],
+            $c->fetchAllAssociative('SELECT type, amount FROM movement WHERE session_id = ?', [self::NEXT_SESSION_ID])
+        );
+        $this->assertSame([], $this->movements());
+        $this->assertSame($zTotals, (string) $c->fetchOne('SELECT totals FROM z_report WHERE session_id = ?', [self::SESSION_ID]), 'the Z is unchanged');
     }
 
     public function testVoucherShareNeedsAKnownShopBeforeAnythingIsWritten(): void

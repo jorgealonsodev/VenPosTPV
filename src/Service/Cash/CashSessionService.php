@@ -123,6 +123,24 @@ class CashSessionService
     }
 
     /**
+     * Locks the row of a still open session inside the caller's transaction, so a
+     * concurrent close waits until the caller commits and cannot miss what the
+     * caller books against it. Lock the session before any order_meta row.
+     *
+     * @throws \LogicException            outside a transaction
+     * @throws NoOpenCashSessionException when the session is unknown or already closed
+     */
+    public function lockOpenSessionInTransaction(int $sessionId): void
+    {
+        if (!$this->connection->isTransactionActive()) {
+            throw new \LogicException('lockOpenSessionInTransaction() must run inside the caller transaction');
+        }
+        if ($sessionId < 1 || $this->connection->fetchOne('SELECT id FROM session WHERE id = ? AND closed_at IS NULL FOR UPDATE', [$sessionId]) === false) {
+            throw new NoOpenCashSessionException();
+        }
+    }
+
+    /**
      * Books a movement as part of a caller's transaction (a local-first sale stores
      * its sale, cash, stock and upload together). Same invariant as addMovement():
      * the session must still be open, and its row stays locked until the caller
@@ -138,9 +156,7 @@ class CashSessionService
         if (!$this->connection->isTransactionActive()) {
             throw new \LogicException('recordMovementInTransaction() must run inside the caller transaction');
         }
-        if ($sessionId < 1 || $this->connection->fetchOne('SELECT id FROM session WHERE id = ? AND closed_at IS NULL FOR UPDATE', [$sessionId]) === false) {
-            throw new NoOpenCashSessionException();
-        }
+        $this->lockOpenSessionInTransaction($sessionId);
 
         $this->connection->insert('movement', [
             'session_id' => $sessionId,

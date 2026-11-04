@@ -6,6 +6,7 @@ namespace VenPosTPV\Service\Refund;
 
 use Doctrine\DBAL\Connection;
 use VenPosTPV\Service\Cash\CashSessionService;
+use VenPosTPV\Service\Cash\Exception\NoOpenCashSessionException;
 use VenPosTPV\Service\Catalog\CatalogPriceResolver;
 use VenPosTPV\Service\Catalog\Exception\ProductNotInCatalogException;
 use VenPosTPV\Service\PrestaShop\CouponCreationService;
@@ -272,6 +273,8 @@ class RefundService
 
         /** @var array{0: int, 1: ?int} $planned */
         $planned = $this->conn->transactional(function () use ($orderId, $lines, $cardConfirmed, $requestId, $cashContext, $sessionId, $userId, $reasonCode, $reasonText, $exchangeTotal, $reserved, $shopId, $voucherFallback, $numberer): array {
+            // Session before order_meta, the order every cash writer locks in.
+            $this->lockOpenSessionForRefund($sessionId);
             if ($this->conn->fetchOne('SELECT id FROM order_meta WHERE id = ? FOR UPDATE', [$orderId]) === false) {
                 throw RefundException::orderNotFound($orderId);
             }
@@ -560,6 +563,21 @@ class RefundService
             : ['order_id = ?', [$orderId]];
     }
 
+    /**
+     * Locks the refund's cash session before any order_meta row (lock order:
+     * session, then order_meta) and refuses one that closed in the meantime.
+     *
+     * @throws RefundException 409 when the session is no longer open
+     */
+    private function lockOpenSessionForRefund(int $sessionId): void
+    {
+        try {
+            $this->cashSessionService->lockOpenSessionInTransaction($sessionId);
+        } catch (NoOpenCashSessionException $e) {
+            throw RefundException::conflict('The cash session was closed before the refund completed; open a session and retry it');
+        }
+    }
+
     private function numberer(): CreditNoteNumberer
     {
         return $this->creditNoteNumberer ?? new CreditNoteNumberer($this->conn);
@@ -596,6 +614,9 @@ class RefundService
      */
     private function completeLocally(int $refundId, int $sessionId, CreditNoteNumberer $numberer): bool
     {
+        // The session id was read before the transaction (and maybe before a voucher
+        // call): a drawer closed meanwhile must not receive this refund.
+        $this->lockOpenSessionForRefund($sessionId);
         $now = new \DateTimeImmutable();
         $claimed = $this->conn->update('refund', [
             'status' => 'done',
@@ -1080,6 +1101,9 @@ class RefundService
 
         try {
             $this->conn->transactional(function () use ($numberer, $sessionId, $refundId, $slipId, $cashAmount, $total, $psOrderId, $lines, $restocked, &$alreadyCompleted): void {
+                // The shop call took time: a session closed meanwhile books nothing and
+                // the refund stays pending for retryPending() in the next session.
+                $this->cashSessionService->lockOpenSessionInTransaction($sessionId);
                 // Only the request that moves the row out of pending applies the local
                 // effects; a concurrent retry that got the same slip replayed does nothing.
                 $claimed = $this->conn->update('refund', [

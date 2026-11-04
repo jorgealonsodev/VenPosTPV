@@ -6,7 +6,9 @@ namespace VenPosTPV\Tests\Integration\Service\Refund;
 
 use Doctrine\DBAL\Connection;
 use PHPUnit\Framework\TestCase;
+use Symfony\Component\HttpFoundation\RequestStack;
 use VenPosTPV\Service\Cash\CashSessionService;
+use VenPosTPV\Service\Cash\TerminalService;
 use VenPosTPV\Service\Checkout\PsOrderClient;
 use VenPosTPV\Service\Print\TicketDataResolver;
 use VenPosTPV\Service\Print\TicketVerificationService;
@@ -105,7 +107,11 @@ final class RefundServiceMySqlIntegrationTest extends TestCase
 
     private function service(): RefundService
     {
-        $cash = $this->createMock(CashSessionService::class);
+        // Only the session lookup is faked; the in-transaction session lock is real.
+        $cash = $this->getMockBuilder(CashSessionService::class)
+            ->setConstructorArgs([$this->connection, $this->createMock(TerminalService::class), new RequestStack()])
+            ->onlyMethods(['requireOpenSession'])
+            ->getMock();
         $cash->method('requireOpenSession')->willReturnCallback(fn (): array => ['session_id' => $this->nextSessionId, 'terminal_id' => $this->nextTerminalId, 'user_id' => 1]);
 
         return new RefundService(new OrderSearchService($this->connection), $this->refundClient(), $this->connection, $cash);
@@ -443,6 +449,49 @@ final class RefundServiceMySqlIntegrationTest extends TestCase
         );
         $this->connection->executeStatement('DELETE FROM movement WHERE session_id = ?', [self::SESSION_ID + 1]);
         $this->connection->executeStatement('DELETE FROM session WHERE id = ?', [self::SESSION_ID + 1]);
+    }
+
+    public function testShopRefundFinishingAfterCloseBooksNothingInTheClosedSession(): void
+    {
+        $this->seedOrder(['cash' => 60.0, 'card' => 0.0]);
+        $refundId = $this->seedLegacyPendingRefund();
+        $service = $this->service();
+        $c = $this->connection;
+        // The drawer is closed while PrestaShop is still creating the credit slip.
+        $this->duringPsCall = fn () => $c->update('session', ['closed_at' => '2026-11-03 20:00:00', 'expected_cash' => 100], ['id' => self::SESSION_ID]);
+
+        $result = $service->retryPending(1, $refundId);
+
+        $this->assertTrue($result['saga_error']);
+        $this->assertSame([], $this->movements(), 'nothing is booked in the closed session');
+        $this->assertSame('pending', $c->fetchOne('SELECT status FROM refund WHERE id = ?', [$refundId]));
+        $this->assertNull($c->fetchOne('SELECT credit_note_number FROM refund WHERE id = ?', [$refundId]));
+        $this->assertSame(5, $this->stock(3, 7), 'no local effect was applied');
+        $orphan = $c->fetchOne("SELECT payload FROM audit_log WHERE action = 'refund_orphan' AND target = ? ORDER BY id DESC LIMIT 1", [(string) self::ORDER_ID]);
+        $this->assertIsString($orphan, 'the credit slip already in the shop is recorded for reconciliation');
+        $this->assertSame($refundId, json_decode($orphan, true)['refund_id']);
+
+        // Next session: the retry replays the slip and books the cash there.
+        $c->executeStatement('SET FOREIGN_KEY_CHECKS = 0');
+        $c->insert('session', ['id' => self::SESSION_ID + 1, 'terminal_id' => 1, 'user_id' => 1, 'opened_at' => '2026-11-04 09:00:00', 'opening_cash' => 50]);
+        $c->executeStatement('SET FOREIGN_KEY_CHECKS = 1');
+        $this->nextSessionId = self::SESSION_ID + 1;
+        try {
+            $retried = $service->retryPending(1, $refundId);
+
+            $this->assertFalse($retried['saga_error']);
+            $this->assertSame('done', $c->fetchOne('SELECT status FROM refund WHERE id = ?', [$refundId]));
+            $this->assertSame(self::SESSION_ID + 1, (int) $c->fetchOne('SELECT session_id FROM refund WHERE id = ?', [$refundId]));
+            $this->assertEquals(
+                [['session_id' => (string) (self::SESSION_ID + 1), 'amount' => '24.18']],
+                $c->fetchAllAssociative("SELECT session_id, amount FROM movement WHERE type = 'refund' AND ps_order_id = ?", [self::ORDER_ID])
+            );
+            $this->assertSame('100.00', (string) $c->fetchOne('SELECT expected_cash FROM session WHERE id = ?', [self::SESSION_ID]));
+        } finally {
+            $c->executeStatement('DELETE FROM movement WHERE session_id = ?', [self::SESSION_ID + 1]);
+            $c->executeStatement('DELETE FROM session WHERE id = ?', [self::SESSION_ID + 1]);
+            $c->executeStatement("DELETE FROM audit_log WHERE action = 'refund_orphan' AND target = ?", [(string) self::ORDER_ID]);
+        }
     }
 
     public function testCompletedRefundsGetConsecutiveCreditNoteNumbersAndRejectedOnesNone(): void

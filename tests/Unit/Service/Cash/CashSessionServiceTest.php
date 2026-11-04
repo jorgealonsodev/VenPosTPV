@@ -290,6 +290,59 @@ final class CashSessionServiceTest extends TestCase
         $service->closeSession(1, 100.0);
     }
 
+    public function testLockOpenSessionInTransactionLocksTheOpenSessionRow(): void
+    {
+        $conn = $this->createMock(Connection::class);
+        $conn->method('isTransactionActive')->willReturn(true);
+        $conn->expects($this->once())
+            ->method('fetchOne')
+            ->with('SELECT id FROM session WHERE id = ? AND closed_at IS NULL FOR UPDATE', [10])
+            ->willReturn(10);
+
+        (new CashSessionService($conn, $this->createMock(TerminalService::class), new RequestStack()))->lockOpenSessionInTransaction(10);
+    }
+
+    public function testLockOpenSessionInTransactionRejectsAClosedSession(): void
+    {
+        $conn = $this->createMock(Connection::class);
+        $conn->method('isTransactionActive')->willReturn(true);
+        $conn->method('fetchOne')->willReturn(false);
+
+        $this->expectException(NoOpenCashSessionException::class);
+        (new CashSessionService($conn, $this->createMock(TerminalService::class), new RequestStack()))->lockOpenSessionInTransaction(10);
+    }
+
+    public function testLockOpenSessionInTransactionRejectsAnInvalidIdWithoutQuerying(): void
+    {
+        $conn = $this->createMock(Connection::class);
+        $conn->method('isTransactionActive')->willReturn(true);
+        $conn->expects($this->never())->method('fetchOne');
+
+        $this->expectException(NoOpenCashSessionException::class);
+        (new CashSessionService($conn, $this->createMock(TerminalService::class), new RequestStack()))->lockOpenSessionInTransaction(0);
+    }
+
+    public function testLockOpenSessionInTransactionRequiresTheCallerTransaction(): void
+    {
+        $conn = $this->createMock(Connection::class);
+        $conn->method('isTransactionActive')->willReturn(false);
+        $conn->expects($this->never())->method('fetchOne');
+
+        $this->expectException(\LogicException::class);
+        (new CashSessionService($conn, $this->createMock(TerminalService::class), new RequestStack()))->lockOpenSessionInTransaction(10);
+    }
+
+    public function testRecordMovementInTransactionStillRejectsAClosedSessionWithoutInserting(): void
+    {
+        $conn = $this->createMock(Connection::class);
+        $conn->method('isTransactionActive')->willReturn(true);
+        $conn->method('fetchOne')->willReturn(false);
+        $conn->expects($this->never())->method('insert');
+
+        $this->expectException(NoOpenCashSessionException::class);
+        (new CashSessionService($conn, $this->createMock(TerminalService::class), new RequestStack()))->recordMovementInTransaction(10, 'sale', 5.0);
+    }
+
     public function testRequireOpenSessionUsesDedicatedExceptionWhenUserHasNoOpenSession(): void
     {
         $conn = $this->createMock(Connection::class);

@@ -684,11 +684,10 @@ class CheckoutService
     private function insertCouponCashMovement(array $cashContext, int $userId, float $amount, int $psOrderId): void
     {
         $sessionId = (int) ($cashContext['session_id'] ?? 0);
-        if ($sessionId < 1 || $this->conn->fetchOne(
-            'SELECT id FROM session WHERE id = ? AND closed_at IS NULL FOR UPDATE',
-            [$sessionId]
-        ) === false) {
-            throw new \RuntimeException('Cash session closed during coupon checkout');
+        try {
+            $this->cashSessionService->lockOpenSessionInTransaction($sessionId);
+        } catch (NoOpenCashSessionException $e) {
+            throw new \RuntimeException('Cash session closed during coupon checkout', 0, $e);
         }
         $this->conn->insert('movement', [
             'session_id' => $sessionId,

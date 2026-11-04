@@ -29,6 +29,7 @@ use VenPosTPV\Tests\Support\TestDatabase;
 final class OnlineRefundMySqlIntegrationTest extends TestCase
 {
     private const SESSION_ID = 9201;
+    private const NEXT_SESSION_ID = 9202;
     private const TERMINAL_ID = 9201;
     private const ORDER_ID = 880501;
     private const SHIRT = 880503;
@@ -49,6 +50,11 @@ final class OnlineRefundMySqlIntegrationTest extends TestCase
     private array $psFailures = [];
 
     private ?\Throwable $lookupFailure = null;
+
+    /** @var (callable(): void)|null runs inside the next PrestaShop refund call */
+    private $duringPsCall = null;
+
+    private int $sessionId = self::SESSION_ID;
 
     protected function setUp(): void
     {
@@ -85,9 +91,10 @@ final class OnlineRefundMySqlIntegrationTest extends TestCase
         $c->executeStatement('DELETE FROM outbox WHERE order_id IN (SELECT id FROM order_meta WHERE ps_order_id BETWEEN 880500 AND 880599)');
         $c->executeStatement('DELETE FROM refund WHERE ps_order_id BETWEEN 880500 AND 880599');
         $c->executeStatement('DELETE FROM credit_note_sequence');
-        $c->executeStatement('DELETE FROM movement WHERE session_id = ?', [self::SESSION_ID]);
+        $c->executeStatement('DELETE FROM movement WHERE session_id IN (?, ?)', [self::SESSION_ID, self::NEXT_SESSION_ID]);
         $c->executeStatement('DELETE FROM order_meta WHERE ps_order_id BETWEEN 880500 AND 880599');
-        $c->executeStatement('DELETE FROM session WHERE id = ?', [self::SESSION_ID]);
+        $c->executeStatement('DELETE FROM session WHERE id IN (?, ?)', [self::SESSION_ID, self::NEXT_SESSION_ID]);
+        $c->executeStatement("DELETE FROM audit_log WHERE action = 'refund_orphan' AND target BETWEEN '880500' AND '880599'");
         $c->executeStatement('DELETE FROM terminal WHERE id = ?', [self::TERMINAL_ID]);
         $c->executeStatement('DELETE FROM catalog_stock WHERE id_product BETWEEN 880500 AND 880599');
         $c->executeStatement('DELETE FROM catalog_product WHERE id BETWEEN 880500 AND 880599');
@@ -155,6 +162,11 @@ final class OnlineRefundMySqlIntegrationTest extends TestCase
         $client = $this->createMock(PsRefundClient::class);
         $client->method('createRefund')->willReturnCallback(function (array $payload): array {
             $this->psPayloads[] = $payload;
+            if ($this->duringPsCall !== null) {
+                $during = $this->duringPsCall;
+                $this->duringPsCall = null;
+                $during();
+            }
             $failure = array_shift($this->psFailures);
             if ($failure !== null) {
                 throw $failure;
@@ -174,8 +186,12 @@ final class OnlineRefundMySqlIntegrationTest extends TestCase
 
     private function cash(): CashSessionService
     {
-        $cash = $this->createMock(CashSessionService::class);
-        $cash->method('requireOpenSession')->willReturn(['session_id' => self::SESSION_ID, 'terminal_id' => self::TERMINAL_ID, 'user_id' => 1]);
+        // Only the session lookup is faked; the in-transaction session lock is real.
+        $cash = $this->getMockBuilder(CashSessionService::class)
+            ->setConstructorArgs([$this->connection, $this->createMock(TerminalService::class), new RequestStack()])
+            ->onlyMethods(['requireOpenSession'])
+            ->getMock();
+        $cash->method('requireOpenSession')->willReturnCallback(fn (): array => ['session_id' => $this->sessionId, 'terminal_id' => self::TERMINAL_ID, 'user_id' => 1]);
 
         return $cash;
     }
@@ -239,6 +255,43 @@ final class OnlineRefundMySqlIntegrationTest extends TestCase
         $this->assertSame('0.00', (string) $row['card_amount']);
         $this->assertSame(0, (int) $row['card_confirmed']);
         $this->assertSame(0, (int) $this->connection->fetchOne('SELECT COUNT(*) FROM order_meta WHERE ps_order_id = ?', [self::ORDER_ID]), 'an online order never becomes a TPV sale');
+    }
+
+    public function testShopRefundFinishingAfterCloseBooksNothingInTheClosedSession(): void
+    {
+        $c = $this->connection;
+        // The drawer is closed while PrestaShop is still creating the credit slip.
+        $this->duringPsCall = fn () => $c->update('session', ['closed_at' => '2026-11-03 20:00:00', 'expected_cash' => 100], ['id' => self::SESSION_ID]);
+
+        $result = $this->service()->processRefund(1, self::ORDER_ID, [['line_index' => 0, 'quantity' => 1, 'restock' => true]], 'size');
+
+        $this->assertTrue($result['saga_error'], 'the slip exists in the shop: recorded for reconciliation');
+        $row = $c->fetchAssociative('SELECT * FROM refund WHERE id = ?', [$result['refund_id']]);
+        $this->assertSame('pending', $row['status']);
+        $this->assertNull($row['credit_note_number']);
+        $this->assertNull($row['completed_at']);
+        $this->assertSame(0, $this->movements(), 'nothing is booked in the closed session');
+        $this->assertSame(5, $this->stock(self::SHIRT, 7), 'no local effect was applied');
+        $this->assertSame('100.00', (string) $c->fetchOne('SELECT expected_cash FROM session WHERE id = ?', [self::SESSION_ID]));
+        $this->assertSame(1, (int) $c->fetchOne("SELECT COUNT(*) FROM audit_log WHERE action = 'refund_orphan' AND target = ?", [(string) self::ORDER_ID]));
+
+        // Next session: the retry replays the slip and completes the refund there.
+        $c->executeStatement('SET FOREIGN_KEY_CHECKS = 0');
+        $c->insert('session', ['id' => self::NEXT_SESSION_ID, 'terminal_id' => self::TERMINAL_ID, 'user_id' => 1, 'opened_at' => '2026-11-04 09:00:00', 'opening_cash' => 50]);
+        $c->executeStatement('SET FOREIGN_KEY_CHECKS = 1');
+        $this->sessionId = self::NEXT_SESSION_ID;
+
+        $retried = $this->service()->retryPending(1, $result['refund_id']);
+
+        $this->assertFalse($retried['saga_error']);
+        $this->assertSame($result['refund_id'], $retried['refund_id']);
+        $this->assertCount(2, $this->psPayloads);
+        $this->assertSame($this->psPayloads[0]['request_id'], $this->psPayloads[1]['request_id'], 'replayed, never refunded twice');
+        $done = $c->fetchAssociative('SELECT * FROM refund WHERE id = ?', [$result['refund_id']]);
+        $this->assertSame('done', $done['status']);
+        $this->assertSame(self::NEXT_SESSION_ID, (int) $done['session_id']);
+        $this->assertNotNull($done['credit_note_number']);
+        $this->assertSame(6, $this->stock(self::SHIRT, 7));
     }
 
     public function testTpvSaleRefundStillSendsNoTargetStateAndPaysCash(): void
