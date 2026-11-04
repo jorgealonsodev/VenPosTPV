@@ -18,9 +18,41 @@ class ReleaseMetadataTest extends TestCase
         $php = (string) file_get_contents($moduleRoot . '/tpvconnect.php');
         $xml = (string) file_get_contents($moduleRoot . '/config.xml');
 
-        self::assertSame('0.6.1', $this->declaredPhpVersion($php));
+        self::assertSame('0.6.2', $this->declaredPhpVersion($php));
         self::assertSame($this->declaredPhpVersion($php), $this->declaredXmlVersion($xml));
         self::assertTrue(version_compare($this->declaredPhpVersion($php), '0.1.0', '>'));
+    }
+
+    public function test_prestashop_9_is_accepted_in_both_declarations(): void
+    {
+        $moduleRoot = dirname(__DIR__, 2);
+        $php = (string) file_get_contents($moduleRoot . '/tpvconnect.php');
+        $xml = (string) file_get_contents($moduleRoot . '/config.xml');
+
+        preg_match("/'max'\\s*=>\\s*'([^']+)'/", $php, $phpMax);
+        preg_match_all('/<max>([^<]+)<\\/max>/', $xml, $xmlMax);
+
+        self::assertTrue(version_compare('9.2.0', $phpMax[1] ?? '', '<='), 'ps_versions_compliancy max in tpvconnect.php');
+        self::assertCount(2, $xmlMax[1]);
+        foreach ($xmlMax[1] as $max) {
+            self::assertTrue(version_compare('9.2.0', $max, '<='), 'max in config.xml');
+        }
+    }
+
+    public function test_no_module_code_calls_apis_removed_in_prestashop_9(): void
+    {
+        $offenders = [];
+        $moduleRoot = dirname(__DIR__, 2);
+        foreach (new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($moduleRoot, \FilesystemIterator::SKIP_DOTS)) as $file) {
+            if ($file->getExtension() !== 'php' || str_contains($file->getPathname(), '/tests/')) {
+                continue;
+            }
+            if (preg_match('/Tools::encrypt\\(/', (string) file_get_contents($file->getPathname())) === 1) {
+                $offenders[] = substr($file->getPathname(), \strlen($moduleRoot) + 1);
+            }
+        }
+
+        self::assertSame([], $offenders, 'Tools::encrypt() does not exist in PrestaShop 9');
     }
 
     private function declaredPhpVersion(string $php): string
@@ -117,6 +149,7 @@ class ReleaseMetadataTest extends TestCase
     {
         $changelog = (string) file_get_contents(dirname(__DIR__, 2) . '/CHANGELOG.md');
 
+        self::assertStringContainsString("## 0.6.2\n", $changelog);
         self::assertStringContainsString("## 0.6.1\n", $changelog);
         self::assertStringContainsString("## 0.6.0\n", $changelog);
     }

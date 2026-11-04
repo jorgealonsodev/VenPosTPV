@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.2
+
+- PrestaShop 9 support: the module declares compatibility up to 9.99.99 (it stopped at 8.99.99, so PrestaShop 9.2 refused to install it).
+- The technical customer «Consumidor final» gets its unusable password with `password_hash()`; `Tools::encrypt()` no longer exists in PrestaShop 9 and made the install fail there.
+- No upgrade script: nothing to migrate; PrestaShop records the new version.
+
 ## 0.6.1
 
 - `POST /module/tpvconnect/orders` for a customer without an address (a customer created at the TPV): the temporary address now gets the placeholder `dni` `TPV` when the shop's default country needs an identification number (Spain does). Before, PrestaShop refused it ("Address->dni is empty") and the endpoint answered 500, which the TPV retried forever. Countries without that requirement get the same address as before; a customer with an address keeps using its first one.

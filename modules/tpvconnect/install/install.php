@@ -196,7 +196,10 @@ class TpvConnectInstaller
         $customer->firstname = self::TECHNICAL_CUSTOMER_FIRSTNAME;
         $customer->lastname = self::TECHNICAL_CUSTOMER_LASTNAME;
         $customer->email = self::TECHNICAL_CUSTOMER_EMAIL;
-        $customer->passwd = Tools::encrypt(Tools::passwdGen(16));
+        // Nobody logs in as this customer. password_hash() instead of
+        // the old Tools encrypt helper, which PrestaShop 9 removed; it checks
+        // customer passwords with password_verify() since 1.7.
+        $customer->passwd = password_hash(Tools::passwdGen(32), PASSWORD_BCRYPT);
         $customer->secure_key = md5(uniqid((string) mt_rand(), true));
         $customer->active = 1;
         $customer->deleted = 0;

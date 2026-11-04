@@ -2,7 +2,7 @@
 <module>
     <name>tpvconnect</name>
     <displayName><![CDATA[TPV Connect]]></displayName>
-    <version><![CDATA[0.6.1]]></version>
+    <version><![CDATA[0.6.2]]></version>
     <description><![CDATA[Conecta PrestaShop con la aplicaci&oacute;n TPV independiente v&iacute;a SSO y API.]]></description>
     <author><![CDATA[VenPosTPV]]></author>
     <tab><![CDATA[administration]]></tab>
@@ -12,10 +12,10 @@
     <limited_countries></limited_countries>
     <compatibility>
         <min>1.7.7.0</min>
-        <max>8.99.99</max>
+        <max>9.99.99</max>
     </compatibility>
     <ps_versions_compliancy>
         <min>1.7.7.0</min>
-        <max>8.99.99</max>
+        <max>9.99.99</max>
     </ps_versions_compliancy>
 </module>

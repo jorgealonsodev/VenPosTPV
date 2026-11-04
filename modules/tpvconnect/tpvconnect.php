@@ -20,13 +20,13 @@ class Tpvconnect extends PaymentModule
     {
         $this->name = 'tpvconnect';
         $this->tab = 'administration';
-        $this->version = '0.6.1';
+        $this->version = '0.6.2';
         $this->author = 'VenPosTPV';
         $this->need_instance = 1;
         $this->bootstrap = true;
         $this->ps_versions_compliancy = [
             'min' => '1.7.7.0',
-            'max' => '8.99.99',
+            'max' => '9.99.99',
         ];
 
         parent::__construct();
