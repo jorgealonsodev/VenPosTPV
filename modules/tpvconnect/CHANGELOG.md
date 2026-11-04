@@ -4,6 +4,7 @@
 
 - PrestaShop 9 support: the module declares compatibility up to 9.99.99 (it stopped at 8.99.99, so PrestaShop 9.2 refused to install it).
 - The technical customer «Consumidor final» gets its unusable password with `password_hash()`; `Tools::encrypt()` no longer exists in PrestaShop 9 and made the install fail there.
+- The technical customer's address gets the placeholder `dni` `TPV` when the shop's default country needs an identification number (Spain does); before, the install failed with "Address->dni is empty".
 - No upgrade script: nothing to migrate; PrestaShop records the new version.
 
 ## 0.6.1

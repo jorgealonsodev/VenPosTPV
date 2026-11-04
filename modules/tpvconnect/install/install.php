@@ -238,6 +238,12 @@ class TpvConnectInstaller
         $address->city = 'TPV';
         $address->id_country = (int) Configuration::get('PS_COUNTRY_DEFAULT');
         $address->phone = '000000000';
+        // Countries such as Spain require an identification number: without it
+        // PrestaShop refuses the address ("Address->dni is empty") and the install
+        // fails. Same placeholder as the temporary addresses of TPV orders.
+        if (Address::dniRequired($address->id_country)) {
+            $address->dni = 'TPV';
+        }
         $address->add();
     }
 
