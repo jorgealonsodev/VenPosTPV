@@ -306,7 +306,7 @@ function testThePageLoadsTheIncidentsScreenAndNewVersionsOfTheChangedAssets() {
     const page = fs.readFileSync(path.join(ROOT, 'templates/pos.html.twig'), 'utf8');
     for (const asset of ['css/app.css', 'js/api.js', 'stores/useSession.js', 'SyncStatusIndicator.js', 'SyncStatusPanel.js', 'SaleScreen.js',
         'TicketPanel.js', 'OrderDetailView.js', 'TicketListPanel.js', 'CashCloseScreen.js', 'IncidentsScreen.js', 'js/app.js']) {
-        assert.match(page, new RegExp(asset.replace('.', '\\.') + '\\?v=20261103-'), asset);
+        assert.match(page, new RegExp(asset.replace('.', '\\.') + '\\?v=2026110[3-9]-'), asset);
     }
     assert.ok(page.indexOf('IncidentsScreen.js') < page.indexOf('/app.js'), 'the component loads before the app registers it');
     assert.match(fs.readFileSync(path.join(ROOT, 'public/assets/js/app.js'), 'utf8'), /app\.component\('incidents-screen', IncidentsScreen\)/);

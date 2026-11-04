@@ -56,7 +56,7 @@ function testOnlyTheHeaderButtonIsManual() {
 function testThePageLoadsTheNewVersions() {
     const page = fs.readFileSync(path.join(ROOT, 'templates/pos.html.twig'), 'utf8');
     // api.js also changed in a concurrent task, which may own its version; it only has to be new.
-    assert.match(page, /js\/api\.js\?v=20261103-/);
+    assert.match(page, /js\/api\.js\?v=2026110[3-9]-/);
     assert.doesNotMatch(page, /js\/api\.js\?v=20261103-sync-visibility-v1"/);
     // Later tasks bump SaleScreen again; it only has to be newer than before the manual flag.
     assert.match(page, /SaleScreen\.js\?v=20261103-/);

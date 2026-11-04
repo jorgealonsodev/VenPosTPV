@@ -237,7 +237,7 @@ const TicketListPanel = {
                     </div>
                     <div v-for="order in paidOrders" :key="orderKey(order)" @click="selectOrder(order)"
                         style="background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px; cursor:pointer; display:flex; flex-direction:column; gap:4px; transition:all .1s;"
-                        onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='var(--surface)'">
+                        @mouseover="$event.currentTarget.style.background='var(--surface2)'" @mouseout="$event.currentTarget.style.background='var(--surface)'">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
                             <span style="font-weight:600; color:var(--text); font-size:14px;">{{ orderLabel(order) }}</span>
                             <span style="color:var(--text2); font-size:12px; font-family:'IBM Plex Mono';">€{{ Number(order.total || 0).toFixed(2) }}</span>
@@ -258,7 +258,7 @@ const TicketListPanel = {
                     </div>
                     <div v-for="order in refundedOrders" :key="orderKey(order)" @click="selectOrder(order)"
                         style="background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px; cursor:pointer; display:flex; flex-direction:column; gap:4px; transition:all .1s;"
-                        onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='var(--surface)'">
+                        @mouseover="$event.currentTarget.style.background='var(--surface2)'" @mouseout="$event.currentTarget.style.background='var(--surface)'">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
                             <span style="font-weight:600; color:var(--text); font-size:14px;">{{ orderLabel(order) }}</span>
                             <span style="color:var(--red); font-size:12px; font-family:'IBM Plex Mono';">Devuelto: €{{ Number(order.refunded_amount || 0).toFixed(2) }}</span>

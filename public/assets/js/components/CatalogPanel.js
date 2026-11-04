@@ -153,8 +153,8 @@ const CatalogPanel = {
                         @click="handleProductTap(p)"
                         style="background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:10px 14px; display:flex; align-items:center; gap:14px; text-align:left; font-family:inherit; transition:all .1s;"
                         :style="{ cursor: stockTag(p.stock) === 'no-stock' ? 'not-allowed' : 'pointer', opacity: stockTag(p.stock) === 'no-stock' ? 0.45 : 1, background: lastAdded === p.id ? 'var(--green-bg)' : 'var(--surface)', borderColor: lastAdded === p.id ? 'var(--green-dim)' : 'var(--border)' }"
-                        onmouseover="if(!this.classList.contains('no-stock')) this.style.background='var(--surface2)'"
-                        onmouseout="if(!this.classList.contains('no-stock')) this.style.background='var(--surface)'"
+                        @mouseover="!$event.currentTarget.classList.contains('no-stock') && ($event.currentTarget.style.background='var(--surface2)')"
+                        @mouseout="!$event.currentTarget.classList.contains('no-stock') && ($event.currentTarget.style.background='var(--surface)')"
                     >
                         <div style="width:36px; height:36px; border-radius:6px; background:var(--surface2); border:1px dashed var(--border); display:flex; align-items:center; justify-content:center; flex-shrink:0; font-size:9px; color:var(--text3); font-family:'IBM Plex Mono'; overflow:hidden;">
                             <template v-if="p.image_url"><img :src="p.image_url" :alt="p.name" style="width:100%;height:100%;object-fit:cover;border-radius:6px;" @error="$event.target.parentElement.textContent='IMG'" /></template>

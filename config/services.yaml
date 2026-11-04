@@ -153,11 +153,14 @@ services:
         arguments:
             $basePath: '%app.base_path%'
 
-    # Security (docs/prd-seguridad-strix.md R7). Unset values are null:
+    # Security (docs/prd-seguridad-strix.md R7, R10). Unset values are null:
     # without TPV_URL only the host the request reached is accepted.
     VenPosTPV\EventListener\OriginCheckListener:
         arguments:
             $tpvUrl: '%env(default::TPV_URL)%'
+    VenPosTPV\EventListener\SecurityHeadersListener:
+        arguments:
+            $shopUrl: '%env(default::PS_SHOP_URL)%'
 
     # Refund Service
     VenPosTPV\Service\Refund\PsRefundClient:

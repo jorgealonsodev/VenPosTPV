@@ -117,7 +117,7 @@ const CustomerModal = {
                     <div style="display:flex; flex-direction:column; gap:6px; max-height:260px; overflow:auto;">
                         <button v-for="c in filtered" :key="c.default ? 'default' : c.local_id" @click="select(c)"
                             style="padding:12px 14px; border-radius:10px; border:1px solid var(--border); background:var(--surface2); cursor:pointer; display:flex; align-items:center; justify-content:space-between; text-align:left; transition:all .1s;"
-                            onmouseover="this.style.borderColor='var(--border2)'" onmouseout="this.style.borderColor='var(--border)'">
+                            @mouseover="$event.currentTarget.style.borderColor='var(--border2)'" @mouseout="$event.currentTarget.style.borderColor='var(--border)'">
                             <div>
                                 <div style="font-weight:600; color:var(--text); font-size:14px;">{{ c.name }}</div>
                                 <div style="color:var(--text3); font-size:12px; margin-top:2px;">{{ c.email }}<span v-if="c.phone && !c.default"> · {{ c.phone }}</span></div>

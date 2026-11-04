@@ -172,7 +172,7 @@ const LoginScreen = {
             <!-- Theme toggle -->
             <button @click="toggleTheme"
                 style="position:fixed; top:16px; right:16px; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:8px 12px; color:var(--text3); cursor:pointer; display:flex; align-items:center; gap:6px; font-family:inherit; font-size:12px; z-index:100; transition:all .15s;"
-                onmouseover="this.style.borderColor='var(--border2)'" onmouseout="this.style.borderColor='var(--border)'">
+                @mouseover="$event.currentTarget.style.borderColor='var(--border2)'" @mouseout="$event.currentTarget.style.borderColor='var(--border)'">
                 <svg v-if="theme === 'dark'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
                 <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
             </button>
@@ -269,15 +269,15 @@ const LoginScreen = {
                             <template v-for="k in [1,2,3,4,5,6,7,8,9]" :key="k">
                                 <button @click="handleKey(String(k))"
                                     style="height:72px; border-radius:14px; border:none; cursor:pointer; font-family:'IBM Plex Mono', monospace; font-size:22px; font-weight:500; background:var(--surface2); color:var(--text); transition:all .08s;"
-                                    onmouseover="this.style.background='var(--surface3)'" onmouseout="this.style.background='var(--surface2)'">{{ k }}</button>
+                                    @mouseover="$event.currentTarget.style.background='var(--surface3)'" @mouseout="$event.currentTarget.style.background='var(--surface2)'">{{ k }}</button>
                             </template>
                             <div></div>
                             <button @click="handleKey('0')"
                                 style="height:72px; border-radius:14px; border:none; cursor:pointer; font-family:'IBM Plex Mono', monospace; font-size:22px; font-weight:500; background:var(--surface2); color:var(--text); transition:all .08s;"
-                                onmouseover="this.style.background='var(--surface3)'" onmouseout="this.style.background='var(--surface2)'">0</button>
+                                @mouseover="$event.currentTarget.style.background='var(--surface3)'" @mouseout="$event.currentTarget.style.background='var(--surface2)'">0</button>
                             <button @click="handleDel"
                                 style="height:72px; border-radius:14px; border:none; cursor:pointer; font-family:'IBM Plex Mono', monospace; font-size:22px; font-weight:500; background:var(--surface2); color:var(--text2); transition:all .08s;"
-                                onmouseover="this.style.background='var(--surface3)'" onmouseout="this.style.background='var(--surface2)'">⌫</button>
+                                @mouseover="$event.currentTarget.style.background='var(--surface3)'" @mouseout="$event.currentTarget.style.background='var(--surface2)'">⌫</button>
                         </div>
                         <div style="color:var(--text3); font-size:12px;">Introduce tu PIN</div>
                     </template>

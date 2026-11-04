@@ -123,8 +123,8 @@ const CashOpenScreen = {
                 <div style="display:flex; flex-direction:column; align-items:center; gap:8px;">
                     <button @click="openDrawer"
                         style="width:100%; padding:12px; border-radius:12px; border:1px solid var(--border); cursor:pointer; background:transparent; color:var(--text2); font-family:inherit; font-size:14px; font-weight:500; transition:all .15s;"
-                        onmouseover="this.style.borderColor='var(--text3)'; this.style.color='var(--text)'"
-                        onmouseout="this.style.borderColor='var(--border)'; this.style.color='var(--text2)'">
+                        @mouseover="$event.currentTarget.style.borderColor='var(--text3)'; $event.currentTarget.style.color='var(--text)'"
+                        @mouseout="$event.currentTarget.style.borderColor='var(--border)'; $event.currentTarget.style.color='var(--text2)'">
                         🗂 Abrir cajón
                     </button>
                     <div v-if="drawerStatus && drawerWarn" class="print-drawer-warning" role="alert">{{ drawerStatus }}</div>

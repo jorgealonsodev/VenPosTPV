@@ -11,6 +11,7 @@ use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Attribute\AsController;
 use Symfony\Component\Routing\Attribute\Route;
 use Twig\Environment;
+use VenPosTPV\EventListener\SecurityHeadersListener;
 use VenPosTPV\Service\Device\DeviceCookie;
 use VenPosTPV\Service\Device\DeviceRegistry;
 
@@ -85,7 +86,9 @@ class PosController
         }
 
         $response = new Response($this->twig->render('pos.html.twig', [
-            'session_data' => json_encode($sessionData, JSON_THROW_ON_ERROR),
+            // Printed raw inside a <script>: < > & ' " are escaped so no value can close it (R9).
+            'session_data' => json_encode($sessionData, JSON_THROW_ON_ERROR | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT),
+            'csp_nonce' => (string) $request->attributes->get(SecurityHeadersListener::NONCE_ATTRIBUTE, ''),
         ]));
         if ($issuedToken !== null) {
             $response->headers->setCookie($this->deviceCookie->create($issuedToken, $request));

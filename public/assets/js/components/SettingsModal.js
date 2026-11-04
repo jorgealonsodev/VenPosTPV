@@ -490,31 +490,31 @@ const SettingsModal = {
                         <button @click="activeSection = 'empleados'"
                             style="min-height:48px; padding:0 16px; background:transparent; border:none; border-left:3px solid transparent; color:var(--text2); font-family:inherit; font-size:14px; text-align:left; cursor:pointer; display:flex; align-items:center; gap:10px; transition:background .15s;"
                             :style="activeSection === 'empleados' ? 'background:var(--surface2); border-left-color:var(--green); color:var(--text); font-weight:600;' : 'hover:bg-surface2'"
-                            onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=activeSection === 'empleados' ? 'var(--surface2)' : 'transparent'">
+                            @mouseover="$event.currentTarget.style.background='var(--surface2)'" @mouseout="$event.currentTarget.style.background=activeSection === 'empleados' ? 'var(--surface2)' : 'transparent'">
                             <icon name="user" :size="18"></icon> Empleados
                         </button>
                         <button @click="activeSection = 'tienda'"
                             style="min-height:48px; padding:0 16px; background:transparent; border:none; border-left:3px solid transparent; color:var(--text2); font-family:inherit; font-size:14px; text-align:left; cursor:pointer; display:flex; align-items:center; gap:10px; transition:background .15s;"
                             :style="activeSection === 'tienda' ? 'background:var(--surface2); border-left-color:var(--green); color:var(--text); font-weight:600;' : ''"
-                            onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=activeSection === 'tienda' ? 'var(--surface2)' : 'transparent'">
+                            @mouseover="$event.currentTarget.style.background='var(--surface2)'" @mouseout="$event.currentTarget.style.background=activeSection === 'tienda' ? 'var(--surface2)' : 'transparent'">
                             <icon name="print" :size="18"></icon> Tienda
                         </button>
                         <button @click="activeSection = 'cajas'"
                             style="min-height:48px; padding:0 16px; background:transparent; border:none; border-left:3px solid transparent; color:var(--text2); font-family:inherit; font-size:14px; text-align:left; cursor:pointer; display:flex; align-items:center; gap:10px; transition:background .15s;"
                             :style="activeSection === 'cajas' ? 'background:var(--surface2); border-left-color:var(--green); color:var(--text); font-weight:600;' : ''"
-                            onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=activeSection === 'cajas' ? 'var(--surface2)' : 'transparent'">
+                            @mouseover="$event.currentTarget.style.background='var(--surface2)'" @mouseout="$event.currentTarget.style.background=activeSection === 'cajas' ? 'var(--surface2)' : 'transparent'">
                             <icon name="cashier" :size="18"></icon> Cajas
                         </button>
                         <button @click="activeSection = 'sincronizacion'"
                             style="min-height:48px; padding:0 16px; background:transparent; border:none; border-left:3px solid transparent; color:var(--text2); font-family:inherit; font-size:14px; text-align:left; cursor:pointer; display:flex; align-items:center; gap:10px; transition:background .15s;"
                             :style="activeSection === 'sincronizacion' ? 'background:var(--surface2); border-left-color:var(--green); color:var(--text); font-weight:600;' : ''"
-                            onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=activeSection === 'sincronizacion' ? 'var(--surface2)' : 'transparent'">
+                            @mouseover="$event.currentTarget.style.background='var(--surface2)'" @mouseout="$event.currentTarget.style.background=activeSection === 'sincronizacion' ? 'var(--surface2)' : 'transparent'">
                             <icon name="sync" :size="18"></icon> Sincronización
                         </button>
                         <button @click="activeSection = 'impresion'"
                             style="min-height:48px; padding:0 16px; background:transparent; border:none; border-left:3px solid transparent; color:var(--text2); font-family:inherit; font-size:14px; text-align:left; cursor:pointer; display:flex; align-items:center; gap:10px; transition:background .15s;"
                             :style="activeSection === 'impresion' ? 'background:var(--surface2); border-left-color:var(--green); color:var(--text); font-weight:600;' : ''"
-                            onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=activeSection === 'impresion' ? 'var(--surface2)' : 'transparent'">
+                            @mouseover="$event.currentTarget.style.background='var(--surface2)'" @mouseout="$event.currentTarget.style.background=activeSection === 'impresion' ? 'var(--surface2)' : 'transparent'">
                             <icon name="print" :size="18"></icon> Historial de impresión
                         </button>
                     </div>

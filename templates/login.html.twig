@@ -12,13 +12,13 @@
     <link rel="stylesheet" href="{{ base_path }}/assets/css/app.css?v=20261103-touch-contrast-v2">
 </head>
 <body>
-    <script>window.TPV_BASE = '{{ base_path }}';</script>
+    <script nonce="{{ csp_nonce }}">window.TPV_BASE = '{{ base_path }}';</script>
     <div id="app"></div>
-    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script src="https://unpkg.com/vue@3.5.44/dist/vue.global.prod.js" integrity="sha384-tORx0bXmMnTC28EYQe1coaGZKSQupXQEYDBNex8xkzJ9iqUoNy9Y+VFBhVxi4kUr" crossorigin="anonymous"></script>
     <script src="{{ base_path }}/assets/js/theme-toggle.js"></script>
-    <script src="{{ base_path }}/assets/js/api.js"></script>
-    <script src="{{ base_path }}/assets/js/components/LoginScreen.js?v=20261103-cajas-equipos-v1"></script>
-    <script>
+    <script src="{{ base_path }}/assets/js/api.js?v=20261104-security-v1"></script>
+    <script src="{{ base_path }}/assets/js/components/LoginScreen.js?v=20261104-security-v1"></script>
+    <script nonce="{{ csp_nonce }}">
         const { createApp } = Vue;
         const app = createApp({
             components: { LoginScreen },

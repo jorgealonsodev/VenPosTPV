@@ -96,17 +96,17 @@ const TicketPanel = {
                 <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px;">
                     <button @click="$emit('showDiscount')"
                         style="padding:9px 6px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px; display:flex; align-items:center; justify-content:center; gap:5px; transition:all .1s;"
-                        onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='transparent'">
+                        @mouseover="$event.currentTarget.style.background='var(--surface2)'" @mouseout="$event.currentTarget.style.background='transparent'">
                         <icon name="tag" :size="13" /> Descuento
                     </button>
                     <button @click="$emit('park')"
                         style="padding:9px 6px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px; display:flex; align-items:center; justify-content:center; gap:5px; transition:all .1s;"
-                        onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='transparent'">
+                        @mouseover="$event.currentTarget.style.background='var(--surface2)'" @mouseout="$event.currentTarget.style.background='transparent'">
                         <icon name="pause" :size="13" /> Aparcar
                     </button>
                     <button @click="$emit('void')"
                         style="padding:9px 6px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--red); cursor:pointer; font-family:inherit; font-size:12px; display:flex; align-items:center; justify-content:center; gap:5px; transition:all .1s;"
-                        onmouseover="this.style.background='var(--red-bg)'" onmouseout="this.style.background='transparent'">
+                        @mouseover="$event.currentTarget.style.background='var(--red-bg)'" @mouseout="$event.currentTarget.style.background='transparent'">
                         <icon name="close" :size="13" /> Anular
                     </button>
                 </div>
