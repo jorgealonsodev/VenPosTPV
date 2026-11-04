@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace VenPosTPV\Service\Print;
 
 use Doctrine\DBAL\Connection;
+use VenPosTPV\Service\Session\SessionValue;
 use VenPosTPV\Service\PrintAgent\DrawerAudit;
 use VenPosTPV\Service\PrintAgent\PrintJobQueue;
 use VenPosTPV\Service\PrintAgent\TerminalNotResolvedException;
@@ -291,9 +292,7 @@ class PrinterService
 
     private static function sessionUserId(): ?int
     {
-        $userId = $_SESSION['_sf2_attributes']['user_id'] ?? $_SESSION['user_id'] ?? null;
-
-        return is_numeric($userId) ? (int) $userId : null;
+        return SessionValue::int('user_id');
     }
 
     private static function toWpc1252(string $text): string
@@ -310,7 +309,7 @@ class PrinterService
     {
         try {
             $this->connection->insert('audit_log', [
-                'user_id' => $_SESSION['user_id'] ?? null,
+                'user_id' => SessionValue::int('user_id'),
                 'terminal_id' => $terminalId,
                 'action' => $action,
                 'target' => $target,

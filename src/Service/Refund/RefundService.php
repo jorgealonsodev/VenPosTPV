@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace VenPosTPV\Service\Refund;
 
 use Doctrine\DBAL\Connection;
+use VenPosTPV\Service\Session\SessionValue;
 use VenPosTPV\Service\Cash\CashSessionService;
 use VenPosTPV\Service\Cash\Exception\NoOpenCashSessionException;
 use VenPosTPV\Service\Catalog\CatalogPriceResolver;
@@ -1355,7 +1356,7 @@ class RefundService
     {
         try {
             $this->conn->insert('audit_log', [
-                'user_id' => $_SESSION['user_id'] ?? null,
+                'user_id' => SessionValue::int('user_id'),
                 'terminal_id' => 1,
                 'action' => 'refund_orphan',
                 'target' => (string) $psOrderId,

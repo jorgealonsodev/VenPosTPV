@@ -6,6 +6,7 @@ namespace VenPosTPV\Service\Checkout;
 
 use Doctrine\DBAL\Connection;
 use Symfony\Component\Messenger\MessageBusInterface;
+use VenPosTPV\Service\Session\SessionValue;
 use VenPosTPV\Message\PrintTicketMessage;
 use VenPosTPV\Service\Cart\CartService;
 use VenPosTPV\Service\Cash\CashSessionService;
@@ -299,7 +300,7 @@ class CheckoutService
             'products' => $products,
             'id_customer' => $customer['ps_customer_id'],
             'id_currency' => 1,
-            'id_shop' => (int) ($_SESSION['shop_id'] ?? 1),
+            'id_shop' => (SessionValue::int('shop_id') ?? 1),
             'payment_method' => $paymentMethod,
             'amount_tendered' => $amountTendered,
             'notes' => '',
@@ -580,7 +581,7 @@ class CheckoutService
             'products' => $products,
             'id_customer' => $idCustomer,
             'id_currency' => 1,
-            'id_shop' => (int) ($_SESSION['shop_id'] ?? 1),
+            'id_shop' => (SessionValue::int('shop_id') ?? 1),
             'payment_method' => $paymentMethod,
             'notes' => '',
         ];
@@ -1105,7 +1106,7 @@ class CheckoutService
     ): void {
         try {
             $this->conn->insert('audit_log', [
-                'user_id' => $_SESSION['user_id'] ?? null,
+                'user_id' => SessionValue::int('user_id'),
                 'terminal_id' => 1,
                 'action' => 'checkout_orphan',
                 'target' => (string) $psOrderId,
