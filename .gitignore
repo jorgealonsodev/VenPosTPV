@@ -32,3 +32,6 @@ Thumbs.db
 ###> playwright-mcp ###
 /.playwright-mcp/
 ###< playwright-mcp ###
+
+# Plesk packages (bin/build-plesk.sh)
+/dist/

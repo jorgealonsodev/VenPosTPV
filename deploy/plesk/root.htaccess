@@ -1,0 +1,10 @@
+# Safety net: the document root must be public/. If it still points at this
+# folder, refuse everything outside public/ so .env, vendor/ and src/ are
+# never served.
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule !^public/ - [F,L]
+</IfModule>
+<IfModule !mod_rewrite.c>
+    Require all denied
+</IfModule>
