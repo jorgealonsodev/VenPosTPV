@@ -87,6 +87,21 @@ final class ProductSearchServiceMySqlIntegrationTest extends TestCase
         $this->assertSame([], $service->search(null, self::CAT_ACTIVE_ID, 20, \count($all)));
     }
 
+    public function testOnlyInStockHidesProductsWithoutStock(): void
+    {
+        $service = $this->createServiceOrSkip();
+        \assert($this->connection !== null);
+        $this->connection->executeStatement('UPDATE catalog_stock SET quantity = 0 WHERE id_product = ? AND id_product_attribute = 0', [self::PRODUCT_EAN_ID]);
+
+        $all = array_column($service->search(null, self::CAT_ACTIVE_ID, 20), 'id');
+        $inStock = array_column($service->search(null, self::CAT_ACTIVE_ID, 20, 0, true), 'id');
+
+        $this->assertContains(self::PRODUCT_EAN_ID, $all, 'the default keeps showing products without stock');
+        $this->assertNotContains(self::PRODUCT_EAN_ID, $inStock);
+        $this->assertContains(self::PRODUCT_NAME_ID, $inStock);
+        $this->assertContains(self::PRODUCT_REFERENCE_ID, $inStock);
+    }
+
     public function testFindByIdReturnsCombinationAndCombinationStock(): void
     {
         $service = $this->createServiceOrSkip();

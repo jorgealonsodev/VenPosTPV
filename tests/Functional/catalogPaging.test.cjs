@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const test = require('node:test');
 
 // A fake catalog of 120 products answered by /api/catalog/search with limit/offset.
-function loadCatalog(total = 120) {
+function loadCatalog(total = 120, stored = {}) {
     const source = fs.readFileSync(path.resolve(__dirname, '../../public/assets/js/stores/useCatalog.js'), 'utf8');
     const requests = [];
     const pending = [];
@@ -16,6 +16,10 @@ function loadCatalog(total = 120) {
         Number,
         Math,
         console,
+        localStorage: {
+            getItem: (k) => (k in stored ? stored[k] : null),
+            setItem: (k, v) => { stored[k] = String(v); },
+        },
         ApiClient: {
             get(url) {
                 requests.push(url);
@@ -93,4 +97,25 @@ test('loadMore while a page is loading does not ask twice', async () => {
     store.loadMore();
     assert.equal(requests.filter((u) => u.includes('offset=50')).length, 1);
     await flush();
+});
+
+test('only in stock is off by default and sends in_stock=1 when switched on, and is remembered', async () => {
+    const stored = {};
+    const { store, requests, flush } = loadCatalog(120, stored);
+    await flush();
+    assert.equal(store.catalog.onlyInStock, false);
+    assert.ok(!requests.some((u) => u.includes('in_stock')));
+
+    store.setOnlyInStock(true);
+    await flush();
+    assert.ok(requests[requests.length - 1].includes('in_stock=1'));
+
+    store.loadMore();
+    await flush();
+    assert.ok(requests[requests.length - 1].includes('in_stock=1'), 'next pages keep the filter');
+
+    const again = loadCatalog(120, stored);
+    await again.flush();
+    assert.equal(again.store.catalog.onlyInStock, true, 'remembered on this computer');
+    assert.ok(again.requests.some((u) => u.includes('in_stock=1')));
 });

@@ -24,7 +24,7 @@ class ProductSearchService
      *
      * @return array<int, array<string, mixed>>
      */
-    public function search(?string $query, ?int $categoryId, int $limit = 50, int $offset = 0): array
+    public function search(?string $query, ?int $categoryId, int $limit = 50, int $offset = 0, bool $onlyInStock = false): array
     {
         $qb = $this->connection->createQueryBuilder()
             ->select([
@@ -62,6 +62,12 @@ class ProductSearchService
         }
 
         // The id breaks ties so pages never repeat or skip products with the same name.
+        // The till can hide what it cannot sell. Stock of id_product_attribute 0 is the
+        // product's total, combinations included (PrestaShop keeps it summed).
+        if ($onlyInStock) {
+            $qb->andWhere('COALESCE(s.quantity, 0) > 0');
+        }
+
         $qb->orderBy('p.name', 'ASC');
         $qb->addOrderBy('p.id', 'ASC');
 

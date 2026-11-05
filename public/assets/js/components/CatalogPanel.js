@@ -3,7 +3,7 @@
  */
 const CatalogPanel = {
     props: ['catalog', 'listView', 'lastAdded'],
-    emits: ['setSearch', 'setCategory', 'addProduct', 'toggleView', 'notify', 'loadMore'],
+    emits: ['setSearch', 'setCategory', 'addProduct', 'toggleView', 'notify', 'loadMore', 'setOnlyInStock'],
     components: { CombinationsModal, LabelPrintModal },
     data() {
         return {
@@ -156,6 +156,12 @@ const CatalogPanel = {
                 </div>
                 <button title="Escanear código" style="width:40px; height:40px; border-radius:10px; border:1px solid var(--border); background:var(--surface2); cursor:pointer; color:var(--text2); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
                     <icon name="barcode" :size="17" />
+                </button>
+                <button @click="$emit('setOnlyInStock', !catalog.onlyInStock)" :aria-pressed="catalog.onlyInStock ? 'true' : 'false'"
+                    :title="catalog.onlyInStock ? 'Mostrando solo artículos con stock' : 'Mostrar solo artículos con stock'"
+                    style="height:40px; padding:0 12px; border-radius:10px; cursor:pointer; font-family:inherit; font-size:13px; font-weight:600; white-space:nowrap; flex-shrink:0; display:flex; align-items:center; gap:6px;"
+                    :style="{ border: catalog.onlyInStock ? '1px solid var(--green)' : '1px solid var(--border)', background: catalog.onlyInStock ? 'var(--green-bg)' : 'var(--surface2)', color: catalog.onlyInStock ? 'var(--green)' : 'var(--text2)' }">
+                    <span aria-hidden="true">{{ catalog.onlyInStock ? '✓' : '○' }}</span> Solo con stock
                 </button>
                 <button @click="$emit('toggleView')" style="width:40px; height:40px; border-radius:10px; border:1px solid var(--border); background:var(--surface2); cursor:pointer; color:var(--text2); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
                     <icon :name="listView ? 'grid' : 'list'" :size="16" />

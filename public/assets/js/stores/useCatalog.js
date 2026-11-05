@@ -2,6 +2,12 @@
  * Catalog store — reactive catalog with products, categories, and search.
  */
 const useCatalog = (function () {
+    // "Solo con stock" is remembered per computer; storage may be unavailable.
+    const IN_STOCK_KEY = 'tpv.catalog.onlyInStock';
+    function readOnlyInStock() {
+        try { return localStorage.getItem(IN_STOCK_KEY) === '1'; } catch (e) { return false; }
+    }
+
     const catalog = Vue.reactive({
         products: [],
         categories: [],
@@ -11,6 +17,7 @@ const useCatalog = (function () {
         // Paging: 50 products at a time; the list asks for more at its end.
         loadingMore: false,
         hasMore: false,
+        onlyInStock: readOnlyInStock(),
     });
 
     const PAGE_SIZE = 50;
@@ -21,6 +28,7 @@ const useCatalog = (function () {
         const params = new URLSearchParams();
         if (catalog.search) params.set('q', catalog.search);
         if (catalog.activeCategory) params.set('category', String(catalog.activeCategory));
+        if (catalog.onlyInStock) params.set('in_stock', '1');
         params.set('limit', String(PAGE_SIZE));
         if (offset > 0) params.set('offset', String(offset));
         return '/api/catalog/search?' + params.toString();
@@ -80,6 +88,12 @@ const useCatalog = (function () {
         loadProducts();
     }
 
+    function setOnlyInStock(on) {
+        catalog.onlyInStock = on === true;
+        try { localStorage.setItem(IN_STOCK_KEY, catalog.onlyInStock ? '1' : '0'); } catch (e) { /* not remembered */ }
+        loadProducts();
+    }
+
     function setCategory(catId) {
         catalog.activeCategory = catId;
         loadProducts();
@@ -94,6 +108,7 @@ const useCatalog = (function () {
         loadCategories,
         loadProducts,
         loadMore,
+        setOnlyInStock,
         setSearch,
         setCategory,
     };

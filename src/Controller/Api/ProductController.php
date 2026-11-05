@@ -36,7 +36,8 @@ class ProductController
             is_string($q) ? $q : null,
             is_numeric($category) ? (int) $category : null,
             max(1, min(100, $limit)),
-            max(0, $offset)
+            max(0, $offset),
+            $request->query->getBoolean('in_stock')
         );
 
         return new JsonResponse(['data' => $results]);
