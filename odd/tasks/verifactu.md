@@ -18,7 +18,7 @@ Assumptions (to confirm with the club's adviser): TipoFactura F2 for tickets, R5
 - T1 — S1, S2: fiscal_record table, hash builder, chain writer hooked into sale/coupon sale/credit note issuance, immutability triggers, chain verification (GET /api/fiscal/chain). Route: inline (no Writer trigger reason). Status: done, commit: see Log L6. Risk: items 1 (migration), 4 (chain-head lock).
 - T2 — S3, S4: switch in Ajustes + QR/legend on ESC/POS and PDF. Route: inline. Status: done, commit 55a486d.
 - T4 — L8: review RD 1007/2023 and Orden HAC/1177/2024 against the implementation; list gaps. Route: inline research. Status: pending.
-- T3 — S5: AEAT submission (needs the club's certificate and the AEAT test environment). Route: inline. Status: pending.
+- T3 — S5: AEAT submission (needs the club's certificate and the AEAT test environment). Route: inline. Status: paused — no certificate yet (L17).
 
 ## Log
 
@@ -54,3 +54,4 @@ Assumptions (to confirm with the club's adviser): TipoFactura F2 for tickets, R5
   - Full suite 1023 tests, only the 7 baseline failures. RED was not observed separately for the snapshot and coupon-order tests.
 - L16 Native review of 588c1d2..7906571 (lenses risk, reliability; consent granted): one CRITICAL (R3-settings-copy-claims-aeat-submission: Ajustes text claimed records are sent to the AEAT). Bounded correction 2f035fc (2 lines, text restored); targeted validation approved; acknowledged. Advisories left: verify() inside an outer transaction would roll it back (only called from the controller, outside transactions); the QR test drops the update trigger on the shared test DB (fiscal tests reset triggers themselves); no test for the disabled checkbox or the GET `available`/`unavailable_reason` fields.
 - Next: T3 (AEAT submission, needs the club's certificate and AEAT test environment) and the full record content found missing in L13; adviser questions first. Production: apply Version00000042 before deploying this branch.
+- L17 (2026-11-05) user: "de momento los de verifactu aunque implementado, no lo vamos a usar, no disponemos de certificado, documentalo y mas adelante lo configuramos". T3 paused (no certificate). Documented in docs/verifactu.md: what always works (chained records, verification), what is off and blocked, what is missing to activate, production migration note, legal summary and adviser questions.
