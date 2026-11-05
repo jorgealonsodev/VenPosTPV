@@ -14,6 +14,24 @@ fn argv<const N: usize>(parts: [&str; N]) -> Vec<String> {
     parts.into_iter().map(str::to_owned).collect()
 }
 
+/// Restarting the service needs root: `pkexec` asks for the administrator password
+/// in a desktop dialog (polkit). None without pkexec.
+pub fn restart_service_argv(has: impl Fn(&str) -> bool) -> Option<Vec<String>> {
+    has("pkexec").then(|| argv(["pkexec", "systemctl", "restart", "venpos-agent"]))
+}
+
+/// Runs the restart and waits for it (the dialog may take a while); true when it worked.
+pub fn restart_service() -> Result<(), String> {
+    let Some(cmd) = restart_service_argv(on_path) else {
+        return Err("Falta pkexec: reinícialo con sudo systemctl restart venpos-agent".to_owned());
+    };
+    match Command::new(&cmd[0]).args(&cmd[1..]).stdin(Stdio::null()).status() {
+        Ok(st) if st.success() => Ok(()),
+        Ok(_) => Err("No se reinició el servicio (contraseña cancelada o incorrecta)".to_owned()),
+        Err(e) => Err(format!("No se pudo reiniciar el servicio: {e}")),
+    }
+}
+
 /// The terminal assistant in the first available terminal emulator.
 pub fn assistant_argv(has: impl Fn(&str) -> bool) -> Option<Vec<String>> {
     let term = TERMINALS.into_iter().find(|t| has(t))?;
@@ -96,6 +114,20 @@ mod tests {
 
     fn having(names: &'static [&'static str]) -> impl Fn(&str) -> bool {
         move |p| names.contains(&p)
+    }
+
+    #[test]
+    fn restart_uses_pkexec_only_when_present() {
+        assert_eq!(
+            restart_service_argv(having(&["pkexec"])),
+            Some(vec![
+                "pkexec".to_owned(),
+                "systemctl".to_owned(),
+                "restart".to_owned(),
+                "venpos-agent".to_owned()
+            ])
+        );
+        assert_eq!(restart_service_argv(having(&[])), None);
     }
 
     #[test]

@@ -262,6 +262,12 @@ impl Panel {
                     }
                 });
             }
+            if ui.button("Reiniciar servicio").clicked() {
+                self.run(ctx, Slot::General, |_| match desktop::restart_service() {
+                    Ok(()) => Notice::ok("Servicio reiniciado".to_owned()),
+                    Err(msg) => Notice::warn(msg),
+                });
+            }
             // The service keeps printing; this only closes the window.
             if ui.button("Cerrar").clicked() {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
