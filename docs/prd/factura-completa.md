@@ -55,6 +55,18 @@ Que el cajero pueda entregar una **factura completa** (con los datos y el NIF de
 - Opcionalmente, versión de 80 mm para la impresora de tickets.
 - Rectificativas de facturas completas: un abono de una venta facturada genera una rectificativa de factura completa (serie propia, tipo `R1`–`R4`), no un abono de ticket. Ver P5.
 
+### F6b — Impresora de facturas (A4)
+- Cada caja puede tener una **tercera impresora**, además de la de tickets y la de etiquetas: la **impresora de facturas**, normalmente una impresora A4 de oficina (láser o de tinta) conectada al ordenador de la caja o en la red.
+- Se configura donde las otras dos: en el agente de impresión de esa caja (un destino nuevo, «facturas», junto a «ticket» y «etiqueta») y en Ajustes → Cajas, donde se ve su estado.
+- Al emitir una factura completa:
+  - con impresora de facturas configurada, se imprime en ella el PDF A4 y se sigue el trabajo en el historial de impresión, como los tickets;
+  - sin ella, se ofrece la ventana de «Descargar PDF / Enviar por email» que ya existe.
+- Opcional: imprimir también en esa impresora los informes Z y los abonos en A4.
+- Aspectos técnicos a resolver:
+  - el agente hoy envía órdenes de impresora de tickets (ESC/POS), y para A4 tiene que mandar un **PDF**;
+  - en Linux, CUPS imprime PDF directamente (`lp`);
+  - en Windows hace falta un programa que imprima PDF en silencio (por ejemplo SumatraPDF incluido en el instalador) o la API de impresión de Windows.
+
 ### F7 — Registro fiscal
 - Cada factura completa genera su registro encadenado en `fiscal_record`, con el tipo que corresponda: `F1` para la factura emitida en la venta y `F3` para la que sustituye a tickets. Hay que confirmar los tipos con la lista L2 de la Orden HAC/1177/2024.
 
@@ -79,3 +91,4 @@ Que el cajero pueda entregar una **factura completa** (con los datos y el NIF de
 - **P3.** ¿Se permite canjear un ticket que ya tiene devoluciones?
 - **P4.** ¿Qué tipos de IVA se usan (21 %, 10 %, exento para cuotas o servicios deportivos)? Afecta al desglose y a VERI\*FACTU.
 - **P5.** ¿Las devoluciones de ventas facturadas deben generar rectificativas de factura completa?
+- **P6.** ¿Qué impresora A4 habría en cada caja, y en qué sistema (Linux o Windows)? ¿Debe imprimirse ahí algo más que las facturas, como los informes Z?
