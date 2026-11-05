@@ -978,7 +978,7 @@ const SettingsModal = {
                             <div style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; color:var(--text); margin-bottom:6px;">
                                 <icon name="receipt" :size="16"></icon> VERI*FACTU
                             </div>
-                            <div style="font-size:12px; color:var(--text3); margin-bottom:16px;">Cada ticket y cada devolución se guarda siempre en un registro encadenado con huella que no se puede modificar ni borrar. Al activar VERI*FACTU, los tickets imprimen además el «QR tributario» y la leyenda «VERI*FACTU», y los registros se envían a la AEAT.</div>
+                            <div style="font-size:12px; color:var(--text3); margin-bottom:16px;">Cada ticket y cada devolución se guarda siempre en un registro encadenado con huella que no se puede modificar ni borrar. Al activar VERI*FACTU, los tickets imprimen además el «QR tributario» y la leyenda «VERI*FACTU». El envío de los registros a la AEAT aún no está disponible.</div>
                             <div v-if="verifactu.error" style="color:var(--red); font-size:13px; margin-bottom:12px;">{{ verifactu.error }}</div>
                             <label v-if="verifactu.loaded" style="display:flex; align-items:center; gap:10px; font-size:14px; color:var(--text); cursor:pointer; margin-bottom:20px;">
                                 <input type="checkbox" :checked="verifactu.enabled" :disabled="verifactu.saving || !verifactu.available" @change="saveVerifactu($event.target.checked)" style="width:18px; height:18px;">
