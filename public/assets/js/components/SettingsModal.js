@@ -446,14 +446,14 @@ const SettingsModal = {
 
         // Ajustes → Email: the shop's outgoing account, for tickets by email.
         const INPUT_STYLE = 'width:100%; max-width:420px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box;';
-        const mail = Vue.reactive({ host: '', port: 587, encryption: 'tls', username: '', from_email: '', from_name: '', password: '', has_password: false, configured: false });
+        const mail = Vue.reactive({ host: '', port: 587, encryption: 'tls', username: '', from_email: '', from_name: '', password: '', has_password: false, configured: false, backup_alert_email: '' });
         const mailSaving = Vue.ref(false);
         const mailError = Vue.ref('');
         const mailTestTo = Vue.ref('');
         const mailTestStatus = Vue.ref('');
 
         function applyMail(data) {
-            Object.assign(mail, data || {}, { password: '' });
+            Object.assign(mail, { backup_alert_email: '' }, data || {}, { password: '' });
         }
 
         async function loadMail() {
@@ -470,7 +470,7 @@ const SettingsModal = {
             mailSaving.value = true;
             mailError.value = '';
             try {
-                const body = { host: mail.host, port: Number(mail.port), encryption: mail.encryption, username: mail.username, from_email: mail.from_email, from_name: mail.from_name };
+                const body = { host: mail.host, port: Number(mail.port), encryption: mail.encryption, username: mail.username, from_email: mail.from_email, from_name: mail.from_name, backup_alert_email: String(mail.backup_alert_email || '').trim() };
                 if (mail.password) body.password = mail.password;
                 const resp = await ApiClient.put('/api/settings/email', body);
                 applyMail(resp.data);
@@ -1182,6 +1182,11 @@ const SettingsModal = {
                                         <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Nombre del remitente</label>
                                         <input v-model="mail.from_name" type="text" maxlength="120" placeholder="Nombre de la tienda" :style="INPUT_STYLE">
                                     </div>
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Avisar de copias de seguridad fallidas a:</label>
+                                    <input v-model="mail.backup_alert_email" type="email" placeholder="tu@email.com (vacío = sin aviso)" :style="INPUT_STYLE">
+                                    <div style="font-size:12px; color:var(--text3); margin-top:6px;">Si la copia diaria de la base de datos falla o hay que revisarla, se envía un aviso a este email desde la cuenta de la tienda.</div>
                                 </div>
                                 <div>
                                     <button @click="saveMail" :disabled="mailSaving"

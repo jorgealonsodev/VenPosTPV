@@ -97,4 +97,52 @@ final class EmailSettingsControllerTest extends TestCase
         $this->assertSame(502, $response->getStatusCode());
         $this->assertStringContainsString('servidor de correo', (string) $response->getContent());
     }
+
+    public function testShowIncludesTheBackupAlertAddress(): void
+    {
+        $store = $this->createMock(MailSettingsStore::class);
+        $store->method('load')->willReturn(MailSettings::fromArray($this->valid(), null));
+        $store->method('backupAlertEmail')->willReturn('admin@example.com');
+        $data = json_decode((string) (new EmailSettingsController($store, $this->createMock(TicketMailer::class)))->show($this->request('GET', 'admin'))->getContent(), true)['data'];
+
+        $this->assertSame('admin@example.com', $data['backup_alert_email']);
+        $this->assertSame('smtp.example.com', $data['host'], 'the existing fields are unchanged');
+    }
+
+    /** @return iterable<string, array{0: array<string, mixed>, 1: ?string}> */
+    public static function alertAddresses(): iterable
+    {
+        yield 'typed: saved trimmed' => [['backup_alert_email' => ' admin@example.com '], 'admin@example.com'];
+        yield 'empty: no alert' => [['backup_alert_email' => ''], ''];
+        yield 'absent: unchanged' => [[], null];
+    }
+
+    /** @param array<string, mixed> $extra */
+    #[\PHPUnit\Framework\Attributes\DataProvider('alertAddresses')]
+    public function testUpdateSavesTheBackupAlertAddressOnlyWhenSent(array $extra, ?string $expected): void
+    {
+        $store = $this->createMock(MailSettingsStore::class);
+        $store->method('load')->willReturn(MailSettings::fromArray($this->valid(), null));
+        $store->expects($this->once())->method('save');
+        if ($expected === null) {
+            $store->expects($this->never())->method('saveBackupAlertEmail');
+        } else {
+            $store->expects($this->once())->method('saveBackupAlertEmail')->with($expected);
+        }
+
+        $response = (new EmailSettingsController($store, $this->createMock(TicketMailer::class)))->update($this->request('PUT', 'admin', $this->valid() + $extra));
+
+        $this->assertSame(200, $response->getStatusCode());
+    }
+
+    public function testAnInvalidBackupAlertAddressIsA422AndSavesNothing(): void
+    {
+        $store = $this->createMock(MailSettingsStore::class);
+        $store->expects($this->never())->method('save');
+        $store->expects($this->never())->method('saveBackupAlertEmail');
+        $response = (new EmailSettingsController($store, $this->createMock(TicketMailer::class)))->update($this->request('PUT', 'admin', $this->valid() + ['backup_alert_email' => 'no-es-un-email']));
+
+        $this->assertSame(422, $response->getStatusCode());
+        $this->assertStringContainsString('copias de seguridad', (string) $response->getContent());
+    }
 }

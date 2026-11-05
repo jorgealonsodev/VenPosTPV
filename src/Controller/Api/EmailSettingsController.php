@@ -14,7 +14,7 @@ use VenPosTPV\Service\Mail\MailSettingsStore;
 use VenPosTPV\Service\Mail\TicketMailer;
 use VenPosTPV\Service\Mail\TicketMailException;
 
-/** Ajustes → Email: the shop's outgoing mail account (admins only). */
+/** Ajustes → Email: the shop's outgoing mail account and the backup alert address (admins only). */
 #[AsController]
 final class EmailSettingsController
 {
@@ -31,7 +31,7 @@ final class EmailSettingsController
             return $this->forbidden();
         }
 
-        return new JsonResponse(['data' => $this->store->load()->toPublicArray()]);
+        return new JsonResponse(['data' => $this->publicData()]);
     }
 
     #[Route('/settings/email', methods: ['PUT'])]
@@ -51,14 +51,23 @@ final class EmailSettingsController
             $password = '';
         }
 
+        // The backup alert address is optional in the request: an older client
+        // that does not send it leaves it as it is.
+        $alertEmail = null;
         try {
             $settings = MailSettings::validated($body);
+            if (\array_key_exists('backup_alert_email', $body)) {
+                $alertEmail = MailSettingsStore::validBackupAlertEmail($body['backup_alert_email']);
+            }
         } catch (\InvalidArgumentException $e) {
             return new JsonResponse(['error' => $e->getMessage()], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
         $this->store->save($settings, $password);
+        if ($alertEmail !== null) {
+            $this->store->saveBackupAlertEmail($alertEmail);
+        }
 
-        return new JsonResponse(['data' => $this->store->load()->toPublicArray()]);
+        return new JsonResponse(['data' => $this->publicData()]);
     }
 
     #[Route('/settings/email/test', methods: ['POST'])]
@@ -76,6 +85,12 @@ final class EmailSettingsController
         }
 
         return new JsonResponse(['data' => ['sent' => true]]);
+    }
+
+    /** @return array<string, mixed> the account without its password, plus the backup alert address */
+    private function publicData(): array
+    {
+        return $this->store->load()->toPublicArray() + ['backup_alert_email' => $this->store->backupAlertEmail()];
     }
 
     private function isAdmin(Request $request): bool

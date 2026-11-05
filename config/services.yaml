@@ -130,6 +130,18 @@ services:
             $syncLogRepo: '@VenPosTPV\Service\Sync\SyncLogRepository'
             $psShopUrl: '%ps.api.url%'
 
+    # Daily database backup (tpv:backup:database), docs/despliegue-plesk.md.
+    VenPosTPV\Service\Backup\SqlDumper:
+        arguments:
+            $connection: '@doctrine.dbal.tpv_connection'
+
+    VenPosTPV\Service\Backup\HealthCheck:
+        alias: VenPosTPV\Service\Backup\DatabaseHealthCheck
+
+    VenPosTPV\Service\Backup\DatabaseBackup:
+        arguments:
+            $directory: '%kernel.project_dir%/backups'
+
     # Twig
     Twig\Loader\LoaderInterface:
         class: Twig\Loader\FilesystemLoader

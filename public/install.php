@@ -144,13 +144,14 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 page('TPV instalado', '<p class="ok">Base de datos preparada (' . (int) $executed . ' migraciones aplicadas) y configuración guardada en <code>.env</code>.</p>'
                     . ($deleted ? '' : '<p class="err">No se pudo borrar <code>public/install.php</code>. Bórralo a mano; de todas formas ya está bloqueado.</p>')
                     . '<h2>1. Tareas programadas</h2><p>En Plesk: <em>Tareas programadas → Añadir tarea → <strong>Ejecutar un script PHP</strong></em>. '
-                    . 'Ruta del script: <code>' . h($script) . '</code>, PHP <strong>' . h($phpVersion) . '</strong>, en «Con argumentos» lo de la tabla y notificar solo errores. Cuatro tareas:</p>'
+                    . 'Ruta del script: <code>' . h($script) . '</code>, PHP <strong>' . h($phpVersion) . '</strong>, en «Con argumentos» lo de la tabla y notificar solo errores. Cinco tareas:</p>'
                     . '<table><tr><th>Ejecutar</th><th>Con argumentos</th></tr>'
                     . $task('Estilo cron <code>* * * * *</code>', 'tpv:sync:outbox --env=prod')
                     . $task('Estilo cron <code>* * * * *</code>', 'tpv:catalog:sync --stock-only --env=prod')
                     . $task('Diariamente 03:00', 'tpv:catalog:sync --full --env=prod')
                     . $task('Diariamente 03:30', 'tpv:customers:sync --env=prod')
-                    . '</table><p>En la tarea del catálogo completo pulsa también «Ejecutar ahora» para cargar los productos.</p>'
+                    . $task('Diariamente 04:00', 'tpv:backup:database --env=prod')
+                    . '</table><p>En la tarea del catálogo completo pulsa también «Ejecutar ahora» para cargar los productos. La última guarda cada día una copia de la base de datos en <code>backups/</code> (las 7 más recientes); descarga de vez en cuando una copia y el archivo <code>.env</code> fuera del servidor.</p>'
                     . '<h2>2. PHP del subdominio</h2><p><code>max_execution_time</code> = 35 como mínimo y <code>pm.max_children</code> ≥ número de cajas + 6.</p>'
                     . '<h2>3. PrestaShop</h2><p>En el módulo <strong>TPV Connect</strong>, pon como URL del TPV <code>' . h($tpvUrl) . '</code>'
                     . ($result['values']['SSO_SHARED_SECRET'] === '' ? ' y copia su secreto SSO en <code>SSO_SHARED_SECRET</code> del archivo <code>.env</code>.' : '.') . '</p>'

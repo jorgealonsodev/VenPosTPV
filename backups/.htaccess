@@ -1,0 +1,3 @@
+# Database backups (tpv:backup:database). Never served: the folder is 0700 and
+# outside public/; this file is defence in depth. The command recreates it.
+Require all denied

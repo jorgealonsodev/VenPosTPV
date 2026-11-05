@@ -36,6 +36,10 @@ cp deploy/plesk/root.htaccess "$APP/.htaccess"
 cp deploy/plesk/root-install.php "$APP/install.php"
 cp docs/despliegue-plesk.md "$APP/LEEME-PLESK.md"
 mkdir -p "$APP/var/cache" "$APP/var/log"
+# Database dumps never ship: backups/ is not in the copy list above, and
+# tpv:backup:database creates it on the server (0700, with its .htaccess) on its
+# first run. This guards against a future copy list that includes it.
+rm -rf "$APP/backups"
 
 (cd "$APP" && COMPOSER_HOME="$WORK/composer-home" "$PHP_BIN" "$COMPOSER" install \
     --no-dev --optimize-autoloader --no-interaction --no-progress --quiet)

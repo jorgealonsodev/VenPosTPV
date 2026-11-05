@@ -42,3 +42,7 @@ strix_runs
 
 # Local FTP connection settings (deploy)
 conects
+
+# Database backups (tpv:backup:database); only the folder's .htaccess is tracked
+/backups/*
+!/backups/.htaccess

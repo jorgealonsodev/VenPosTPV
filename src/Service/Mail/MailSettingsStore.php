@@ -73,6 +73,43 @@ class MailSettingsStore
         });
     }
 
+    /** The address that receives failed-backup alerts (tpv:backup:database); '' = none. */
+    public function backupAlertEmail(): string
+    {
+        try {
+            $value = $this->connection->fetchOne("SELECT value FROM app_setting WHERE name = 'backup.alert_email'");
+        } catch (TableNotFoundException) {
+            return '';
+        }
+
+        return trim((string) ($value ?: ''));
+    }
+
+    /**
+     * @return string the address trimmed, '' for none
+     *
+     * @throws \InvalidArgumentException in Spanish, for the admin
+     */
+    public static function validBackupAlertEmail(mixed $email): string
+    {
+        $email = \is_string($email) ? trim($email) : '';
+        if ($email !== '' && (preg_match('/[\x00-\x1F\x7F]/', $email) === 1 || filter_var($email, FILTER_VALIDATE_EMAIL) === false)) {
+            throw new \InvalidArgumentException('El email para avisar de copias de seguridad fallidas no es válido.');
+        }
+
+        return $email;
+    }
+
+    public function saveBackupAlertEmail(string $email): void
+    {
+        $email = self::validBackupAlertEmail($email);
+        $this->connection->executeStatement(self::CREATE_TABLE);
+        $this->connection->executeStatement(
+            'INSERT INTO app_setting (name, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)',
+            ['backup.alert_email', $email]
+        );
+    }
+
     private function key(): string
     {
         return hash('sha256', 'venpostpv.mail|' . $this->appSecret, true);
