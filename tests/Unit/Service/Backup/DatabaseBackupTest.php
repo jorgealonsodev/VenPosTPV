@@ -121,6 +121,22 @@ final class DatabaseBackupTest extends TestCase
         ], $this->files());
     }
 
+    public function testARetentionFailureKeepsTheWrittenBackupAndIsReportedApart(): void
+    {
+        $retention = new class () extends BackupRetention {
+            public function prune(string $directory, int $keep): array
+            {
+                throw new \RuntimeException('Cannot delete venpostpv-20261101-040000.sql.gz');
+            }
+        };
+        $backup = new DatabaseBackup($this->dumper('SELECT 1;', 1), $retention, $this->health(), $this->dir);
+
+        $result = $backup->run(7, new \DateTimeImmutable('2026-11-05 04:00:00'));
+
+        self::assertFileExists($this->dir . '/venpostpv-20261105-040000.sql.gz');
+        self::assertSame('Cannot delete venpostpv-20261101-040000.sql.gz', $result->retentionError);
+    }
+
     public function testAFailedBackupLeavesNoFileAndDeletesNothing(): void
     {
         $this->oldBackups(9);

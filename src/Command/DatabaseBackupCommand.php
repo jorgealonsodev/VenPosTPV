@@ -82,6 +82,9 @@ final class DatabaseBackupCommand extends Command
             }
         }
         $output->writeln(sprintf('Backup %s: %s, %d tables', $result->fileName(), self::size($result->bytes), $result->tables));
+        if ($result->retentionError !== null) {
+            $output->writeln(sprintf('<error>Old backups were not removed: %s</error>', $result->retentionError));
+        }
         if (!$health->ok()) {
             $this->alert($output, 'VenPosTPV: revisar copia de seguridad', $startedAt, $result, $health->problems);
         }

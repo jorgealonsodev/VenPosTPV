@@ -169,6 +169,16 @@ const useSession = (function () {
         // Without a till there is no drawer to ask for (the API answers 409).
         if (!session.deviceLinked) return null;
         const generation = ++cashHydrationGeneration;
+        if (session.screen === 'checking') {
+            // A stalled check (hung connection, slow proxy) must not leave the
+            // cashier on «Comprobando caja…»: after 8 s «Abrir caja» shows, as
+            // before; an answer that arrives later still decides.
+            setTimeout(() => {
+                if (generation === cashHydrationGeneration && session.screen === 'checking') {
+                    session.screen = session.user ? 'cashOpen' : 'login';
+                }
+            }, 8000);
+        }
 
         try {
             const response = await ApiClient.cashCurrent();

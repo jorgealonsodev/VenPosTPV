@@ -33,6 +33,7 @@ function loadStore({
     cashReportX = () => Promise.resolve({ data: {} }),
 }) {
     const storage = new Map([['venpostpv_session', JSON.stringify({ screen: storedScreen })]]);
+    const timers = [];
     const window = {
         __SESSION__: { user_id: 1, terminal_id: 7 },
         TPV_BASE: '',
@@ -58,7 +59,7 @@ function loadStore({
             cashClose,
             cashReportX,
         },
-        setTimeout() { return 1; },
+        setTimeout(fn, ms) { timers.push({ fn, ms }); return timers.length; },
         clearTimeout() {},
         setInterval() { return 1; },
         clearInterval() {},
@@ -69,7 +70,7 @@ function loadStore({
         filename: 'useSession.js',
     });
 
-    return { store: context.__store, storage };
+    return { timers,  store: context.__store, storage };
 }
 
 async function testCachedSaleRedirectsWhenServerSaysClosed() {
@@ -95,6 +96,22 @@ async function testAReloadWaitsForTheServerBeforeShowingAScreen() {
     answer({ data: { open: true, session_id: 5, terminal_id: 7, opened_at: '2026-11-05T09:00:00', opening_cash: 100 } });
     await settle();
     assert.equal(store.session.screen, 'sale');
+}
+
+async function testAStalledCheckFallsBackToAbrirCajaAndAnAnswerStillWins() {
+    let answer;
+    const { store, timers } = loadStore({
+        cashCurrent: () => new Promise((resolve) => { answer = resolve; }),
+    });
+    const fallback = timers.find((t) => t.ms === 8000);
+    assert.ok(fallback, 'a reload waits at most 8 s for the drawer check');
+
+    fallback.fn();
+    assert.equal(store.session.screen, 'cashOpen', 'no endless «Comprobando caja…»');
+
+    answer({ data: { open: true, session_id: 5, terminal_id: 7, opened_at: '2026-11-05T09:00:00', opening_cash: 100 } });
+    await settle();
+    assert.equal(store.session.screen, 'sale', 'a late answer still opens the sale screen');
 }
 
 async function testInitialTransportFailureDoesNotTrustCachedSale() {
@@ -246,6 +263,7 @@ async function main() {
     await testCachedSaleRedirectsWhenServerSaysClosed();
     await testInitialTransportFailureDoesNotTrustCachedSale();
     await testAReloadWaitsForTheServerBeforeShowingAScreen();
+    await testAStalledCheckFallsBackToAbrirCajaAndAnAnswerStillWins();
     await testCloseInvalidatesAnInFlightHydration();
     await testLogoutInvalidatesAnInFlightHydration();
     await testStaleHydrationCannotOverwriteNewOpenSession();

@@ -62,12 +62,18 @@ class DatabaseBackup
         }
 
         clearstatcache(true, $final);
-        $result = new BackupResult($final, (int) filesize($final), $tables, $health);
+        // The copy is already in place: a failure to remove old copies (two runs at
+        // once, a permission) must not report the backup itself as failed.
+        $retentionError = null;
         if ($health->ok()) {
-            $this->retention->prune($this->directory, $keep);
+            try {
+                $this->retention->prune($this->directory, $keep);
+            } catch (\Throwable $e) {
+                $retentionError = $e->getMessage();
+            }
         }
 
-        return $result;
+        return new BackupResult($final, (int) filesize($final), $tables, $health, $retentionError);
     }
 
     private function check(): HealthReport
