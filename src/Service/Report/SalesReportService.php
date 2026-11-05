@@ -259,13 +259,14 @@ class SalesReportService
 
         return [
             'sales' => (int) $this->connection->fetchOne(
-                "SELECT COUNT(*) FROM order_meta o INNER JOIN outbox x ON x.order_id = o.id AND x.type = 'sale'
+                "SELECT COUNT(DISTINCT o.id) FROM order_meta o INNER JOIN outbox x ON x.order_id = o.id AND x.type = 'sale'
                  WHERE " . $saleWhere . ' AND x.status IN ' . self::PENDING,
                 $saleParams
             ),
-            // A refund's upload carries the refund's own request_id.
+            // A refund's upload carries the refund's own request_id; one refund may have
+            // both a refund and a restock row, and counts once.
             'refunds' => (int) $this->connection->fetchOne(
-                "SELECT COUNT(*) FROM refund r INNER JOIN outbox x ON x.request_id = r.request_id AND x.type IN ('refund', 'restock')
+                "SELECT COUNT(DISTINCT r.id) FROM refund r INNER JOIN outbox x ON x.request_id = r.request_id AND x.type IN ('refund', 'restock')
                  WHERE r.status = 'done' AND " . $refundWhere . ' AND x.status IN ' . self::PENDING,
                 $refundParams
             ),
