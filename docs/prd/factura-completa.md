@@ -51,8 +51,8 @@ Que el cajero pueda entregar una **factura completa** (con los datos y el NIF de
 - Las ventas antiguas sin tipo de IVA guardado se facturan con el tipo deducido de `price` / `price_net`. Si no se puede deducir, la factura no se emite y se avisa (P4).
 
 ### F6 — Documento
-- PDF A4 con todos los datos del art. 6.1, que se puede descargar, imprimir o enviar por email (usando la ventana de descargar o enviar ya existente).
-- Opcionalmente, versión de 80 mm para la impresora de tickets.
+- La factura completa se entrega **siempre en A4** (decisión del club, 2026-11-05: «una factura se entregara en A4»). Nunca se imprime en la impresora de tickets.
+- PDF A4 con todos los datos del art. 6.1. Se imprime en la impresora de facturas (F6b) o, si la caja no tiene, se descarga o se envía por email desde la ventana que ya existe.
 - Rectificativas de facturas completas: un abono de una venta facturada genera una rectificativa de factura completa (serie propia, tipo `R1`–`R4`), no un abono de ticket. Ver P5.
 
 ### F6b — Impresora de facturas (A4)
