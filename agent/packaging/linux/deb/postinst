@@ -1,0 +1,31 @@
+#!/bin/sh
+# VenPos Agent: user, configuration folder and systemd service.
+set -e
+
+if [ "$1" = "configure" ]; then
+    getent group lp >/dev/null || groupadd --system lp
+    if id -u venpos-agent >/dev/null 2>&1; then
+        usermod -a -G lp venpos-agent
+    else
+        useradd --system --no-create-home --shell /usr/sbin/nologin --groups lp venpos-agent
+    fi
+
+    if [ -d /run/systemd/system ]; then
+        # Writes the unit, creates /etc/venpos-agent and enables + starts the service.
+        /usr/bin/venpos-agent install
+    else
+        install -d -o venpos-agent -g venpos-agent -m 0750 /etc/venpos-agent
+        echo "systemd no está activo: arranca el agente a mano con 'venpos-agent run'."
+    fi
+
+    if [ ! -f /etc/venpos-agent/key ]; then
+        echo
+        echo "VenPos Agent instalado. Empareja esta caja con el código de 6 cifras"
+        echo "que da el TPV en Ajustes → Cajas:"
+        echo "  sudo venpos-agent pair 123456 --server https://tu-tpv"
+        echo "Y elige la impresora, por ejemplo:"
+        echo "  sudo venpos-agent set-printer --target ticket --cups NOMBRE_DE_LA_COLA"
+    fi
+fi
+
+exit 0

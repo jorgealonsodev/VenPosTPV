@@ -70,9 +70,21 @@ Ve paso a paso y para en cuanto vuelva a imprimir:
 8. **Mientras tanto, cobra igual**: el TPV ofrece el ticket en PDF si no se imprime.
 9. Si nada funciona: botón derecho en el icono → **Ver registro**, y envía ese fichero a quien te da soporte.
 
-## Instalar en Linux (fase 1)
+## Instalar en Linux
 
-En Linux no hay instalador con ventanas ni icono todavía: se instala con órdenes. Con el binario `venpos-agent` y el script `agent/packaging/linux/install.sh` en la misma carpeta:
+Con el paquete `venpos-agent_0.1.0_amd64.deb` (vale para cualquier Debian o Ubuntu de 64 bits):
+
+```
+sudo apt install ./venpos-agent_0.1.0_amd64.deb
+sudo venpos-agent pair <código> --server https://tu-tpv
+sudo venpos-agent list-printers
+sudo venpos-agent set-printer --target ticket --cups Epson_TM-T20II   # o --device /dev/usb/lp0
+sudo venpos-agent test-print
+```
+
+El paquete crea el usuario `venpos-agent` (grupo `lp`) y deja el servicio en marcha con systemd. Al actualizarlo con una versión nueva se conserva el emparejado.
+
+Sin el paquete, también se puede instalar con el binario `venpos-agent` y el script `agent/packaging/linux/install.sh` en la misma carpeta:
 
 ```
 sudo ./install.sh ./venpos-agent --server https://tu-tpv --code 123456
@@ -87,7 +99,7 @@ El script copia el programa a `/usr/local/bin`, crea el usuario `venpos-agent` (
 ## Desinstalar
 
 - **Windows**: Configuración → Aplicaciones → **VenPos Agent** → Desinstalar. Al final pregunta si quieres borrar también la configuración, la clave de emparejado y el registro; contesta **No** si vas a reinstalarlo en la misma caja. Después, en Ajustes → Cajas, desconecta el agente de esa caja.
-- **Linux**: `sudo venpos-agent uninstall` y `sudo rm /usr/local/bin/venpos-agent`. La configuración queda en `/etc/venpos-agent`; bórrala si no vas a volver a usarlo.
+- **Linux**: con el paquete, `sudo apt remove venpos-agent` (conserva el emparejado) o `sudo apt purge venpos-agent` (borra también la configuración, el registro y el usuario). Instalado con el script: `sudo venpos-agent uninstall` y `sudo rm /usr/local/bin/venpos-agent`; la configuración queda en `/etc/venpos-agent`.
 
 ## Puesta en marcha en el servidor
 

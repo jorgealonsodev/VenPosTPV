@@ -1,0 +1,16 @@
+#!/bin/sh
+set -e
+
+if [ -d /run/systemd/system ]; then
+    case "$1" in
+        remove|deconfigure)
+            /usr/bin/venpos-agent uninstall || true
+            ;;
+        upgrade|failed-upgrade)
+            # postinst starts the new version.
+            systemctl stop venpos-agent >/dev/null 2>&1 || true
+            ;;
+    esac
+fi
+
+exit 0

@@ -43,4 +43,23 @@ unit, enabled and started) and, with `--server URL --code 123456`, pairs it.
 sudo packaging/linux/install.sh dist/linux-x86_64/venpos-agent --server https://tpv --code 123456
 ```
 
-The `.deb` and the static musl build are phase 2 (PRD I3).
+### .deb (any amd64 Debian/Ubuntu)
+
+```
+packaging/linux/build-musl.sh   # static musl binary, built in a rust:alpine container
+packaging/linux/build-deb.sh    # dist/venpos-agent_<version>_amd64.deb
+```
+
+The binary is static, so the package does not depend on the system glibc. On the
+till:
+
+```
+sudo apt install ./venpos-agent_0.1.0_amd64.deb
+sudo venpos-agent pair 123456 --server https://tu-tpv
+sudo venpos-agent set-printer --target ticket --cups NOMBRE_DE_LA_COLA
+```
+
+`postinst` creates the `venpos-agent` user (group `lp`) and runs `venpos-agent
+install` (systemd unit, enabled and started); upgrades keep the pairing and restart
+the service; `apt remove` stops and removes the service; `apt purge` also deletes
+`/etc/venpos-agent`, its state, logs and user.

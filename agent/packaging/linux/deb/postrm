@@ -1,0 +1,15 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "purge" ]; then
+    # The pairing key, configuration, print history and logs of this till.
+    rm -rf /etc/venpos-agent /var/lib/venpos-agent /var/log/venpos-agent
+    if id -u venpos-agent >/dev/null 2>&1; then
+        userdel venpos-agent >/dev/null 2>&1 || true
+    fi
+    if [ -d /run/systemd/system ]; then
+        systemctl daemon-reload >/dev/null 2>&1 || true
+    fi
+fi
+
+exit 0
