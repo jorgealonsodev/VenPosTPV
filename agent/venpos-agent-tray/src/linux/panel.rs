@@ -262,6 +262,10 @@ impl Panel {
                     }
                 });
             }
+            // The service keeps printing; this only closes the window.
+            if ui.button("Cerrar").clicked() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
         });
         show_notice(ui, &self.notice);
     }
