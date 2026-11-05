@@ -98,6 +98,12 @@ services:
             $storeName: '%env(TPV_STORE_NAME)%'
             $storeAddress: '%env(TPV_STORE_ADDRESS)%'
 
+    # Full invoices (docs/prd/factura-completa.md): same issuer fallbacks as the tickets.
+    VenPosTPV\Service\Invoice\InvoiceIssuer:
+        arguments:
+            $storeName: '%env(TPV_STORE_NAME)%'
+            $storeAddress: '%env(TPV_STORE_ADDRESS)%'
+
     # Informe X / Z: same store name fallback as the tickets.
     VenPosTPV\Service\Print\CashReportService:
         arguments:

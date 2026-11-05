@@ -10,9 +10,9 @@ use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 
 /**
- * Writes the fiscal record of every issued ticket (F2, simplified invoice) and
- * credit note (R5, its rectifying invoice), chained to the previous record by
- * the AEAT fingerprint (FiscalHash).
+ * Writes the fiscal record of every issued ticket (F2, simplified invoice), credit
+ * note (R5, its rectifying invoice) and full invoice (F3, in exchange for a ticket),
+ * chained to the previous record by the AEAT fingerprint (FiscalHash).
  *
  * It must run inside the transaction that issues the number: the chain head is
  * locked until commit, so concurrent sales are chained one after another, and a
@@ -23,6 +23,8 @@ class FiscalRecorder
 {
     public const SALE = 'F2';
     public const CREDIT_NOTE = 'R5';
+    /** Full invoice issued in exchange for a ticket (HAC/1177/2024 list L2; factura-completa.md F7). */
+    public const INVOICE_REPLACING_TICKET = 'F3';
 
     /**
      * The issue date and the record time are Spanish time whatever the server's
@@ -95,8 +97,32 @@ class FiscalRecorder
         ], $issuedAt);
     }
 
+    /**
+     * The record of a full invoice. It is keyed by invoice_id, not order_id: the sale
+     * keeps the F2 of its ticket, which the invoice replaces without cancelling it.
+     * Unlike a ticket, an invoice is never issued without the issuer NIF (the issuer
+     * checks it first), so a missing fiscal_record table is an error here.
+     */
+    public function recordInvoice(int $invoiceId, string $invoiceType, string $number, int $terminalId, float $total, float $tax, \DateTimeImmutable $issuedAt): void
+    {
+        if ($invoiceType !== self::INVOICE_REPLACING_TICKET) {
+            throw new \InvalidArgumentException(sprintf('Unsupported invoice type %s', $invoiceType));
+        }
+        $this->append([
+            'invoice_type' => $invoiceType,
+            'number' => $number,
+            'tax_total' => FiscalHash::amount($tax),
+            'total' => FiscalHash::amount($total),
+            'rectified_number' => null,
+            'order_id' => null,
+            'refund_id' => null,
+            'invoice_id' => $invoiceId,
+            'terminal_id' => $terminalId,
+        ], $issuedAt, true);
+    }
+
     /** @param array<string, mixed> $record */
-    private function append(array $record, \DateTimeImmutable $issuedAt): void
+    private function append(array $record, \DateTimeImmutable $issuedAt, bool $required = false): void
     {
         if (!$this->connection->isTransactionActive()) {
             throw new \LogicException('Fiscal records must be written inside the transaction that issues the number');
@@ -105,6 +131,9 @@ class FiscalRecorder
         try {
             $head = $this->connection->fetchAssociative('SELECT last_hash FROM fiscal_chain WHERE id = 1 FOR UPDATE');
         } catch (TableNotFoundException $e) {
+            if ($required) {
+                throw $e;
+            }
             // Version00000042 not applied yet: selling must go on; the gap shows in the logs.
             $this->logger->error('fiscal_record missing: {number} was issued without a fiscal record', ['number' => $record['number'], 'exception' => $e]);
 
