@@ -16,9 +16,9 @@ Branch: feat/sales-reports (from feat/verifactu af09dd0). Delivery: ask-on-risk.
 
 | ID | Specs | Route | Status | Commit |
 |---|---|---|---|---|
-| T1 | S2 (I1 table + write on sale, criterion 10) | inline | pending | |
-| T2 | S2 (backfill command, criterion 11) | inline | pending | |
-| T3 | S3 (VAT rate on ticket PDF/ESC-POS) | inline | pending | |
+| T1 | S2 (I1 table + write on sale, criterion 10) | inline | done; verifier PASS | 582cf3c, 72ac742 (FK) |
+| T2 | S2 (backfill command, criterion 11) | inline | done | 8a79cf5 |
+| T3 | S3 (VAT rate on ticket PDF/ESC-POS) | inline | done | 945f35c |
 | T4 | S4 (shared cash totals aggregator extracted from aggregateTotals) | inline | pending | |
 | T5 | S4 (API summary/daily/payments + CSV + access; criteria 1-4, 7, 8, 12, 13) | inline | pending | |
 | T6 | S4 (Informes screen) | inline | pending | |
@@ -34,3 +34,8 @@ Branch: feat/sales-reports (from feat/verifactu af09dd0). Delivery: ask-on-risk.
 - L1 (2026-11-05) «empieza hace los prds anteriores con odd»
 - L2 (2026-11-05) Open questions: user chose «Usar las recomendadas (Recommended)».
 - L3 Route: T1-T8 inline (sequential, shared files CheckoutService/migrations; no writer reason). T9-T12 routed when reached.
+- L4 T1 verifier: PASS, no blockers. Advisories: VAT rule is a 1-cent match on net×(1+rate) instead of P5's 0.5-point rule (kept: better for cheap items); exempt items < 0.13 € read as 4 % (fixed in 945f35c: equal prices → 0 %); 0 € lines marked approximate (accepted); test cleanups left orphan sale_line rows (fixed by FK ON DELETE CASCADE, 72ac742).
+- L5 T2/T3 RED observed only for VatRate and SaleLine tests; backfill and ticket box tests written right after the code (no pre-implementation RED).
+- L6 Decision: sale VAT (payment_breakdown.tax, fiscal_record.tax_total) = sum of the per-rate VAT box (factura-completa F5), replacing resolveVatAmount; 2×23.14 at 21 % now 8.03 instead of 8.04. Ticket prints «IVA 21 %: x € (base y €)» per rate; sales without lines keep «IVA: x €».
+- L7 Test DB container venpos-test-mysql had to be recreated (mysql:8.0); a fresh DB runs 11 legacy tests that used to be skipped (list in scratchpad base-fail-freshdb.txt), unrelated to this feature.
+- L8 Native review of af09dd0..945f35c (lenses risk, reliability; consent «Revisar este cambio»): CRITICAL R3 reprint of backfilled sales would change the printed VAT → corrected in 0e34d03 (box only when no approximate line and Σ equals stored tax); approved and acknowledged (lineage review-1a890fbc203528c9). Advisories fixed in the next commit: missing sale_line table on print, INSERT IGNORE in backfill, test of a backfilled reprint.
