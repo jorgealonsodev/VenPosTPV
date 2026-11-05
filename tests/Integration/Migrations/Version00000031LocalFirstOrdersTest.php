@@ -62,6 +62,9 @@ final class Version00000031LocalFirstOrdersTest extends TestCase
         $c = $this->connection;
         $this->assertSame(0, (int) $c->fetchOne('SELECT COUNT(*) FROM order_meta WHERE ps_order_id IS NULL'), 'other tests left local sales behind');
         $c->executeStatement('DROP TABLE IF EXISTS outbox');
+        // Its foreign key to order_meta.id did not exist before V31; the next test
+        // database connection creates it again (Version00000046).
+        $c->executeStatement('DROP TABLE IF EXISTS sale_line');
         $c->executeStatement('ALTER TABLE order_meta DROP INDEX uk_order_meta_reference, DROP INDEX uk_order_meta_ps_order, DROP COLUMN reference, DROP COLUMN ps_reference, MODIFY id BIGINT UNSIGNED NOT NULL');
         $c->executeStatement('ALTER TABLE order_meta DROP PRIMARY KEY, DROP COLUMN id, MODIFY ps_order_id INT UNSIGNED NOT NULL, ADD PRIMARY KEY (ps_order_id)');
         $c->executeStatement('ALTER TABLE movement DROP INDEX idx_movement_order, DROP COLUMN order_id');

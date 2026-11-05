@@ -597,5 +597,6 @@ CREATE TABLE IF NOT EXISTS sale_line (
     KEY idx_sale_line_sold (sold_at),
     KEY idx_sale_line_terminal_sold (terminal_id, sold_at),
     KEY idx_sale_line_product_sold (product_id, id_product_attribute, sold_at),
-    KEY idx_sale_line_category_sold (category_id, sold_at)
+    KEY idx_sale_line_category_sold (category_id, sold_at),
+    CONSTRAINT fk_sale_line_order FOREIGN KEY (order_id) REFERENCES order_meta (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

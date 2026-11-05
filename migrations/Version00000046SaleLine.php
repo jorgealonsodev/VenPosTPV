@@ -13,6 +13,7 @@ use Doctrine\Migrations\AbstractMigration;
  * in the sale transaction (docs/prd/informes-ventas.md, I1). Also the date indexes the
  * sales reports filter on. Every step is guarded so the migration can run again.
  * Existing sales get their lines from `tpv:sales:backfill-lines`, not from here.
+ * The foreign key keeps lines from outliving their sale (the app never deletes sales).
  */
 final class Version00000046SaleLine extends AbstractMigration
 {
@@ -61,7 +62,8 @@ final class Version00000046SaleLine extends AbstractMigration
             KEY idx_sale_line_sold (sold_at),
             KEY idx_sale_line_terminal_sold (terminal_id, sold_at),
             KEY idx_sale_line_product_sold (product_id, id_product_attribute, sold_at),
-            KEY idx_sale_line_category_sold (category_id, sold_at)
+            KEY idx_sale_line_category_sold (category_id, sold_at),
+            CONSTRAINT fk_sale_line_order FOREIGN KEY (order_id) REFERENCES order_meta (id) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
 
         foreach (self::INDEXES as [$table, $index, $columns]) {
