@@ -742,3 +742,41 @@ html, body, #app {
 
 /* While a reload asks the server whether the drawer is open. */
 .app-checking { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: var(--text3); font-size: 14px; background: var(--bg); }
+
+/* «Informes» (docs/prd/informes-ventas.md I5): full screen like Incidencias. */
+.reports-screen { width: 100%; height: 100%; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); color: var(--text); }
+.reports-header { height: 64px; min-height: 64px; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 16px; gap: 14px; flex-shrink: 0; }
+.reports-title { font-size: 18px; font-weight: 700; margin: 0; }
+.reports-body { flex: 1; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.reports-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.reports-tab { min-height: 44px; padding: 8px 16px; border: none; border-bottom: 3px solid transparent; background: transparent; color: var(--text2); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+.reports-tab.active { color: var(--text); border-bottom-color: var(--primary); }
+.reports-filters { display: flex; flex-direction: column; gap: 10px; }
+.reports-presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.reports-chip { min-height: 40px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--text2); font: inherit; font-size: 13px; cursor: pointer; }
+.reports-chip.active { border-color: var(--primary); color: var(--text); background: var(--surface2); font-weight: 700; }
+.reports-chip:disabled { opacity: 0.5; cursor: not-allowed; }
+.reports-custom, .reports-selects { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-size: 13px; color: var(--text2); }
+.reports-custom label, .reports-selects label { display: flex; align-items: center; gap: 6px; }
+.reports-custom .tpv-input, .reports-selects .tpv-input { width: auto; min-height: 40px; }
+.reports-hint, .reports-range { font-size: 13px; color: var(--text3); }
+.reports-state { padding: 32px 16px; text-align: center; color: var(--text2); font-size: 15px; }
+.reports-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.reports-table { width: 100%; max-width: 960px; border-collapse: collapse; font-size: 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+.reports-table th, .reports-table td { padding: 8px 12px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+.reports-table th { font-size: 12px; font-weight: 600; color: var(--text2); background: var(--surface2); }
+.reports-table .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; font-family: 'IBM Plex Mono', monospace; }
+.reports-table th.num { font-family: inherit; }
+.reports-table .muted { color: var(--text2); }
+.reports-table .negative { color: var(--red); }
+.reports-table tr.strong td { font-weight: 700; }
+.reports-table tfoot td { border-bottom: none; }
+.reports-sub { font-weight: 400; color: var(--text3); }
+/* Por día: one column per day; negative days hang below the axis. */
+.reports-chart { display: flex; align-items: stretch; gap: 2px; height: 180px; max-width: 960px; padding: 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow-x: auto; }
+.reports-bar-col { flex: 1 1 0; min-width: 4px; display: flex; flex-direction: column; }
+.reports-bar-pos { flex: 1; display: flex; align-items: flex-end; border-bottom: 1px solid var(--border2); }
+.reports-bar-neg { flex: 1; display: flex; align-items: flex-start; }
+.reports-bar { width: 100%; min-height: 1px; background: var(--green); border-radius: 3px 3px 0 0; }
+.reports-bar.negative { background: var(--red); border-radius: 0 0 3px 3px; }
+.reports-bar-label { font-size: 10px; text-align: center; color: var(--text3); padding-top: 2px; font-family: 'IBM Plex Mono', monospace; }

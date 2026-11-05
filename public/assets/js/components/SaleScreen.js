@@ -29,6 +29,8 @@ const SaleScreen = {
         const showIncidents = Vue.ref(false);
         // PRD L2: the "Etiquetas" screen.
         const showLabels = Vue.ref(false);
+        // docs/prd/informes-ventas.md I5: «Informes», administrators only.
+        const showReports = Vue.ref(false);
         // Local stock of each added product/combination ("<product>:<combination>"), so
         // the ticket marks lines the TPV has no stock for (PRD V4: warn, never block).
         const stockByKey = Vue.reactive({});
@@ -305,7 +307,7 @@ const SaleScreen = {
             session, cart, catalog,
             showPayment, showDiscount, showCustomer, showCouponCreation, showCashClose, showRefund, showSettings,
             showLogoutConfirm, showSyncPanel, showTickets, showParkModal, parkNote, showVoidConfirm,
-            showIncidents, openIncidents, refreshOutbox, stockByKey, stockNotice, showLabels,
+            showIncidents, openIncidents, refreshOutbox, stockByKey, stockNotice, showLabels, showReports,
             parkedCount,
             notification, listView, lastAdded, ticketCount, timeStr, lastCompletedOrder,
             hasOpenSession, printAgentNotice, hasPrintNotice,
@@ -334,6 +336,9 @@ const SaleScreen = {
         </div>
         <div v-else-if="showIncidents && session.role === 'admin'" style="width:100%; height:100%;">
             <incidents-screen @back="showIncidents = false" @changed="refreshOutbox" />
+        </div>
+        <div v-else-if="showReports && session.role === 'admin'" style="width:100%; height:100%;">
+            <reports-screen @back="showReports = false" />
         </div>
         <div v-else-if="showLabels" style="width:100%; height:100%;">
             <labels-screen @back="showLabels = false" @notify="handleRefundNotify" />
@@ -375,6 +380,11 @@ const SaleScreen = {
                         title="Crear cupón"
                         style="min-height:44px; display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;">
                         <icon name="coupon" :size="13" /> Crear cupón
+                    </button>
+                    <button v-if="session.role === 'admin'" @click="showReports = true"
+                        title="Informes de ventas"
+                        style="min-height:44px; display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;">
+                        <icon name="list" :size="13" /> Informes
                     </button>
                     <button v-if="session.role === 'admin'" @click="showSettings = true"
                         title="Ajustes: tienda, cajas, empleados y sincronización"

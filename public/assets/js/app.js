@@ -70,6 +70,7 @@ app.component('coupon-creation-modal', CouponCreationModal);
 app.component('cash-close-screen', CashCloseScreen);
 app.component('refund-screen', RefundScreen);
 app.component('incidents-screen', IncidentsScreen);
+app.component('reports-screen', ReportsScreen);
 app.component('settings-modal', SettingsModal);
 app.component('sync-status-indicator', SyncStatusIndicator);
 app.component('sync-status-panel', SyncStatusPanel);

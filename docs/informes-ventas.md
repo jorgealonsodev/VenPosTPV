@@ -4,6 +4,19 @@ Los informes muestran cómo van las ventas a partir de la base de datos local de
 
 Especificación completa: `docs/prd/informes-ventas.md`.
 
+## Pantalla «Informes»
+
+En la cabecera de la pantalla de venta, el botón **Informes** (solo lo ven los administradores) abre la pantalla completa; **Volver** regresa a la venta.
+
+- **Pestañas:** Resumen, Por día y Por forma de pago.
+- **Periodo:** Hoy, Ayer, Esta semana (de lunes a domingo), Este mes, Mes anterior, Este año o Personalizado (elige «Desde» y «Hasta» y pulsa «Aplicar»; como máximo 366 días).
+- **Caja:** todas o una.
+- **Sesión de caja** (solo en «Por forma de pago»): «Por fechas» o uno de los últimos cierres de caja; por sesión no se aplican las fechas ni la caja, y los importes coinciden con el Z de esa sesión.
+- Los filtros se mantienen al cambiar de pestaña.
+- **Descargar CSV** descarga el informe de la pestaña con los mismos filtros.
+- «Resumen» compara cada dato con el periodo anterior de la misma duración (diferencia y %); «Por día» muestra además un gráfico de barras de las ventas netas, con los días negativos por debajo de la línea.
+- Si el periodo no tiene movimientos sale «No hay ventas en este periodo». Si la consulta falla, el motivo y el botón «Reintentar». Un aviso amarillo indica importes aproximados o ventas sin líneas (ver [Avisos](#avisos)).
+
 ## Informes disponibles
 
 | Informe | `type` | Contenido |
