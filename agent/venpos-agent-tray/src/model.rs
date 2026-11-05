@@ -94,7 +94,9 @@ pub fn pair_server_prefill(server: Option<&str>) -> String {
 /// Checks the dialog fields before asking the service (which checks again).
 pub fn pair_request(server: &str, code: &str) -> Result<Request, String> {
     use agent_core::pairing::{PairError, strict_code};
-    let server = server.trim();
+    // An address never has spaces: a stray one ("tpv.tienda .com") is a typo.
+    let server: String = server.chars().filter(|c| !c.is_whitespace()).collect();
+    let server = server.as_str();
     if server.is_empty() || server.eq_ignore_ascii_case("https://") {
         return Err("Escribe la dirección del TPV.".into());
     }
@@ -128,6 +130,17 @@ pub fn pair_outcome(result: std::io::Result<Response>) -> PairOutcome {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn spaces_typed_in_the_tpv_address_are_ignored() {
+        assert_eq!(
+            pair_request("https://tpv.clubnatacion .com", "707438"),
+            Ok(Request::Pair {
+                server: "https://tpv.clubnatacion.com".into(),
+                code: "707438".into()
+            })
+        );
+    }
+
     use super::*;
     use agent_core::config::Target;
     use agent_core::printer::QueueStatus;
