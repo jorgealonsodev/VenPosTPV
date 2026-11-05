@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# VenPos Agent setup assistant (Linux): pair, choose printers, test print and
+# status, without remembering commands. Launched from the applications menu.
+set -uo pipefail
+AGENT=/usr/bin/venpos-agent
+[ -x "$AGENT" ] || AGENT=$(command -v venpos-agent || true)
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "El asistente necesita permisos de administrador."
+    exec sudo "$0" "$@"
+fi
+
+pause() { echo; read -r -p "Pulsa Intro para continuar…" _; }
+
+pair() {
+    echo
+    read -r -p "Dirección del TPV (por ejemplo https://tpv.tutienda.com): " server
+    read -r -p "Código de 6 cifras (TPV → Ajustes → Cajas → Emparejar agente): " code
+    if [ -z "$server" ] || [ -z "$code" ]; then echo "Faltan datos."; return; fi
+    "$AGENT" pair "$code" --server "$server"
+}
+
+choose_printer() {
+    local target=$1 label=$2
+    echo
+    echo "Impresoras de este equipo para $label:"
+    mapfile -t lines < <("$AGENT" list-printers 2>/dev/null | grep -E '^--')
+    local i=1
+    for line in "${lines[@]}"; do
+        printf '  %d) %s\n' "$i" "$(printf '%s' "$line" | cut -f1 | sed 's/^--cups /Cola CUPS: /; s/^--device /Dispositivo: /; s/^--network /Red: /')"
+        i=$((i + 1))
+    done
+    echo "  u) Dispositivo USB directo (por ejemplo /dev/usb/lp0)"
+    echo "  r) Impresora de red (IP)"
+    echo "  0) Volver"
+    read -r -p "Elige: " pick
+    case "$pick" in
+        0|"") return ;;
+        u) read -r -p "Dispositivo: " dev; [ -n "$dev" ] && "$AGENT" set-printer --target "$target" --device "$dev" ;;
+        r) read -r -p "IP o nombre de la impresora: " ip; [ -n "$ip" ] && "$AGENT" set-printer --target "$target" --network "$ip" ;;
+        *)
+            if [[ "$pick" =~ ^[0-9]+$ ]] && [ "$pick" -ge 1 ] && [ "$pick" -le "${#lines[@]}" ]; then
+                local choice flag value
+                choice=$(printf '%s' "${lines[$((pick - 1))]}" | cut -f1)
+                flag=${choice%% *}
+                value=${choice#* }
+                "$AGENT" set-printer --target "$target" "$flag" "$value"
+            else
+                echo "Opción no válida."
+            fi
+            ;;
+    esac
+}
+
+while true; do
+    clear 2>/dev/null || true
+    echo "VenPos Agent — agente de impresión del TPV ($("$AGENT" version 2>/dev/null))"
+    echo
+    if [ -f /etc/venpos-agent/key ]; then echo "Emparejado: sí"; else echo "Emparejado: no (empieza por la opción 1)"; fi
+    if systemctl is-active --quiet venpos-agent 2>/dev/null; then echo "Servicio: en marcha"; else echo "Servicio: parado"; fi
+    echo
+    echo "  1) Emparejar con el TPV"
+    echo "  2) Elegir impresora de tickets"
+    echo "  3) Elegir impresora de etiquetas"
+    echo "  4) Imprimir una página de prueba"
+    echo "  5) Ver el estado completo"
+    echo "  6) Reiniciar el servicio"
+    echo "  0) Salir"
+    echo
+    read -r -p "Elige una opción: " option || exit 0
+    case "$option" in
+        1) pair; pause ;;
+        2) choose_printer ticket "tickets"; pause ;;
+        3) choose_printer label "etiquetas"; pause ;;
+        4) "$AGENT" test-print; pause ;;
+        5) "$AGENT" status; pause ;;
+        6) systemctl restart venpos-agent && echo "Servicio reiniciado."; pause ;;
+        0|q) exit 0 ;;
+        *) ;;
+    esac
+done

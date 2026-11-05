@@ -84,6 +84,8 @@ sudo venpos-agent test-print
 
 El paquete crea el usuario `venpos-agent` (grupo `lp`) y deja el servicio en marcha con systemd. Al actualizarlo con una versión nueva se conserva el emparejado.
 
+En el menú de aplicaciones aparece **VenPos Agent**: abre un asistente en una terminal (pide la contraseña de administrador) para emparejar la caja, elegir la impresora de tickets o de etiquetas de una lista, imprimir una prueba y ver el estado, sin escribir órdenes. También se abre con `venpos-agent-setup`.
+
 Sin el paquete, también se puede instalar con el binario `venpos-agent` y el script `agent/packaging/linux/install.sh` en la misma carpeta:
 
 ```

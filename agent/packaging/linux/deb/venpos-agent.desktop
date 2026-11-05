@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=VenPos Agent
+GenericName=Agente de impresión del TPV
+Comment=Empareja esta caja con el TPV, elige la impresora y haz una prueba
+Exec=venpos-agent-setup
+Icon=printer
+Terminal=true
+Categories=Office;
+Keywords=TPV;impresora;ticket;etiquetas;VenPos;

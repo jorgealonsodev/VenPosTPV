@@ -18,6 +18,9 @@ trap 'rm -rf "$WORK"' EXIT
 PKG="$WORK/venpos-agent_${VERSION}_amd64"
 install -d "$PKG/DEBIAN" "$PKG/usr/bin" "$PKG/usr/share/doc/venpos-agent"
 install -m 0755 "$BIN" "$PKG/usr/bin/venpos-agent"
+install -m 0755 packaging/linux/deb/venpos-agent-setup "$PKG/usr/bin/venpos-agent-setup"
+# Applications menu entry: opens the setup assistant in a terminal.
+install -D -m 0644 packaging/linux/deb/venpos-agent.desktop "$PKG/usr/share/applications/venpos-agent.desktop"
 install -m 0755 packaging/linux/deb/postinst packaging/linux/deb/prerm packaging/linux/deb/postrm "$PKG/DEBIAN/"
 install -m 0644 README.md "$PKG/usr/share/doc/venpos-agent/README.md"
 

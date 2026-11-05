@@ -59,6 +59,8 @@ sudo venpos-agent pair 123456 --server https://tu-tpv
 sudo venpos-agent set-printer --target ticket --cups NOMBRE_DE_LA_COLA
 ```
 
+The package adds a **VenPos Agent** entry to the applications menu: `venpos-agent-setup`, a terminal assistant (re-runs itself with sudo) to pair, choose the ticket/label printer from `list-printers`, test print, see the status and restart the service.
+
 `postinst` creates the `venpos-agent` user (group `lp`) and runs `venpos-agent
 install` (systemd unit, enabled and started); upgrades keep the pairing and restart
 the service; `apt remove` stops and removes the service; `apt purge` also deletes
