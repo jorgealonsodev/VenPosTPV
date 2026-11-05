@@ -58,8 +58,10 @@ const useSession = (function () {
                 session.cashOpenedAt = s.cash_opened_at || null;
                 session.openingCash = Number(s.opening_cash || 0);
                 // A persisted screen is never authority for the cash boundary.
-                // Only hydrateCashSession may transition an authenticated user to sale.
-                session.screen = 'cashOpen';
+                // Only hydrateCashSession may transition an authenticated user to sale;
+                // until it answers a neutral screen shows, so a reload with the drawer
+                // open does not flash «Abrir caja».
+                session.screen = 'checking';
                 if (s.device_linked === false) {
                     session.deviceLinked = false;
                     session.terminalId = null;
@@ -198,6 +200,10 @@ const useSession = (function () {
             return true;
         } catch (e) {
             // Keep the existing screen on a transport failure: the cash state is unknown.
+            // Still waiting after a reload: «Abrir caja», as before (never the sale).
+            if (generation === cashHydrationGeneration && session.screen === 'checking') {
+                session.screen = session.user ? 'cashOpen' : 'login';
+            }
             return null;
         }
     }

@@ -739,3 +739,6 @@ html, body, #app {
 .settings-resize-ne { top: 0; right: 0; cursor: nesw-resize; }
 .settings-resize-sw { bottom: 0; left: 0; cursor: nesw-resize; }
 .settings-resize-se { bottom: 0; right: 0; cursor: nwse-resize; background: linear-gradient(135deg, transparent 55%, var(--text3) 55%, var(--text3) 62%, transparent 62%, transparent 72%, var(--text3) 72%, var(--text3) 79%, transparent 79%); }
+
+/* While a reload asks the server whether the drawer is open. */
+.app-checking { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: var(--text3); font-size: 14px; background: var(--bg); }

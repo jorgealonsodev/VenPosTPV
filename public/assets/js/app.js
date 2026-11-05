@@ -46,6 +46,7 @@ const app = createApp({
             <login-screen v-if="session.screen === 'login'" :store-name="session.storeName" @login="onLogin" />
             <device-link-screen v-else-if="session.screen === 'deviceLink'" />
             <cash-open-screen v-else-if="session.screen === 'cashOpen'" :cashier-name="session.cashierName" @open="onOpenCash" />
+            <div v-else-if="session.screen === 'checking'" class="app-checking" role="status" aria-live="polite">Comprobando caja…</div>
             <!-- A problem printing the Z of the close just made (print agent) stays visible here. -->
             <print-status-notice v-if="session.screen === 'cashOpen'" placement="sale" />
             <sale-screen v-else-if="session.screen === 'sale'" :cashier-name="session.cashierName" :store-name="session.storeName" @cash-close="onCashClose" />

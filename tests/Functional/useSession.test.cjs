@@ -84,6 +84,19 @@ async function testCachedSaleRedirectsWhenServerSaysClosed() {
     assert.equal(store.session.openingCash, 0);
 }
 
+async function testAReloadWaitsForTheServerBeforeShowingAScreen() {
+    let answer;
+    const { store } = loadStore({
+        cashCurrent: () => new Promise((resolve) => { answer = resolve; }),
+    });
+
+    assert.equal(store.session.screen, 'checking', 'neither «Abrir caja» nor the sale screen until the server answers');
+
+    answer({ data: { open: true, session_id: 5, terminal_id: 7, opened_at: '2026-11-05T09:00:00', opening_cash: 100 } });
+    await settle();
+    assert.equal(store.session.screen, 'sale');
+}
+
 async function testInitialTransportFailureDoesNotTrustCachedSale() {
     const { store } = loadStore({
         cashCurrent: () => Promise.reject(new Error('network unavailable')),
@@ -232,6 +245,7 @@ async function main() {
     await testRefreshCashTotalsReadsTheXReportByMethod();
     await testCachedSaleRedirectsWhenServerSaysClosed();
     await testInitialTransportFailureDoesNotTrustCachedSale();
+    await testAReloadWaitsForTheServerBeforeShowingAScreen();
     await testCloseInvalidatesAnInFlightHydration();
     await testLogoutInvalidatesAnInFlightHydration();
     await testStaleHydrationCannotOverwriteNewOpenSession();
