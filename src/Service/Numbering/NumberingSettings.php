@@ -5,12 +5,14 @@ declare(strict_types=1);
 namespace VenPosTPV\Service\Numbering;
 
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Exception\TableNotFoundException;
+use VenPosTPV\Service\Invoice\InvoiceNumberer;
 use VenPosTPV\Service\Refund\CreditNoteNumberer;
 use VenPosTPV\Service\Sale\TicketNumberer;
 
 /**
- * Where each ticket series (one per till letter) and the credit-note series of the
- * year continue, so numbering can go on after losing the database or installing
+ * Where each ticket series (one per till letter), the credit-note series and the
+ * full-invoice series (F26) of the year continue, so numbering can go on after losing the database or installing
  * for another shop (Ajustes → Cajas).
  *
  * RD 1619/2012 art. 7.1.a asks for correlative numbers within each series, so a
@@ -31,18 +33,21 @@ class NumberingSettings
 
     private readonly TicketNumberer $tickets;
     private readonly CreditNoteNumberer $creditNotes;
+    private readonly InvoiceNumberer $invoices;
 
     public function __construct(
         private readonly Connection $connection,
         ?TicketNumberer $tickets = null,
         ?CreditNoteNumberer $creditNotes = null,
+        ?InvoiceNumberer $invoices = null,
     ) {
         $this->tickets = $tickets ?? new TicketNumberer($connection);
         $this->creditNotes = $creditNotes ?? new CreditNoteNumberer($connection);
+        $this->invoices = $invoices ?? new InvoiceNumberer($connection);
     }
 
     /**
-     * @return array{year: int, tills: list<array<string, mixed>>, credit_notes: array<string, mixed>, changes: list<array<string, mixed>>}
+     * @return array{year: int, tills: list<array<string, mixed>>, credit_notes: array<string, mixed>, invoices: ?array<string, mixed>, changes: list<array<string, mixed>>}
      */
     public function overview(int $shopId, \DateTimeImmutable $now): array
     {
@@ -81,7 +86,57 @@ class NumberingSettings
                 'next_number' => $creditLast + 1,
                 'next_code' => CreditNoteNumberer::format($year, $creditLast + 1),
             ],
+            'invoices' => $this->invoiceOverview($year),
             'changes' => $this->recentChanges(),
+        ];
+    }
+
+    /** @return array{series: string, last_number: int, next_number: int, next_code: ?string}|null null before Version00000047 */
+    private function invoiceOverview(int $year): ?array
+    {
+        try {
+            $last = (int) ($this->connection->fetchOne('SELECT last_number FROM invoice_sequence WHERE series = ? AND year = ?', [InvoiceNumberer::SERIES, $year]) ?: 0);
+        } catch (TableNotFoundException) {
+            return null;
+        }
+
+        return [
+            'series' => InvoiceNumberer::series($year),
+            'last_number' => $last,
+            'next_number' => $last + 1,
+            'next_code' => $last < InvoiceNumberer::MAX_NUMBER ? InvoiceNumberer::format($year, $last + 1) : null,
+        ];
+    }
+
+    /**
+     * Where the shop's invoice series continues this year («Próxima factura»).
+     *
+     * @return array{series: string, last_number: int, next_number: int, next_code: string}
+     *
+     * @throws \DomainException with the message to show when the change is refused
+     */
+    public function setInvoiceNext(mixed $nextNumber, mixed $reason, ?int $userId, \DateTimeImmutable $now): array
+    {
+        [$next, $reason] = $this->validated($nextNumber, $reason);
+        $year = (int) $now->format('Y');
+        $this->invoices->prepareYear($now);
+
+        $this->apply(
+            InvoiceNumberer::series($year),
+            'SELECT last_number FROM invoice_sequence WHERE series = ? AND year = ? FOR UPDATE',
+            'UPDATE invoice_sequence SET last_number = ? WHERE series = ? AND year = ?',
+            [InvoiceNumberer::SERIES, $year],
+            $next,
+            $reason,
+            $userId,
+            $now
+        );
+
+        return [
+            'series' => InvoiceNumberer::series($year),
+            'last_number' => $next - 1,
+            'next_number' => $next,
+            'next_code' => InvoiceNumberer::format($year, $next),
         ];
     }
 

@@ -12,6 +12,7 @@ use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Attribute\AsController;
 use Symfony\Component\Routing\Attribute\Route;
 use VenPosTPV\Service\Fiscal\SpanishTaxId;
+use VenPosTPV\Service\Invoice\InvoiceNumberer;
 use VenPosTPV\Service\Label\LabelSettings;
 use VenPosTPV\Service\Label\LabelSettingsStore;
 use VenPosTPV\Service\Print\PrinterConfig;
@@ -138,6 +139,9 @@ final class TerminalController
             $letter = strtoupper(trim((string) $body['ticket_letter']));
             if (!preg_match('/^[A-Z]$/', $letter)) {
                 return new JsonResponse(['error' => 'La letra de caja debe ser una letra de la A a la Z'], Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
+            if (InvoiceNumberer::isReservedLetter($letter)) {
+                return $this->letterReserved();
             }
             if ($this->letterUsedByAnotherTerminal($letter, $id)) {
                 return $this->letterInUse();
@@ -362,6 +366,9 @@ final class TerminalController
         if (!preg_match('/^[A-Z]$/', $letter)) {
             return new JsonResponse(['error' => 'La letra de caja debe ser una letra de la A a la Z'], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
+        if (InvoiceNumberer::isReservedLetter($letter)) {
+            return $this->letterReserved();
+        }
         if ($this->letterUsedByAnotherTerminal($letter, 0)) {
             return $this->letterInUse();
         }
@@ -410,6 +417,12 @@ final class TerminalController
             'SELECT COUNT(*) FROM terminal WHERE ticket_letter = ? AND id <> ?',
             [$letter, $id]
         ) > 0;
+    }
+
+    /** F is the shop's invoice series (docs/prd/factura-completa.md F4). */
+    private function letterReserved(): JsonResponse
+    {
+        return new JsonResponse(['error' => InvoiceNumberer::RESERVED_LETTER_MESSAGE], Response::HTTP_UNPROCESSABLE_ENTITY);
     }
 
     private function letterInUse(): JsonResponse

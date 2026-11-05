@@ -422,6 +422,15 @@ CREATE TABLE IF NOT EXISTS customer (
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     synced_at DATETIME NULL,
+    -- Version00000047: tax data for full invoices (stay at the till, not uploaded)
+    tax_name VARCHAR(120) NULL,
+    country CHAR(2) NULL,
+    tax_id_type CHAR(2) NULL,
+    tax_id VARCHAR(20) NULL,
+    address VARCHAR(255) NULL,
+    postcode VARCHAR(12) NULL,
+    city VARCHAR(100) NULL,
+    province VARCHAR(100) NULL,
     UNIQUE KEY uk_customer_ps (ps_customer_id),
     KEY idx_customer_email (email),
     KEY idx_customer_name (lastname, firstname)
@@ -538,10 +547,13 @@ CREATE TABLE IF NOT EXISTS fiscal_record (
     rectified_number VARCHAR(60) NULL,
     order_id INT UNSIGNED NULL,
     refund_id INT UNSIGNED NULL,
+    -- Version00000047: the full invoice (F3) of a redeemed ticket, whose sale keeps its F2
+    invoice_id BIGINT UNSIGNED NULL,
     terminal_id INT UNSIGNED NOT NULL,
     created_at DATETIME NOT NULL,
     UNIQUE KEY uk_fiscal_record_order (order_id),
     UNIQUE KEY uk_fiscal_record_refund (refund_id),
+    UNIQUE KEY uk_fiscal_record_invoice (invoice_id),
     KEY idx_fiscal_record_number (number)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -599,4 +611,49 @@ CREATE TABLE IF NOT EXISTS sale_line (
     KEY idx_sale_line_product_sold (product_id, id_product_attribute, sold_at),
     KEY idx_sale_line_category_sold (category_id, sold_at),
     CONSTRAINT fk_sale_line_order FOREIGN KEY (order_id) REFERENCES order_meta (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- invoice_sequence (Version00000047): the shop's full-invoice series (F + year,
+-- F26000001), apart from tickets and credit notes (RD 1619/2012 art. 7.1.a).
+CREATE TABLE IF NOT EXISTS invoice_sequence (
+    series CHAR(1) NOT NULL,
+    year SMALLINT UNSIGNED NOT NULL,
+    last_number INT UNSIGNED NOT NULL DEFAULT 0,
+    PRIMARY KEY (series, year)
+) ENGINE=InnoDB;
+
+-- invoice (Version00000047): full invoices (docs/prd/factura-completa.md F9) with a
+-- copy of the issuer, recipient, lines and VAT box they show; reprints reuse it.
+CREATE TABLE IF NOT EXISTS invoice (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    number VARCHAR(20) NOT NULL,
+    series CHAR(1) NOT NULL,
+    year SMALLINT UNSIGNED NOT NULL,
+    seq INT UNSIGNED NOT NULL,
+    invoice_type CHAR(2) NOT NULL,
+    sale_order_id BIGINT UNSIGNED NULL,
+    refund_id BIGINT UNSIGNED NULL,
+    rectified_invoice_id BIGINT UNSIGNED NULL,
+    replaced_reference VARCHAR(9) NULL,
+    replaced_date DATE NULL,
+    customer_id INT UNSIGNED NULL,
+    issuer JSON NOT NULL,
+    recipient JSON NOT NULL,
+    line_items JSON NOT NULL,
+    tax_breakdown JSON NOT NULL,
+    payments JSON NOT NULL,
+    tax_total DECIMAL(10,2) NOT NULL,
+    total DECIMAL(10,2) NOT NULL,
+    issue_date DATE NOT NULL,
+    operation_date DATE NOT NULL,
+    email_consent_at DATETIME NULL,
+    request_id VARCHAR(64) NULL,
+    terminal_id INT UNSIGNED NOT NULL,
+    user_id INT UNSIGNED NULL,
+    created_at DATETIME NOT NULL,
+    UNIQUE KEY uk_invoice_number (number),
+    UNIQUE KEY uk_invoice_sale (sale_order_id),
+    UNIQUE KEY uk_invoice_refund (refund_id),
+    UNIQUE KEY uk_invoice_request (request_id),
+    KEY idx_invoice_issue_date (issue_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -13,8 +13,8 @@ use Symfony\Component\Routing\Attribute\Route;
 use VenPosTPV\Service\Numbering\NumberingSettings;
 
 /**
- * Admin only: where the ticket series of each till and the credit-note series of
- * the year continue (Ajustes → Cajas), forward only and audited.
+ * Admin only: where the ticket series of each till, the credit-note series and the
+ * invoice series of the year continue (Ajustes → Cajas), forward only and audited.
  */
 #[AsController]
 final class NumberingController
@@ -69,6 +69,18 @@ final class NumberingController
         $body = $this->body($request);
 
         return $this->changed(fn (): array => $this->numbering->setCreditNoteNext($body['next_number'] ?? null, $body['reason'] ?? null, $this->userId($request), new \DateTimeImmutable()));
+    }
+
+    /** Body {next_number, reason}: the shop's full invoices continue at next_number this year. */
+    #[Route('/numbering/invoices', methods: ['PUT'])]
+    public function setInvoice(Request $request): JsonResponse
+    {
+        if (!$this->isAdmin($request)) {
+            return $this->denied();
+        }
+        $body = $this->body($request);
+
+        return $this->changed(fn (): array => $this->numbering->setInvoiceNext($body['next_number'] ?? null, $body['reason'] ?? null, $this->userId($request), new \DateTimeImmutable()));
     }
 
     /** @param callable(): array<string, mixed> $change */
