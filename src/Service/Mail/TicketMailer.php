@@ -15,7 +15,7 @@ use VenPosTPV\Service\Print\TicketPdfGenerator;
 
 /**
  * Sends a sale ticket as PDF from the shop's mail account (Ajustes → Email), for
- * tills without a printer, and the account's test email.
+ * tills without a printer, a full invoice (A4), and the account's test email.
  */
 class TicketMailer
 {
@@ -52,6 +52,24 @@ class TicketMailer
             ->subject(sprintf('Tu ticket %s%s', $ticket->reference, $shop !== '' ? ' - ' . $shop : ''))
             ->text(sprintf("Gracias por tu compra%s.\n\nTe enviamos el ticket %s en PDF.\n", $shop !== '' ? ' en ' . $shop : '', $ticket->reference))
             ->attach($this->pdf->generate($ticket), sprintf('ticket-%s.pdf', $ticket->reference), 'application/pdf');
+
+        $this->send($settings, $email);
+    }
+
+    /**
+     * Sends a full invoice (A4 PDF) to a customer who accepted receiving it by email
+     * (RD 1619/2012 art. 9.2): the caller checks the stored consent.
+     *
+     * @throws TicketMailException
+     */
+    public function sendInvoice(string $to, string $number, string $shop, string $pdf, string $fileName): void
+    {
+        $settings = $this->configuredSettings();
+        $shop = trim($shop) !== '' ? trim($shop) : $settings->fromName;
+        $email = $this->message($settings, $this->recipient($to))
+            ->subject(sprintf('Tu factura %s%s', $number, $shop !== '' ? ' - ' . $shop : ''))
+            ->text(sprintf("Gracias por tu compra%s.\n\nTe enviamos la factura %s en PDF.\n", $shop !== '' ? ' en ' . $shop : '', $number))
+            ->attach($pdf, $fileName, 'application/pdf');
 
         $this->send($settings, $email);
     }

@@ -9,6 +9,7 @@ El seguimiento técnico completo (requisitos, tareas, pruebas y decisiones) est�
 Aunque VERI*FACTU esté desactivado, el TPV hace esto en cada venta y cada devolución:
 
 - **Registro fiscal encadenado.** Cada ticket (tipo `F2`, factura simplificada) y cada abono (tipo `R5`, rectificativa de simplificada, con importes negativos) genera un registro en la tabla `fiscal_record`, en la misma transacción que le da el número. Si la venta falla, no queda registro.
+- **Facturas completas por canje** (tipo `F3`, «factura emitida en sustitución de facturas simplificadas»; ver `docs/factura-completa.md`). Al canjear un ticket por factura se graba un registro `F3` encadenado con los demás, con su número `F26000001`, en la misma transacción que le da el número. Se enlaza con la factura por `invoice_id` (no por `order_id`): el ticket conserva su registro `F2`, que no se anula ni se modifica. La huella usa los mismos campos que el resto. Los datos que el envío a la AEAT necesitará (destinatario, desglose por tipo, ticket sustituido y fecha de operación) quedan guardados en la tabla `invoice`.
 - **Huella (hash) según la AEAT.** Cada registro lleva la huella SHA-256 calculada como indica la especificación oficial de la AEAT (v0.1.2), encadenada con la del registro anterior. Se comprueba con los tres ejemplos oficiales del documento.
 - **Registros inalterables.** El TPV nunca modifica ni borra registros. Si el servidor lo permite, la base de datos también rechaza cualquier modificación o borrado (triggers); en hostings que no permiten crear triggers, la comprobación de la cadena detecta cualquier cambio.
 - **Fechas en hora española** (`Europe/Madrid`), sea cual sea la zona horaria del servidor.
@@ -81,3 +82,4 @@ Revisado en los textos consolidados del BOE el 5 de noviembre de 2026; conviene 
 - `src/Service/Fiscal/VerifactuSettings.php`: interruptor y bloqueo (`SUBMISSION_AVAILABLE`).
 - `src/Controller/Api/FiscalController.php`: `GET /api/fiscal/chain`, `GET/PUT /api/fiscal/settings`.
 - `migrations/Version00000042FiscalRecord.php`: tablas `fiscal_record` y `fiscal_chain`.
+- `migrations/Version00000047FullInvoice.php`: columna `fiscal_record.invoice_id` (única) para los registros `F3`.

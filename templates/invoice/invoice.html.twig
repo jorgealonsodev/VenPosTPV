@@ -1,0 +1,123 @@
+{# Full invoice, A4 (docs/prd/factura-completa.md F6; RD 1619/2012 art. 6.1). Built
+   only from the stored invoice, so every copy is the same document. #}
+{% macro money(value) %}{{ value|number_format(2, ',', '.') }} €{% endmacro %}
+{% macro rate(value) %}{{ value == value|round ? value|number_format(0) : value|number_format(2, ',', '.') }} %{% endmacro %}
+{% import _self as f %}
+{% set r = invoice.recipient %}
+{% set i = invoice.issuer %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Factura {{ invoice.number }}</title>
+    <style>
+        @page { margin: 18mm 16mm; }
+        body { font-family: DejaVu Sans, sans-serif; font-size: 10px; color: #000; }
+        h1 { font-size: 20px; margin: 0 0 4px; }
+        table { width: 100%; border-collapse: collapse; }
+        .parties td { width: 50%; vertical-align: top; padding: 0 8px 0 0; }
+        .box { border: 1px solid #000; padding: 6px 8px; }
+        .label { font-size: 9px; text-transform: uppercase; color: #333; margin-bottom: 2px; }
+        .lines { margin-top: 14px; }
+        .lines th { border-bottom: 1px solid #000; text-align: left; padding: 4px; font-size: 9px; }
+        .lines td { border-bottom: 1px solid #ccc; padding: 4px; }
+        .num { text-align: right; white-space: nowrap; }
+        .summary { margin-top: 12px; width: 60%; margin-left: 40%; }
+        .summary th, .summary td { padding: 3px 4px; }
+        .summary th { border-bottom: 1px solid #000; font-size: 9px; text-align: right; }
+        .total td { border-top: 1px solid #000; font-weight: bold; font-size: 12px; }
+        .note { margin-top: 12px; }
+    </style>
+</head>
+<body>
+    <table>
+        <tr>
+            <td style="vertical-align: top;">
+                <h1>Factura</h1>
+                <div>Número: <strong>{{ invoice.number }}</strong></div>
+                <div>Fecha de expedición: {{ invoice.issue_date|date('d/m/Y') }}</div>
+                {% if invoice.operation_date != invoice.issue_date %}
+                <div>Fecha de operación: {{ invoice.operation_date|date('d/m/Y') }}</div>
+                {% endif %}
+            </td>
+        </tr>
+    </table>
+
+    <table class="parties" style="margin-top: 12px;">
+        <tr>
+            <td>
+                <div class="box">
+                    <div class="label">Emisor</div>
+                    <div><strong>{{ i.name }}</strong></div>
+                    <div>NIF: {{ i.tax_id }}</div>
+                    <div>{{ i.address }}</div>
+                </div>
+            </td>
+            <td>
+                <div class="box">
+                    <div class="label">Cliente</div>
+                    <div><strong>{{ r.name }}</strong></div>
+                    <div>{{ documentTypes[r.tax_id_type] ?? 'Documento' }}: {{ r.tax_id }}</div>
+                    <div>{{ r.address }}</div>
+                    <div>{{ r.postcode }} {{ r.city }}{% if r.province %} ({{ r.province }}){% endif %}{% if r.country != 'ES' %} — {{ r.country }}{% endif %}</div>
+                </div>
+            </td>
+        </tr>
+    </table>
+
+    <table class="lines">
+        <thead>
+            <tr>
+                <th>Descripción</th>
+                <th class="num">Cantidad</th>
+                <th class="num">Precio unitario sin IVA</th>
+                <th class="num">Descuento sin IVA</th>
+                <th class="num">Importe sin IVA</th>
+                <th class="num">IVA</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for line in invoice.lines %}
+            <tr>
+                <td>{{ line.name }}{% if line.reference %} <span style="color:#555;">({{ line.reference }})</span>{% endif %}</td>
+                <td class="num">{{ line.quantity }}</td>
+                <td class="num">{{ f.money(line.unit_price_net) }}</td>
+                <td class="num">{{ line.discount_net > 0 ? f.money(line.discount_net) : '—' }}</td>
+                <td class="num">{{ f.money(line.net_amount) }}</td>
+                <td class="num">{{ f.rate(line.vat_rate) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <table class="summary">
+        <thead>
+            <tr><th>Base imponible</th><th>Tipo de IVA</th><th>Cuota de IVA</th></tr>
+        </thead>
+        <tbody>
+            {% for row in invoice.tax_breakdown %}
+            <tr>
+                <td class="num">{{ f.money(row.base) }}</td>
+                <td class="num">{{ f.rate(row.rate) }}</td>
+                <td class="num">{{ f.money(row.vat) }}</td>
+            </tr>
+            {% endfor %}
+            <tr class="total">
+                <td colspan="2">Total factura</td>
+                <td class="num">{{ f.money(invoice.total) }}</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <div class="note">
+        <div class="label">Forma de pago</div>
+        {% for p in invoice.payments %}
+        <div>{{ p.label }}: {{ f.money(p.amount) }}</div>
+        {% endfor %}
+    </div>
+
+    {% if invoice.replaced_reference %}
+    <div class="note">Sustituye a la factura simplificada {{ invoice.replaced_reference }} de {{ invoice.replaced_date|date('d/m/Y') }}.</div>
+    {% endif %}
+</body>
+</html>
