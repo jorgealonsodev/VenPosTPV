@@ -16,14 +16,36 @@ final class FiscalChainVerifier
 {
     private const BATCH = 500;
 
-    public function __construct(private readonly Connection $connection)
-    {
+    /**
+     * @param ?\Closure $afterRecords test seam: runs between reading the records and
+     *                               the chain head, where a concurrent sale would land
+     */
+    public function __construct(
+        private readonly Connection $connection,
+        private readonly ?\Closure $afterRecords = null,
+    ) {
     }
 
     /**
      * @return array{ok: bool, records: int, broken_id: ?int, reason: ?string, protected: bool}
      */
     public function verify(): array
+    {
+        // One consistent snapshot for the records and the head: a sale committed
+        // while the check runs must not look like removed records.
+        if (!$this->connection->isTransactionActive()) {
+            $this->connection->executeStatement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+        }
+        $this->connection->beginTransaction();
+        try {
+            return $this->verifyInSnapshot();
+        } finally {
+            $this->connection->rollBack();
+        }
+    }
+
+    /** @return array{ok: bool, records: int, broken_id: ?int, reason: ?string, protected: bool} */
+    private function verifyInSnapshot(): array
     {
         $previousHash = '';
         $count = 0;
@@ -56,6 +78,10 @@ final class FiscalChainVerifier
                 ++$count;
             }
         } while (\count($rows) === self::BATCH);
+
+        if ($this->afterRecords !== null) {
+            ($this->afterRecords)();
+        }
 
         $head = $this->connection->fetchOne('SELECT last_hash FROM fiscal_chain WHERE id = 1');
         if ((string) ($head ?: '') !== $previousHash) {

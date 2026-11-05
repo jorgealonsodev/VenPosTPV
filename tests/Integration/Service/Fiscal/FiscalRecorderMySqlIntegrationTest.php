@@ -160,6 +160,40 @@ final class FiscalRecorderMySqlIntegrationTest extends TestCase
         self::assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+0[12]:00$/', $record['generated_at']);
     }
 
+    public function testATillWithoutNifIsRecordedAndWarnedAbout(): void
+    {
+        \assert($this->connection !== null);
+        $this->connection->update('terminal', ['tax_id' => null], ['id' => self::TERMINAL]);
+        $logger = $this->createMock(\Psr\Log\LoggerInterface::class);
+        $logger->expects($this->once())->method('warning')->with($this->stringContains('NIF'), $this->callback(
+            static fn (array $context): bool => $context['number'] === 'Z26000001'
+        ));
+
+        $this->connection->transactional(fn () => (new FiscalRecorder($this->connection, $logger))->recordSale(self::ORDERS[0], self::TERMINAL, 'Z26000001', 1.0, 0.17, new \DateTimeImmutable()));
+
+        self::assertSame('', $this->records()[0]['issuer_nif']);
+    }
+
+    public function testTheVerifierReadsOneSnapshotSoASaleDuringTheCheckIsNoFalseAlarm(): void
+    {
+        \assert($this->connection !== null);
+        $this->sale(self::ORDERS[0], 'Z26000001', 12.10, 2.10);
+        $other = TestDatabase::connection();
+        \assert($other !== null);
+        $connection = $this->connection;
+        $verifier = new FiscalChainVerifier($connection, static function () use ($other): void {
+            // Another till sells between the last batch and the head read.
+            $other->transactional(static fn () => (new FiscalRecorder($other))->recordSale(self::ORDERS[1], self::TERMINAL, 'Z26000002', 24.20, 4.20, new \DateTimeImmutable()));
+        });
+
+        $result = $verifier->verify();
+        $other->close();
+
+        self::assertTrue($result['ok'], (string) $result['reason']);
+        self::assertSame(1, $result['records']);
+        self::assertTrue((new FiscalChainVerifier($connection))->verify()['ok']);
+    }
+
     public function testRecordingOutsideATransactionIsRefused(): void
     {
         $this->expectException(\LogicException::class);

@@ -542,3 +542,4 @@ CREATE TABLE IF NOT EXISTS fiscal_chain (
     last_record_id BIGINT UNSIGNED NULL,
     last_hash CHAR(64) NULL
 ) ENGINE=InnoDB;
+INSERT IGNORE INTO fiscal_chain (id, last_record_id, last_hash) VALUES (1, NULL, NULL);

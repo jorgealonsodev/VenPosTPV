@@ -552,6 +552,44 @@ final class CheckoutServiceTest extends TestCase
         $this->assertSame(['session', 'fiscal'], $order);
     }
 
+    public function testACouponCashSaleLocksTheSessionBeforeItsFiscalRecord(): void
+    {
+        $quote = [
+            'cart_id' => 7, 'customer_id' => 2, 'shop_id' => 1, 'currency_id' => 1,
+            'coupon_code' => 'SAVE10', 'before_discount_total' => 23.14,
+            'discount_amount' => 10.0, 'total_paid' => 13.14,
+            'products' => [['id_product' => 1, 'id_product_attribute' => 0, 'quantity' => 1]],
+        ];
+        $client = $this->createMock(PsOrderClient::class);
+        $client->method('verifyCouponQuote')->willReturn($quote);
+        $client->method('createCouponOrder')->willReturn(['order_id' => 77, 'reference' => 'CPN-77', 'total_paid' => 13.14]);
+        $conn = $this->createMock(Connection::class);
+        $conn->method('fetchAssociative')->willReturnCallback(static fn (string $sql): array|false => str_contains($sql, 'catalog_product')
+            ? ['price' => 23.90, 'price_ttc' => 23.14, 'price_net' => 19.12] : false);
+        $conn->method('fetchOne')->willReturnCallback(static fn (string $sql): int|false => str_contains($sql, 'order_meta') ? false : 1);
+        $conn->method('executeStatement')->willReturn(1);
+        $conn->method('transactional')->willReturnCallback(static fn (callable $operation): mixed => $operation());
+        $conn->method('insert')->willReturn(1);
+        $order = [];
+        $cashSession = $this->createMock(CashSessionService::class);
+        $cashSession->method('requireOpenSession')->willReturn(['session_id' => 1, 'terminal_id' => 3]);
+        $cashSession->method('lockOpenSessionInTransaction')
+            ->willReturnCallback(static function () use (&$order): void { $order[] = 'session'; });
+        $fiscal = $this->createMock(FiscalRecorder::class);
+        $fiscal->expects($this->once())->method('recordSale')->with($this->anything(), 3, 'CPN-77', 13.14)
+            ->willReturnCallback(static function () use (&$order): void { $order[] = 'fiscal'; });
+
+        $this->createService(client: $client, conn: $conn, cashSessionService: $cashSession, couponCheckoutEnabled: true, fiscalRecorder: $fiscal)
+            ->createOrder(1, [
+                'lines' => [['product_id' => 1, 'qty' => 1, 'price' => 23.14]], 'total' => 23.14,
+                'customer' => ['id' => 2],
+                'coupon' => ['code' => 'SAVE10', 'preview_cart_id' => 7, 'quote' => 'signed.quote'],
+            ], 'cash', 20.0);
+
+        $this->assertSame('session', $order[0], 'the session is locked before the fiscal chain');
+        $this->assertContains('fiscal', $order);
+    }
+
     public function testCashSessionClosedDuringTheSaleStoresNothingAndKeepsTheCart(): void
     {
         $client = $this->createMock(PsOrderClient::class);

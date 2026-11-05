@@ -31,7 +31,11 @@ final class FiscalController
             return $this->denied();
         }
 
-        return new JsonResponse(['data' => ['enabled' => $this->verifactu()->isEnabled()]]);
+        return new JsonResponse(['data' => [
+            'enabled' => $this->verifactu()->isEnabled(),
+            'available' => $this->verifactu()->canEnable(),
+            'unavailable_reason' => $this->verifactu()->canEnable() ? null : VerifactuSettings::UNAVAILABLE_MESSAGE,
+        ]]);
     }
 
     /** Admin only: {enabled: bool}. The fiscal records are written either way. */
@@ -45,7 +49,11 @@ final class FiscalController
         if (!\is_array($body) || !\is_bool($body['enabled'] ?? null)) {
             return new JsonResponse(['error' => 'Indica si VERI*FACTU está activado (enabled: true o false)'], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
-        $this->verifactu()->setEnabled($body['enabled']);
+        try {
+            $this->verifactu()->setEnabled($body['enabled']);
+        } catch (\DomainException $e) {
+            return new JsonResponse(['error' => $e->getMessage()], Response::HTTP_CONFLICT);
+        }
 
         return new JsonResponse(['data' => ['enabled' => $body['enabled']]]);
     }

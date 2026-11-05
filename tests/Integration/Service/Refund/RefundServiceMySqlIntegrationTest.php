@@ -255,6 +255,22 @@ final class RefundServiceMySqlIntegrationTest extends TestCase
         $this->assertSame(701, (int) $this->connection->fetchOne('SELECT ps_order_slip_id FROM refund WHERE id = ?', [$result['refund_id']]));
     }
 
+    public function testTheCreditNoteGetsItsChainedFiscalRecordInTheSameTransaction(): void
+    {
+        $this->seedOrder(['cash' => 60.0, 'card' => 0.0]);
+        $head = $this->connection->fetchOne('SELECT last_hash FROM fiscal_chain WHERE id = 1');
+
+        $result = $this->service()->processRefund(1, self::ORDER_ID, [['line_index' => 0, 'quantity' => 1, 'restock' => true]], 'size');
+
+        $record = $this->connection->fetchAssociative('SELECT * FROM fiscal_record WHERE refund_id = ?', [$result['refund_id']]);
+        $this->assertIsArray($record);
+        $this->assertSame('R5', $record['invoice_type']);
+        $this->assertSame($this->connection->fetchOne('SELECT credit_note_number FROM refund WHERE id = ?', [$result['refund_id']]), $record['number']);
+        $this->assertSame('-24.18', $record['total']);
+        $this->assertSame($head !== false && $head !== null ? $head : null, $record['previous_hash']);
+        $this->assertSame($record['hash'], $this->connection->fetchOne('SELECT last_hash FROM fiscal_chain WHERE id = 1'));
+    }
+
     public function testUnitsAreRefundedUntilExhaustedAndLastUnitTakesTheRemainder(): void
     {
         $this->seedOrder(['cash' => 60.0, 'card' => 0.0]);

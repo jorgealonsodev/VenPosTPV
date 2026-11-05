@@ -361,7 +361,8 @@ class TicketDataResolver
             return null;
         }
 
-        return $record !== false ? FiscalQr::forRecord($record) : null;
+        // Without the issuer's NIF the AEAT cannot match the QR: print none.
+        return $record !== false && trim((string) $record['issuer_nif']) !== '' ? FiscalQr::forRecord($record) : null;
     }
 
     /** The terminal's choice of scan code; Code128 by default (1D scanners cannot read QR). */

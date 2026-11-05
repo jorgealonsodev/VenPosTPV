@@ -492,13 +492,15 @@ const SettingsModal = {
         }
 
         // Ajustes → VERI*FACTU: the switch (QR tributario on the tickets) and the chain check.
-        const verifactu = Vue.reactive({ enabled: false, loaded: false, saving: false, error: '', chain: null, checking: false });
+        const verifactu = Vue.reactive({ enabled: false, available: false, unavailableReason: '', loaded: false, saving: false, error: '', chain: null, checking: false });
 
         async function loadVerifactu() {
             verifactu.error = '';
             try {
                 const resp = await ApiClient.get('/api/fiscal/settings');
                 verifactu.enabled = !!(resp.data && resp.data.enabled);
+                verifactu.available = !!(resp.data && resp.data.available);
+                verifactu.unavailableReason = (resp.data && resp.data.unavailable_reason) || '';
                 verifactu.loaded = true;
             } catch (e) {
                 verifactu.error = errorText(e, 'Error al cargar VERI*FACTU');
@@ -976,12 +978,13 @@ const SettingsModal = {
                             <div style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; color:var(--text); margin-bottom:6px;">
                                 <icon name="receipt" :size="16"></icon> VERI*FACTU
                             </div>
-                            <div style="font-size:12px; color:var(--text3); margin-bottom:16px;">Cada ticket y cada devolución se guarda siempre en un registro encadenado con huella que no se puede modificar ni borrar. Al activar VERI*FACTU, los tickets imprimen además el «QR tributario» y la leyenda «VERI*FACTU». El envío de los registros a la AEAT aún no está disponible.</div>
+                            <div style="font-size:12px; color:var(--text3); margin-bottom:16px;">Cada ticket y cada devolución se guarda siempre en un registro encadenado con huella que no se puede modificar ni borrar. Al activar VERI*FACTU, los tickets imprimen además el «QR tributario» y la leyenda «VERI*FACTU», y los registros se envían a la AEAT.</div>
                             <div v-if="verifactu.error" style="color:var(--red); font-size:13px; margin-bottom:12px;">{{ verifactu.error }}</div>
                             <label v-if="verifactu.loaded" style="display:flex; align-items:center; gap:10px; font-size:14px; color:var(--text); cursor:pointer; margin-bottom:20px;">
-                                <input type="checkbox" :checked="verifactu.enabled" :disabled="verifactu.saving" @change="saveVerifactu($event.target.checked)" style="width:18px; height:18px;">
+                                <input type="checkbox" :checked="verifactu.enabled" :disabled="verifactu.saving || !verifactu.available" @change="saveVerifactu($event.target.checked)" style="width:18px; height:18px;">
                                 Activar VERI*FACTU (QR tributario en los tickets)
                             </label>
+                            <div v-if="verifactu.loaded && !verifactu.available" style="font-size:12px; color:var(--text3); margin:-12px 0 20px;">{{ verifactu.unavailableReason }}</div>
                             <button @click="checkChain" :disabled="verifactu.checking"
                                 style="min-height:40px; padding:0 16px; background:var(--surface2); border:1px solid var(--border); border-radius:8px; color:var(--text); font-family:inherit; font-size:13px; cursor:pointer;">
                                 {{ verifactu.checking ? 'Comprobando…' : 'Comprobar registros' }}

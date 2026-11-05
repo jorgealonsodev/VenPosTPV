@@ -117,6 +117,11 @@ class FiscalRecorder
         $previousHash = \is_array($head) && $head['last_hash'] !== null ? (string) $head['last_hash'] : '';
 
         $issuerNif = strtoupper(trim((string) $this->connection->fetchOne('SELECT tax_id FROM terminal WHERE id = ?', [$record['terminal_id']])));
+        if ($issuerNif === '') {
+            // Still recorded (the ticket was issued), but without a NIF the record and
+            // its QR cannot be checked: the shop has to fill it in Ajustes.
+            $this->logger->warning('fiscal_record {number} has no issuer NIF: fill in the NIF in Ajustes → Tienda', ['number' => $record['number']]);
+        }
         $zone = new \DateTimeZone($this->timeZone);
         $issueDate = FiscalHash::date($issuedAt->setTimezone($zone));
         $generatedAt = FiscalHash::timestamp(new \DateTimeImmutable('now', $zone));

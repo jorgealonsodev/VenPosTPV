@@ -17,6 +17,15 @@ class VerifactuSettings
 {
     private const NAME = 'verifactu.enabled';
 
+    /**
+     * Whether this version sends the fiscal records to the AEAT. Until it does, the
+     * switch stays off: a «VERI*FACTU» ticket whose record the AEAT never receives
+     * breaks RRSIF art. 16.1 («remitir efectivamente») and fails the cotejo.
+     */
+    public const SUBMISSION_AVAILABLE = false;
+
+    public const UNAVAILABLE_MESSAGE = 'VERI*FACTU no se puede activar todavía: esta versión del TPV aún no envía los registros a la AEAT';
+
     private const CREATE_TABLE = 'CREATE TABLE IF NOT EXISTS app_setting (
         name VARCHAR(64) NOT NULL PRIMARY KEY,
         value TEXT NULL,
@@ -27,8 +36,16 @@ class VerifactuSettings
     {
     }
 
+    public function canEnable(): bool
+    {
+        return self::SUBMISSION_AVAILABLE;
+    }
+
     public function isEnabled(): bool
     {
+        if (!$this->canEnable()) {
+            return false;
+        }
         try {
             return $this->connection->fetchOne('SELECT value FROM app_setting WHERE name = ?', [self::NAME]) === '1';
         } catch (TableNotFoundException) {
@@ -36,8 +53,12 @@ class VerifactuSettings
         }
     }
 
+    /** @throws \DomainException when turning it on before the records can be sent */
     public function setEnabled(bool $enabled): void
     {
+        if ($enabled && !$this->canEnable()) {
+            throw new \DomainException(self::UNAVAILABLE_MESSAGE);
+        }
         // A host where migrations are run by hand may not have the table yet.
         $this->connection->executeStatement(self::CREATE_TABLE);
         $this->connection->executeStatement(

@@ -92,15 +92,31 @@ final class FiscalControllerMySqlIntegrationTest extends TestCase
         return json_decode((string) $response->getContent(), true)['data']['enabled'];
     }
 
-    public function testTheSwitchIsOffUntilTheAdminTurnsItOn(): void
+    /**
+     * Until the records are sent to the AEAT the switch cannot be turned on: a
+     * ticket saying «VERI*FACTU» whose record the AEAT never receives breaks
+     * RRSIF art. 16.1 and makes the cotejo answer «Factura no encontrada».
+     */
+    public function testTheSwitchCannotBeTurnedOnWhileRecordsAreNotSentToTheAeat(): void
     {
         self::assertFalse($this->enabled());
 
-        self::assertSame(Response::HTTP_OK, $this->put(['enabled' => true])->getStatusCode());
-        self::assertTrue($this->enabled());
+        $response = $this->put(['enabled' => true]);
+        self::assertSame(Response::HTTP_CONFLICT, $response->getStatusCode());
+        self::assertStringContainsString('AEAT', json_decode((string) $response->getContent(), true)['error']);
+        self::assertFalse($this->enabled());
 
         self::assertSame(Response::HTTP_OK, $this->put(['enabled' => false])->getStatusCode());
         self::assertFalse($this->enabled());
+    }
+
+    public function testAValueStoredBeforeTheGuardDoesNotTurnItOn(): void
+    {
+        \assert($this->connection !== null);
+        $this->connection->executeStatement("INSERT INTO app_setting (name, value) VALUES ('verifactu.enabled', '1')");
+
+        self::assertFalse($this->enabled());
+        self::assertFalse((new VerifactuSettings($this->connection))->isEnabled());
     }
 
     public function testInvalidValuesAndCashiersChangeNothing(): void
@@ -126,15 +142,22 @@ final class FiscalControllerMySqlIntegrationTest extends TestCase
             'created_at' => '2026-11-05 10:00:00',
         ]);
         $this->connection->transactional(fn () => (new FiscalRecorder($this->connection))->recordSale(self::ORDER, self::TERMINAL, 'Y26000007', 12.1, 2.1, new \DateTimeImmutable('2026-11-05 10:00:00')));
-        $settings = new VerifactuSettings($this->connection);
+        $enabled = false;
+        $settings = $this->createMock(VerifactuSettings::class);
+        $settings->method('isEnabled')->willReturnCallback(static function () use (&$enabled): bool { return $enabled; });
         $resolver = new TicketDataResolver($this->connection, new TicketVerificationService('test-secret', 'http://tpv'), 'Tienda', 'Calle 1', $settings);
 
         self::assertNull($resolver->resolve(TicketDataResolver::saleKey(self::ORDER))?->fiscalQrUrl);
 
-        $settings->setEnabled(true);
+        $enabled = true;
         self::assertSame(
             'https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT/ValidarQR?nif=G12345678&numserie=Y26000007&fecha=05-11-2026&importe=12.10',
             $resolver->resolve(TicketDataResolver::saleKey(self::ORDER))?->fiscalQrUrl
         );
+        // Without the issuer's NIF the AEAT cannot match the QR: none is printed.
+        $this->connection->executeStatement("UPDATE terminal SET tax_id = NULL WHERE id = ?", [self::TERMINAL]);
+        $this->connection->executeStatement('DROP TRIGGER IF EXISTS fiscal_record_no_update');
+        $this->connection->executeStatement("UPDATE fiscal_record SET issuer_nif = '' WHERE order_id = ?", [self::ORDER]);
+        self::assertNull($resolver->resolve(TicketDataResolver::saleKey(self::ORDER))?->fiscalQrUrl);
     }
 }

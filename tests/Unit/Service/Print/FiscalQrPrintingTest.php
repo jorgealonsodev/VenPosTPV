@@ -73,6 +73,10 @@ final class FiscalQrPrintingTest extends TestCase
 
     public function testPdfShowsTheTitleAndTheLegendAroundTheQr(): void
     {
+        exec('command -v pdftotext', $found, $missing);
+        if ($missing !== 0) {
+            self::markTestSkipped('pdftotext (poppler-utils) is not installed');
+        }
         $generator = new TicketPdfGenerator(new Environment(new FilesystemLoader(__DIR__ . '/../../../../templates')));
         $dir = sys_get_temp_dir() . '/tpv_fiscal_pdf_' . bin2hex(random_bytes(4));
         mkdir($dir);
