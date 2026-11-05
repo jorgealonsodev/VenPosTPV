@@ -78,11 +78,11 @@ class TicketDataResolver
         $changeDue = isset($breakdown['change_due']) ? (float) $breakdown['change_due'] : 0.0;
         $subtotal = isset($breakdown['subtotal']) ? (float) $breakdown['subtotal'] : $total;
         $tax = isset($breakdown['tax']) ? (float) $breakdown['tax'] : 0.0;
+        // The VAT box only when it tells exactly the VAT the sale stored (and chained in
+        // its fiscal record): a reprint never changes the amounts of the original ticket.
         $vatBreakdown = $this->vatBreakdown($orderId);
-        if ($vatBreakdown !== []) {
-            // The box and the totals tell the same VAT.
-            $tax = round(array_sum(array_column($vatBreakdown, 'vat')), 2);
-            $subtotal = round($total - $tax, 2);
+        if ($vatBreakdown !== [] && abs(round(array_sum(array_column($vatBreakdown, 'vat')), 2) - $tax) >= 0.005) {
+            $vatBreakdown = [];
         }
         // Part of the total paid with the goods returned in an exchange.
         $exchangeCredit = \is_array($breakdown['tender'] ?? null) && is_numeric($breakdown['tender']['exchange_credit'] ?? null)
@@ -135,8 +135,9 @@ class TicketDataResolver
 
     /**
      * The VAT box of a sale from its sale_line rows: what was paid at each rate,
-     * rounded once per rate. Empty for a sale without stored lines. $orderId is the
-     * resolve() key: -order_meta.id, or the PrestaShop order id.
+     * rounded once per rate. Empty for a sale without stored lines or with a line
+     * backfilled from the current catalog (approximate): its rates are a guess.
+     * $orderId is the resolve() key: -order_meta.id, or the PrestaShop order id.
      *
      * @return list<array{rate: float, base: float, vat: float}>
      */
@@ -144,19 +145,20 @@ class TicketDataResolver
     {
         $rows = $orderId < 0
             ? $this->connection->fetchAllAssociative(
-                'SELECT vat_rate, SUM(paid_amount) AS paid FROM sale_line WHERE order_id = ? AND vat_rate IS NOT NULL GROUP BY vat_rate',
+                'SELECT vat_rate, SUM(paid_amount) AS paid, MAX(approximate) AS approximate FROM sale_line WHERE order_id = ? GROUP BY vat_rate',
                 [-$orderId]
             )
             : $this->connection->fetchAllAssociative(
-                'SELECT s.vat_rate, SUM(s.paid_amount) AS paid FROM sale_line s JOIN order_meta o ON o.id = s.order_id
-                 WHERE o.ps_order_id = ? AND s.vat_rate IS NOT NULL GROUP BY s.vat_rate',
+                'SELECT s.vat_rate, SUM(s.paid_amount) AS paid, MAX(s.approximate) AS approximate FROM sale_line s
+                 JOIN order_meta o ON o.id = s.order_id WHERE o.ps_order_id = ? GROUP BY s.vat_rate',
                 [$orderId]
             );
         $paidByRate = [];
         foreach ($rows as $row) {
-            if (is_numeric($row['vat_rate'] ?? null) && is_numeric($row['paid'] ?? null)) {
-                $paidByRate[number_format((float) $row['vat_rate'], 2, '.', '')] = (float) $row['paid'];
+            if ((int) ($row['approximate'] ?? 0) !== 0 || !is_numeric($row['vat_rate'] ?? null) || !is_numeric($row['paid'] ?? null)) {
+                return [];
             }
+            $paidByRate[number_format((float) $row['vat_rate'], 2, '.', '')] = (float) $row['paid'];
         }
 
         return VatRate::summary($paidByRate);

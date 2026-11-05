@@ -186,9 +186,28 @@ final class SaleLineMySqlIntegrationTest extends TestCase
             ['rate' => 10.0, 'base' => 10.0, 'vat' => 1.0],
         ], $ticket->vatBreakdown);
         $this->assertSame(8.81, $ticket->tax);
-        $this->assertSame(47.19, $ticket->subtotal);
+        $this->assertSame(61.0, $ticket->subtotal, 'the subtotal printed as before: lines before discounts');
         $breakdown = json_decode((string) $this->connection->fetchOne('SELECT payment_breakdown FROM order_meta WHERE id = ?', [$result['order_id']]), true);
         $this->assertSame(8.81, $breakdown['tax']);
         $this->assertSame('8.81', (string) $this->connection->fetchOne('SELECT tax_total FROM fiscal_record WHERE order_id = ?', [$result['order_id']]));
+    }
+
+    public function testAReprintOfABackfilledOrOtherwiseDifferentSaleKeepsItsStoredVat(): void
+    {
+        $result = $this->service()->createOrder(7, $this->cart(), 'cash', 60.0);
+        $resolver = new TicketDataResolver($this->connection, $this->createMock(TicketVerificationService::class), 'Tienda', '');
+
+        // Lines backfilled from the current catalog are a guess: the original VAT line stays.
+        $this->connection->executeStatement('UPDATE sale_line SET approximate = 1 WHERE order_id = ? AND line_index = 1', [$result['order_id']]);
+        $ticket = $resolver->resolve(TicketDataResolver::saleKey($result['order_id']));
+        $this->assertSame([], $ticket->vatBreakdown);
+        $this->assertSame(8.81, $ticket->tax);
+
+        // A box that would tell another VAT than the stored (and chained) one is not printed.
+        $this->connection->executeStatement('UPDATE sale_line SET approximate = 0, vat_rate = 21 WHERE order_id = ?', [$result['order_id']]);
+        $ticket = $resolver->resolve(TicketDataResolver::saleKey($result['order_id']));
+        $this->assertSame([], $ticket->vatBreakdown);
+        $this->assertSame(8.81, $ticket->tax);
+        $this->assertSame(61.0, $ticket->subtotal);
     }
 }
