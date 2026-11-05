@@ -1162,6 +1162,60 @@ final class CheckoutServiceTest extends TestCase
      * @param array<string, string|array<string, string|null>|null> $catalogPrices
      */
 
+    /**
+     * A line discount lowers the VAT once: 2 x 121.00 (100.00 + 21 % VAT) at 50 %
+     * off is 121.00 paid, which carries 21.00 of VAT, not 10.50.
+     */
+    public function testALineDiscountIsAppliedToTheVatOnlyOnce(): void
+    {
+        $inserted = [];
+        $conn = $this->createMock(Connection::class);
+        $this->localTransaction($conn);
+        $conn->method('fetchOne')->willReturn(10);
+        $conn->method('fetchAssociative')->willReturn(['price' => 121.0, 'price_ttc' => 121.0, 'price_net' => 100.0]);
+        $conn->method('executeStatement')->willReturn(1);
+        $conn->method('insert')->willReturnCallback(function (string $table, array $data) use (&$inserted): int {
+            $inserted[$table] = $data;
+
+            return 1;
+        });
+
+        $this->createService(conn: $conn)->createOrder(1, [
+            'lines' => [['product_id' => 1, 'qty' => 2, 'price' => 121.0, 'discount' => 50]],
+            'total' => 121.0,
+        ], 'cash', 121.0);
+
+        $breakdown = json_decode($inserted['order_meta']['payment_breakdown'], true);
+        $this->assertEquals(242.0, $breakdown['subtotal'], 'the subtotal stays before discounts');
+        $this->assertEquals(21.0, $breakdown['tax']);
+    }
+
+    public function testATicketDiscountOnTopOfALineDiscountScalesTheVatOnce(): void
+    {
+        $inserted = [];
+        $conn = $this->createMock(Connection::class);
+        $this->localTransaction($conn);
+        $conn->method('fetchOne')->willReturn(10);
+        $conn->method('fetchAssociative')->willReturn(['price' => 121.0, 'price_ttc' => 121.0, 'price_net' => 100.0]);
+        $conn->method('executeStatement')->willReturn(1);
+        $conn->method('insert')->willReturnCallback(function (string $table, array $data) use (&$inserted): int {
+            $inserted[$table] = $data;
+
+            return 1;
+        });
+
+        // 121.00 at 50 % = 60.50, then a 10 % ticket discount: 54.45 paid, 9.45 of VAT.
+        $this->createService(conn: $conn)->createOrder(1, [
+            'lines' => [['product_id' => 1, 'qty' => 1, 'price' => 121.0, 'discount' => 50]],
+            'discount' => ['type' => 'pct', 'value' => 10],
+            'total' => 54.45,
+        ], 'cash', 54.45);
+
+        $breakdown = json_decode($inserted['order_meta']['payment_breakdown'], true);
+        $this->assertEquals(54.45, $breakdown['total']);
+        $this->assertEquals(9.45, $breakdown['tax']);
+    }
+
     public function testOrderMetaRecordsTheExactVatOfEachLine(): void
     {
         $conn = $this->catalogConnection([

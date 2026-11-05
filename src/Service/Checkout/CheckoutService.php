@@ -961,7 +961,9 @@ class CheckoutService
                 $subtotal += $bl['line_total'];
             }
 
-            $tax = $this->resolveVatAmount($lines, $subtotal, $total);
+            // The VAT already counts each line discount, so only the ticket discount or
+            // coupon scales it: against the amount after line discounts, not $subtotal.
+            $tax = $this->resolveVatAmount($lines, array_sum($netTotals), $total);
             $issuedAt = new \DateTimeImmutable();
 
             $this->conn->insert('order_meta', [
@@ -1019,7 +1021,7 @@ class CheckoutService
      *
      * @param array<int, array<string, mixed>> $lines
      */
-    private function resolveVatAmount(array $lines, float $subtotal, float $total): float
+    private function resolveVatAmount(array $lines, float $afterLineDiscounts, float $total): float
     {
         $vatSum = 0.0;
         $linesWithNet = 0;
@@ -1042,7 +1044,7 @@ class CheckoutService
             return round($total * self::ASSUMED_TAX_RATE / (1 + self::ASSUMED_TAX_RATE), 2);
         }
 
-        $discountFactor = $subtotal > 0 ? $total / $subtotal : 1.0;
+        $discountFactor = $afterLineDiscounts > 0 ? $total / $afterLineDiscounts : 1.0;
 
         return round(max(0.0, $vatSum * $discountFactor), 2);
     }
