@@ -22,8 +22,8 @@ Branch: feat/sales-reports (from feat/verifactu af09dd0). Delivery: ask-on-risk.
 | T4 | S4 (shared cash totals aggregator extracted from aggregateTotals) | delegated (context backstop) | done; verifier PASS (X/Z totals and hash byte-identical on a wide probe) | 21769e3 |
 | T5 | S4 (API summary/daily/payments + CSV + access; criteria 1-4, 7, 8, 12, 13) | delegated (context backstop) | done | cabcc0b |
 | T6 | S4 (Informes screen) | delegated (context backstop) | done; templates compile with @vue/compiler-dom 3.5.44, no browser run | 868733d |
-| T7 | S4 (products, categories, VAT; criteria 6, 9) | inline | pending | |
-| T8 | S4 (hourly, cashiers, previous period, performance; criteria 5, 14) | inline | pending | |
+| T7 | S4 (products, categories, VAT; criteria 6, 9) | delegated (context backstop) | done | 1ce9b3a |
+| T8 | S4 (hourly, cashiers, previous period, performance; criteria 5, 14) | delegated (context backstop) | done | 1ce9b3a |
 | T9 | S5 phase 1 (customer tax data, F series, redeem ticket, A4 PDF, fiscal F3) | tbd | pending | |
 | T10 | S5 phase 2 (invoice at sale time) | tbd | pending | |
 | T11 | S5 phase 3 (A4 invoice printer in the agent, email) | tbd | pending | |
@@ -42,3 +42,4 @@ Branch: feat/sales-reports (from feat/verifactu af09dd0). Delivery: ask-on-risk.
 - L9 T4/T5 by a bounded writer: RED observed for T5 (43 class-not-found), T4 protected by existing cash tests plus a base-vs-change differential (X, z_report.totals and hashes identical). Full suite 1193 tests, only the 18 known fresh-DB failures. Decisions: cash by date via sessions open in the range + movement date; unusable filters → 422; CSV names resumen/dias/formas-pago; >366 days → 422. Criterion 12 Excel opening not tested by hand.
 - L10 Native review of 0e34d03..cabcc0b (risk, reliability; consent «Revisar este cambio»): approved and acknowledged, no correction. Advisories: pending uploads double count → fixed 44065ba (COUNT DISTINCT, no dedicated test); TableNotFoundException import → false positive (imported at TicketDataResolver.php:9); till filter on refunds/vouchers in period mode untested → follow-up test in T7. Verifier advisories (range mode): movements with NULL created_at and exchanges with NULL completed_at drop out of date ranges; accepted.
 - L11 T6: 14 JS tests (RED first), full JS suite 92/92 via `node --test tests/Functional/*.test.cjs`; templates compiled with the official compiler (0 errors); not rendered in a browser. Native assess medium, under_budget (pending in slice from 44065ba).
+- L12 T7/T8: RED seen (14 errors, 12 failures; 4 JS), GREEN: report tests 76 OK, JS 95/95, template compile 0 errors, full suite only the 18 known. Perf test (TPV_PERF_TEST=1) passes: year reports < 1 s, products CSV < 3 s. Till filter on refunds/vouchers by date tested: no bug. Native assess medium, under_budget (slice from 44065ba pending). S4 complete except a browser run.
