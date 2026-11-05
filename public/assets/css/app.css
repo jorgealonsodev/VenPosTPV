@@ -699,9 +699,10 @@ html, body, #app {
 .print-history-filters { display: flex; flex-wrap: wrap; gap: 12px; }
 .print-history-filter { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text3); min-width: 160px; }
 .print-history-filter select { min-height: 44px; }
-.print-history-scroll { overflow-x: auto; }
+.print-history-scroll { overflow-x: auto; overflow-y: auto; max-height: min(55vh, 520px); scrollbar-width: thin; scrollbar-color: var(--text3) transparent; border: 1px solid var(--border); border-radius: 8px; }
+.print-history-pager { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; color: var(--text2); }
 .print-history-table { width: 100%; border-collapse: collapse; font-size: 13px; color: var(--text); }
-.print-history-table th { text-align: left; font-weight: 600; color: var(--text3); padding: 6px 8px; border-bottom: 1px solid var(--border2); }
+.print-history-table th { position: sticky; top: 0; background: var(--surface); z-index: 1; text-align: left; font-weight: 600; color: var(--text3); padding: 6px 8px; border-bottom: 1px solid var(--border2); }
 .print-history-table td { padding: 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
 
 /* ── Labels (docs/prd/agente-impresion.md L1, L2) ──────────────────

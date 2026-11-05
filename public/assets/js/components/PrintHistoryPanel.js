@@ -1,7 +1,8 @@
 /**
  * PrintHistoryPanel — «Historial de impresión» in Ajustes (docs/prd/agente-impresion.md
  * S4, AC13): the print jobs of the last 30 days, newest first, filtered by till and
- * state, 50 at a time («Cargar más» follows next_cursor). Never the job's data.
+ * state, in pages of 25 («Anterior» / «Siguiente»; the API pages by cursor, so the
+ * panel keeps the cursor of each page it has shown). Never the job's data.
  */
 const PrintHistoryPanel = {
     props: ['tills'],
@@ -10,6 +11,10 @@ const PrintHistoryPanel = {
         const statusFilter = Vue.ref('');
         const items = Vue.ref([]);
         const nextCursor = Vue.ref(null);
+        const PAGE_SIZE = 25;
+        // The cursor that opened each page shown so far; page 1 starts with none.
+        const pageCursors = Vue.ref([null]);
+        const page = Vue.computed(() => pageCursors.value.length);
         const loading = Vue.ref(false);
         const error = Vue.ref('');
         const statusOptions = [
@@ -38,13 +43,14 @@ const PrintHistoryPanel = {
             error: job.error_code || job.error ? usePrintJobs.reasonText(job.error_code, job.error) : '',
         })));
         const hasMore = Vue.computed(() => nextCursor.value !== null && nextCursor.value !== undefined);
+        const hasPrev = Vue.computed(() => pageCursors.value.length > 1);
 
         async function fetchPage(cursor) {
             const params = {};
             if (terminalFilter.value) params.terminal_id = terminalFilter.value;
             if (statusFilter.value) params.status = statusFilter.value;
             if (cursor) params.cursor = cursor;
-            params.limit = 50;
+            params.limit = PAGE_SIZE;
             loading.value = true;
             error.value = '';
             try {
@@ -58,24 +64,31 @@ const PrintHistoryPanel = {
             }
         }
 
-        async function reload() {
-            const page = await fetchPage(null);
-            if (!page) return;
-            items.value = page.items;
-            nextCursor.value = page.next;
+        async function show(cursors) {
+            const result = await fetchPage(cursors[cursors.length - 1]);
+            if (!result) return;
+            items.value = result.items;
+            nextCursor.value = result.next;
+            pageCursors.value = cursors;
         }
 
-        async function loadMore() {
+        function reload() {
+            return show([null]);
+        }
+
+        async function nextPage() {
             if (!hasMore.value || loading.value) return;
-            const page = await fetchPage(nextCursor.value);
-            if (!page) return;
-            items.value = items.value.concat(page.items);
-            nextCursor.value = page.next;
+            await show(pageCursors.value.concat([nextCursor.value]));
+        }
+
+        async function prevPage() {
+            if (!hasPrev.value || loading.value) return;
+            await show(pageCursors.value.slice(0, -1));
         }
 
         Vue.onMounted(() => { reload(); });
 
-        return { terminalFilter, statusFilter, statusOptions, rows, hasMore, loading, error, reload, loadMore };
+        return { terminalFilter, statusFilter, statusOptions, rows, hasMore, hasPrev, page, loading, error, reload, nextPage, prevPage };
     },
     template: `
         <div class="print-history">
@@ -110,7 +123,11 @@ const PrintHistoryPanel = {
                     </tbody>
                 </table>
             </div>
-            <button v-if="hasMore" class="tpv-btn" :disabled="loading" @click="loadMore">Cargar más</button>
+            <div v-if="hasPrev || hasMore" class="print-history-pager">
+                <button class="tpv-btn" :disabled="!hasPrev || loading" @click="prevPage">← Anterior</button>
+                <span>Página {{ page }}</span>
+                <button class="tpv-btn" :disabled="!hasMore || loading" @click="nextPage">Siguiente →</button>
+            </div>
         </div>
     `
 };
