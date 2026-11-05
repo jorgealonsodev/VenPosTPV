@@ -322,7 +322,7 @@ const SettingsModal = {
                 success.value = 'Intervalo PS → TPV guardado';
                 setTimeout(() => { success.value = ''; }, 2000);
             } catch (e) {
-                syncError.value = e?.response?.data?.error || 'Error al guardar intervalo';
+                syncError.value = errorText(e, 'Error al guardar intervalo');
             } finally {
                 syncSaving.value = false;
             }
@@ -340,7 +340,7 @@ const SettingsModal = {
                 success.value = 'Intervalo TPV → PS guardado';
                 setTimeout(() => { success.value = ''; }, 2000);
             } catch (e) {
-                syncError.value = e?.response?.data?.error || 'Error al guardar intervalo push';
+                syncError.value = errorText(e, 'Error al guardar intervalo push');
             } finally {
                 syncPushSaving.value = false;
             }
@@ -356,7 +356,7 @@ const SettingsModal = {
                 success.value = 'Sincronización completada';
                 setTimeout(() => { success.value = ''; }, 3000);
             } catch (e) {
-                syncError.value = e?.response?.data?.error || 'Error al sincronizar';
+                syncError.value = errorText(e, 'Error al sincronizar');
             } finally {
                 syncNowRunning.value = false;
             }
@@ -380,7 +380,7 @@ const SettingsModal = {
                 setTimeout(() => { success.value = ''; }, 2000);
                 await loadEmployees();
             } catch (e) {
-                createError.value = e?.response?.data?.error || 'Error al crear empleado';
+                createError.value = errorText(e, 'Error al crear empleado');
             } finally {
                 creating.value = false;
             }
@@ -415,7 +415,7 @@ const SettingsModal = {
                 setTimeout(() => { success.value = ''; }, 2000);
                 await loadEmployees();
             } catch (e) {
-                editError.value = e?.response?.data?.error || 'Error al guardar';
+                editError.value = errorText(e, 'Error al guardar');
             } finally {
                 saving.value = false;
             }

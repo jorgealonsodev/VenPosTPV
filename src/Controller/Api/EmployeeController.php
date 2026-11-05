@@ -15,6 +15,7 @@ use Symfony\Component\Routing\Attribute\Route;
 final class EmployeeController
 {
     private const MIN_PIN_LENGTH = 8;
+    private const KNOWN_ROLES = ['admin', 'cashier'];
 
     public function __construct(private readonly Connection $connection)
     {
@@ -69,7 +70,7 @@ final class EmployeeController
             );
         }
 
-        $roleId = $this->roleIdByName($role);
+        $roleId = $this->roleIdByName($role) ?? $this->createKnownRole($role);
         if (!$roleId) {
             return new JsonResponse(['error' => "Rol '$role' no encontrado"], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
@@ -144,7 +145,7 @@ final class EmployeeController
         }
 
         if (isset($body['role'])) {
-            $roleId = $this->roleIdByName((string) $body['role']);
+            $roleId = $this->roleIdByName((string) $body['role']) ?? $this->createKnownRole((string) $body['role']);
             if (!$roleId) {
                 return new JsonResponse(['error' => 'Rol no encontrado'], Response::HTTP_UNPROCESSABLE_ENTITY);
             }
@@ -201,5 +202,22 @@ final class EmployeeController
     {
         $row = $this->connection->fetchAssociative('SELECT id FROM role WHERE name = ?', [$name]);
         return $row ? (int) $row['id'] : null;
+    }
+
+    /**
+     * The roles the employee form offers. Shops installed before
+     * Version00000041 only have `admin`, so `cashier` is created on first use.
+     */
+    private function createKnownRole(string $name): ?int
+    {
+        if (!\in_array($name, self::KNOWN_ROLES, true)) {
+            return null;
+        }
+        $this->connection->executeStatement(
+            'INSERT IGNORE INTO role (name, permissions) VALUES (?, JSON_OBJECT())',
+            [$name]
+        );
+
+        return $this->roleIdByName($name);
     }
 }
