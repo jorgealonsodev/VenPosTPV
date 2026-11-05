@@ -265,9 +265,18 @@ impl Panel {
                     }
                 });
             }
-            if ui.button("Reiniciar servicio").clicked() {
+            // Restart also starts a stopped service.
+            if ui.button("Iniciar / reiniciar servicio").clicked() {
                 self.run(ctx, Slot::General, |_| match desktop::restart_service() {
-                    Ok(()) => Notice::ok("Servicio reiniciado".to_owned()),
+                    Ok(()) => Notice::ok("Servicio en marcha".to_owned()),
+                    Err(msg) => Notice::warn(msg),
+                });
+            }
+            if ui.button("Detener servicio").clicked() {
+                self.run(ctx, Slot::General, |_| match desktop::stop_service() {
+                    Ok(()) => Notice::warn(
+                        "Servicio detenido: no se imprimirá hasta que lo inicies (o reinicies el equipo)".to_owned(),
+                    ),
                     Err(msg) => Notice::warn(msg),
                 });
             }
