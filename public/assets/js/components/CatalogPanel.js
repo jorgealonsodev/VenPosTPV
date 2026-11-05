@@ -10,6 +10,8 @@ const CatalogPanel = {
             combinationsProduct: null,
             showCombinationsModal: false,
             labelProduct: null,
+            catDrag: null,
+            catDragged: false,
         };
     },
     setup(props, { emit }) {
@@ -20,6 +22,14 @@ const CatalogPanel = {
         }
 
         return { stockTag };
+    },
+    watch: {
+        'catalog.activeCategory'() {
+            this.$nextTick(() => {
+                const active = this.$refs.catBar?.querySelector('[data-active]');
+                if (active) active.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+            });
+        },
     },
     methods: {
         async handleProductTap(p) {
@@ -52,6 +62,51 @@ const CatalogPanel = {
             this.labelProduct = product;
             this.showCombinationsModal = false;
             this.combinationsProduct = null;
+        },
+        // Category bar: drag with the mouse (touch scrolls natively), wheel and arrows.
+        onCatPointerDown(e) {
+            this.catDragged = false;
+            if (e.pointerType !== 'mouse' || e.button !== 0) return;
+            this.catDrag = { x: e.clientX, left: this.$refs.catBar.scrollLeft, id: e.pointerId };
+        },
+        onCatPointerMove(e) {
+            if (!this.catDrag) return;
+            const dx = e.clientX - this.catDrag.x;
+            if (!this.catDragged && Math.abs(dx) > 5) {
+                this.catDragged = true;
+                this.$refs.catBar.setPointerCapture(this.catDrag.id);
+                this.$refs.catBar.classList.add('dragging');
+            }
+            if (this.catDragged) this.$refs.catBar.scrollLeft = this.catDrag.left - dx;
+        },
+        onCatPointerUp() {
+            if (!this.catDrag) return;
+            this.catDrag = null;
+            this.$refs.catBar.classList.remove('dragging');
+        },
+        // A drag must not also select the category under the pointer when it ends.
+        onCatClickCapture(e) {
+            if (this.catDragged) {
+                e.stopPropagation();
+                e.preventDefault();
+                this.catDragged = false;
+            }
+        },
+        onCatWheel(e) {
+            const bar = this.$refs.catBar;
+            if (bar.scrollWidth <= bar.clientWidth || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+            e.preventDefault();
+            bar.scrollLeft += e.deltaY;
+        },
+        // The arrows move to the first category hidden on that side.
+        stepCategories(dir) {
+            const bar = this.$refs.catBar;
+            const tabs = [...bar.querySelectorAll('[data-cat]')];
+            const view = bar.getBoundingClientRect();
+            const target = dir > 0
+                ? tabs.find((t) => t.getBoundingClientRect().right > view.right + 1)
+                : [...tabs].reverse().find((t) => t.getBoundingClientRect().left < view.left - 1);
+            if (target) target.scrollIntoView({ behavior: 'smooth', inline: dir > 0 ? 'start' : 'end', block: 'nearest' });
         },
         // Near the end of the list, ask for the next 50 products.
         onProductsScroll(event) {
@@ -107,20 +162,26 @@ const CatalogPanel = {
                 </button>
             </div>
 
-            <!-- Category tabs -->
-            <div style="border-bottom:1px solid var(--border); padding:0 16px; display:flex; gap:4; overflow-x:auto; flex-shrink:0;">
-                <button
-                    @click="$emit('setCategory', null)"
-                    style="padding:10px 14px; background:transparent; border:none; cursor:pointer; font-family:inherit; font-size:13px; white-space:nowrap; transition:all .12s;"
-                    :style="{ fontWeight: catalog.activeCategory === null ? 600 : 400, color: catalog.activeCategory === null ? 'var(--text)' : 'var(--text3)', borderBottom: catalog.activeCategory === null ? '2px solid var(--green)' : '2px solid transparent' }">
-                    Todo
-                </button>
-                <button v-for="cat in catalog.categories" :key="cat.id"
-                    @click="$emit('setCategory', cat.id)"
-                    style="padding:10px 14px; background:transparent; border:none; cursor:pointer; font-family:inherit; font-size:13px; white-space:nowrap; transition:all .12s;"
-                    :style="{ fontWeight: catalog.activeCategory === cat.id ? 600 : 400, color: catalog.activeCategory === cat.id ? 'var(--text)' : 'var(--text3)', borderBottom: catalog.activeCategory === cat.id ? '2px solid var(--green)' : '2px solid transparent' }">
-                    {{ cat.name }}
-                </button>
+            <!-- Category tabs: scrollbar, mouse drag, wheel and arrows -->
+            <div style="display:flex; align-items:stretch; border-bottom:1px solid var(--border); flex-shrink:0;">
+                <button class="cat-arrow" @click="stepCategories(-1)" aria-label="Categorías anteriores">‹</button>
+                <div ref="catBar" class="cat-tabs"
+                    @pointerdown="onCatPointerDown" @pointermove="onCatPointerMove" @pointerup="onCatPointerUp" @pointercancel="onCatPointerUp"
+                    @click.capture="onCatClickCapture" @wheel="onCatWheel">
+                    <button data-cat
+                        @click="$emit('setCategory', null)"
+                        style="padding:10px 14px; background:transparent; border:none; cursor:pointer; font-family:inherit; font-size:13px; white-space:nowrap; transition:all .12s; flex-shrink:0;"
+                        :style="{ fontWeight: catalog.activeCategory === null ? 600 : 400, color: catalog.activeCategory === null ? 'var(--text)' : 'var(--text3)', borderBottom: catalog.activeCategory === null ? '2px solid var(--green)' : '2px solid transparent' }">
+                        Todo
+                    </button>
+                    <button v-for="cat in catalog.categories" :key="cat.id" data-cat :data-active="catalog.activeCategory === cat.id ? 1 : null"
+                        @click="$emit('setCategory', cat.id)"
+                        style="padding:10px 14px; background:transparent; border:none; cursor:pointer; font-family:inherit; font-size:13px; white-space:nowrap; transition:all .12s; flex-shrink:0;"
+                        :style="{ fontWeight: catalog.activeCategory === cat.id ? 600 : 400, color: catalog.activeCategory === cat.id ? 'var(--text)' : 'var(--text3)', borderBottom: catalog.activeCategory === cat.id ? '2px solid var(--green)' : '2px solid transparent' }">
+                        {{ cat.name }}
+                    </button>
+                </div>
+                <button class="cat-arrow" @click="stepCategories(1)" aria-label="Categorías siguientes">›</button>
             </div>
 
             <!-- Products -->

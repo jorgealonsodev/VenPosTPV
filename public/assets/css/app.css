@@ -712,3 +712,12 @@ html, body, #app {
 .label-qty { width: 72px; min-width: 72px; text-align: center; padding: 0 6px; font-family: 'IBM Plex Mono', monospace; font-weight: 600; }
 .label-previews { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-top: 14px; }
 .label-preview-img { display: block; width: 100%; height: auto; background: #fff; border: 1px solid var(--border2); border-radius: 6px; image-rendering: pixelated; }
+
+/* Category bar of the sale screen: visible scrollbar, mouse drag, arrows. */
+.cat-tabs { flex: 1; min-width: 0; display: flex; overflow-x: auto; overflow-y: hidden; cursor: grab; user-select: none; scrollbar-width: thin; scrollbar-color: var(--text3) transparent; touch-action: pan-x; }
+.cat-tabs.dragging { cursor: grabbing; }
+.cat-tabs.dragging button { pointer-events: none; }
+.cat-tabs::-webkit-scrollbar { height: 8px; }
+.cat-tabs::-webkit-scrollbar-thumb { background: var(--text3); border-radius: 4px; }
+.cat-arrow { flex-shrink: 0; width: 34px; border: none; background: var(--surface2); color: var(--text2); font-size: 20px; line-height: 1; cursor: pointer; font-family: inherit; }
+.cat-arrow:hover { background: var(--surface3); color: var(--text); }
