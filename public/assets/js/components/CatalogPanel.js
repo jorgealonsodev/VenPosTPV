@@ -31,6 +31,12 @@ const CatalogPanel = {
             });
         },
     },
+    mounted() {
+        document.addEventListener('keydown', this.onGlobalKey);
+    },
+    beforeUnmount() {
+        document.removeEventListener('keydown', this.onGlobalKey);
+    },
     methods: {
         async handleProductTap(p) {
             if (p.has_combinations) {
@@ -62,6 +68,21 @@ const CatalogPanel = {
             this.labelProduct = product;
             this.showCombinationsModal = false;
             this.combinationsProduct = null;
+        },
+        // On the sale screen, typing or scanning with no field focused goes to the
+        // search box, replacing the previous search. Not while a window covers it
+        // (payment, customer…) nor when another field has the focus.
+        onGlobalKey(e) {
+            if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1) return;
+            const active = document.activeElement;
+            if (active && (active.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName))) return;
+            const input = this.$refs.searchInput;
+            if (!input || input.offsetParent === null) return;
+            const box = input.getBoundingClientRect();
+            const top = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+            if (!top || !input.parentElement.contains(top)) return;
+            input.focus();
+            input.select();
         },
         // Mouse drag scrolls the category bar (x) and the product list (y), like a
         // finger does on a touch screen (touch scrolls natively). A drag never
@@ -152,7 +173,7 @@ const CatalogPanel = {
                     <span style="position:absolute; left:12px; top:50%; transform:translateY(-50%); color:var(--text3); pointer-events:none;">
                         <icon name="search" :size="16" />
                     </span>
-                    <input
+                    <input ref="searchInput"
                         :value="catalog.search"
                         @input="$emit('setSearch', $event.target.value)"
                         placeholder="Buscar por nombre, SKU, EAN…"
