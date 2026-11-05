@@ -90,6 +90,22 @@ function testListPersistsUntilPrintedAndEmptiesAfter() {
     assert.equal(load(storage).LabelList.state.lines.length, 0);
 }
 
+function testLinesKeepTheProductImage() {
+    const storage = new Map();
+    let { LabelList } = load(storage);
+    LabelList.add({ product_id: 7, id_product_attribute: 71, name: 'Camiseta', image: 'https://shop.example.com/img/p/7/7-home_default.jpg' });
+    LabelList.add({ product_id: 8, id_product_attribute: 0, name: 'Gorra' });
+    ({ LabelList } = load(storage));
+    assert.deepEqual(plain(LabelList.state.lines.map(l => l.image)), ['https://shop.example.com/img/p/7/7-home_default.jpg', '']);
+
+    // Every way into the list passes the catalog image: search, variant and scan.
+    const screen = fs.readFileSync(path.join(ROOT, 'LabelsScreen.js'), 'utf8');
+    assert.ok(screen.includes('image: product.image_url'), 'a product picked from the search');
+    assert.ok(screen.includes('image: product.image_url', screen.indexOf('function pickCombination')), 'a variant');
+    assert.ok(screen.includes('image: found.image_url'), 'a scanned code');
+    assert.ok(/<img v-if="line\.image"[^>]*:src="line\.image"/.test(screen), 'the row shows it');
+}
+
 function testListWorksWithoutStorage() {
     const { LabelList } = load(new Map(), { throwingStorage: true });
     LabelList.add({ product_id: 7, id_product_attribute: 71, name: 'Camiseta' }, 3);
@@ -137,6 +153,7 @@ testQuantityFromStock();
 testQuantitiesAreClamped();
 testListPersistsUntilPrintedAndEmptiesAfter();
 testListWorksWithoutStorage();
+testLinesKeepTheProductImage();
 testStatusMessages();
 testPendingPrompt();
 testScreensAreWired();

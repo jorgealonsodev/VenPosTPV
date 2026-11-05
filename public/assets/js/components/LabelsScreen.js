@@ -45,6 +45,7 @@ const LabelList = (function () {
                 id_product_attribute: entry.id_product_attribute || 0,
                 name: entry.name || '',
                 combination: entry.combination || '',
+                image: typeof entry.image === 'string' ? entry.image : '',
                 stock: Number(entry.stock) || 0,
                 quantity: LabelPrintLogic.clampQuantity(quantity),
             });
@@ -117,7 +118,7 @@ const LabelsScreen = {
             busy.value = true;
             try {
                 const found = await ApiClient.labelLookup(text);
-                added(found);
+                added({ ...found, image: found.image_url || '' });
                 notify('Añadido: ' + found.name + (found.combination ? ' · ' + found.combination : ''), 'var(--green)');
             } catch (err) {
                 await search(text);
@@ -138,7 +139,7 @@ const LabelsScreen = {
 
         async function pick(product) {
             if (!product.has_combinations) {
-                added({ product_id: product.id, id_product_attribute: 0, name: product.name, stock: product.stock });
+                added({ product_id: product.id, id_product_attribute: 0, name: product.name, stock: product.stock, image: product.image_url || '' });
                 return;
             }
             try {
@@ -151,7 +152,7 @@ const LabelsScreen = {
 
         function pickCombination(combo) {
             const product = choosing.value;
-            added({ product_id: product.id, id_product_attribute: combo.id, name: product.name, combination: LabelPrintLogic.combinationText(combo.attributes), stock: combo.stock });
+            added({ product_id: product.id, id_product_attribute: combo.id, name: product.name, combination: LabelPrintLogic.combinationText(combo.attributes), stock: combo.stock, image: product.image_url || '' });
         }
 
         function step(line, delta) { LabelList.setQuantity(line.key, line.quantity + delta); previews.value = []; }
@@ -254,6 +255,9 @@ const LabelsScreen = {
                     </div>
 
                     <div v-for="line in list.lines" :key="line.key" class="label-row">
+                        <div class="label-row-img">
+                            <img v-if="line.image" :src="line.image" :alt="line.name" loading="lazy" @error="$event.target.remove()" />
+                        </div>
                         <div style="flex:1; min-width:0;">
                             <div style="font-size:15px; font-weight:600; color:var(--text);">{{ line.name }}</div>
                             <div v-if="line.combination" style="font-size:13px; color:var(--text2);">{{ line.combination }}</div>

@@ -68,7 +68,7 @@ final class LabelControllerTest extends TestCase
         $agents->method('statusOf')->willReturn(['paired' => true, 'connected' => $connected]);
         $catalog = $this->createMock(LabelCatalog::class);
         $catalog->method('findByCode')->willReturnCallback(static fn (string $code): ?array => $code === '8412345678905' ? ['product_id' => 7, 'id_product_attribute' => 71] : null);
-        $catalog->method('productData')->willReturn(['id' => 7, 'name' => 'Camiseta', 'stock' => 0, 'combinations' => [
+        $catalog->method('productData')->willReturn(['id' => 7, 'name' => 'Camiseta', 'stock' => 0, 'image_url' => 'https://shop.example.com/img/p/7/7-home_default.jpg', 'combinations' => [
             ['id' => 71, 'stock' => 4, 'attributes' => [['group_name' => 'Talla', 'attribute_name' => 'M'], ['group_name' => 'Color', 'attribute_name' => 'Azul']]],
         ]]);
         $conn = $this->createMock(Connection::class);
@@ -171,7 +171,7 @@ final class LabelControllerTest extends TestCase
     public function testAScannedCodeFindsTheCombinationWithItsStock(): void
     {
         $found = self::body($this->controller()->lookup(SessionRequest::create(['code' => '8412345678905'], self::CASHIER)));
-        self::assertSame(['product_id' => 7, 'id_product_attribute' => 71, 'name' => 'Camiseta', 'combination' => 'M · Azul', 'stock' => 4], $found);
+        self::assertSame(['product_id' => 7, 'id_product_attribute' => 71, 'name' => 'Camiseta', 'combination' => 'M · Azul', 'stock' => 4, 'image_url' => 'https://shop.example.com/img/p/7/7-home_default.jpg'], $found);
 
         self::assertSame(404, $this->controller()->lookup(SessionRequest::create(['code' => '000'], self::CASHIER))->getStatusCode());
     }

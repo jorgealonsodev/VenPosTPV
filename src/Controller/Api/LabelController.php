@@ -120,7 +120,7 @@ final class LabelController
         return self::noStore(new JsonResponse($result, $result['print_status'] === 'failed' ? Response::HTTP_BAD_GATEWAY : Response::HTTP_CREATED));
     }
 
-    /** ?code= → {product_id, id_product_attribute, name, combination, stock} (Etiquetas: scanning) */
+    /** ?code= → {product_id, id_product_attribute, name, combination, stock, image_url} (Etiquetas: scanning) */
     #[Route('/labels/lookup', methods: ['GET'])]
     public function lookup(Request $request): JsonResponse
     {
@@ -143,7 +143,12 @@ final class LabelController
             }
         }
 
-        return self::noStore(new JsonResponse($found + ['name' => (string) $product['name'], 'combination' => $combination, 'stock' => $stock]));
+        return self::noStore(new JsonResponse($found + [
+            'name' => (string) $product['name'],
+            'combination' => $combination,
+            'stock' => $stock,
+            'image_url' => isset($product['image_url']) && \is_string($product['image_url']) && $product['image_url'] !== '' ? $product['image_url'] : null,
+        ]));
     }
 
     /** ?terminal_id → {jobs, labels, connected, ask, message} (L9) */

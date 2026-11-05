@@ -709,6 +709,9 @@ html, body, #app {
     padding: 10px 12px; border-radius: 12px;
     border: 1px solid var(--border); background: var(--surface);
 }
+/* Product photo of each line; an empty tile when it has none or it does not load. */
+.label-row-img { width: 52px; height: 52px; flex-shrink: 0; border-radius: 8px; overflow: hidden; background: var(--surface2); border: 1px solid var(--border); }
+.label-row-img img { display: block; width: 100%; height: 100%; object-fit: contain; background: #fff; }
 .label-qty { width: 72px; min-width: 72px; text-align: center; padding: 0 6px; font-family: 'IBM Plex Mono', monospace; font-weight: 600; }
 .label-previews { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-top: 14px; }
 .label-preview-img { display: block; width: 100%; height: auto; background: #fff; border: 1px solid var(--border2); border-radius: 6px; image-rendering: pixelated; }
