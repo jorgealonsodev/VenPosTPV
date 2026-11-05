@@ -44,12 +44,58 @@ const OrderDetailView = {
             }
         }
 
+        // PDF button: a window to download the ticket or send it by email.
+        const pdfChoice = Vue.ref(false);
+        const pdfEmailEnabled = Vue.ref(false);
+        const pdfEmail = Vue.ref('');
+        const pdfEmailStatus = Vue.ref('');
+        const pdfEmailSending = Vue.ref(false);
+
+        async function openPdfChoice() {
+            pdfEmail.value = '';
+            pdfEmailStatus.value = '';
+            pdfEmailEnabled.value = false;
+            pdfChoice.value = true;
+            // Only a TPV sale (local order_id) can be emailed, and only with a mail account.
+            if (!(props.order && props.order.order_id)) return;
+            try {
+                const r = await ApiClient.get('/api/ticket/email-enabled');
+                pdfEmailEnabled.value = !!(r && r.data && r.data.enabled);
+            } catch (e) {
+                pdfEmailEnabled.value = false;
+            }
+        }
+
+        function downloadPdf() {
+            pdf();
+            pdfChoice.value = false;
+        }
+
+        async function sendPdfEmail() {
+            const order = props.order || {};
+            const email = String(pdfEmail.value || '').trim();
+            if (!order.order_id || !email || pdfEmailSending.value) return;
+            pdfEmailSending.value = true;
+            pdfEmailStatus.value = '';
+            try {
+                await ApiClient.post('/api/ticket/sale/' + order.order_id + '/email', { email });
+                pdfEmailStatus.value = 'Ticket enviado a ' + email;
+            } catch (e) {
+                const match = /^HTTP \d+: ([\s\S]*)$/.exec((e && e.message) || '');
+                let text = 'No se pudo enviar el ticket';
+                if (match) { try { text = JSON.parse(match[1]).error || text; } catch (err) { /* keep default */ } }
+                pdfEmailStatus.value = text;
+            } finally {
+                pdfEmailSending.value = false;
+            }
+        }
+
         const totalQty = Vue.computed(() => {
             if (!props.order || !props.order.lines) return 0;
             return props.order.lines.reduce((sum, line) => sum + (line.qty || line.quantity || 1), 0);
         });
 
-        return { totalQty, title, canPrint, reprint, pdf };
+        return { totalQty, title, canPrint, reprint, pdf, pdfChoice, pdfEmailEnabled, pdfEmail, pdfEmailStatus, pdfEmailSending, openPdfChoice, downloadPdf, sendPdfEmail };
     },
     template: `
         <div style="display:flex; flex-direction:column; height:100%; overflow:hidden;">
@@ -108,7 +154,29 @@ const OrderDetailView = {
                 </div>
                 <div v-if="canPrint" style="display:flex; gap:8px; margin-top:8px;">
                     <button class="tpv-btn" style="flex:1;" @click="reprint"><icon name="receipt" :size="16" /> Reimprimir</button>
-                    <button class="tpv-btn" style="flex:1;" @click="pdf"><icon name="receipt" :size="16" /> PDF</button>
+                    <button class="tpv-btn" style="flex:1;" @click="openPdfChoice"><icon name="receipt" :size="16" /> PDF</button>
+                </div>
+            </div>
+
+            <!-- PDF: download or send by email -->
+            <div v-if="pdfChoice" class="combinations-modal-backdrop" @click.self="pdfChoice = false">
+                <div class="combinations-modal" role="dialog" aria-label="Ticket en PDF" style="max-width:420px;">
+                    <div class="combinations-modal-header">
+                        <h3 style="margin:0; font-size:16px; color:var(--text); font-weight:600;">Ticket {{ title }}</h3>
+                        <button @click="pdfChoice = false" aria-label="Cerrar" style="margin-left:auto; background:none; border:none; color:var(--text); font-size:20px; cursor:pointer; line-height:1; padding:4px 8px;">✕</button>
+                    </div>
+                    <div style="display:flex; flex-direction:column; gap:12px; padding:4px 0 8px;">
+                        <button class="tpv-btn" style="min-height:48px;" @click="downloadPdf"><icon name="receipt" :size="16" /> Descargar PDF</button>
+                        <template v-if="pdfEmailEnabled">
+                            <div style="font-size:13px; color:var(--text2);">O enviarlo por email:</div>
+                            <div style="display:flex; gap:8px;">
+                                <input v-model="pdfEmail" type="email" inputmode="email" placeholder="email del cliente" aria-label="Email del cliente" class="tpv-input" style="flex:1; min-width:0;" @keydown.enter.prevent="sendPdfEmail" />
+                                <button class="tpv-btn" :disabled="pdfEmailSending || !pdfEmail" @click="sendPdfEmail">{{ pdfEmailSending ? 'Enviando…' : 'Enviar' }}</button>
+                            </div>
+                            <div v-if="pdfEmailStatus" style="font-size:13px; color:var(--text2);">{{ pdfEmailStatus }}</div>
+                        </template>
+                        <div v-else style="font-size:12px; color:var(--text3);">{{ order && order.order_id ? 'Para enviarlo por email, configura la cuenta de correo en Ajustes → Email.' : 'Los pedidos online solo se pueden descargar.' }}</div>
+                    </div>
                 </div>
             </div>
         </div>
