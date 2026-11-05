@@ -263,6 +263,20 @@ pub fn pair_notice(result: io::Result<Response>) -> Notice {
 }
 
 /// Log path reported by the service, else the default one.
+/// Why the log at `path` cannot be opened, from trying to read it; None when it can.
+/// The service writes it as the venpos-agent user, readable by that group only.
+pub fn log_open_problem(path: &str, readable: io::Result<()>) -> Option<String> {
+    match readable {
+        Ok(()) => None,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Some(format!("Todavía no hay registro en {path}")),
+        Err(e) if e.kind() == io::ErrorKind::PermissionDenied => Some(format!(
+            "No tienes permiso para leer {path}. Añade tu usuario al grupo venpos-agent con: \
+             sudo usermod -aG venpos-agent $USER (y vuelve a iniciar sesión)."
+        )),
+        Err(e) => Some(format!("No se pudo leer {path}: {e}")),
+    }
+}
+
 pub fn log_target(result: io::Result<Response>, default: &std::path::Path) -> String {
     result
         .ok()
@@ -619,5 +633,18 @@ mod tests {
             ),
             "/tmp/x.log"
         );
+    }
+
+    #[test]
+    fn an_unreadable_log_says_how_to_get_access() {
+        let denied = io::Error::from(io::ErrorKind::PermissionDenied);
+        let text = log_open_problem("/var/log/venpos-agent/agent.log", Err(denied)).unwrap();
+        assert!(text.contains("sudo usermod -aG venpos-agent $USER"), "{text}");
+        assert!(text.contains("vuelve a iniciar sesión"), "{text}");
+        assert_eq!(
+            log_open_problem("/x.log", Err(io::Error::from(io::ErrorKind::NotFound))).as_deref(),
+            Some("Todavía no hay registro en /x.log")
+        );
+        assert_eq!(log_open_problem("/x.log", Ok(())), None);
     }
 }

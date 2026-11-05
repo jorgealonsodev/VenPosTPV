@@ -25,6 +25,7 @@ RuntimeDirectory=venpos-agent
 RuntimeDirectoryMode=0750
 StateDirectory=venpos-agent
 LogsDirectory=venpos-agent
+LogsDirectoryMode=0750
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

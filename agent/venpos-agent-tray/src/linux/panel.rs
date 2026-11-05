@@ -255,7 +255,10 @@ impl Panel {
                 let default = self.log_default.clone();
                 self.run(ctx, Slot::General, move |n| {
                     let path = client::log_path(n, &default);
-                    if desktop::open(&path) {
+                    let readable = std::fs::File::open(&path).map(|_| ());
+                    if let Some(problem) = logic::log_open_problem(&path, readable) {
+                        Notice::warn(problem)
+                    } else if desktop::open(&path) {
                         Notice::ok(format!("Registro: {path}"))
                     } else {
                         Notice::warn(format!("No se pudo abrir {path}"))
