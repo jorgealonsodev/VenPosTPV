@@ -242,7 +242,10 @@ const LabelsScreen = {
                     </div>
                     <div v-else-if="results.length" style="display:flex; flex-direction:column; gap:8px;">
                         <button v-for="p in results" :key="p.id" class="tpv-row" @click="pick(p)">
-                            <span style="flex:1; min-width:0;">
+                            <span class="label-row-img">
+                                <img v-if="p.image_url" :src="p.image_url" :alt="p.name" loading="lazy" @error="$event.target.remove()" />
+                            </span>
+                            <span style="flex:1; min-width:0; text-align:left;">
                                 <span style="display:block; font-weight:600; color:var(--text);">{{ p.name }}</span>
                                 <span v-if="p.reference" style="display:block; font-size:13px; color:var(--text2); font-family:'IBM Plex Mono';">{{ p.reference }}</span>
                             </span>

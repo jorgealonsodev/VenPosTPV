@@ -104,6 +104,7 @@ function testLinesKeepTheProductImage() {
     assert.ok(screen.includes('image: product.image_url', screen.indexOf('function pickCombination')), 'a variant');
     assert.ok(screen.includes('image: found.image_url'), 'a scanned code');
     assert.ok(/<img v-if="line\.image"[^>]*:src="line\.image"/.test(screen), 'the row shows it');
+    assert.ok(/<button v-for="p in results"[\s\S]*?<img v-if="p\.image_url"[^>]*:src="p\.image_url"[\s\S]*?<\/button>/.test(screen), 'each search result shows it too');
 }
 
 function testListWorksWithoutStorage() {
