@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace VenPosTPV\Tests\Unit\Service\Print;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Twig\Environment;
 use Twig\Loader\FilesystemLoader;
@@ -24,7 +25,7 @@ final class TicketPdfWidthTest extends TestCase
         yield 'a width wider than the paper' => [576];
     }
 
-    /** @dataProvider widths */
+    #[DataProvider('widths')]
     public function testEveryWordFitsInsideThePaper(?int $widthPx): void
     {
         $words = $this->words($this->ticket(widthPx: $widthPx));
@@ -40,7 +41,7 @@ final class TicketPdfWidthTest extends TestCase
         yield '10 mm on the right only' => [0.0, 10.0];
     }
 
-    /** @dataProvider margins */
+    #[DataProvider('margins')]
     public function testWithTheTillMarginsEveryWordStillFitsInsideThePaper(float $left, float $right): void
     {
         $words = $this->words($this->ticket(left: $left, right: $right));

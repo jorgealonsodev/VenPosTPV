@@ -46,7 +46,11 @@ final class NumberingController
         if (!$this->isAdmin($request)) {
             return $this->denied();
         }
-        $exists = $this->connection->fetchOne('SELECT 1 FROM terminal WHERE id = ?', [$terminalId]);
+        // Only the active tills of this session's shop, the ones the overview lists.
+        $exists = $this->connection->fetchOne(
+            'SELECT 1 FROM terminal WHERE id = ? AND active = 1 AND ps_shop_id = ?',
+            [$terminalId, $this->shopId($request)]
+        );
         if ($exists === false) {
             return new JsonResponse(['error' => 'Caja no encontrada'], Response::HTTP_NOT_FOUND);
         }

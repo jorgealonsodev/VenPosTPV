@@ -218,6 +218,15 @@ final class NumberingControllerMySqlIntegrationTest extends TestCase
         self::assertSame('La caja no tiene letra de ticket: asígnala en Ajustes', $this->json($response)['error']);
     }
 
+    public function testATillOfAnotherShopOrAnInactiveTillCannotBeChanged(): void
+    {
+        $this->connection?->update('terminal', ['ps_shop_id' => self::SHOP + 1], ['id' => self::TILL_K]);
+        self::assertSame(Response::HTTP_NOT_FOUND, $this->setTicket(self::TILL_K, ['next_number' => 5, 'reason' => 'Restauración'])->getStatusCode());
+
+        $this->connection?->update('terminal', ['active' => 0], ['id' => self::TILL_M]);
+        self::assertSame(Response::HTTP_NOT_FOUND, $this->setTicket(self::TILL_M, ['next_number' => 5, 'reason' => 'Restauración'])->getStatusCode());
+    }
+
     /** S3 + S4: the credit-note series follows the same rules. */
     public function testTheCreditNoteSeriesMovesForwardOnly(): void
     {

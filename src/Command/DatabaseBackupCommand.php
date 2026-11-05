@@ -83,13 +83,16 @@ final class DatabaseBackupCommand extends Command
         }
         $output->writeln(sprintf('Backup %s: %s, %d tables', $result->fileName(), self::size($result->bytes), $result->tables));
         if ($result->retentionError !== null) {
+            // The copy is fine, but old copies pile up until someone fixes it: alert
+            // and fail the run so Plesk notifies it as well.
             $output->writeln(sprintf('<error>Old backups were not removed: %s</error>', $result->retentionError));
+            $this->alert($output, 'VenPosTPV: no se pudieron borrar copias antiguas', $startedAt, $result, [$result->retentionError]);
         }
         if (!$health->ok()) {
             $this->alert($output, 'VenPosTPV: revisar copia de seguridad', $startedAt, $result, $health->problems);
         }
 
-        return $health->ok() ? Command::SUCCESS : Command::FAILURE;
+        return $health->ok() && $result->retentionError === null ? Command::SUCCESS : Command::FAILURE;
     }
 
     /** @param list<string> $problems */

@@ -110,6 +110,26 @@ final class DatabaseBackupCommandTest extends TestCase
         $this->assertSame("Backup failed: Cannot write the backup file (is the disk full?).\n", $tester->getDisplay());
     }
 
+    public function testOldBackupsThatCannotBeRemovedAlertAndExitWithOne(): void
+    {
+        $backup = $this->createMock(DatabaseBackup::class);
+        $backup->method('run')->willReturn(new BackupResult('/b/venpostpv-20261105-040000.sql.gz', 2048, 42, new HealthReport(42, null, []), 'Cannot delete venpostpv-20261029-040000.sql.gz'));
+        $alerts = $this->createMock(BackupAlertMailer::class);
+        $alerts->expects($this->once())->method('send')->with(
+            'VenPosTPV: no se pudieron borrar copias antiguas',
+            $this->callback(function (string $body): bool {
+                $this->assertStringContainsString('venpostpv-20261105-040000.sql.gz', $body);
+                $this->assertStringContainsString('- Cannot delete venpostpv-20261029-040000.sql.gz', $body);
+
+                return true;
+            })
+        )->willReturn(true);
+        $tester = new CommandTester(new DatabaseBackupCommand($backup, $alerts));
+
+        $this->assertSame(1, $tester->execute([]), 'Plesk «Solo errores» notifies it too');
+        $this->assertStringContainsString('Old backups were not removed: Cannot delete venpostpv-20261029-040000.sql.gz', $tester->getDisplay());
+    }
+
     public function testABackupMarkedForReviewSendsTheReviewAlert(): void
     {
         $backup = $this->createMock(DatabaseBackup::class);
