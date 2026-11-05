@@ -408,7 +408,10 @@ const PaymentModal = {
                 return;
             }
             if (k.startsWith('preset:')) {
-                target.value = k.split(':')[1];
+                // Banknote buttons add up: 20 + 20 + 10 = 50 handed over.
+                const current = Number(String(target.value || '0').replace(',', '.')) || 0;
+                const sum = Math.round((current + Number(k.split(':')[1])) * 100) / 100;
+                target.value = Number.isInteger(sum) ? String(sum) : sum.toFixed(2).replace('.', ',');
                 return;
             }
             target.value = String(target.value) + k;
