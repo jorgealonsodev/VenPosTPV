@@ -18,7 +18,9 @@ use VenPosTPV\Service\Customer\CustomerDirectory;
 use VenPosTPV\Service\Print\PrinterService;
 use VenPosTPV\Service\Print\TicketDataResolver;
 use VenPosTPV\Service\Fiscal\FiscalRecorder;
+use VenPosTPV\Service\Sale\Prorate;
 use VenPosTPV\Service\Sale\SaleLineWriter;
+use VenPosTPV\Service\Sale\VatRate;
 use VenPosTPV\Service\Sale\TicketNumberer;
 use VenPosTPV\Service\Sync\Outbox;
 use VenPosTPV\Service\Sync\OutboxSyncTrigger;
@@ -48,9 +50,6 @@ class CheckoutService
 {
     private const PRICE_TOLERANCE = 0.02;
     private const TOTAL_TOLERANCE = 0.02;
-
-    /** Used only when the sync could not resolve a tax-excluded price for any line. */
-    private const ASSUMED_TAX_RATE = 0.21;
 
     public function __construct(
         private readonly CartService $cart,
@@ -954,7 +953,7 @@ class CheckoutService
 
             // What the customer actually paid per line: line discounts, then the cart
             // discount or coupon spread proportionally. Refunds return exactly this.
-            foreach ($this->prorate($netTotals, $total) as $index => $paid) {
+            foreach (Prorate::shares($netTotals, $total) as $index => $paid) {
                 $breakdownLines[$index]['paid_total'] = $paid;
             }
 
@@ -963,9 +962,21 @@ class CheckoutService
                 $subtotal += $bl['line_total'];
             }
 
-            // The VAT already counts each line discount, so only the ticket discount or
-            // coupon scales it: against the amount after line discounts, not $subtotal.
-            $tax = $this->resolveVatAmount($lines, array_sum($netTotals), $total);
+            // One sale_line per ticket line with its VAT (reports, full invoice). The
+            // sale VAT is the ticket's VAT box: what was paid at each rate, rounded once
+            // per rate (factura-completa.md, F5), so ticket, fiscal record and invoice agree.
+            $saleLines = [];
+            $paidByRate = [];
+            foreach ($breakdownLines as $index => $breakdownLine) {
+                $saleLines[] = $breakdownLine + [
+                    'price_net' => $lines[$index]['price_net'] ?? null,
+                    'discount' => max(0.0, min(100.0, (float) ($lines[$index]['discount'] ?? 0))),
+                ];
+                $rate = VatRate::fromPrices((float) $breakdownLine['price'], isset($lines[$index]['price_net']) && is_numeric($lines[$index]['price_net']) ? (float) $lines[$index]['price_net'] : null)['rate'];
+                $key = number_format($rate, 2, '.', '');
+                $paidByRate[$key] = ($paidByRate[$key] ?? 0.0) + (float) $breakdownLine['paid_total'];
+            }
+            $tax = round(array_sum(array_column(VatRate::summary($paidByRate), 'vat')), 2);
             $issuedAt = new \DateTimeImmutable();
 
             $this->conn->insert('order_meta', [
@@ -999,14 +1010,6 @@ class CheckoutService
             ] + ($requestId !== null ? ['request_id' => $requestId] : []));
             $orderId = (int) $this->conn->lastInsertId();
 
-            // One sale_line per ticket line with its VAT (reports, full invoice).
-            $saleLines = [];
-            foreach ($breakdownLines as $index => $breakdownLine) {
-                $saleLines[] = $breakdownLine + [
-                    'price_net' => $lines[$index]['price_net'] ?? null,
-                    'discount' => max(0.0, min(100.0, (float) ($lines[$index]['discount'] ?? 0))),
-                ];
-            }
             ($this->saleLineWriter ?? new SaleLineWriter($this->conn))->write(
                 $orderId,
                 $issuedAt,
@@ -1024,48 +1027,6 @@ class CheckoutService
         } catch (\Throwable $e) {
             throw CheckoutException::orderMetaFailed($psOrderId ?? 0, $reference, $e);
         }
-    }
-
-    /**
-     * Sums the VAT each line actually carries, `price - price_net`, and scales it by
-     * the discount applied to the whole sale, because VAT is owed on the amount the
-     * customer pays.
-     *
-     * The previous formula, `total - subtotal`, is meaningless now that both values
-     * are tax included: it returned zero or a negative number.
-     *
-     * When the sync could not resolve a net price for any line, it falls back to the
-     * standard rate the point of sale has always assumed, and never to a negative
-     * amount.
-     *
-     * @param array<int, array<string, mixed>> $lines
-     */
-    private function resolveVatAmount(array $lines, float $afterLineDiscounts, float $total): float
-    {
-        $vatSum = 0.0;
-        $linesWithNet = 0;
-
-        foreach ($lines as $line) {
-            if (!isset($line['price_net']) || !is_numeric($line['price_net'])) {
-                continue;
-            }
-
-            $qty = (int) ($line['qty'] ?? $line['quantity'] ?? 1);
-            $price = (float) ($line['price'] ?? 0);
-            $net = (float) $line['price_net'];
-            $lineDiscount = max(0.0, min(100.0, (float) ($line['discount'] ?? 0)));
-
-            $vatSum += ($price - $net) * $qty * (1 - $lineDiscount / 100);
-            ++$linesWithNet;
-        }
-
-        if ($linesWithNet === 0) {
-            return round($total * self::ASSUMED_TAX_RATE / (1 + self::ASSUMED_TAX_RATE), 2);
-        }
-
-        $discountFactor = $afterLineDiscounts > 0 ? $total / $afterLineDiscounts : 1.0;
-
-        return round(max(0.0, $vatSum * $discountFactor), 2);
     }
 
     /**
@@ -1102,40 +1063,6 @@ class CheckoutService
         } catch (\Throwable $e) {
             throw CheckoutException::stockUpdateFailed(0, $e);
         }
-    }
-
-    /**
-     * Splits $total across lines in proportion to their weights, in cents, so the
-     * shares always add up to $total exactly. The heaviest line absorbs rounding,
-     * so a free line (weight 0) can never end up with a negative share.
-     *
-     * @param array<int, float> $weights
-     *
-     * @return array<int, float>
-     */
-    private function prorate(array $weights, float $total): array
-    {
-        $sum = array_sum($weights);
-        $totalCents = (int) round($total * 100);
-        $shares = [];
-        $assigned = 0;
-        $heaviest = $weights === [] ? null : array_keys($weights, max($weights))[0];
-
-        foreach ($weights as $index => $weight) {
-            $cents = $sum > 0 ? (int) round($totalCents * $weight / $sum) : 0;
-            $shares[$index] = $cents;
-            $assigned += $cents;
-        }
-
-        if ($heaviest !== null) {
-            $shares[$heaviest] += $totalCents - $assigned;
-        }
-
-        foreach ($shares as $index => $cents) {
-            $shares[$index] = $cents / 100;
-        }
-
-        return $shares;
     }
 
     /**

@@ -173,7 +173,17 @@ class EscPosTicketBuilder
             // Totals
             $printer->setJustification(Printer::JUSTIFY_RIGHT);
             $printer->text('Subtotal: ' . number_format($ticketData->subtotal, 2) . " €\n");
-            $printer->text('IVA: ' . number_format($ticketData->tax, 2) . " €\n");
+            if ($ticketData->vatBreakdown === []) {
+                $printer->text('IVA: ' . number_format($ticketData->tax, 2) . " €\n");
+            }
+            foreach ($ticketData->vatBreakdown as $vat) {
+                $printer->text(sprintf(
+                    "IVA %s: %s € (base %s €)\n",
+                    TicketData::formatRate($vat['rate']),
+                    number_format($vat['vat'], 2),
+                    number_format($vat['base'], 2)
+                ));
+            }
             $printer->selectPrintMode(Printer::MODE_DOUBLE_HEIGHT | Printer::MODE_DOUBLE_WIDTH | Printer::MODE_EMPHASIZED);
             $printer->text('TOTAL: ' . number_format($ticketData->total, 2) . " €\n");
             $printer->selectPrintMode();

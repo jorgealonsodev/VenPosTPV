@@ -110,7 +110,10 @@
         {% endif %}{% if ticket.creditNote.voucherCode %}<div class="bold">Vale: {{ ticket.creditNote.voucherCode }}  {{ ticket.creditNote.voucherAmount|number_format(2, ',', '.') }} €</div>{% endif %}
     {% elseif not giftMode %}
         <div class="right">Subtotal: {{ ticket.subtotal|number_format(2, ',', '.') }} €</div>
-        <div class="right">IVA: {{ ticket.tax|number_format(2, ',', '.') }} €</div>
+        {% for vat in ticket.vatBreakdown %}<div class="right">IVA {{ ticket.formatRate(vat.rate) }}: {{ vat.vat|number_format(2, ',', '.') }} € (base {{ vat.base|number_format(2, ',', '.') }} €)</div>{# one line per VAT rate, art. 7.1.f RD 1619/2012 #}{% if not loop.last %}
+
+        {% endif %}{% else %}<div class="right">IVA: {{ ticket.tax|number_format(2, ',', '.') }} €</div>{% endfor %}
+
         <div class="right bold large">TOTAL: {{ ticket.total|number_format(2, ',', '.') }} €</div>
 
         <div class="line"></div>

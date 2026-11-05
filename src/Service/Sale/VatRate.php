@@ -32,6 +32,11 @@ final class VatRate
             return ['rate' => self::ASSUMED, 'approximate' => true];
         }
 
+        // Same gross and net price: no VAT, even for items so cheap that 4 % rounds away.
+        if (abs($gross - $net) < 0.005) {
+            return ['rate' => 0.0, 'approximate' => false];
+        }
+
         $best = null;
         $bestDiff = INF;
         foreach (self::KNOWN as $rate) {
@@ -48,6 +53,27 @@ final class VatRate
         $computed = round(($gross / $net - 1) * 100, 2);
 
         return ['rate' => max(0.0, min(99.99, $computed)), 'approximate' => true];
+    }
+
+    /**
+     * The VAT box of a ticket or invoice: one row per rate, rounded per rate and not
+     * per line (factura-completa.md, F5), highest rate first. Each row's base + VAT is
+     * exactly what was paid at that rate.
+     *
+     * @param array<int|string, float> $paidByRate amount paid with VAT, keyed by rate
+     *
+     * @return list<array{rate: float, base: float, vat: float}>
+     */
+    public static function summary(array $paidByRate): array
+    {
+        $rows = [];
+        foreach ($paidByRate as $rate => $paid) {
+            $split = self::split(round((float) $paid, 2), (float) $rate);
+            $rows[] = ['rate' => (float) $rate, 'base' => $split['base'], 'vat' => $split['vat']];
+        }
+        usort($rows, static fn (array $a, array $b): int => $b['rate'] <=> $a['rate']);
+
+        return $rows;
     }
 
     /**

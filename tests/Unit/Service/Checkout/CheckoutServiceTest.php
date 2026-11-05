@@ -1218,7 +1218,7 @@ final class CheckoutServiceTest extends TestCase
         $this->assertEquals(9.45, $breakdown['tax']);
     }
 
-    public function testOrderMetaRecordsTheExactVatOfEachLine(): void
+    public function testOrderMetaRecordsTheVatOfTheRateOfEachLineRoundedPerRate(): void
     {
         $conn = $this->catalogConnection([
             '1' => ['price' => 23.90, 'price_ttc' => 23.14, 'price_net' => 19.12],
@@ -1249,9 +1249,10 @@ final class CheckoutServiceTest extends TestCase
         $breakdown = json_decode($inserted['order_meta']['payment_breakdown'], true);
 
         $this->assertSame(46.28, $breakdown['subtotal']);
-        // 2 units x (23.14 tax included - 19.12 tax excluded) = 8.04 of VAT, taken
-        // from the shop prices instead of an assumed rate.
-        $this->assertSame(8.04, $breakdown['tax']);
+        // 23.14 / 19.12 is the 21 % rate of the shop prices; the VAT is the ticket's VAT
+        // box, rounded once per rate: 46.28 = 38.25 base + 8.03 VAT (factura-completa F5),
+        // not 2 x (23.14 - 19.12) = 8.04, which would not add up with the base.
+        $this->assertSame(8.03, $breakdown['tax']);
     }
 
     private function catalogConnection(array $catalogPrices, int $stock = 10): Connection

@@ -17,6 +17,8 @@ final class VatRateTest extends TestCase
         yield '10 %' => [11.00, 10.00, 10.0];
         yield '4 %' => [5.20, 5.00, 4.0];
         yield '0 %' => [8.00, 8.00, 0.0];
+        // 0,10 × 1,04 still rounds to 0,10: equal prices mean no VAT, not 4 %.
+        yield 'cheap exempt item' => [0.10, 0.10, 0.0];
         // 0.83 × 1.21 = 1.0043: the net price kept with two decimals still matches.
         yield 'cheap item at 21 %' => [1.00, 0.83, 21.0];
     }
@@ -46,5 +48,16 @@ final class VatRateTest extends TestCase
         $this->assertSame(['base' => 8.26, 'vat' => 1.74], VatRate::split(10.00, 21.0));
         $this->assertSame(['base' => 8.00, 'vat' => 0.0], VatRate::split(8.00, 0.0));
         $this->assertSame(['base' => 0.0, 'vat' => 0.0], VatRate::split(0.0, 21.0));
+    }
+
+    public function testTheSummaryRoundsPerRateHighestFirst(): void
+    {
+        // The sales report adds the line bases (41,32 + 8,26 + 29,75 + 8,26 = 87,59);
+        // a ticket or invoice rounds once per rate.
+        $this->assertSame([
+            ['rate' => 21.0, 'base' => 87.6, 'vat' => 18.4],
+            ['rate' => 10.0, 'base' => 10.0, 'vat' => 1.0],
+        ], VatRate::summary(['10.00' => 11.00, '21.00' => 106.00]));
+        $this->assertSame([], VatRate::summary([]));
     }
 }

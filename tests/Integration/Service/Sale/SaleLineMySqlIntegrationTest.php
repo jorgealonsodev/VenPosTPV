@@ -16,6 +16,8 @@ use VenPosTPV\Service\Checkout\CheckoutService;
 use VenPosTPV\Service\Checkout\Exception\CheckoutException;
 use VenPosTPV\Service\Checkout\PsOrderClient;
 use VenPosTPV\Service\Print\PrinterService;
+use VenPosTPV\Service\Print\TicketDataResolver;
+use VenPosTPV\Service\Print\TicketVerificationService;
 use VenPosTPV\Service\Sale\SaleLineWriter;
 use VenPosTPV\Service\Sale\TicketNumberer;
 use VenPosTPV\Service\Sync\Outbox;
@@ -170,5 +172,23 @@ final class SaleLineMySqlIntegrationTest extends TestCase
         $this->assertSame($fiscalBefore, (int) $this->connection->fetchOne('SELECT COUNT(*) FROM fiscal_record'));
         $this->assertSame($outboxBefore, (int) $this->connection->fetchOne('SELECT COUNT(*) FROM outbox'));
         $this->assertSame(5, (int) $this->connection->fetchOne('SELECT quantity FROM catalog_stock WHERE id_product = ?', [self::SHIRT]));
+    }
+
+    public function testTheTicketAndTheFiscalRecordShowTheVatBoxOfTheStoredLines(): void
+    {
+        $result = $this->service()->createOrder(7, $this->cart(), 'cash', 60.0);
+
+        $ticket = (new TicketDataResolver($this->connection, $this->createMock(TicketVerificationService::class), 'Tienda', ''))
+            ->resolve(TicketDataResolver::saleKey($result['order_id']));
+
+        $this->assertSame([
+            ['rate' => 21.0, 'base' => 37.19, 'vat' => 7.81],
+            ['rate' => 10.0, 'base' => 10.0, 'vat' => 1.0],
+        ], $ticket->vatBreakdown);
+        $this->assertSame(8.81, $ticket->tax);
+        $this->assertSame(47.19, $ticket->subtotal);
+        $breakdown = json_decode((string) $this->connection->fetchOne('SELECT payment_breakdown FROM order_meta WHERE id = ?', [$result['order_id']]), true);
+        $this->assertSame(8.81, $breakdown['tax']);
+        $this->assertSame('8.81', (string) $this->connection->fetchOne('SELECT tax_total FROM fiscal_record WHERE order_id = ?', [$result['order_id']]));
     }
 }

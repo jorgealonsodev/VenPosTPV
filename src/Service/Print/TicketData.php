@@ -48,7 +48,20 @@ final class TicketData
         public readonly ?float $ticketMarginLeftMm = null,
         public readonly ?float $ticketMarginRightMm = null,
         public readonly ?int $ticketLogoWidthPct = null,
+        // Sale tickets: the VAT box, one row per rate (art. 7.1.f RD 1619/2012); empty
+        // when the sale has no stored lines, then the single «IVA:» line is printed.
+        /** @var list<array{rate: float, base: float, vat: float}> */
+        public readonly array $vatBreakdown = [],
     ) {
+    }
+
+    /** Rate as printed: «21 %», «5,5 %». */
+    public static function formatRate(float $rate): string
+    {
+        $text = number_format($rate, 2, ',', '');
+        $text = rtrim(rtrim($text, '0'), ',');
+
+        return $text . ' %';
     }
 
     /** Side margin used when the till sets none. */
