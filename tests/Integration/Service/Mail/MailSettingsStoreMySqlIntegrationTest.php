@@ -77,4 +77,15 @@ final class MailSettingsStoreMySqlIntegrationTest extends TestCase
 
         $this->assertNull($this->store('a-different-secret-of-sufficient-length')->load()->password());
     }
+
+    public function testSavingCreatesTheTableWhenTheMigrationHasNotRunYet(): void
+    {
+        \assert($this->connection !== null);
+        $this->connection->executeStatement('DROP TABLE app_setting');
+
+        $this->assertFalse($this->store()->load()->isConfigured());
+        $this->store()->save(MailSettings::validated($this->input()), 'secreto-123');
+
+        $this->assertSame('secreto-123', $this->store()->load()->password());
+    }
 }

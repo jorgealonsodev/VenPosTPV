@@ -39,3 +39,6 @@ Thumbs.db
 # Strix
 strix_runs
 /.env.check
+
+# Local FTP connection settings (deploy)
+conects

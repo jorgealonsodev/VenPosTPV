@@ -17,6 +17,13 @@ class MailSettingsStore
 {
     private const FIELDS = ['host', 'port', 'encryption', 'username', 'from_email', 'from_name'];
 
+    /** Same table as migration Version00000040AppSetting (which is idempotent too). */
+    private const CREATE_TABLE = 'CREATE TABLE IF NOT EXISTS app_setting (
+        name VARCHAR(64) NOT NULL PRIMARY KEY,
+        value TEXT NULL,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci';
+
     public function __construct(
         private readonly Connection $connection,
         private readonly string $appSecret,
@@ -52,6 +59,9 @@ class MailSettingsStore
         if ($password !== null) {
             $values['password'] = $password === '' ? '' : $this->encrypt($password);
         }
+
+        // A host where migrations are run by hand may not have the table yet.
+        $this->connection->executeStatement(self::CREATE_TABLE);
 
         $this->connection->transactional(function () use ($values): void {
             foreach ($values as $field => $value) {
