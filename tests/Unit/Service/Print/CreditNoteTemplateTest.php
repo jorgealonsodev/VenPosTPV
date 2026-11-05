@@ -95,15 +95,21 @@ final class CreditNoteTemplateTest extends TestCase
 
     public function testOrdinarySaleTicketRendersTheSameHtmlAsBeforeExchanges(): void
     {
-        // sha1 of the HTML rendered before the exchange credit was added (HEAD 8f64b2a).
-        $this->assertSame('42b86e5e5a967cf0534d91890dc10da23c4cc10a', sha1($this->render(null)));
+        // sha1 of the HTML rendered before the exchange credit was added (HEAD 8f64b2a),
+        // without its <style>: the page layout (width, margins) may change, the content not.
+        $this->assertSame('136b50789f0d70203e152aba426f1eba01c07d8c', sha1(self::withoutStyle($this->render(null))));
     }
 
     public function testOrdinaryCreditNoteRendersTheSameHtmlAsBeforeExchanges(): void
     {
         $note = new CreditNoteInfo('R2026-000007', 'REF42', new \DateTimeImmutable('2026-10-30 10:00'), 'Defectuoso', 10.08, 14.1);
 
-        $this->assertSame('30bc21b9cc97d2e52bc501e4c385b8c1b1ba7073', sha1($this->render($note, method: 'mixed', tendered: 0.0, change: 0.0)));
+        $this->assertSame('f20d5da92e0d3a5ef19a8e96da32cdcfc5150735', sha1(self::withoutStyle($this->render($note, method: 'mixed', tendered: 0.0, change: 0.0))));
+    }
+
+    private static function withoutStyle(string $html): string
+    {
+        return (string) preg_replace('#<style>.*?</style>#s', '', $html);
     }
 
     public function testExchangeCreditNoteStatesTheAmountAppliedAndOnlyThePaidOutPart(): void

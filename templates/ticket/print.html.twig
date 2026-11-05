@@ -8,16 +8,20 @@
         body {
             font-family: 'Courier New', Courier, monospace;
             font-size: 12px;
-{% if ticket.ticketWidthPx %}
-            width: {{ ticket.ticketWidthPx }}px;
-{% else %}
-            width: 80mm;
-{% endif %}
-            margin: 0 auto;
-            padding: 8px;
+{# dompdf ignores box-sizing: the text width is the paper minus both margins,
+   so nothing (text, logo, barcode) runs past the right edge. 302 px = 80 mm. #}
+{% set paperPx = ticket.ticketWidthPx and ticket.ticketWidthPx < 302 ? ticket.ticketWidthPx : 302 %}
+{% set marginLeftPx = marginLeftPx is defined ? marginLeftPx : 8 %}
+{% set marginRightPx = marginRightPx is defined ? marginRightPx : 8 %}
+            width: {{ paperPx - marginLeftPx - marginRightPx }}px;
+            margin: 0;
+            padding: 8px {{ marginRightPx }}px 8px {{ marginLeftPx }}px;
+            overflow-wrap: break-word;
+            word-wrap: break-word;
             color: #000;
         }
         .center { text-align: center; }
+        img { max-width: 100%; }
         .bold { font-weight: bold; }
         .large { font-size: 16px; }
         .line {
