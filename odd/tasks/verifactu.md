@@ -16,7 +16,7 @@ Assumptions (to confirm with the club's adviser): TipoFactura F2 for tickets, R5
 ## Tasks
 
 - T1 — S1, S2: fiscal_record table, hash builder, chain writer hooked into sale/coupon sale/credit note issuance, immutability triggers, chain verification (GET /api/fiscal/chain). Route: inline (no Writer trigger reason). Status: done, commit: see Log L6. Risk: items 1 (migration), 4 (chain-head lock).
-- T2 — S3, S4: switch in Ajustes + QR/legend on ESC/POS and PDF. Route: inline. Status: pending.
+- T2 — S3, S4: switch in Ajustes + QR/legend on ESC/POS and PDF. Route: inline. Status: done, commit 55a486d.
 - T4 — L8: review RD 1007/2023 and Orden HAC/1177/2024 against the implementation; list gaps. Route: inline research. Status: pending.
 - T3 — S5: AEAT submission (needs the club's certificate and the AEAT test environment). Route: inline. Status: pending.
 
@@ -31,3 +31,6 @@ Assumptions (to confirm with the club's adviser): TipoFactura F2 for tickets, R5
 - Pending for production: the server only runs migrations from install.php, so Version00000042 must be applied there before records are written (until then sales go on and the gap is logged).
 - L7 (2026-11-05) Delivery question answered: "Cadena sobre la rama (Recommended)" (feature-branch-chain). T1 commit 4c7d6d1; RDD assess: high, review due (escalated item 1).
 - L8 (2026-11-05) user, pasted text about the developer's obligations (declaración responsable signed and given to the client; AEAT access to the event log, invoice sequence and chain integrity; the system shows its identification, commercial name, exact version and the declaration identifier; LGT art. 201 bis sanctions up to 150.000 € per year), with: "luego revisa toda la normativa he leido algo como esto" and then "busca la ley y compruebalo". → task T4 (regulation review against the implementation).
+- L9 Independent verifier on T1: S2 met; S1 partial with blocker B1 (cash sale locked fiscal_chain before session, refunds the reverse → reproduced deadlock). Advisory A2: dates used the server zone. Correction 0777bd7: session locked first in both sale paths (regression test asserts order), records dated Europe/Madrid (integration test 23:30 UTC → next day). Recheck of B1 requested. Advisories A1 (CREATE TRIGGER IF NOT EXISTS needs MySQL ≥ 8.0.29), A3 (global chain lock serializes sales), A4 left open.
+- L10 T2 commit 55a486d: FiscalQr (official URL-encoding example passes; production base www2.agenciatributaria.gob.es, QR spec v0.5.0), VerifactuSettings (app_setting verifactu.enabled, off by default), GET/PUT /api/fiscal/settings (admin), QR on ESC/POS (EC M, 6 dots/module) and PDF (32 mm) at the top, Ajustes → VERI*FACTU section with "Comprobar registros". With the switch off the ticket HTML is byte-identical to before (existing snapshot tests). Full suite 1018 tests, only the 7 baseline failures. RED was not observed separately for FiscalQr (test and class written together).
+- L11 T4 research delegated (primary sources: BOE RD 1007/2023, Orden HAC/1177/2024, LGT 201 bis, AEAT FAQ).
