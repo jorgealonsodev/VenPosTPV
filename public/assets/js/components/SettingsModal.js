@@ -443,6 +443,54 @@ const SettingsModal = {
             }
         }
 
+        // Ajustes → Email: the shop's outgoing account, for tickets by email.
+        const INPUT_STYLE = 'width:100%; max-width:420px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box;';
+        const mail = Vue.reactive({ host: '', port: 587, encryption: 'tls', username: '', from_email: '', from_name: '', password: '', has_password: false, configured: false });
+        const mailSaving = Vue.ref(false);
+        const mailError = Vue.ref('');
+        const mailTestTo = Vue.ref('');
+        const mailTestStatus = Vue.ref('');
+
+        function applyMail(data) {
+            Object.assign(mail, data || {}, { password: '' });
+        }
+
+        async function loadMail() {
+            mailError.value = '';
+            try {
+                const resp = await ApiClient.get('/api/settings/email');
+                applyMail(resp.data);
+            } catch (e) {
+                mailError.value = errorText(e, 'Error al cargar el email');
+            }
+        }
+
+        async function saveMail() {
+            mailSaving.value = true;
+            mailError.value = '';
+            try {
+                const body = { host: mail.host, port: Number(mail.port), encryption: mail.encryption, username: mail.username, from_email: mail.from_email, from_name: mail.from_name };
+                if (mail.password) body.password = mail.password;
+                const resp = await ApiClient.put('/api/settings/email', body);
+                applyMail(resp.data);
+                flash('Email guardado');
+            } catch (e) {
+                mailError.value = errorText(e, 'Error al guardar el email');
+            } finally {
+                mailSaving.value = false;
+            }
+        }
+
+        async function sendMailTest() {
+            mailTestStatus.value = 'Enviando…';
+            try {
+                await ApiClient.post('/api/settings/email/test', { to: mailTestTo.value });
+                mailTestStatus.value = 'Email de prueba enviado. Revisa la bandeja de entrada (y el spam).';
+            } catch (e) {
+                mailTestStatus.value = errorText(e, 'No se pudo enviar el email de prueba');
+            }
+        }
+
         Vue.onMounted(() => {
             loadEmployees();
             loadTerminal();
@@ -464,6 +512,7 @@ const SettingsModal = {
             syncInterval, syncPushInterval, syncSaving, syncPushSaving, syncError,
             syncNowRunning, syncLastResult,
             saveSyncInterval, saveSyncPushInterval, syncNow,
+            INPUT_STYLE, mail, mailSaving, mailError, mailTestTo, mailTestStatus, saveMail, sendMailTest, loadMail,
             emit,
         };
     },
@@ -516,6 +565,12 @@ const SettingsModal = {
                             :style="activeSection === 'impresion' ? 'background:var(--surface2); border-left-color:var(--green); color:var(--text); font-weight:600;' : ''"
                             @mouseover="$event.currentTarget.style.background='var(--surface2)'" @mouseout="$event.currentTarget.style.background=activeSection === 'impresion' ? 'var(--surface2)' : 'transparent'">
                             <icon name="print" :size="18"></icon> Historial de impresión
+                        </button>
+                        <button @click="activeSection = 'email'; loadMail()"
+                            style="min-height:48px; padding:0 16px; background:transparent; border:none; border-left:3px solid transparent; color:var(--text2); font-family:inherit; font-size:14px; text-align:left; cursor:pointer; display:flex; align-items:center; gap:10px; transition:background .15s;"
+                            :style="activeSection === 'email' ? 'background:var(--surface2); border-left-color:var(--green); color:var(--text); font-weight:600;' : ''"
+                            @mouseover="$event.currentTarget.style.background='var(--surface2)'" @mouseout="$event.currentTarget.style.background=activeSection === 'email' ? 'var(--surface2)' : 'transparent'">
+                            <icon name="mail" :size="18"></icon> Email
                         </button>
                     </div>
 
@@ -866,6 +921,69 @@ const SettingsModal = {
                             <div style="font-size:13px; font-weight:600; color:var(--text); margin-bottom:6px;">Historial de impresión</div>
                             <div style="font-size:12px; color:var(--text3); margin-bottom:12px;">Trabajos del agente de impresión de los últimos 30 días: tickets, cajón y etiquetas.</div>
                             <print-history-panel :tills="tills" />
+                        </div>
+
+                        <!-- ==================== EMAIL ==================== -->
+                        <div v-if="activeSection === 'email'">
+                            <div style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; color:var(--text); margin-bottom:6px;">
+                                <icon name="mail" :size="16"></icon> Cuenta de correo de la tienda
+                            </div>
+                            <div style="font-size:12px; color:var(--text3); margin-bottom:16px;">Desde esta cuenta se envía el ticket en PDF a los clientes cuando la caja no tiene impresora. Usa los datos SMTP de tu correo (en Plesk: Correo → la cuenta → Configuración del cliente de correo).</div>
+                            <div v-if="mailError" style="color:var(--red); font-size:13px; margin-bottom:12px;">{{ mailError }}</div>
+                            <div style="display:flex; flex-direction:column; gap:14px;">
+                                <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                                    <div style="flex:1; min-width:200px;">
+                                        <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Servidor SMTP</label>
+                                        <input v-model="mail.host" type="text" placeholder="smtp.tudominio.com" autocomplete="off" :style="INPUT_STYLE">
+                                    </div>
+                                    <div style="width:110px;">
+                                        <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Puerto</label>
+                                        <input v-model.number="mail.port" type="number" min="1" max="65535" :style="INPUT_STYLE">
+                                    </div>
+                                    <div style="width:150px;">
+                                        <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Cifrado</label>
+                                        <select v-model="mail.encryption" :style="INPUT_STYLE">
+                                            <option value="tls">TLS (587)</option>
+                                            <option value="ssl">SSL (465)</option>
+                                            <option value="none">Ninguno (25)</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Usuario</label>
+                                    <input v-model="mail.username" type="text" placeholder="tienda@tudominio.com" autocomplete="off" :style="INPUT_STYLE">
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Contraseña <span v-if="mail.has_password" style="color:var(--green);">— guardada (déjala vacía para no cambiarla)</span></label>
+                                    <input v-model="mail.password" type="password" autocomplete="new-password" :placeholder="mail.has_password ? '••••••••' : ''" :style="INPUT_STYLE">
+                                </div>
+                                <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                                    <div style="flex:1; min-width:200px;">
+                                        <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Email del remitente</label>
+                                        <input v-model="mail.from_email" type="email" placeholder="tienda@tudominio.com" :style="INPUT_STYLE">
+                                    </div>
+                                    <div style="flex:1; min-width:200px;">
+                                        <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Nombre del remitente</label>
+                                        <input v-model="mail.from_name" type="text" maxlength="120" placeholder="Nombre de la tienda" :style="INPUT_STYLE">
+                                    </div>
+                                </div>
+                                <div>
+                                    <button @click="saveMail" :disabled="mailSaving"
+                                        style="padding:8px 20px; border-radius:9px; border:none; background:var(--green); color:#000; font-family:inherit; font-size:13px; font-weight:600; cursor:pointer;"
+                                        :style="mailSaving ? 'opacity:0.6; cursor:not-allowed;' : ''">
+                                        {{ mailSaving ? 'Guardando…' : 'Guardar' }}
+                                    </button>
+                                </div>
+                                <div style="border-top:1px solid var(--border); padding-top:14px;">
+                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Enviar un email de prueba a</label>
+                                    <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+                                        <input v-model="mailTestTo" type="email" placeholder="tu@email.com" :style="INPUT_STYLE + ' max-width:300px;'">
+                                        <button type="button" class="tpv-btn" @click="sendMailTest" :disabled="!mail.configured" style="min-height:40px;">Enviar prueba</button>
+                                    </div>
+                                    <div v-if="!mail.configured" style="font-size:12px; color:var(--text3); margin-top:6px;">Guarda la cuenta antes de probarla.</div>
+                                    <div v-if="mailTestStatus" style="font-size:12px; color:var(--text2); margin-top:6px;">{{ mailTestStatus }}</div>
+                                </div>
+                            </div>
                         </div>
 
                         <!-- ==================== SINCRONIZACIÓN ==================== -->

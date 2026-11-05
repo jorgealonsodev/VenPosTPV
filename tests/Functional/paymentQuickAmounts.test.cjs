@@ -7,14 +7,14 @@ const test = require('node:test');
 function ref(value) { return { value }; }
 function computed(fn) { return { get value() { return fn(); } }; }
 
-function loadPayment(total = 37.5) {
+function loadPayment(total = 37.5, api = {}) {
     const source = fs.readFileSync(path.resolve(__dirname, '../../public/assets/js/components/PaymentModal.js'), 'utf8');
     const cart = { lines: [{ id: 1, product_id: 1, qty: 1, price: total }], subtotal: total, discount: null, discount_amount: 0, total, iva: 0, customer: null };
     const context = {
         Vue: { ref, computed, watch() {} },
         useCart: { cart },
         useSession: { session: {}, hydrateCashSession: async () => {} },
-        ApiClient: {},
+        ApiClient: api,
         setTimeout(fn) { fn(); return 1; }, clearTimeout() {},
         Number, String, Math, parseFloat, JSON, console, Promise, Error,
     };
@@ -49,4 +49,24 @@ test('in a mixed payment the buttons add to the cash part', () => {
     state.appendNum('preset:20');
     state.appendNum('preset:5');
     assert.equal(state.card2.value, '25');
+});
+
+test('the ticket is emailed for the last sale, and a refusal is shown', async () => {
+    const posts = [];
+    const state = loadPayment(10, {
+        async post(url, body) {
+            posts.push([url, body]);
+            if (body.email === 'mal') throw new Error('HTTP 422: {"error":"El email del cliente no es válido."}');
+            return { data: { sent: true } };
+        },
+    });
+    state.lastSaleId.value = 15;
+    state.ticketEmail.value = 'cliente@example.com';
+    await state.sendTicketEmail();
+    assert.equal(JSON.stringify(posts[0]), JSON.stringify(['/api/ticket/sale/15/email', { email: 'cliente@example.com' }]));
+    assert.match(state.emailStatus.value, /enviado a cliente@example.com/);
+
+    state.ticketEmail.value = 'mal';
+    await state.sendTicketEmail();
+    assert.equal(state.emailStatus.value, 'El email del cliente no es válido.');
 });

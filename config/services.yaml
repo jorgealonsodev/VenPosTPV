@@ -164,6 +164,12 @@ services:
         arguments:
             $shopUrl: '%env(default::PS_SHOP_URL)%'
 
+    # Ticket by email (Ajustes → Email): the account password is encrypted with APP_SECRET.
+    VenPosTPV\Service\Mail\MailSettingsStore:
+        arguments:
+            $connection: '@doctrine.dbal.tpv_connection'
+            $appSecret: '%env(APP_SECRET)%'
+
     # Refund Service
     VenPosTPV\Service\Refund\PsRefundClient:
         arguments:

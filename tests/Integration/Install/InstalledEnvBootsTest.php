@@ -72,6 +72,8 @@ final class InstalledEnvBootsTest extends TestCase
         yield 'catalog search' => ['GET', '/api/catalog/search'];
         yield 'sync now' => ['POST', '/api/sync/now'];
         yield 'ticket verify' => ['GET', '/api/ticket/verify'];
+        yield 'ticket email enabled' => ['GET', '/api/ticket/email-enabled'];
+        yield 'email settings' => ['GET', '/api/settings/email'];
     }
 
     #[DataProvider('endpoints')]

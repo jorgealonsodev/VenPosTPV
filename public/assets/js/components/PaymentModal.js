@@ -22,6 +22,11 @@ const PaymentModal = {
         const lastOrderId = Vue.ref(null);
         // Local sale id: the ticket exists before the sale is uploaded to PrestaShop.
         const lastSaleId = Vue.ref(null);
+        // Ticket by email when the till has no printer (Ajustes → Email).
+        const emailEnabled = Vue.ref(false);
+        const ticketEmail = Vue.ref('');
+        const emailStatus = Vue.ref('');
+        const emailSending = Vue.ref(false);
         const voucherCode = Vue.ref('');
         const voucherPreview = Vue.ref(null);
         const voucherBusy = Vue.ref(false);
@@ -117,8 +122,8 @@ const PaymentModal = {
         }
 
         function onBackdrop() {
-            // A charged sale on an agent till is completed, never just closed.
-            if (step.value === 'done' && completedSale && printerType.value === 'agent') {
+            // A charged sale that waits (agent printing, ticket by email) is completed, never just closed.
+            if (step.value === 'done' && completedSale) {
                 finish();
                 return;
             }
@@ -271,6 +276,10 @@ const PaymentModal = {
                     }
                     lastOrderId.value = response.data.ps_order_id || null;
                     lastSaleId.value = response.data.order_id || null;
+                    // Prefill with the customer's email; the account may be configured meanwhile.
+                    const customerEmail = (useCart.cart.customer && useCart.cart.customer.email) || '';
+                    ticketEmail.value = String(customerEmail).includes('@') ? String(customerEmail) : '';
+                    emailStatus.value = '';
                     completedTotal.value = Object.prototype.hasOwnProperty.call(response.data, 'total')
                         ? Number(response.data.total)
                         : null;
@@ -304,11 +313,16 @@ const PaymentModal = {
                         }
                     }
                     step.value = 'done';
+                    const doneSale = { ...response.data, payment_method: paymentMethod };
+                    // No printer and an email account: stay open so the ticket can be
+                    // emailed; "Terminar" (or the backdrop) completes the sale.
+                    if ((pt === 'pdf' || pt === 'none') && lastSaleId.value && await ticketEmailEnabled()) {
+                        completedSale = doneSale;
+                        emailEnabled.value = true;
+                        return;
+                    }
                     setTimeout(() => {
-                        emit('complete', {
-                            ...response.data,
-                            payment_method: paymentMethod,
-                        });
+                        emit('complete', doneSale);
                     }, 2000);
                 } else {
                     throw new Error('Respuesta inesperada del servidor');
@@ -341,6 +355,33 @@ const PaymentModal = {
                 step.value = 'error';
             } finally {
                 isSubmitting.value = false;
+            }
+        }
+
+        async function ticketEmailEnabled() {
+            if (typeof ApiClient.get !== 'function') return false;
+            try {
+                const r = await ApiClient.get('/api/ticket/email-enabled');
+                return !!(r && r.data && r.data.enabled);
+            } catch (e) {
+                return false;
+            }
+        }
+
+        async function sendTicketEmail() {
+            if (!lastSaleId.value || emailSending.value) return;
+            emailSending.value = true;
+            emailStatus.value = '';
+            try {
+                await ApiClient.post('/api/ticket/sale/' + lastSaleId.value + '/email', { email: ticketEmail.value });
+                emailStatus.value = 'Ticket enviado a ' + ticketEmail.value;
+            } catch (e) {
+                const match = /^HTTP \d+: ([\s\S]*)$/.exec((e && e.message) || '');
+                let text = 'No se pudo enviar el ticket';
+                if (match) { try { text = JSON.parse(match[1]).error || text; } catch (err) { /* keep default */ } }
+                emailStatus.value = text;
+            } finally {
+                emailSending.value = false;
             }
         }
 
@@ -429,7 +470,7 @@ const PaymentModal = {
             cashInput.value = props.total.toFixed(2).replace('.', ',');
         }
 
-        return { method, cashInput, card1, card2, step, errorMsg, errorRetry, lastOrderId, lastSaleId, methods, cashParsed, change, cardParsed, card2Parsed, dataphoneMode, printerType, voucherCode, voucherPreview, voucherBusy, voucherError, voucherTender, voucherCashInput, voucherPayable, voucherDiscount, voucherGross, voucherCashParsed, voucherChange, voucherReconciliationRequired, couponOffline, chargeWithoutCoupon, completedTotal, completedChange, doneTotal, doneChange, isSubmitting, canConfirm, handleConfirm, retryCheckout, returnToSelection, appendNum, exacto, downloadTicket, applyVoucher, invalidateVoucher, keypadKeys, quickAmounts, eur, drawerWarning, finish, onBackdrop };
+        return { method, cashInput, card1, card2, step, errorMsg, errorRetry, lastOrderId, lastSaleId, methods, cashParsed, change, cardParsed, card2Parsed, dataphoneMode, printerType, voucherCode, voucherPreview, voucherBusy, voucherError, voucherTender, voucherCashInput, voucherPayable, voucherDiscount, voucherGross, voucherCashParsed, voucherChange, voucherReconciliationRequired, couponOffline, chargeWithoutCoupon, completedTotal, completedChange, doneTotal, doneChange, isSubmitting, canConfirm, handleConfirm, retryCheckout, returnToSelection, appendNum, exacto, downloadTicket, emailEnabled, ticketEmail, emailStatus, emailSending, sendTicketEmail, applyVoucher, invalidateVoucher, keypadKeys, quickAmounts, eur, drawerWarning, finish, onBackdrop };
     },
     template: `
         <div class="modal-backdrop" @click.self="onBackdrop">
@@ -454,6 +495,20 @@ const PaymentModal = {
                 <button v-if="(lastSaleId || lastOrderId) && printerType === 'pdf'" @click="downloadTicket" class="tpv-btn" style="margin-top:8px;">
                     <icon name="print" :size="18" /> Descargar ticket PDF
                 </button>
+                <!-- No printer: the ticket can go by email -->
+                <div v-if="lastSaleId && emailEnabled && (printerType === 'pdf' || printerType === 'none')"
+                    style="display:flex; flex-direction:column; gap:6px; margin-top:10px; width:100%; max-width:340px;">
+                    <div style="display:flex; gap:6px;">
+                        <input v-model="ticketEmail" type="email" placeholder="email del cliente" aria-label="Email del cliente"
+                            @keydown.enter.prevent="sendTicketEmail"
+                            style="flex:1; min-width:0; padding:9px 12px; border-radius:9px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-family:inherit; font-size:14px; outline:none;">
+                        <button @click="sendTicketEmail" :disabled="emailSending || !ticketEmail" class="tpv-btn" style="display:flex; align-items:center; gap:6px;">
+                            <icon name="mail" :size="16" /> {{ emailSending ? 'Enviando…' : 'Enviar' }}
+                        </button>
+                    </div>
+                    <div v-if="emailStatus" style="font-size:12px; color:var(--text2);">{{ emailStatus }}</div>
+                    <button @click="finish" class="tpv-btn tpv-btn-primary" style="margin-top:4px;">Terminar</button>
+                </div>
             </div>
 
             <!-- Error state -->

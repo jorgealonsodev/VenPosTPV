@@ -163,6 +163,7 @@ final class TestDatabase
         self::runMigration($connection, 'Version00000036OutboxDiscard');
         self::runMigration($connection, 'Version00000037PrintAgent');
         self::runMigration($connection, 'Version00000038LabelSettings');
+        self::runMigration($connection, 'Version00000040AppSetting');
     }
 
     private static function applyInstallSchema(Connection $connection): void
