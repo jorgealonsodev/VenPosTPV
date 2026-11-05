@@ -9,10 +9,13 @@ use VenPosTPV\Service\PrestaShop\PrestaShopApiClient;
 
 class SyncStatusService
 {
+    // Seconds each kind stays fresh, after how often it is synced: stock every
+    // minute (cron and the POS timer), catalog and prices once a night (the full
+    // sync asks PrestaShop for every price, too slow to run more often).
     private const FRESHNESS_THRESHOLDS = [
-        'stock' => 30,
-        'prices' => 300,
-        'catalog' => 900,
+        'stock' => 180,
+        'prices' => 93600,
+        'catalog' => 93600,
     ];
 
     public function __construct(

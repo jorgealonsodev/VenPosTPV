@@ -114,7 +114,7 @@ final class SyncStatusServiceTest extends TestCase
         $service = $this->createService(
             pingResult: ['online' => true, 'latency_ms' => 100],
             lastSyncs: [
-                'catalog' => new SyncLogEntry(1, 'catalog', 'inbound', new \DateTimeImmutable('-20 minutes'), 10, new \DateTimeImmutable()),
+                'catalog' => new SyncLogEntry(1, 'catalog', 'inbound', new \DateTimeImmutable('-30 hours'), 10, new \DateTimeImmutable()),
             ],
         );
         $dto = $service->getStatus();
@@ -153,29 +153,44 @@ final class SyncStatusServiceTest extends TestCase
         $this->assertFalse($dto->freshness['prices']);
     }
 
-    public function testStockFreshnessThresholdIs30Seconds(): void
+    /**
+     * Stock is refreshed every minute (cron and the POS timer), so it is fresh for
+     * three minutes; catalog and prices are the nightly full sync, fresh for 26 h.
+     *
+     * @return iterable<string, array{0: string, 1: string, 2: bool}>
+     */
+    public static function freshnessCases(): iterable
     {
-        $service = $this->createService(
-            pingResult: ['online' => true, 'latency_ms' => 100],
-            lastSyncs: [
-                'stock' => new SyncLogEntry(1, 'stock', 'inbound', new \DateTimeImmutable('-25 seconds'), 10, new \DateTimeImmutable()),
-            ],
-        );
-        $dto = $service->getStatus();
-
-        $this->assertTrue($dto->freshness['stock']);
+        yield 'stock 2 min' => ['stock', '-120 seconds', true];
+        yield 'stock 4 min' => ['stock', '-240 seconds', false];
+        yield 'catalog 20 h' => ['catalog', '-20 hours', true];
+        yield 'catalog 27 h' => ['catalog', '-27 hours', false];
+        yield 'prices 20 h' => ['prices', '-20 hours', true];
+        yield 'prices 27 h' => ['prices', '-27 hours', false];
     }
 
-    public function testStockFreshnessStaleAfter30Seconds(): void
+    #[\PHPUnit\Framework\Attributes\DataProvider('freshnessCases')]
+    public function testFreshnessFollowsHowOftenEachKindIsSynced(string $type, string $age, bool $fresh): void
+    {
+        $service = $this->createService(
+            pingResult: ['online' => true, 'latency_ms' => 100],
+            lastSyncs: [$type => new SyncLogEntry(1, $type, 'inbound', new \DateTimeImmutable($age), 10, new \DateTimeImmutable())],
+        );
+
+        $this->assertSame($fresh, $service->getStatus()->freshness[$type]);
+    }
+
+    public function testANightlyCatalogAndAMinuteOldStockAreOk(): void
     {
         $service = $this->createService(
             pingResult: ['online' => true, 'latency_ms' => 100],
             lastSyncs: [
-                'stock' => new SyncLogEntry(1, 'stock', 'inbound', new \DateTimeImmutable('-35 seconds'), 10, new \DateTimeImmutable()),
+                'catalog' => new SyncLogEntry(1, 'catalog', 'inbound', new \DateTimeImmutable('-8 hours'), 900, new \DateTimeImmutable()),
+                'prices' => new SyncLogEntry(2, 'prices', 'inbound', new \DateTimeImmutable('-8 hours'), 900, new \DateTimeImmutable()),
+                'stock' => new SyncLogEntry(3, 'stock', 'inbound', new \DateTimeImmutable('-50 seconds'), 900, new \DateTimeImmutable()),
             ],
         );
-        $dto = $service->getStatus();
 
-        $this->assertFalse($dto->freshness['stock']);
+        $this->assertSame('ok', $service->getStatus()->state);
     }
 }
