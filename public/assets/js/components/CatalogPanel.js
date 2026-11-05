@@ -1,6 +1,9 @@
 /**
  * CatalogPanel — category tabs + search bar + product grid/list.
  */
+// Scan mode: a scanned code goes straight to the ticket. Remembered per device.
+const SCAN_TO_CART_KEY = 'tpv.catalog.scanToCart';
+
 const CatalogPanel = {
     props: ['catalog', 'listView', 'lastAdded'],
     emits: ['setSearch', 'setCategory', 'addProduct', 'toggleView', 'notify', 'loadMore', 'setOnlyInStock', 'setSearchInCategory'],
@@ -12,6 +15,7 @@ const CatalogPanel = {
             labelProduct: null,
             drag: null,
             dragged: false,
+            scanToCart: (() => { try { return localStorage.getItem(SCAN_TO_CART_KEY) === '1'; } catch (e) { return false; } })(),
         };
     },
     setup(props, { emit }) {
@@ -68,6 +72,42 @@ const CatalogPanel = {
             this.labelProduct = product;
             this.showCombinationsModal = false;
             this.combinationsProduct = null;
+        },
+        toggleScanToCart() {
+            this.scanToCart = !this.scanToCart;
+            try { localStorage.setItem(SCAN_TO_CART_KEY, this.scanToCart ? '1' : '0'); } catch (e) { /* not remembered */ }
+        },
+        // Scan mode on: the scanner types the code and Enter. The product whose EAN
+        // or reference is exactly that code (or the only product found, for the EAN
+        // of a size) goes straight to the ticket; a product with variants opens the
+        // variants window, as when it is tapped. A partial or unknown code adds
+        // nothing and keeps the text so the cashier sees what was read.
+        async onSearchEnter() {
+            if (!this.scanToCart) return;
+            const code = String(this.catalog.search || '').trim();
+            if (code === '') return;
+            let found = [];
+            try {
+                const res = await ApiClient.get('/api/catalog/search?' + new URLSearchParams({ q: code, limit: '5' }).toString());
+                found = res.data || [];
+            } catch (e) {
+                found = [];
+            }
+            const product = found.find((p) => p.ean13 === code || p.reference === code)
+                || (found.length === 1 && !this.isPartialMatch(found[0], code) ? found[0] : null);
+            if (!product) {
+                this.$emit('notify', 'No hay ningún producto con el código ' + code, 'var(--red)');
+                return;
+            }
+            await this.handleProductTap(product);
+            this.$emit('setSearch', '');
+            const input = this.$refs.searchInput;
+            if (input) input.focus();
+        },
+        // The only product found for a code it merely contains in its own EAN or
+        // reference (a code cut short): not a scan of that product.
+        isPartialMatch(product, code) {
+            return [product.ean13, product.reference].some((value) => value && value !== code && value.includes(code));
         },
         // The search box's clear button: empties the search and keeps the box ready
         // for the next search or scan.
@@ -183,6 +223,7 @@ const CatalogPanel = {
                     <input ref="searchInput"
                         :value="catalog.search"
                         @input="$emit('setSearch', $event.target.value)"
+                        @keydown.enter.prevent="onSearchEnter"
                         placeholder="Buscar por nombre, SKU, EAN…"
                         style="width:100%; background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:9px 48px 9px 38px; color:var(--text); font-family:inherit; font-size:14px; outline:none;"
                     />
@@ -193,7 +234,11 @@ const CatalogPanel = {
                         <icon name="close" :size="18" />
                     </button>
                 </div>
-                <button title="Escanear código" style="width:40px; height:40px; border-radius:10px; border:1px solid var(--border); background:var(--surface2); cursor:pointer; color:var(--text2); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
+                <button @click="toggleScanToCart" :aria-pressed="scanToCart ? 'true' : 'false'"
+                    :title="scanToCart ? 'Escanear y añadir: lo escaneado entra directo en el ticket (pulsa para solo buscar)' : 'Escanear y añadir al ticket'"
+                    aria-label="Escanear y añadir al ticket"
+                    style="width:40px; height:40px; border-radius:10px; cursor:pointer; display:flex; align-items:center; justify-content:center; flex-shrink:0;"
+                    :style="{ border: scanToCart ? '1px solid var(--green)' : '1px solid var(--border)', background: scanToCart ? 'var(--green-bg)' : 'var(--surface2)', color: scanToCart ? 'var(--green)' : 'var(--text2)' }">
                     <icon name="barcode" :size="17" />
                 </button>
                 <button @click="$emit('setSearchInCategory', !catalog.searchInCategory)" :aria-pressed="catalog.searchInCategory ? 'true' : 'false'"
