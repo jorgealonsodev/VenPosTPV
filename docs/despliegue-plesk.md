@@ -16,67 +16,67 @@ El paquete `venpostpv-plesk.zip` lleva el TPV con sus dependencias y un instalad
 3. **Configuración de PHP** del subdominio: versión 8.4 o superior, `max_execution_time` = 35 como mínimo y `pm.max_children` ≥ número de cajas + 6.
 4. Abre `https://tu-subdominio/install.php`. La primera visita crea el archivo `INSTALL_KEY` en la carpeta del subdominio. Ábrelo en el Administrador de archivos y copia la clave en el formulario.
 5. Rellena la base de datos, el usuario administrador, la tienda y PrestaShop. Pulsa **Instalar**: el instalador prueba la conexión, crea las tablas, escribe `.env`, se bloquea y borra `install.php`.
-6. Crea las **tareas programadas**: cuatro, una por una. En Plesk, dentro del dominio: **Tareas programadas → Añadir tarea**, rellena el formulario como indica cada tabla y pulsa **Aceptar**.
+6. Crea las **tareas programadas**: cuatro, una por una. En Plesk, dentro del dominio: **Tareas programadas → Añadir tarea**. Se abre la pantalla «Programación de una tarea»: rellénala como indica cada tabla y pulsa **Aceptar**.
 
    Dos avisos para todas:
    - El tipo de tarea tiene que ser **Ejecutar un script PHP**. «Ejecutar un comando» falla en muchos Plesk porque se ejecuta en un entorno aislado donde no existe `/opt/plesk/php`.
-   - Cambia siempre **Usar la versión de PHP** a la del subdominio (8.4 o superior; en loading.es, 8.5). La que sale por defecto puede ser PHP 5 y la tarea falla con «Unsupported declare strict_types».
+   - Cambia siempre **Usar la versión PHP** a la del subdominio (8.4 o superior; en loading.es, 8.5). Por defecto sale **5.3** y con ella la tarea falla con «Unsupported declare strict_types».
 
    **Tarea 1 — Subir ventas a PrestaShop.** Sube las ventas, devoluciones y clientes nuevos a PrestaShop y limpia el historial de impresión.
 
    | Campo en Plesk | Qué poner |
    |---|---|
-   | Tarea activa | Marcado |
+   | Activa | Marcado |
    | Tipo de tarea | **Ejecutar un script PHP** |
-   | Ruta del script | `tpv.clubnatacion.com/bin/console` (la carpeta del subdominio + `/bin/console`) |
-   | Con argumentos | `tpv:sync:outbox --env=prod` |
-   | Usar la versión de PHP | **8.5** (la del subdominio; nunca la que sale por defecto) |
-   | Ejecutar | **Estilo cron** → `* * * * *` (cada minuto) |
+   | Ruta de acceso del script | `tpv.clubnatacion.com/bin/console` (la carpeta del subdominio + `/bin/console`) |
+   | con argumentos (a la derecha de la ruta) | `tpv:sync:outbox --env=prod` |
+   | Usar la versión PHP | **8.5** (la del subdominio; nunca la 5.3 que sale por defecto) |
+   | Ejecutar | elige **Estilo cron** en el desplegable y escribe `* * * * *` (cada minuto) |
    | Descripción | Subir ventas a PrestaShop |
-   | Notificar | Notificar solo errores |
+   | Notificar | **Solo errores** |
 
    **Tarea 2 — Stock.** Actualiza el stock desde PrestaShop.
 
    | Campo en Plesk | Qué poner |
    |---|---|
-   | Tarea activa | Marcado |
+   | Activa | Marcado |
    | Tipo de tarea | **Ejecutar un script PHP** |
-   | Ruta del script | `tpv.clubnatacion.com/bin/console` (la carpeta del subdominio + `/bin/console`) |
-   | Con argumentos | `tpv:catalog:sync --stock-only --env=prod` |
-   | Usar la versión de PHP | **8.5** (la del subdominio; nunca la que sale por defecto) |
-   | Ejecutar | **Estilo cron** → `* * * * *` (cada minuto) |
+   | Ruta de acceso del script | `tpv.clubnatacion.com/bin/console` (la carpeta del subdominio + `/bin/console`) |
+   | con argumentos (a la derecha de la ruta) | `tpv:catalog:sync --stock-only --env=prod` |
+   | Usar la versión PHP | **8.5** (la del subdominio; nunca la 5.3 que sale por defecto) |
+   | Ejecutar | elige **Estilo cron** en el desplegable y escribe `* * * * *` (cada minuto) |
    | Descripción | Stock |
-   | Notificar | Notificar solo errores |
+   | Notificar | **Solo errores** |
 
    **Tarea 3 — Catálogo completo.** Productos, categorías, precios, fotos y colores de las tallas/colores.
 
    | Campo en Plesk | Qué poner |
    |---|---|
-   | Tarea activa | Marcado |
+   | Activa | Marcado |
    | Tipo de tarea | **Ejecutar un script PHP** |
-   | Ruta del script | `tpv.clubnatacion.com/bin/console` (la carpeta del subdominio + `/bin/console`) |
-   | Con argumentos | `tpv:catalog:sync --full --env=prod` |
-   | Usar la versión de PHP | **8.5** (la del subdominio; nunca la que sale por defecto) |
-   | Ejecutar | **Diariamente** a las **03:00** |
+   | Ruta de acceso del script | `tpv.clubnatacion.com/bin/console` (la carpeta del subdominio + `/bin/console`) |
+   | con argumentos (a la derecha de la ruta) | `tpv:catalog:sync --full --env=prod` |
+   | Usar la versión PHP | **8.5** (la del subdominio; nunca la 5.3 que sale por defecto) |
+   | Ejecutar | **Diariamente** en **03 : 00** (hora de Madrid) |
    | Descripción | Catálogo completo |
-   | Notificar | Notificar solo errores |
+   | Notificar | **Solo errores** |
 
-   Después de guardarla, pulsa **Ejecutar ahora** en esta tarea para cargar los productos la primera vez. Repítelo tras una actualización que cambie datos del catálogo (por ejemplo, fotos y colores de las variantes).
+   Antes de **Aceptar**, pulsa **Ejecutar ahora** (o ábrela después y púlsalo) para cargar los productos la primera vez. Repítelo tras una actualización que cambie datos del catálogo (por ejemplo, fotos y colores de las variantes).
 
    **Tarea 4 — Clientes.** Copia los clientes de PrestaShop al TPV.
 
    | Campo en Plesk | Qué poner |
    |---|---|
-   | Tarea activa | Marcado |
+   | Activa | Marcado |
    | Tipo de tarea | **Ejecutar un script PHP** |
-   | Ruta del script | `tpv.clubnatacion.com/bin/console` (la carpeta del subdominio + `/bin/console`) |
-   | Con argumentos | `tpv:customers:sync --env=prod` |
-   | Usar la versión de PHP | **8.5** (la del subdominio; nunca la que sale por defecto) |
-   | Ejecutar | **Diariamente** a las **03:30** |
+   | Ruta de acceso del script | `tpv.clubnatacion.com/bin/console` (la carpeta del subdominio + `/bin/console`) |
+   | con argumentos (a la derecha de la ruta) | `tpv:customers:sync --env=prod` |
+   | Usar la versión PHP | **8.5** (la del subdominio; nunca la 5.3 que sale por defecto) |
+   | Ejecutar | **Diariamente** en **03 : 30** (hora de Madrid) |
    | Descripción | Clientes |
-   | Notificar | Notificar solo errores |
+   | Notificar | **Solo errores** |
 
-   Los nombres de los campos pueden variar un poco según la versión de Plesk. Comprueba que funcionan con **Ejecutar ahora**: el resultado aparece al momento y, si hay un error, Plesk lo muestra (y lo envía por correo si elegiste notificar errores).
+   Comprueba cada tarea con **Ejecutar ahora**, en la misma pantalla: el resultado aparece al momento y, si hay un error, Plesk lo muestra (y lo envía por correo con **Solo errores**).
 7. En el módulo TPV Connect, pon como URL del TPV la del subdominio. Si no pusiste el secreto SSO en el instalador, cópialo en `SSO_SHARED_SECRET` del `.env`.
 8. Entra en el TPV, empareja el agente de impresión de cada caja (**Ajustes → Cajas**, ver `docs/print-agent.md`) y haz una venta de prueba.
 
