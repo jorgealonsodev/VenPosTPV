@@ -114,7 +114,7 @@ class FiscalRecorder
             $this->connection->executeStatement('INSERT IGNORE INTO fiscal_chain (id, last_record_id, last_hash) VALUES (1, NULL, NULL)');
             $head = $this->connection->fetchAssociative('SELECT last_hash FROM fiscal_chain WHERE id = 1 FOR UPDATE');
         }
-        $previousHash = \is_array($head) && $head['last_hash'] !== null ? (string) $head['last_hash'] : '';
+        $previousHash = \is_array($head) && ($head['last_hash'] ?? null) !== null ? (string) $head['last_hash'] : '';
 
         $issuerNif = strtoupper(trim((string) $this->connection->fetchOne('SELECT tax_id FROM terminal WHERE id = ?', [$record['terminal_id']])));
         if ($issuerNif === '') {
