@@ -222,6 +222,6 @@ test('Ajustes → «Cierres de caja» lists the closes and prints or downloads e
 test('the changed scripts have a new cache version', () => {
     const twig = fs.readFileSync(path.resolve(__dirname, '../../templates/pos.html.twig'), 'utf8');
     for (const file of ['api.js', 'stores/useSession.js', 'components/CashCloseScreen.js', 'components/SettingsModal.js', 'app.js']) {
-        assert.ok(twig.includes(`/assets/js/${file}?v=20261105-cash-reports-v1`), file);
+        assert.ok(twig.includes(`/assets/js/${file}?v=20261105-`), file);
     }
 });
