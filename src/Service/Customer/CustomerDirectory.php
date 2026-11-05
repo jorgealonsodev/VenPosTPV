@@ -56,8 +56,8 @@ class CustomerDirectory
         $params = [];
         if ($query !== '') {
             $like = '%' . addcslashes($query, '%_\\') . '%';
-            $sql .= " AND (CONCAT(firstname, ' ', lastname) LIKE ? OR email LIKE ? OR phone LIKE ?)";
-            $params = [$like, $like, $like];
+            $sql .= " AND (CONCAT(firstname, ' ', lastname) LIKE ? OR email LIKE ? OR phone LIKE ? OR tax_name LIKE ? OR tax_id LIKE ?)";
+            $params = [$like, $like, $like, $like, $like];
         }
         $rows = $this->connection->fetchAllAssociative($sql . ' ORDER BY lastname, firstname, id LIMIT ' . self::SEARCH_LIMIT, $params);
 
@@ -126,6 +126,50 @@ class CustomerDirectory
         $row = $this->connection->fetchAssociative('SELECT * FROM customer WHERE id = ?', [$id]);
 
         return $this->view($row === false ? [] : $row) + ['existing' => false];
+    }
+
+    /**
+     * The active customer row of a local id, following a merged duplicate to the
+     * customer it was merged into.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function find(int $id): ?array
+    {
+        $row = $this->connection->fetchAssociative(
+            'SELECT COALESCE(m.id, c.id) AS id FROM customer c LEFT JOIN customer m ON m.id = c.merged_into WHERE c.id = ?',
+            [$id]
+        );
+        if ($row === false) {
+            return null;
+        }
+        $customer = $this->connection->fetchAssociative('SELECT * FROM customer WHERE id = ? AND active = 1', [(int) $row['id']]);
+
+        return $customer === false ? null : $customer;
+    }
+
+    /**
+     * Stores the tax data of a customer (docs/prd/factura-completa.md F1, PUT
+     * /api/customers/{id}). Only the fields sent change; they stay at the till (not
+     * uploaded to PrestaShop) and invoices already issued keep their own copy.
+     *
+     * @param array<string, mixed> $input tax_name, country, tax_id_type, tax_id, address, postcode, city, province
+     *
+     * @return array<string, mixed> the customer as the screen shows it
+     *
+     * @throws CustomerException 404 unknown customer, 422 invalid data
+     */
+    public function updateTaxData(int $id, array $input): array
+    {
+        $current = $this->find($id);
+        if ($current === null) {
+            throw CustomerException::notFound();
+        }
+        $values = CustomerTaxData::normalize($input, $current);
+        $this->connection->update('customer', $values + ['updated_at' => (new \DateTimeImmutable())->format('Y-m-d H:i:s')], ['id' => (int) $current['id']]);
+        $row = $this->find((int) $current['id']);
+
+        return $this->view($row ?? []);
     }
 
     /**
@@ -210,6 +254,25 @@ class CustomerDirectory
             'email' => (string) ($row['email'] ?? ''),
             'phone' => (string) ($row['phone'] ?? ''),
             'synced' => isset($row['ps_customer_id']),
-        ];
+        ] + $this->taxView($row);
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     *
+     * @return array<string, mixed>
+     */
+    private function taxView(array $row): array
+    {
+        $tax = [];
+        foreach (CustomerTaxData::FIELDS as $field) {
+            $tax[$field] = isset($row[$field]) ? (string) $row[$field] : '';
+        }
+        $tax['country'] = $tax['country'] !== '' ? $tax['country'] : CustomerTaxData::DEFAULT_COUNTRY;
+        $check = CustomerTaxData::invoiceCheck($row);
+        $tax['tax_missing'] = $check['missing'];
+        $tax['tax_complete'] = $check['message'] === null;
+
+        return $tax;
     }
 }

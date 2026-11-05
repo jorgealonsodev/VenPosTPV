@@ -14,7 +14,8 @@ use VenPosTPV\Service\Customer\Exception\CustomerException;
 
 /**
  * Customers for the sale screen (PRD C1, C2): searched in the local copy, so it
- * works without PrestaShop, and created at the till with their upload queued.
+ * works without PrestaShop, and created at the till with their upload queued. Their
+ * tax data for full invoices are edited here and stay at the till.
  */
 #[AsController]
 final class CustomerController
@@ -54,5 +55,26 @@ final class CustomerController
         }
 
         return new JsonResponse(['data' => $customer], $customer['existing'] ? Response::HTTP_OK : Response::HTTP_CREATED);
+    }
+
+    /** The customer's tax data for full invoices (docs/prd/factura-completa.md F1). */
+    #[Route('/customers/{id}', methods: ['PUT'], requirements: ['id' => '\d+'])]
+    public function update(int $id, Request $request): JsonResponse
+    {
+        if ($request->getSession()->get('user_id') === null) {
+            return new JsonResponse(['error' => 'Unauthorized'], Response::HTTP_UNAUTHORIZED);
+        }
+        if ($request->getContentTypeFormat() !== 'json') {
+            return new JsonResponse(['error' => 'Se espera un cuerpo JSON'], Response::HTTP_UNSUPPORTED_MEDIA_TYPE);
+        }
+        $body = json_decode((string) $request->getContent(), true);
+
+        try {
+            $customer = $this->customers->updateTaxData($id, \is_array($body) ? $body : []);
+        } catch (CustomerException $e) {
+            return new JsonResponse(['error' => $e->getMessage()], $e->getCode() === Response::HTTP_NOT_FOUND ? Response::HTTP_NOT_FOUND : Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        return new JsonResponse(['data' => $customer]);
     }
 }
