@@ -12,6 +12,9 @@ parameters:
     env(TPV_AGENT_MIN_VERSION): ''
     env(TPV_AGENT_LATEST_VERSION): ''
     env(TPV_AGENT_DOWNLOAD_URL): ''
+    # Public address of the TPV for ticket QR codes. The web installer writes
+    # TPV_URL only; APP_URL (older installs) wins when it is set.
+    app.public_url: '%env(TPV_URL)%'
 
 services:
     _defaults:
@@ -87,7 +90,7 @@ services:
     VenPosTPV\Service\Print\TicketVerificationService:
         arguments:
             $secret: '%env(APP_SECRET)%'
-            $appUrl: '%env(APP_URL)%'
+            $appUrl: '%env(default:app.public_url:APP_URL)%'
 
     # Ticket Data Resolver
     VenPosTPV\Service\Print\TicketDataResolver:
