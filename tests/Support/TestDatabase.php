@@ -164,6 +164,8 @@ final class TestDatabase
         self::runMigration($connection, 'Version00000037PrintAgent');
         self::runMigration($connection, 'Version00000038LabelSettings');
         self::runMigration($connection, 'Version00000040AppSetting');
+        self::runMigration($connection, 'Version00000041EnsureCashierRole');
+        self::runMigration($connection, 'Version00000042FiscalRecord');
     }
 
     private static function applyInstallSchema(Connection $connection): void

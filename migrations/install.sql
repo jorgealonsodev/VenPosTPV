@@ -510,3 +510,35 @@ CREATE TABLE IF NOT EXISTS rate_limit (
     PRIMARY KEY (rate_key, window_start),
     KEY idx_rate_limit_window (window_start)
 ) ENGINE=InnoDB;
+
+-- fiscal_record (Version00000042): one append-only record per issued ticket (F2)
+-- and credit note (R5), chained by the AEAT fingerprint of the previous record.
+-- The amounts and dates are kept as the exact strings that were hashed.
+CREATE TABLE IF NOT EXISTS fiscal_record (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    record_type VARCHAR(10) NOT NULL DEFAULT 'alta',
+    invoice_type CHAR(2) NOT NULL,
+    issuer_nif VARCHAR(16) NOT NULL,
+    number VARCHAR(60) NOT NULL,
+    issue_date CHAR(10) NOT NULL,
+    tax_total CHAR(16) NOT NULL,
+    total CHAR(16) NOT NULL,
+    previous_hash CHAR(64) NULL,
+    hash CHAR(64) NOT NULL,
+    generated_at CHAR(25) NOT NULL,
+    rectified_number VARCHAR(60) NULL,
+    order_id INT UNSIGNED NULL,
+    refund_id INT UNSIGNED NULL,
+    terminal_id INT UNSIGNED NOT NULL,
+    created_at DATETIME NOT NULL,
+    UNIQUE KEY uk_fiscal_record_order (order_id),
+    UNIQUE KEY uk_fiscal_record_refund (refund_id),
+    KEY idx_fiscal_record_number (number)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- fiscal_chain (Version00000042): the head of the chain, locked while a record is added.
+CREATE TABLE IF NOT EXISTS fiscal_chain (
+    id TINYINT UNSIGNED NOT NULL PRIMARY KEY,
+    last_record_id BIGINT UNSIGNED NULL,
+    last_hash CHAR(64) NULL
+) ENGINE=InnoDB;

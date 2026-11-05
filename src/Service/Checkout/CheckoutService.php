@@ -17,6 +17,7 @@ use VenPosTPV\Service\Checkout\Exception\CheckoutException;
 use VenPosTPV\Service\Customer\CustomerDirectory;
 use VenPosTPV\Service\Print\PrinterService;
 use VenPosTPV\Service\Print\TicketDataResolver;
+use VenPosTPV\Service\Fiscal\FiscalRecorder;
 use VenPosTPV\Service\Sale\TicketNumberer;
 use VenPosTPV\Service\Sync\Outbox;
 use VenPosTPV\Service\Sync\OutboxSyncTrigger;
@@ -63,6 +64,7 @@ class CheckoutService
         private readonly ?Outbox $outbox = null,
         private readonly ?OutboxSyncTrigger $syncTrigger = null,
         private readonly ?CustomerDirectory $customers = null,
+        private readonly ?FiscalRecorder $fiscalRecorder = null,
     ) {
     }
 
@@ -945,6 +947,7 @@ class CheckoutService
             }
 
             $tax = $this->resolveVatAmount($lines, $subtotal, $total);
+            $issuedAt = new \DateTimeImmutable();
 
             $this->conn->insert('order_meta', [
                 // The ticket code; a PrestaShop reference longer than the column stays in payment_breakdown only.
@@ -972,11 +975,16 @@ class CheckoutService
                 ], JSON_THROW_ON_ERROR),
                 'printed' => 0,
                 'synced' => $synced ? 1 : 0,
-                'created_at' => (new \DateTimeImmutable())->format('Y-m-d H:i:s'),
+                'created_at' => $issuedAt->format('Y-m-d H:i:s'),
                 // Unique: a repeated payment attempt returns this sale (V32).
             ] + ($requestId !== null ? ['request_id' => $requestId] : []));
+            $orderId = (int) $this->conn->lastInsertId();
 
-            return (int) $this->conn->lastInsertId();
+            // The chained fiscal record of the ticket, in the same transaction (VERI*FACTU).
+            ($this->fiscalRecorder ?? new FiscalRecorder($this->conn))
+                ->recordSale($orderId, (int) ($cashContext['terminal_id'] ?? 1), $reference, $total, $tax, $issuedAt);
+
+            return $orderId;
         } catch (\Throwable $e) {
             throw CheckoutException::orderMetaFailed($psOrderId ?? 0, $reference, $e);
         }

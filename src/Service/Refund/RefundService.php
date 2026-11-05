@@ -10,6 +10,7 @@ use VenPosTPV\Service\Cash\CashSessionService;
 use VenPosTPV\Service\Cash\Exception\NoOpenCashSessionException;
 use VenPosTPV\Service\Catalog\CatalogPriceResolver;
 use VenPosTPV\Service\Catalog\Exception\ProductNotInCatalogException;
+use VenPosTPV\Service\Fiscal\FiscalRecorder;
 use VenPosTPV\Service\PrestaShop\CouponCreationService;
 use VenPosTPV\Service\Refund\Exception\RefundException;
 use VenPosTPV\Service\Sync\Outbox;
@@ -81,6 +82,7 @@ class RefundService
         private readonly ?CatalogPriceResolver $priceResolver = null,
         private readonly ?Outbox $outbox = null,
         private readonly ?OutboxSyncTrigger $syncTrigger = null,
+        private readonly ?FiscalRecorder $fiscalRecorder = null,
     ) {
         $this->voucherIssuer = new VoucherIssuer($conn, $couponCreationService);
     }
@@ -579,6 +581,11 @@ class RefundService
         }
     }
 
+    private function fiscal(): FiscalRecorder
+    {
+        return $this->fiscalRecorder ?? new FiscalRecorder($this->conn);
+    }
+
     private function numberer(): CreditNoteNumberer
     {
         return $this->creditNoteNumberer ?? new CreditNoteNumberer($this->conn);
@@ -646,6 +653,8 @@ class RefundService
         }
 
         $this->conn->update('refund', ['credit_note_number' => $numberer->next($now)], ['id' => $refundId]);
+        // The chained fiscal record of the credit note, in the same transaction (VERI*FACTU).
+        $this->fiscal()->recordCreditNote($refundId, $now);
 
         $cashAmount = round((float) $refund['cash_amount'], 2);
         $total = round((float) $refund['total'], 2);
@@ -1120,9 +1129,11 @@ class RefundService
                 }
 
                 // Numbered only once the refund really happened, in the same transaction.
+                $issuedAt = new \DateTimeImmutable();
                 $this->conn->update('refund', [
-                    'credit_note_number' => $numberer->next(new \DateTimeImmutable()),
+                    'credit_note_number' => $numberer->next($issuedAt),
                 ], ['id' => $refundId]);
+                $this->fiscal()->recordCreditNote($refundId, $issuedAt);
 
                 if ($cashAmount > 0) {
                     // Positive: the cash report subtracts the refund total from the drawer.
