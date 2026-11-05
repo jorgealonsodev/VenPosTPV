@@ -491,6 +491,47 @@ const SettingsModal = {
             }
         }
 
+        // Ajustes → VERI*FACTU: the switch (QR tributario on the tickets) and the chain check.
+        const verifactu = Vue.reactive({ enabled: false, loaded: false, saving: false, error: '', chain: null, checking: false });
+
+        async function loadVerifactu() {
+            verifactu.error = '';
+            try {
+                const resp = await ApiClient.get('/api/fiscal/settings');
+                verifactu.enabled = !!(resp.data && resp.data.enabled);
+                verifactu.loaded = true;
+            } catch (e) {
+                verifactu.error = errorText(e, 'Error al cargar VERI*FACTU');
+            }
+        }
+
+        async function saveVerifactu(enabled) {
+            verifactu.saving = true;
+            verifactu.error = '';
+            try {
+                const resp = await ApiClient.put('/api/fiscal/settings', { enabled });
+                verifactu.enabled = !!(resp.data && resp.data.enabled);
+                flash(verifactu.enabled ? 'VERI*FACTU activado' : 'VERI*FACTU desactivado');
+            } catch (e) {
+                verifactu.error = errorText(e, 'Error al guardar VERI*FACTU');
+            } finally {
+                verifactu.saving = false;
+            }
+        }
+
+        async function checkChain() {
+            verifactu.checking = true;
+            verifactu.error = '';
+            try {
+                const resp = await ApiClient.get('/api/fiscal/chain');
+                verifactu.chain = resp.data;
+            } catch (e) {
+                verifactu.error = errorText(e, 'No se pudo comprobar la cadena de registros');
+            } finally {
+                verifactu.checking = false;
+            }
+        }
+
         Vue.onMounted(() => {
             loadEmployees();
             loadTerminal();
@@ -513,6 +554,7 @@ const SettingsModal = {
             syncNowRunning, syncLastResult,
             saveSyncInterval, saveSyncPushInterval, syncNow,
             INPUT_STYLE, mail, mailSaving, mailError, mailTestTo, mailTestStatus, saveMail, sendMailTest, loadMail,
+            verifactu, loadVerifactu, saveVerifactu, checkChain,
             emit,
         };
     },
@@ -571,6 +613,12 @@ const SettingsModal = {
                             :style="activeSection === 'email' ? 'background:var(--surface2); border-left-color:var(--green); color:var(--text); font-weight:600;' : ''"
                             @mouseover="$event.currentTarget.style.background='var(--surface2)'" @mouseout="$event.currentTarget.style.background=activeSection === 'email' ? 'var(--surface2)' : 'transparent'">
                             <icon name="mail" :size="18"></icon> Email
+                        </button>
+                        <button @click="activeSection = 'verifactu'; loadVerifactu()"
+                            style="min-height:48px; padding:0 16px; background:transparent; border:none; border-left:3px solid transparent; color:var(--text2); font-family:inherit; font-size:14px; text-align:left; cursor:pointer; display:flex; align-items:center; gap:10px; transition:background .15s;"
+                            :style="activeSection === 'verifactu' ? 'background:var(--surface2); border-left-color:var(--green); color:var(--text); font-weight:600;' : ''"
+                            @mouseover="$event.currentTarget.style.background='var(--surface2)'" @mouseout="$event.currentTarget.style.background=activeSection === 'verifactu' ? 'var(--surface2)' : 'transparent'">
+                            <icon name="receipt" :size="18"></icon> VERI*FACTU
                         </button>
                     </div>
 
@@ -924,6 +972,27 @@ const SettingsModal = {
                         </div>
 
                         <!-- ==================== EMAIL ==================== -->
+                        <div v-if="activeSection === 'verifactu'">
+                            <div style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; color:var(--text); margin-bottom:6px;">
+                                <icon name="receipt" :size="16"></icon> VERI*FACTU
+                            </div>
+                            <div style="font-size:12px; color:var(--text3); margin-bottom:16px;">Cada ticket y cada devolución se guarda siempre en un registro encadenado con huella que no se puede modificar ni borrar. Al activar VERI*FACTU, los tickets imprimen además el «QR tributario» y la leyenda «VERI*FACTU». El envío de los registros a la AEAT aún no está disponible.</div>
+                            <div v-if="verifactu.error" style="color:var(--red); font-size:13px; margin-bottom:12px;">{{ verifactu.error }}</div>
+                            <label v-if="verifactu.loaded" style="display:flex; align-items:center; gap:10px; font-size:14px; color:var(--text); cursor:pointer; margin-bottom:20px;">
+                                <input type="checkbox" :checked="verifactu.enabled" :disabled="verifactu.saving" @change="saveVerifactu($event.target.checked)" style="width:18px; height:18px;">
+                                Activar VERI*FACTU (QR tributario en los tickets)
+                            </label>
+                            <button @click="checkChain" :disabled="verifactu.checking"
+                                style="min-height:40px; padding:0 16px; background:var(--surface2); border:1px solid var(--border); border-radius:8px; color:var(--text); font-family:inherit; font-size:13px; cursor:pointer;">
+                                {{ verifactu.checking ? 'Comprobando…' : 'Comprobar registros' }}
+                            </button>
+                            <div v-if="verifactu.chain" style="margin-top:12px; font-size:13px;">
+                                <div v-if="verifactu.chain.ok" style="color:var(--green);">Cadena correcta: {{ verifactu.chain.records }} registros.</div>
+                                <div v-else style="color:var(--red);">{{ verifactu.chain.reason }}<span v-if="verifactu.chain.broken_id"> (registro {{ verifactu.chain.broken_id }})</span></div>
+                                <div style="color:var(--text3); margin-top:4px;">{{ verifactu.chain.protected ? 'La base de datos también impide modificar o borrar registros.' : 'El servidor no permite bloquear los registros en la base de datos; la aplicación no los modifica y esta comprobación detecta cualquier cambio.' }}</div>
+                            </div>
+                        </div>
+
                         <div v-if="activeSection === 'email'">
                             <div style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; color:var(--text); margin-bottom:6px;">
                                 <icon name="mail" :size="16"></icon> Cuenta de correo de la tienda

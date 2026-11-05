@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace VenPosTPV\Service\Print;
 
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Exception\TableNotFoundException;
+use VenPosTPV\Service\Fiscal\FiscalQr;
+use VenPosTPV\Service\Fiscal\VerifactuSettings;
 
 class TicketDataResolver
 {
@@ -13,6 +16,7 @@ class TicketDataResolver
         private readonly TicketVerificationService $verificationService,
         private readonly string $storeName,
         private readonly string $storeAddress,
+        private readonly ?VerifactuSettings $verifactu = null,
     ) {
     }
 
@@ -113,6 +117,7 @@ class TicketDataResolver
             legalName: $legalName,
             taxId: $taxId,
             webOrderReference: $this->webOrderReference($orderId, $reference),
+            fiscalQrUrl: $this->fiscalQrUrl('order_id', $orderId < 0 ? -$orderId : null, $orderId > 0 ? $orderId : null),
         );
     }
 
@@ -284,6 +289,7 @@ class TicketDataResolver
             ),
             legalName: $legalName,
             taxId: $taxId,
+            fiscalQrUrl: $this->fiscalQrUrl('refund_id', $refundId),
         );
     }
 
@@ -327,6 +333,35 @@ class TicketDataResolver
         $taxShare = is_numeric($ttc) && is_numeric($net) && (float) $ttc > 0 ? max(0.0, 1 - (float) $net / (float) $ttc) : 0.0;
 
         return [$name, $taxShare];
+    }
+
+    /**
+     * VERI*FACTU on: the cotejo URL of the ticket's fiscal record. Null when the
+     * switch is off, or when the record does not exist (a ticket issued before the
+     * records, or on a database without them).
+     */
+    private function fiscalQrUrl(string $column, ?int $id, ?int $psOrderId = null): ?string
+    {
+        if ($this->verifactu === null || !$this->verifactu->isEnabled()) {
+            return null;
+        }
+        try {
+            if ($id === null && $psOrderId !== null) {
+                $found = $this->connection->fetchOne('SELECT id FROM order_meta WHERE ps_order_id = ?', [$psOrderId]);
+                $id = $found !== false ? (int) $found : null;
+            }
+            if ($id === null) {
+                return null;
+            }
+            $record = $this->connection->fetchAssociative(
+                'SELECT issuer_nif, number, issue_date, total FROM fiscal_record WHERE ' . ($column === 'refund_id' ? 'refund_id' : 'order_id') . ' = ?',
+                [$id]
+            );
+        } catch (TableNotFoundException) {
+            return null;
+        }
+
+        return $record !== false ? FiscalQr::forRecord($record) : null;
     }
 
     /** The terminal's choice of scan code; Code128 by default (1D scanners cannot read QR). */

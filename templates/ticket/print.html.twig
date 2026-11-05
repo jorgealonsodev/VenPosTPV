@@ -34,6 +34,14 @@
     </style>
 </head>
 <body>
+    {% if fiscalQrPath is defined and fiscalQrPath %}
+    <div style="text-align:center; margin-bottom:6pt;">
+        <div style="font-weight:bold;">{{ fiscalQrTitle }}</div>
+        {# 32 mm: within the 30-40 mm the AEAT requires #}
+        <img src="{{ fiscalQrPath }}" alt="QR tributario" style="width:32mm;height:32mm;">
+        <div style="font-weight:bold;">{{ fiscalQrLegend }}</div>
+    </div>
+    {% endif -%}
     {% if logoPath %}
     <div style="text-align:center; margin-bottom:8px;">
         <img src="{{ logoPath }}" style="max-width:100%; height:auto;" alt="Logo">

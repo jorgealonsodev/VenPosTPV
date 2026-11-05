@@ -1,7 +1,7 @@
 # VERI*FACTU fiscal records
 
 Objective: chained, unalterable fiscal record per issued ticket and credit note (always on); VERI*FACTU QR, legend and AEAT submission behind a switch that ships off.
-Branch: feat/verifactu (from feat/print-agent). Delivery: ask-on-risk. Tests: PHPUnit with `PATH=.runtime/php-8.5.12/bin:$PATH php vendor/bin/phpunit`.
+Branch: feat/verifactu (from feat/print-agent). Delivery: ask-on-risk → feature-branch-chain (user choice); slices: T1 = a22710c..4c7d6d1. Tests: PHPUnit with `PATH=.runtime/php-8.5.12/bin:$PATH php vendor/bin/phpunit`.
 
 ## Specs
 
@@ -17,6 +17,7 @@ Assumptions (to confirm with the club's adviser): TipoFactura F2 for tickets, R5
 
 - T1 — S1, S2: fiscal_record table, hash builder, chain writer hooked into sale/coupon sale/credit note issuance, immutability triggers, chain verification (GET /api/fiscal/chain). Route: inline (no Writer trigger reason). Status: done, commit: see Log L6. Risk: items 1 (migration), 4 (chain-head lock).
 - T2 — S3, S4: switch in Ajustes + QR/legend on ESC/POS and PDF. Route: inline. Status: pending.
+- T4 — L8: review RD 1007/2023 and Orden HAC/1177/2024 against the implementation; list gaps. Route: inline research. Status: pending.
 - T3 — S5: AEAT submission (needs the club's certificate and the AEAT test environment). Route: inline. Status: pending.
 
 ## Log
@@ -28,3 +29,5 @@ Assumptions (to confirm with the club's adviser): TipoFactura F2 for tickets, R5
 - L5 T1 evidence: FiscalHashTest reproduces the 3 official AEAT vectors (RED: class missing → GREEN). Integration on a throwaway MySQL 8 (binlog on): chain links, rollback leaves no record, verifier detects edit/removal/tail truncation, triggers refuse UPDATE/DELETE when allowed and are skipped without error when the user lacks the privilege (as on shared hosting). Real refund/sale flows wrote 52 chained records. Full suite: 1007 tests; the 7 failing integration tests fail identically on the base commit (diff of failure lists empty). Container: FiscalRecorder gets doctrine.dbal.tpv_connection, the same connection as CheckoutService/RefundService.
 - L6 Commit a22710c holds the employees fix (needed by TestDatabase's migration list); T1 is the next commit.
 - Pending for production: the server only runs migrations from install.php, so Version00000042 must be applied there before records are written (until then sales go on and the gap is logged).
+- L7 (2026-11-05) Delivery question answered: "Cadena sobre la rama (Recommended)" (feature-branch-chain). T1 commit 4c7d6d1; RDD assess: high, review due (escalated item 1).
+- L8 (2026-11-05) user, pasted text about the developer's obligations (declaración responsable signed and given to the client; AEAT access to the event log, invoice sequence and chain integrity; the system shows its identification, commercial name, exact version and the declaration identifier; LGT art. 201 bis sanctions up to 150.000 € per year), with: "luego revisa toda la normativa he leido algo como esto" and then "busca la ley y compruebalo". → task T4 (regulation review against the implementation).

@@ -41,6 +41,8 @@ final class TicketData
         // PRD S5: the PrestaShop reference when PrestaShop answered one other than the
         // ticket code; printed as "Pedido web: XXXX" under it. Null for every other ticket.
         public readonly ?string $webOrderReference = null,
+        // VERI*FACTU on: the AEAT cotejo URL printed as «QR tributario:» at the top.
+        public readonly ?string $fiscalQrUrl = null,
     ) {
     }
 

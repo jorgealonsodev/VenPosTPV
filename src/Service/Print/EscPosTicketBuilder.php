@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace VenPosTPV\Service\Print;
 
+use VenPosTPV\Service\Fiscal\FiscalQr;
 use Mike42\Escpos\CapabilityProfile;
 use Mike42\Escpos\PrintConnectors\PrintConnector;
 use Mike42\Escpos\GdEscposImage;
@@ -67,6 +68,13 @@ class EscPosTicketBuilder
 
         // Header
         $printer->setJustification(Printer::JUSTIFY_CENTER);
+        if ($ticketData->fiscalQrUrl !== null) {
+            // VERI*FACTU: the tax QR comes first on the ticket, 30-40 mm, error
+            // correction M (6 dots per module: about 34 mm for this URL at 203 dpi).
+            $printer->text(FiscalQr::TITLE . "\n");
+            $printer->qrCode($ticketData->fiscalQrUrl, Printer::QR_ECLEVEL_M, 6);
+            $printer->text(FiscalQr::LEGEND . "\n\n");
+        }
         $logo = $this->logoImage($ticketData->ticketLogo);
         if ($logo !== null) {
             $printer->bitImage($logo);

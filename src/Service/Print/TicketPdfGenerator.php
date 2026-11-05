@@ -6,9 +6,11 @@ namespace VenPosTPV\Service\Print;
 
 use Dompdf\Dompdf;
 use Dompdf\Options;
+use Endroid\QrCode\ErrorCorrectionLevel\ErrorCorrectionLevelMedium;
 use Endroid\QrCode\QrCode;
 use Endroid\QrCode\Writer\PngWriter;
 use Twig\Environment;
+use VenPosTPV\Service\Fiscal\FiscalQr;
 
 class TicketPdfGenerator
 {
@@ -32,12 +34,18 @@ class TicketPdfGenerator
             $logoPath = $ticketData->ticketLogo;
         }
 
+        // VERI*FACTU: the tax QR (error correction M) at the top of the ticket.
+        $fiscalQrPath = $ticketData->fiscalQrUrl !== null ? $this->qrDataUri($ticketData->fiscalQrUrl, true) : '';
+
         $html = $this->twig->render('ticket/print.html.twig', [
             'ticket'   => $ticketData,
             'giftMode' => $giftMode,
             'qrPath'   => $qrPath,
             'barcodePath' => $barcodePath,
             'logoPath' => $logoPath,
+            'fiscalQrPath' => $fiscalQrPath,
+            'fiscalQrTitle' => FiscalQr::TITLE,
+            'fiscalQrLegend' => FiscalQr::LEGEND,
         ]);
 
         $options = new Options();
@@ -53,10 +61,13 @@ class TicketPdfGenerator
         return (string) $dompdf->output();
     }
 
-    private function qrDataUri(string $url): string
+    private function qrDataUri(string $url, bool $fiscal = false): string
     {
         try {
             $qrCode = QrCode::create($url)->setSize(150)->setMargin(4);
+            if ($fiscal) {
+                $qrCode = $qrCode->setErrorCorrectionLevel(new ErrorCorrectionLevelMedium());
+            }
 
             return 'data:image/png;base64,' . base64_encode((new PngWriter())->write($qrCode)->getString());
         } catch (\Throwable) {
