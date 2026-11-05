@@ -13,6 +13,12 @@ final class ReportFilter
 {
     public const MAX_DAYS = 366;
     public const FORMATS = ['json', 'csv'];
+    public const SORTS = ['amount', 'units'];
+    public const GROUPS = ['combination', 'product'];
+    public const VIEWS = ['sold', 'unsold'];
+
+    /** The options only «Por producto» takes. */
+    private const PRODUCT_OPTIONS = ['sort', 'group', 'view', 'cursor'];
 
     private function __construct(
         private readonly ?\DateTimeImmutable $from,
@@ -21,6 +27,10 @@ final class ReportFilter
         public readonly ?int $userId,
         public readonly ?int $sessionId,
         public readonly string $format,
+        public readonly string $sort = 'amount',
+        public readonly string $group = 'combination',
+        public readonly string $view = 'sold',
+        public readonly int $cursor = 0,
     ) {
     }
 
@@ -31,10 +41,26 @@ final class ReportFilter
      */
     public static function fromQuery(string $type, array $query): self
     {
-        foreach (['from', 'to', 'terminal_id', 'user_id', 'session_id', 'format'] as $key) {
+        foreach (['from', 'to', 'terminal_id', 'user_id', 'session_id', 'format', ...self::PRODUCT_OPTIONS] as $key) {
             if (isset($query[$key]) && !\is_scalar($query[$key])) {
                 throw new InvalidReportFilter('Filtro no válido: ' . $key);
             }
+        }
+        foreach (self::PRODUCT_OPTIONS as $key) {
+            if ($type !== 'products' && self::given($query, $key)) {
+                throw new InvalidReportFilter('Solo el informe por producto admite ' . $key);
+            }
+        }
+        $sort = self::option($query, 'sort', self::SORTS, 'Orden no válido: usa amount o units');
+        $group = self::option($query, 'group', self::GROUPS, 'Agrupación no válida: usa combination o product');
+        $view = self::option($query, 'view', self::VIEWS, 'Vista no válida: usa sold o unsold');
+        $cursor = 0;
+        if (self::given($query, 'cursor')) {
+            $value = (string) $query['cursor'];
+            if (!ctype_digit($value) || \strlen($value) > 9) {
+                throw new InvalidReportFilter('Cursor no válido');
+            }
+            $cursor = (int) $value;
         }
         $format = (string) ($query['format'] ?? 'json');
         if (!\in_array($format, self::FORMATS, true)) {
@@ -68,7 +94,7 @@ final class ReportFilter
         if ($from > $to) {
             throw new InvalidReportFilter('La fecha desde no puede ser posterior a la fecha hasta');
         }
-        $filter = new self($from, $to, $terminalId, $userId, null, $format);
+        $filter = new self($from, $to, $terminalId, $userId, null, $format, $sort, $group, $view, $cursor);
         if ($filter->days() > self::MAX_DAYS) {
             throw new InvalidReportFilter('El rango máximo es de 366 días');
         }
@@ -111,7 +137,8 @@ final class ReportFilter
         }
         $days = $this->days();
 
-        return new self($this->from->modify(sprintf('-%d days', $days)), $this->from->modify('-1 day'), $this->terminalId, $this->userId, null, $this->format);
+        return new self($this->from->modify(sprintf('-%d days', $days)), $this->from->modify('-1 day'), $this->terminalId, $this->userId, null, $this->format,
+            $this->sort, $this->group, $this->view, $this->cursor);
     }
 
     /** @return array{type: string, from: ?string, to: ?string, terminal_id: ?int, user_id: ?int, session_id: ?int} */
@@ -131,6 +158,23 @@ final class ReportFilter
     private static function given(array $query, string $key): bool
     {
         return isset($query[$key]) && (string) $query[$key] !== '';
+    }
+
+    /**
+     * @param array<string, mixed> $query
+     * @param list<string> $allowed the first one is the default
+     */
+    private static function option(array $query, string $key, array $allowed, string $message): string
+    {
+        if (!self::given($query, $key)) {
+            return $allowed[0];
+        }
+        $value = (string) $query[$key];
+        if (!\in_array($value, $allowed, true)) {
+            throw new InvalidReportFilter($message);
+        }
+
+        return $value;
     }
 
     /** @param array<string, mixed> $query */

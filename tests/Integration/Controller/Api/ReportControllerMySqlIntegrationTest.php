@@ -91,12 +91,59 @@ final class ReportControllerMySqlIntegrationTest extends TestCase
         $this->assertSame(0, $this->audits());
     }
 
-    public function testAnUnknownOrNotYetAvailableTypeIs404(): void
+    public function testAnUnknownTypeIs404(): void
     {
-        foreach (['nope', 'hourly', 'products', 'categories', 'cashiers', 'vat'] as $type) {
-            $response = $this->controller()->show($type, SessionRequest::create(['from' => '2026-03-10', 'to' => '2026-03-10'], self::ADMIN));
-            $this->assertSame(Response::HTTP_NOT_FOUND, $response->getStatusCode(), $type);
-            $this->assertSame(['error' => 'Informe no encontrado'], $this->json($response));
+        $response = $this->controller()->show('nope', SessionRequest::create(['from' => '2026-03-10', 'to' => '2026-03-10'], self::ADMIN));
+
+        $this->assertSame(Response::HTTP_NOT_FOUND, $response->getStatusCode());
+        $this->assertSame(['error' => 'Informe no encontrado'], $this->json($response));
+    }
+
+    public function testEveryReportTypeAnswersTheJsonEnvelopeAndExportsCsv(): void
+    {
+        $names = ['summary' => 'resumen', 'daily' => 'dias', 'hourly' => 'horas', 'products' => 'productos', 'categories' => 'categorias',
+            'cashiers' => 'cajeros', 'payments' => 'formas-pago', 'vat' => 'iva'];
+        foreach ($names as $type => $name) {
+            $json = $this->controller()->show($type, SessionRequest::create(['from' => '2026-03-10', 'to' => '2026-03-11'], self::ADMIN));
+            $this->assertSame(Response::HTTP_OK, $json->getStatusCode(), $type);
+            $this->assertSame(['data', 'approximate_amount', 'missing_lines'], array_keys($this->json($json)), $type);
+
+            $csv = $this->controller()->show($type, SessionRequest::create(['from' => '2026-03-10', 'to' => '2026-03-11', 'format' => 'csv'], self::ADMIN));
+            $this->assertSame(Response::HTTP_OK, $csv->getStatusCode(), $type);
+            $this->assertSame('attachment; filename="informe-' . $name . '-2026-03-10-2026-03-11.csv"', $csv->headers->get('Content-Disposition'), $type);
+            $this->assertStringStartsWith("\xEF\xBB\xBF", (string) $csv->getContent(), $type);
+        }
+        $this->assertSame(\count($names), $this->audits());
+    }
+
+    public function testProductsCsvHasEveryRowAndATotalCriterion12(): void
+    {
+        $response = $this->controller()->show('products', SessionRequest::create(['from' => '2026-03-10', 'to' => '2026-03-11', 'format' => 'csv', 'cursor' => '50'], self::ADMIN));
+
+        $this->assertSame(
+            "\xEF\xBB\xBFReferencia;Nombre;Unidades vendidas;Unidades devueltas;Unidades netas;Ventas;Devoluciones;Importe neto;% del total\r\n"
+            . ";Camiseta;3;1;2;75,00;25,00;50,00;47,17\r\n"
+            . ";Bañador;1;0;1;36,00;0,00;36,00;33,96\r\n"
+            . ";Gorro;2;0;2;20,00;0,00;20,00;18,87\r\n"
+            . "Total;;6;1;5;131,00;25,00;106,00;100,00\r\n",
+            $response->getContent()
+        );
+        $rows = $this->connection->fetchAllAssociative("SELECT target, payload FROM audit_log WHERE action = 'report_export' AND user_id = ?", [SalesReportFixture::ANA]);
+        $this->assertCount(1, $rows);
+        $this->assertSame('products', $rows[0]['target']);
+    }
+
+    public function testInvalidProductOptionsAre422(): void
+    {
+        $cases = [
+            ['products', ['sort' => 'name'], 'Orden no válido: usa amount o units'],
+            ['products', ['cursor' => 'abc'], 'Cursor no válido'],
+            ['daily', ['sort' => 'units'], 'Solo el informe por producto admite sort'],
+        ];
+        foreach ($cases as [$type, $query, $message]) {
+            $response = $this->controller()->show($type, SessionRequest::create(['from' => '2026-03-10', 'to' => '2026-03-10'] + $query, self::ADMIN));
+            $this->assertSame(Response::HTTP_UNPROCESSABLE_ENTITY, $response->getStatusCode(), $message);
+            $this->assertSame(['error' => $message], $this->json($response));
         }
     }
 
@@ -107,7 +154,7 @@ final class ReportControllerMySqlIntegrationTest extends TestCase
             [['from' => '2026-01-01', 'to' => '2027-02-04'], 'El rango máximo es de 366 días'],
             [['from' => '10/03/2026', 'to' => '2026-03-10'], 'Fecha no válida: usa el formato AAAA-MM-DD'],
         ];
-        foreach (['summary', 'daily', 'payments'] as $type) {
+        foreach (['summary', 'daily', 'hourly', 'products', 'categories', 'cashiers', 'payments', 'vat'] as $type) {
             foreach ($cases as [$query, $message]) {
                 $response = $this->controller()->show($type, SessionRequest::create($query + ['format' => 'csv'], self::ADMIN));
                 $this->assertSame(Response::HTTP_UNPROCESSABLE_ENTITY, $response->getStatusCode(), $type);

@@ -119,10 +119,15 @@ test('amounts are formatted as 1.234,50 €', () => {
     assert.equal(ReportsLogic.formatDate('2026-03-09'), '09/03/2026');
 });
 
-test('the screen has the three report tabs, built from one list', () => {
+test('the screen has the eight report tabs, built from one list', () => {
     const { REPORT_TABS } = load();
     assert.deepEqual(plain(REPORT_TABS.map((t) => [t.type, t.label])),
-        [['summary', 'Resumen'], ['daily', 'Por día'], ['payments', 'Por forma de pago']]);
+        [['summary', 'Resumen'], ['daily', 'Por día'], ['hourly', 'Por hora'], ['products', 'Por producto'], ['categories', 'Por categoría'],
+            ['cashiers', 'Por cajero'], ['payments', 'Por forma de pago'], ['vat', 'IVA']]);
+    const template = /template: `([\s\S]*)`/.exec(source)[1];
+    for (const t of REPORT_TABS) {
+        assert.match(template, new RegExp(`activeType === '${t.type}'`), `the ${t.type} tab has its table`);
+    }
 });
 
 test('it opens on Resumen for today and loads the tills', async () => {
@@ -252,4 +257,94 @@ test('the sale screen opens it with a header button shown only to administrators
 test('the template uses only what setup exposes (no global consts)', () => {
     const template = /template: `([\s\S]*)`/.exec(source)[1];
     assert.doesNotMatch(template, /\bApiClient\b|\bREPORT_TABS\b|\bwindow\./);
+});
+
+function productsResponse({ view = 'sold', cursor = '0', next = null, previous = null, rows = null } = {}) {
+    const sold = [{ product_id: 1, id_product_attribute: 0, reference: 'CAM-01', name: 'Camiseta', free_item: false, units_sold: 3, units_refunded: 1, units_net: 2,
+        sales_amount: 75, refunds_amount: 25, net_amount: 50, percent: 47.17 }];
+    return {
+        data: {
+            from: '2026-03-11', to: '2026-03-11', view, sort: 'amount', group: 'combination',
+            rows: rows || (view === 'unsold' ? [{ product_id: 5, reference: 'GAF-01', name: 'Gafas', category_name: null }] : sold),
+            totals: view === 'unsold' ? { products: 1 } : { units_sold: 3, units_refunded: 1, units_net: 2, sales_amount: 75, refunds_amount: 25, net_amount: 50 },
+            page: { cursor, size: 50, total_rows: 120, next_cursor: next, previous_cursor: previous },
+        },
+        approximate_amount: 0, missing_lines: 0,
+    };
+}
+
+test('«Por producto» pages with «Siguiente» / «Anterior» by cursor, like the print history', async () => {
+    const pages = { '': productsResponse({ next: '50' }), 50: productsResponse({ cursor: '50', next: '100', previous: '0' }), 100: productsResponse({ cursor: '100', previous: '50' }) };
+    const { state, calls, mount } = load({ answers: { products: (url) => pages[(/cursor=(\d+)/.exec(url) || [, ''])[1]] } });
+    await mount();
+    await state.selectTab('products');
+    assert.equal(reportCalls(calls).at(-1), '/api/reports/products?from=2026-03-11&to=2026-03-11');
+    assert.deepEqual(plain(state.productPage.value), { number: 1, hasPrev: false, hasNext: true, total: 120 });
+
+    await state.nextPage();
+    assert.equal(reportCalls(calls).at(-1), '/api/reports/products?from=2026-03-11&to=2026-03-11&cursor=50');
+    await state.nextPage();
+    assert.equal(reportCalls(calls).at(-1), '/api/reports/products?from=2026-03-11&to=2026-03-11&cursor=100');
+    assert.deepEqual(plain(state.productPage.value), { number: 3, hasPrev: true, hasNext: false, total: 120 });
+    const before = reportCalls(calls).length;
+    await state.nextPage();
+    assert.equal(reportCalls(calls).length, before, 'no page after the last one');
+
+    await state.prevPage();
+    assert.equal(reportCalls(calls).at(-1), '/api/reports/products?from=2026-03-11&to=2026-03-11&cursor=50');
+    // «Reintentar» stays on the page; a filter change goes back to page 1.
+    await state.retry();
+    assert.equal(reportCalls(calls).at(-1), '/api/reports/products?from=2026-03-11&to=2026-03-11&cursor=50');
+    state.filters.terminalId = '2';
+    await state.load();
+    assert.equal(reportCalls(calls).at(-1), '/api/reports/products?from=2026-03-11&to=2026-03-11&terminal_id=2');
+    assert.equal(state.productPage.value.number, 1);
+});
+
+test('«Por producto» options: sort, grouping and «Sin ventas» go back to page 1, and the CSV has every row', async () => {
+    const { state, calls, downloads, mount } = load({
+        answers: { products: (url) => productsResponse({ view: /view=unsold/.test(url) ? 'unsold' : 'sold', next: '50' }) },
+    });
+    await mount();
+    await state.selectTab('products');
+    await state.nextPage();
+    await state.setProductOption('sort', 'units');
+    assert.equal(reportCalls(calls).at(-1), '/api/reports/products?from=2026-03-11&to=2026-03-11&sort=units');
+    await state.setProductOption('group', 'product');
+    assert.equal(reportCalls(calls).at(-1), '/api/reports/products?from=2026-03-11&to=2026-03-11&sort=units&group=product');
+    await state.nextPage();
+    await state.downloadCsv();
+    assert.equal(downloads[0].fetched, '/tpv/api/reports/products?from=2026-03-11&to=2026-03-11&sort=units&group=product&format=csv', 'no cursor in the CSV');
+
+    await state.setProductOption('view', 'unsold');
+    assert.equal(reportCalls(calls).at(-1), '/api/reports/products?from=2026-03-11&to=2026-03-11&view=unsold&sort=units&group=product');
+    assert.equal(state.data.value.view, 'unsold');
+    assert.equal(state.isEmpty.value, false, '«Sin ventas» is not «No hay ventas»');
+
+    // The options stay when the tab changes, and other reports never send them.
+    await state.selectTab('daily');
+    assert.equal(reportCalls(calls).at(-1), '/api/reports/daily?from=2026-03-11&to=2026-03-11');
+    await state.selectTab('products');
+    assert.match(reportCalls(calls).at(-1), /view=unsold/);
+    assert.deepEqual(plain(state.ReportsLogic.PRODUCT_VIEWS.map((v) => v.label)), ['Vendidos', 'Sin ventas']);
+});
+
+test('formats and empty states of the hourly, product, category, cashier and VAT reports', () => {
+    const { ReportsLogic: L } = load();
+    assert.equal(L.formatHour(9), '09:00');
+    assert.equal(L.formatHour(23), '23:00');
+    assert.equal(L.formatRate(21), '21 %');
+    assert.equal(L.formatRate(5.26), '5,26 %');
+    assert.equal(L.productName({ name: 'Cuota club', free_item: true }), 'Artículo libre: Cuota club');
+    assert.equal(L.productName({ name: 'Gorro', free_item: false }), 'Gorro');
+
+    assert.equal(L.isEmpty('hourly', { totals: { tickets: 0, gross_sales: 0 } }), true);
+    assert.equal(L.isEmpty('hourly', { totals: { tickets: 1, gross_sales: 0 } }), false);
+    assert.equal(L.isEmpty('products', { view: 'sold', rows: [] }), true);
+    assert.equal(L.isEmpty('products', { view: 'unsold', rows: [] }), false);
+    for (const type of ['categories', 'cashiers', 'vat']) {
+        assert.equal(L.isEmpty(type, { rows: [] }), true, type);
+        assert.equal(L.isEmpty(type, { rows: [{}] }), false, type);
+    }
+    assert.equal(L.UNSOLD_EMPTY_TEXT, 'Todos los productos activos del catálogo tienen ventas en este periodo');
 });

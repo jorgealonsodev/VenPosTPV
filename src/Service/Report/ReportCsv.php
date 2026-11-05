@@ -16,7 +16,11 @@ final class ReportCsv
     private const BOM = "\xEF\xBB\xBF";
 
     /** The type in the file name, in Spanish (informe-<tipo>-<desde>-<hasta>.csv). */
-    private const FILE_TYPES = ['summary' => 'resumen', 'daily' => 'dias', 'payments' => 'formas-pago'];
+    private const FILE_TYPES = ['summary' => 'resumen', 'daily' => 'dias', 'hourly' => 'horas', 'products' => 'productos', 'categories' => 'categorias',
+        'cashiers' => 'cajeros', 'payments' => 'formas-pago', 'vat' => 'iva'];
+
+    /** Columns shared by «Por producto» and «Por categoría», after the name. */
+    private const AMOUNT_HEADERS = ['Unidades vendidas', 'Unidades devueltas', 'Unidades netas', 'Ventas', 'Devoluciones', 'Importe neto', '% del total'];
 
     /** Label and key of each summary row, in screen order. */
     private const SUMMARY_ROWS = [
@@ -57,7 +61,12 @@ final class ReportCsv
         return match ($type) {
             'summary' => $this->summary($data),
             'daily' => $this->daily($data),
+            'hourly' => $this->hourly($data),
+            'products' => ($data['view'] ?? 'sold') === 'unsold' ? $this->unsold($data) : $this->products($data),
+            'categories' => $this->categories($data),
+            'cashiers' => $this->cashiers($data),
             'payments' => $this->payments($data),
+            'vat' => $this->vat($data),
             default => throw new \InvalidArgumentException(sprintf('No CSV for report type "%s"', $type)),
         };
     }
@@ -65,6 +74,9 @@ final class ReportCsv
     public function fileName(string $type, ReportFilter $filter): string
     {
         $name = 'informe-' . (self::FILE_TYPES[$type] ?? $type);
+        if ($type === 'products' && $filter->view === 'unsold') {
+            $name .= '-sin-ventas';
+        }
         if ($filter->sessionId !== null) {
             return sprintf('%s-sesion-%d.csv', $name, $filter->sessionId);
         }
@@ -155,6 +167,101 @@ final class ReportCsv
         $rows[] = ['Total', (float) $data['net_total']];
 
         return self::encode(['Concepto', 'Importe'], $rows);
+    }
+
+    /** @param array<string, mixed> $data */
+    private function hourly(array $data): string
+    {
+        $rows = [];
+        foreach ($data['hours'] as $hour) {
+            $rows[] = [sprintf('%02d:00', (int) $hour['hour']), (int) $hour['tickets'], (float) $hour['gross_sales']];
+        }
+        $rows[] = ['Total', (int) $data['totals']['tickets'], (float) $data['totals']['gross_sales']];
+
+        return self::encode(['Hora', 'Tickets', 'Ventas brutas'], $rows);
+    }
+
+    /** @param array<string, mixed> $data every row, not only one page */
+    private function products(array $data): string
+    {
+        $rows = [];
+        foreach ($data['rows'] as $row) {
+            $name = (string) $row['name'];
+            $rows[] = [$row['reference'] ?? null, $row['free_item'] ? 'Artículo libre: ' . $name : $name, ...$this->amounts($row)];
+        }
+        $rows[] = ['Total', null, ...$this->amounts($data['totals'] + ['percent' => (float) $data['totals']['net_amount'] == 0.0 ? null : 100.0])];
+
+        return self::encode(['Referencia', 'Nombre', ...self::AMOUNT_HEADERS], $rows);
+    }
+
+    /** @param array<string, mixed> $data */
+    private function unsold(array $data): string
+    {
+        $rows = [];
+        foreach ($data['rows'] as $row) {
+            $rows[] = [$row['reference'] ?? null, (string) $row['name'], $row['category_name'] ?? SalesReportService::UNCATEGORISED];
+        }
+
+        return self::encode(['Referencia', 'Nombre', 'Categoría'], $rows);
+    }
+
+    /** @param array<string, mixed> $data */
+    private function categories(array $data): string
+    {
+        $rows = [];
+        foreach ($data['rows'] as $row) {
+            $rows[] = [(string) $row['name'], ...$this->amounts($row)];
+        }
+        $rows[] = ['Total', ...$this->amounts($data['totals'] + ['percent' => (float) $data['totals']['net_amount'] == 0.0 ? null : 100.0])];
+
+        return self::encode(['Categoría', ...self::AMOUNT_HEADERS], $rows);
+    }
+
+    /** @param array<string, mixed> $data */
+    private function cashiers(array $data): string
+    {
+        $line = static fn (string $name, array $r): array => [$name, (int) $r['tickets'], (float) $r['gross_sales'], (float) $r['average_ticket'], (float) $r['refunds'], (float) $r['net_sales']];
+        $rows = [];
+        foreach ($data['rows'] as $row) {
+            $rows[] = $line((string) $row['name'], $row);
+        }
+        $rows[] = $line('Total', $data['totals']);
+
+        return self::encode(['Empleado', 'Tickets', 'Ventas brutas', 'Ticket medio', 'Devoluciones', 'Ventas netas'], $rows);
+    }
+
+    /** @param array<string, mixed> $data */
+    private function vat(array $data): string
+    {
+        $parts = static function (array $r): array {
+            $cells = [];
+            foreach (['sales', 'refunds', 'net'] as $side) {
+                foreach (['base', 'vat', 'total'] as $part) {
+                    $cells[] = (float) $r[$side][$part];
+                }
+            }
+
+            return $cells;
+        };
+        $rows = [];
+        foreach ($data['rows'] as $row) {
+            $rows[] = [(float) $row['rate'], ...$parts($row)];
+        }
+        $rows[] = ['Total', ...$parts($data['totals'])];
+
+        return self::encode(['Tipo de IVA (%)', 'Ventas base', 'Ventas cuota', 'Ventas total', 'Devoluciones base', 'Devoluciones cuota', 'Devoluciones total',
+            'Neto base', 'Neto cuota', 'Neto total'], $rows);
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     *
+     * @return list<int|float|null>
+     */
+    private function amounts(array $row): array
+    {
+        return [(int) $row['units_sold'], (int) $row['units_refunded'], (int) $row['units_net'], (float) $row['sales_amount'], (float) $row['refunds_amount'],
+            (float) $row['net_amount'], $this->percent($row['percent'] ?? null)];
     }
 
     private function percent(int|float|null $percent): ?float

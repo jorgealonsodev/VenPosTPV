@@ -50,6 +50,17 @@ final class ReportFilterTest extends TestCase
         $this->assertSame('csv', $filter->format);
     }
 
+    public function testProductsTakeSortGroupViewAndCursorWithTheirDefaults(): void
+    {
+        $default = ReportFilter::fromQuery('products', ['from' => '2026-03-10', 'to' => '2026-03-11']);
+        $this->assertSame(['amount', 'combination', 'sold', 0], [$default->sort, $default->group, $default->view, $default->cursor]);
+
+        $given = ReportFilter::fromQuery('products', ['from' => '2026-03-10', 'to' => '2026-03-11', 'sort' => 'units', 'group' => 'product', 'view' => 'unsold', 'cursor' => '50']);
+        $this->assertSame(['units', 'product', 'unsold', 50], [$given->sort, $given->group, $given->view, $given->cursor]);
+        // The previous period keeps the till and cashier; the page options do not matter there.
+        $this->assertSame('units', $given->previous()->sort);
+    }
+
     /** @return iterable<string, array{0: string, 1: array<string, string>, 2: string}> */
     public static function invalid(): iterable
     {
@@ -67,6 +78,12 @@ final class ReportFilterTest extends TestCase
         yield 'session outside payments' => ['summary', ['from' => '2026-03-10', 'to' => '2026-03-10', 'session_id' => '3'], 'Solo el informe por forma de pago se filtra por sesión de caja'];
         yield 'session and dates' => ['payments', ['session_id' => '3', 'from' => '2026-03-10', 'to' => '2026-03-10'], 'Filtra por sesión de caja o por fechas y caja, no por las dos cosas'];
         yield 'session and till' => ['payments', ['session_id' => '3', 'terminal_id' => '1'], 'Filtra por sesión de caja o por fechas y caja, no por las dos cosas'];
+        yield 'bad sort' => ['products', ['from' => '2026-03-10', 'to' => '2026-03-10', 'sort' => 'name'], 'Orden no válido: usa amount o units'];
+        yield 'bad group' => ['products', ['from' => '2026-03-10', 'to' => '2026-03-10', 'group' => 'category'], 'Agrupación no válida: usa combination o product'];
+        yield 'bad view' => ['products', ['from' => '2026-03-10', 'to' => '2026-03-10', 'view' => 'all'], 'Vista no válida: usa sold o unsold'];
+        yield 'bad cursor' => ['products', ['from' => '2026-03-10', 'to' => '2026-03-10', 'cursor' => '-50'], 'Cursor no válido'];
+        yield 'sort outside products' => ['summary', ['from' => '2026-03-10', 'to' => '2026-03-10', 'sort' => 'units'], 'Solo el informe por producto admite sort'];
+        yield 'cursor outside products' => ['vat', ['from' => '2026-03-10', 'to' => '2026-03-10', 'cursor' => '50'], 'Solo el informe por producto admite cursor'];
         yield 'cashier on payments' => ['payments', ['from' => '2026-03-10', 'to' => '2026-03-10', 'user_id' => '2'], 'El informe por forma de pago no se filtra por cajero'];
     }
 

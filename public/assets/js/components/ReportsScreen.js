@@ -2,15 +2,23 @@
  * ReportsScreen — «Informes» (docs/prd/informes-ventas.md I2, I3, I5), administrators
  * only: the sale screen shows its button to admins and the server answers 403 to anyone
  * else. Tabs pick the report; the date, till and (payments only) cash session filters
- * are shared, so they stay when the tab changes. «Descargar CSV» repeats the same
- * request with format=csv. Emits: back.
+ * are shared, so they stay when the tab changes. «Por producto» also has its list
+ * (sold or «Sin ventas»), order, grouping and pages of 50 («Anterior» / «Siguiente»;
+ * the API pages by cursor, so the screen keeps the cursor of each page shown, like
+ * PrintHistoryPanel). «Descargar CSV» repeats the same request with format=csv (every
+ * row, not only the page). Emits: back.
  */
 
 /** The reports with a tab, in order. A new report is one more entry here plus its table. */
 const REPORT_TABS = [
     { type: 'summary', label: 'Resumen' },
     { type: 'daily', label: 'Por día' },
+    { type: 'hourly', label: 'Por hora' },
+    { type: 'products', label: 'Por producto' },
+    { type: 'categories', label: 'Por categoría' },
+    { type: 'cashiers', label: 'Por cajero' },
     { type: 'payments', label: 'Por forma de pago' },
+    { type: 'vat', label: 'IVA' },
 ];
 
 /** Pure helpers of the screen (dates, formats, query, chart); tested in a VM. */
@@ -67,6 +75,13 @@ const ReportsLogic = (function () {
     };
 
     const EMPTY_TEXT = 'No hay ventas en este periodo';
+    const UNSOLD_EMPTY_TEXT = 'Todos los productos activos del catálogo tienen ventas en este periodo';
+
+    /** «Por producto»: its two lists, orders and groupings (defaults first, as the API). */
+    const PRODUCT_VIEWS = [{ value: 'sold', label: 'Vendidos' }, { value: 'unsold', label: 'Sin ventas' }];
+    const PRODUCT_SORTS = [{ value: 'amount', label: 'Importe' }, { value: 'units', label: 'Unidades' }];
+    const PRODUCT_GROUPS = [{ value: 'combination', label: 'Por combinación' }, { value: 'product', label: 'Por producto' }];
+    const PRODUCT_DEFAULTS = { view: 'sold', sort: 'amount', group: 'combination' };
 
     const pad = (n) => String(n).padStart(2, '0');
 
@@ -148,19 +163,45 @@ const ReportsLogic = (function () {
         return match ? match[1] : '';
     }
 
+    /** 9 → «09:00». */
+    function formatHour(hour) {
+        return pad(Number(hour) || 0) + ':00';
+    }
+
+    /** 21 → «21 %», 5.26 → «5,26 %». */
+    function formatRate(rate) {
+        const n = Number(rate) || 0;
+        return (Number.isInteger(n) ? String(n) : n.toFixed(2).replace('.', ',')) + ' %';
+    }
+
+    /** The name of a «Por producto» row; free items are grouped by name. */
+    function productName(row) {
+        return row && row.free_item ? 'Artículo libre: ' + row.name : String((row && row.name) || '');
+    }
+
     /** True when the report is filtered by a cash session (payments only). */
     function bySession(type, filters) {
         return type === 'payments' && !!filters.sessionId;
     }
 
-    /** The query string of a report: by session, or by dates and till. */
-    function query(type, filters, format) {
+    /**
+     * The query string of a report: by session, or by dates and till. «Por producto»
+     * adds its options when they are not the default, and the page cursor (never in
+     * a CSV, which has every row).
+     */
+    function query(type, filters, format, products) {
         const parts = [];
         if (bySession(type, filters)) {
             parts.push('session_id=' + encodeURIComponent(filters.sessionId));
         } else {
             parts.push('from=' + encodeURIComponent(filters.from), 'to=' + encodeURIComponent(filters.to));
             if (filters.terminalId) parts.push('terminal_id=' + encodeURIComponent(filters.terminalId));
+        }
+        if (type === 'products' && products) {
+            ['view', 'sort', 'group'].forEach((key) => {
+                if (products[key] && products[key] !== PRODUCT_DEFAULTS[key]) parts.push(key + '=' + encodeURIComponent(products[key]));
+            });
+            if (format !== 'csv' && products.cursor) parts.push('cursor=' + encodeURIComponent(products.cursor));
         }
         if (format === 'csv') parts.push('format=csv');
         return parts.join('&');
@@ -191,6 +232,10 @@ const ReportsLogic = (function () {
             const tickets = Object.values(data.tickets_by_method || {}).reduce((a, n) => a + (Number(n) || 0), 0);
             return tickets === 0 && ['sales_total', 'refunds_total', 'exchange_credit', 'cash_in_total', 'cash_out_total'].every((k) => zero(data[k]));
         }
+        if (type === 'hourly') return zero((data.totals || {}).tickets) && zero((data.totals || {}).gross_sales);
+        // «Sin ventas» is a list of products, not of sales: it has its own empty text.
+        if (type === 'products') return data.view !== 'unsold' && !(data.rows || []).length;
+        if (type === 'categories' || type === 'cashiers' || type === 'vat') return !(data.rows || []).length;
         return false;
     }
 
@@ -226,9 +271,10 @@ const ReportsLogic = (function () {
     }
 
     return {
-        MAX_DAYS, PRESETS, SUMMARY_ROWS, PAYMENT_ROWS, METHOD_LABELS, EMPTY_TEXT,
+        MAX_DAYS, PRESETS, SUMMARY_ROWS, PAYMENT_ROWS, METHOD_LABELS, EMPTY_TEXT, UNSOLD_EMPTY_TEXT,
+        PRODUCT_VIEWS, PRODUCT_SORTS, PRODUCT_GROUPS, PRODUCT_DEFAULTS,
         now: () => new Date(),
-        ymd, presetRange, rangeError, formatAmount, formatCount, formatPercent, formatDate, formatTime,
+        ymd, presetRange, rangeError, formatAmount, formatCount, formatPercent, formatDate, formatTime, formatHour, formatRate, productName,
         bySession, query, bars, isEmpty, notices, errorText, fileName,
     };
 })();
@@ -252,6 +298,11 @@ const ReportsScreen = {
         const downloading = Vue.ref(false);
         const csvError = Vue.ref('');
         let requestSeq = 0;
+        // «Por producto»: its options, kept when the tab changes, and the cursor that
+        // opened each page shown so far (page 1 starts with none).
+        const productOptions = Vue.reactive({ ...L.PRODUCT_DEFAULTS });
+        const productCursors = Vue.ref([null]);
+        const productQuery = () => ({ ...productOptions, cursor: productCursors.value[productCursors.value.length - 1] });
 
         const data = Vue.computed(() => (response.value && response.value.type === activeType.value ? response.value.body.data : null));
         const isEmpty = Vue.computed(() => !loading.value && !error.value && L.isEmpty(activeType.value, data.value));
@@ -269,7 +320,24 @@ const ReportsScreen = {
             return Object.keys(methods).map((key) => ({ key, label: L.METHOD_LABELS[key] || 'Tickets ' + key, count: methods[key] }));
         });
 
-        async function load() {
+        const productPage = Vue.computed(() => {
+            const page = (data.value && data.value.page) || {};
+            return {
+                number: productCursors.value.length,
+                hasPrev: productCursors.value.length > 1,
+                hasNext: page.next_cursor !== null && page.next_cursor !== undefined,
+                total: Number(page.total_rows) || 0,
+            };
+        });
+
+        /** Loads the report from its first page (a filter or option changed). */
+        function load() {
+            productCursors.value = [null];
+            return fetchReport();
+        }
+
+        /** Loads the report again on the page it is on (also «Reintentar»). */
+        async function fetchReport() {
             const type = activeType.value;
             csvError.value = '';
             if (!L.bySession(type, filters)) {
@@ -284,7 +352,7 @@ const ReportsScreen = {
             loading.value = true;
             error.value = '';
             try {
-                const body = await ApiClient.get('/api/reports/' + type + '?' + L.query(type, filters));
+                const body = await ApiClient.get('/api/reports/' + type + '?' + L.query(type, filters, 'json', productQuery()));
                 if (seq !== requestSeq) return;
                 response.value = { type, body: body || { data: null } };
             } catch (err) {
@@ -333,6 +401,24 @@ const ReportsScreen = {
         }
 
         function retry() {
+            return fetchReport();
+        }
+
+        async function nextPage() {
+            if (!productPage.value.hasNext || loading.value) return;
+            productCursors.value = [...productCursors.value, String(data.value.page.next_cursor)];
+            await fetchReport();
+        }
+
+        async function prevPage() {
+            if (!productPage.value.hasPrev || loading.value) return;
+            productCursors.value = productCursors.value.slice(0, -1);
+            await fetchReport();
+        }
+
+        /** Changes a «Por producto» option (view, sort or group) and goes back to page 1. */
+        function setProductOption(key, value) {
+            productOptions[key] = value;
             return load();
         }
 
@@ -367,7 +453,7 @@ const ReportsScreen = {
             const base = window.TPV_BASE || '';
             downloading.value = true;
             try {
-                const res = await fetch(base + '/api/reports/' + type + '?' + L.query(type, filters, 'csv'), {
+                const res = await fetch(base + '/api/reports/' + type + '?' + L.query(type, filters, 'csv', productOptions), {
                     credentials: 'same-origin',
                     headers: { Accept: 'text/csv' },
                 });
@@ -405,9 +491,10 @@ const ReportsScreen = {
 
         return {
             ReportsLogic: L, tabs, activeType, filters, tills, sessions, loading, error, data, isEmpty, notices, chart,
-            sessionMode, rangeLabel, methodRows, downloading, csvError,
-            load, retry, selectTab, setPreset, downloadCsv, sessionLabel, cell, difference,
+            sessionMode, rangeLabel, methodRows, downloading, csvError, productOptions, productPage,
+            load, retry, selectTab, setPreset, downloadCsv, sessionLabel, cell, difference, nextPage, prevPage, setProductOption,
             formatAmount: L.formatAmount, formatCount: L.formatCount, formatPercent: L.formatPercent, formatDate: L.formatDate,
+            formatHour: L.formatHour, formatRate: L.formatRate, productName: L.productName,
             back: () => emit('back'),
         };
     },
@@ -454,6 +541,26 @@ const ReportsScreen = {
                             </select>
                         </label>
                         <span class="reports-range">{{ sessionMode ? 'Por sesión de caja: no se aplican las fechas ni la caja' : rangeLabel }}</span>
+                    </div>
+                </div>
+
+                <div v-if="activeType === 'products'" class="reports-options">
+                    <div class="reports-presets" role="group" aria-label="Lista">
+                        <button v-for="v in ReportsLogic.PRODUCT_VIEWS" :key="v.value" class="reports-chip"
+                            :class="{ active: productOptions.view === v.value }" :aria-pressed="productOptions.view === v.value ? 'true' : 'false'"
+                            @click="setProductOption('view', v.value)">{{ v.label }}</button>
+                    </div>
+                    <div v-if="productOptions.view === 'sold'" class="reports-selects">
+                        <label>Ordenar por
+                            <select class="tpv-input" :value="productOptions.sort" @change="setProductOption('sort', $event.target.value)">
+                                <option v-for="o in ReportsLogic.PRODUCT_SORTS" :key="o.value" :value="o.value">{{ o.label }}</option>
+                            </select>
+                        </label>
+                        <label>Agrupar
+                            <select class="tpv-input" :value="productOptions.group" @change="setProductOption('group', $event.target.value)">
+                                <option v-for="o in ReportsLogic.PRODUCT_GROUPS" :key="o.value" :value="o.value">{{ o.label }}</option>
+                            </select>
+                        </label>
                     </div>
                 </div>
 
@@ -528,6 +635,133 @@ const ReportsScreen = {
                         </table>
                     </template>
 
+                    <!-- Por hora: 24 slots, every day of the range added up -->
+                    <template v-else-if="activeType === 'hourly'">
+                        <table class="reports-table">
+                            <thead><tr><th>Hora</th><th class="num">Tickets</th><th class="num">Ventas brutas</th></tr></thead>
+                            <tbody>
+                                <tr v-for="h in data.hours" :key="h.hour" :class="{ muted: !h.tickets }">
+                                    <td>{{ formatHour(h.hour) }}</td>
+                                    <td class="num">{{ formatCount(h.tickets) }}</td>
+                                    <td class="num">{{ formatAmount(h.gross_sales) }}</td>
+                                </tr>
+                            </tbody>
+                            <tfoot><tr class="strong">
+                                <td>Total</td>
+                                <td class="num">{{ formatCount(data.totals.tickets) }}</td>
+                                <td class="num">{{ formatAmount(data.totals.gross_sales) }}</td>
+                            </tr></tfoot>
+                        </table>
+                    </template>
+
+                    <!-- Por producto: sold (with order, grouping and pages) or «Sin ventas» -->
+                    <template v-else-if="activeType === 'products' && data.view === 'unsold'">
+                        <div v-if="!data.rows.length" class="reports-state">{{ ReportsLogic.UNSOLD_EMPTY_TEXT }}</div>
+                        <table v-else class="reports-table">
+                            <thead><tr><th>Referencia</th><th>Nombre</th><th>Categoría</th></tr></thead>
+                            <tbody>
+                                <tr v-for="p in data.rows" :key="p.product_id">
+                                    <td>{{ p.reference || '—' }}</td>
+                                    <td>{{ p.name }}</td>
+                                    <td>{{ p.category_name || 'Sin categoría' }}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </template>
+                    <template v-else-if="activeType === 'products'">
+                        <table class="reports-table">
+                            <thead><tr>
+                                <th>Referencia</th><th>Nombre</th>
+                                <th class="num">Vendidas</th><th class="num">Devueltas</th><th class="num">Netas</th>
+                                <th class="num">Ventas</th><th class="num">Devoluciones</th><th class="num">Importe neto</th><th class="num">%</th>
+                            </tr></thead>
+                            <tbody>
+                                <tr v-for="row in data.rows" :key="(row.product_id || 'libre') + ':' + (row.id_product_attribute === null ? '' : row.id_product_attribute) + ':' + row.name">
+                                    <td>{{ row.reference || '—' }}</td>
+                                    <td>{{ productName(row) }}</td>
+                                    <td class="num">{{ formatCount(row.units_sold) }}</td>
+                                    <td class="num">{{ formatCount(row.units_refunded) }}</td>
+                                    <td class="num" :class="{ negative: row.units_net < 0 }">{{ formatCount(row.units_net) }}</td>
+                                    <td class="num">{{ formatAmount(row.sales_amount) }}</td>
+                                    <td class="num">{{ formatAmount(row.refunds_amount) }}</td>
+                                    <td class="num" :class="{ negative: row.net_amount < 0 }">{{ formatAmount(row.net_amount) }}</td>
+                                    <td class="num">{{ row.percent === null ? '—' : formatPercent(row.percent).replace('+', '') }}</td>
+                                </tr>
+                            </tbody>
+                            <tfoot><tr class="strong">
+                                <td>Total</td><td></td>
+                                <td class="num">{{ formatCount(data.totals.units_sold) }}</td>
+                                <td class="num">{{ formatCount(data.totals.units_refunded) }}</td>
+                                <td class="num">{{ formatCount(data.totals.units_net) }}</td>
+                                <td class="num">{{ formatAmount(data.totals.sales_amount) }}</td>
+                                <td class="num">{{ formatAmount(data.totals.refunds_amount) }}</td>
+                                <td class="num">{{ formatAmount(data.totals.net_amount) }}</td>
+                                <td class="num">{{ data.totals.net_amount ? '100,0 %' : '—' }}</td>
+                            </tr></tfoot>
+                        </table>
+                    </template>
+
+                    <!-- Por categoría: the category stored in each sale -->
+                    <template v-else-if="activeType === 'categories'">
+                        <table class="reports-table">
+                            <thead><tr>
+                                <th>Categoría</th>
+                                <th class="num">Vendidas</th><th class="num">Devueltas</th><th class="num">Netas</th>
+                                <th class="num">Ventas</th><th class="num">Devoluciones</th><th class="num">Importe neto</th><th class="num">%</th>
+                            </tr></thead>
+                            <tbody>
+                                <tr v-for="row in data.rows" :key="row.category_id === null ? 'none' : row.category_id">
+                                    <td>{{ row.name }}</td>
+                                    <td class="num">{{ formatCount(row.units_sold) }}</td>
+                                    <td class="num">{{ formatCount(row.units_refunded) }}</td>
+                                    <td class="num" :class="{ negative: row.units_net < 0 }">{{ formatCount(row.units_net) }}</td>
+                                    <td class="num">{{ formatAmount(row.sales_amount) }}</td>
+                                    <td class="num">{{ formatAmount(row.refunds_amount) }}</td>
+                                    <td class="num" :class="{ negative: row.net_amount < 0 }">{{ formatAmount(row.net_amount) }}</td>
+                                    <td class="num">{{ row.percent === null ? '—' : formatPercent(row.percent).replace('+', '') }}</td>
+                                </tr>
+                            </tbody>
+                            <tfoot><tr class="strong">
+                                <td>Total</td>
+                                <td class="num">{{ formatCount(data.totals.units_sold) }}</td>
+                                <td class="num">{{ formatCount(data.totals.units_refunded) }}</td>
+                                <td class="num">{{ formatCount(data.totals.units_net) }}</td>
+                                <td class="num">{{ formatAmount(data.totals.sales_amount) }}</td>
+                                <td class="num">{{ formatAmount(data.totals.refunds_amount) }}</td>
+                                <td class="num">{{ formatAmount(data.totals.net_amount) }}</td>
+                                <td class="num">{{ data.totals.net_amount ? '100,0 %' : '—' }}</td>
+                            </tr></tfoot>
+                        </table>
+                    </template>
+
+                    <!-- Por cajero: refunds by who made them -->
+                    <template v-else-if="activeType === 'cashiers'">
+                        <table class="reports-table">
+                            <thead><tr>
+                                <th>Empleado</th><th class="num">Tickets</th><th class="num">Ventas brutas</th><th class="num">Ticket medio</th>
+                                <th class="num">Devoluciones</th><th class="num">Ventas netas</th>
+                            </tr></thead>
+                            <tbody>
+                                <tr v-for="row in data.rows" :key="row.user_id">
+                                    <td>{{ row.name }}</td>
+                                    <td class="num">{{ formatCount(row.tickets) }}</td>
+                                    <td class="num">{{ formatAmount(row.gross_sales) }}</td>
+                                    <td class="num">{{ formatAmount(row.average_ticket) }}</td>
+                                    <td class="num">{{ formatAmount(row.refunds) }}</td>
+                                    <td class="num" :class="{ negative: row.net_sales < 0 }">{{ formatAmount(row.net_sales) }}</td>
+                                </tr>
+                            </tbody>
+                            <tfoot><tr class="strong">
+                                <td>Total</td>
+                                <td class="num">{{ formatCount(data.totals.tickets) }}</td>
+                                <td class="num">{{ formatAmount(data.totals.gross_sales) }}</td>
+                                <td class="num">{{ formatAmount(data.totals.average_ticket) }}</td>
+                                <td class="num">{{ formatAmount(data.totals.refunds) }}</td>
+                                <td class="num">{{ formatAmount(data.totals.net_sales) }}</td>
+                            </tr></tfoot>
+                        </table>
+                    </template>
+
                     <!-- Por forma de pago: same rules as the Z -->
                     <template v-else-if="activeType === 'payments'">
                         <table class="reports-table">
@@ -549,6 +783,54 @@ const ReportsScreen = {
                             </tbody>
                         </table>
                     </template>
+                    <!-- IVA: base, VAT and total per rate of sales, refunds and net -->
+                    <template v-else-if="activeType === 'vat'">
+                        <table class="reports-table reports-table-wide">
+                            <thead>
+                                <tr>
+                                    <th rowspan="2">Tipo de IVA</th>
+                                    <th class="num" colspan="3">Ventas</th><th class="num" colspan="3">Devoluciones</th><th class="num" colspan="3">Neto</th>
+                                </tr>
+                                <tr>
+                                    <th class="num">Base</th><th class="num">Cuota</th><th class="num">Total</th>
+                                    <th class="num">Base</th><th class="num">Cuota</th><th class="num">Total</th>
+                                    <th class="num">Base</th><th class="num">Cuota</th><th class="num">Total</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="row in data.rows" :key="row.rate">
+                                    <td>{{ formatRate(row.rate) }}</td>
+                                    <td class="num" :class="{ negative: row.sales.base < 0 }">{{ formatAmount(row.sales.base) }}</td>
+                                    <td class="num" :class="{ negative: row.sales.vat < 0 }">{{ formatAmount(row.sales.vat) }}</td>
+                                    <td class="num" :class="{ negative: row.sales.total < 0 }">{{ formatAmount(row.sales.total) }}</td>
+                                    <td class="num" :class="{ negative: row.refunds.base < 0 }">{{ formatAmount(row.refunds.base) }}</td>
+                                    <td class="num" :class="{ negative: row.refunds.vat < 0 }">{{ formatAmount(row.refunds.vat) }}</td>
+                                    <td class="num" :class="{ negative: row.refunds.total < 0 }">{{ formatAmount(row.refunds.total) }}</td>
+                                    <td class="num" :class="{ negative: row.net.base < 0 }">{{ formatAmount(row.net.base) }}</td>
+                                    <td class="num" :class="{ negative: row.net.vat < 0 }">{{ formatAmount(row.net.vat) }}</td>
+                                    <td class="num" :class="{ negative: row.net.total < 0 }">{{ formatAmount(row.net.total) }}</td>
+                                </tr>
+                            </tbody>
+                            <tfoot><tr class="strong">
+                                <td>Total</td>
+                                <td class="num" :class="{ negative: data.totals.sales.base < 0 }">{{ formatAmount(data.totals.sales.base) }}</td>
+                                    <td class="num" :class="{ negative: data.totals.sales.vat < 0 }">{{ formatAmount(data.totals.sales.vat) }}</td>
+                                    <td class="num" :class="{ negative: data.totals.sales.total < 0 }">{{ formatAmount(data.totals.sales.total) }}</td>
+                                    <td class="num" :class="{ negative: data.totals.refunds.base < 0 }">{{ formatAmount(data.totals.refunds.base) }}</td>
+                                    <td class="num" :class="{ negative: data.totals.refunds.vat < 0 }">{{ formatAmount(data.totals.refunds.vat) }}</td>
+                                    <td class="num" :class="{ negative: data.totals.refunds.total < 0 }">{{ formatAmount(data.totals.refunds.total) }}</td>
+                                    <td class="num" :class="{ negative: data.totals.net.base < 0 }">{{ formatAmount(data.totals.net.base) }}</td>
+                                    <td class="num" :class="{ negative: data.totals.net.vat < 0 }">{{ formatAmount(data.totals.net.vat) }}</td>
+                                    <td class="num" :class="{ negative: data.totals.net.total < 0 }">{{ formatAmount(data.totals.net.total) }}</td>
+                            </tr></tfoot>
+                        </table>
+                    </template>
+
+                    <div v-if="activeType === 'products' && (productPage.hasPrev || productPage.hasNext)" class="reports-pager">
+                        <button class="tpv-btn" :disabled="!productPage.hasPrev || loading" @click="prevPage">Anterior</button>
+                        <span class="reports-hint">Página {{ productPage.number }} · {{ formatCount(productPage.total) }} filas</span>
+                        <button class="tpv-btn" :disabled="!productPage.hasNext || loading" @click="nextPage">Siguiente</button>
+                    </div>
                 </template>
             </div>
         </div>

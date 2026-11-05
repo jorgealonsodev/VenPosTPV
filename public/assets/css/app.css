@@ -772,6 +772,11 @@ html, body, #app {
 .reports-table tr.strong td { font-weight: 700; }
 .reports-table tfoot td { border-bottom: none; }
 .reports-sub { font-weight: 400; color: var(--text3); }
+.reports-table tbody tr.muted td { color: var(--text3); }
+.reports-table-wide { max-width: none; }
+.reports-table-wide th[colspan] { text-align: center; }
+.reports-options { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.reports-pager { display: flex; align-items: center; gap: 12px; max-width: 960px; }
 /* Por día: one column per day; negative days hang below the axis. */
 .reports-chart { display: flex; align-items: stretch; gap: 2px; height: 180px; max-width: 960px; padding: 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow-x: auto; }
 .reports-bar-col { flex: 1 1 0; min-width: 4px; display: flex; flex-direction: column; }
