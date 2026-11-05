@@ -18,7 +18,7 @@ use VenPosTPV\Service\Print\TicketLine;
 final class TicketVatBreakdownTest extends TestCase
 {
     /** @param list<array{rate: float, base: float, vat: float}> $breakdown */
-    private function ticket(array $breakdown): TicketData
+    private function ticket(array $breakdown, ?string $replacedBy = null): TicketData
     {
         return new TicketData(
             orderId: 42, reference: 'A26000042', storeName: 'Tienda', storeAddress: '', ticketHeader: '', ticketFooter: '',
@@ -27,6 +27,7 @@ final class TicketVatBreakdownTest extends TestCase
             subtotal: 97.6, tax: 19.4, total: 117.0,
             paymentMethod: 'card', amountTendered: 117.0, changeDue: 0.0, verificationUrl: 'http://tpv/v',
             vatBreakdown: $breakdown,
+            replacedByInvoice: $replacedBy,
         );
     }
 
@@ -81,5 +82,13 @@ final class TicketVatBreakdownTest extends TestCase
         $this->assertSame('21 %', TicketData::formatRate(21.0));
         $this->assertSame('5,5 %', TicketData::formatRate(5.5));
         $this->assertSame('0 %', TicketData::formatRate(0.0));
+    }
+
+    public function testAReprintOfARedeemedTicketSaysWhichInvoiceReplacedIt(): void
+    {
+        $this->assertStringContainsString("<div class=\"center bold\">Sustituido por la factura F26000004</div>\n    <div class=\"footer\">", $this->html($this->ticket([], 'F26000004')));
+        $this->assertStringContainsString("Sustituido por la factura F26000004\n", $this->escPos($this->ticket([], 'F26000004')));
+        $this->assertStringNotContainsString('Sustituido', $this->html($this->ticket([])));
+        $this->assertStringNotContainsString('Sustituido', $this->escPos($this->ticket([])));
     }
 }

@@ -140,6 +140,7 @@
         {% endif %}
     </div>
 
-    <div class="footer">{{ (ticket.ticketFooter ?: 'Gracias por su compra')|nl2br }}</div>
+    {% if ticket.replacedByInvoice %}<div class="center bold">Sustituido por la factura {{ ticket.replacedByInvoice }}</div>
+    {% endif %}<div class="footer">{{ (ticket.ticketFooter ?: 'Gracias por su compra')|nl2br }}</div>
 </body>
 </html>

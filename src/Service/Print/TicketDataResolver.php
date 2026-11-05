@@ -130,7 +130,32 @@ class TicketDataResolver
             ticketMarginRightMm: $marginRightMm,
             ticketLogoWidthPct: $logoWidthPct,
             vatBreakdown: $vatBreakdown,
+            replacedByInvoice: $this->replacingInvoice($orderId),
         );
+    }
+
+    /**
+     * Number of the full invoice (F3) that replaced the sale's ticket, if any.
+     * $orderId is the resolve() key: -order_meta.id, or the PrestaShop order id.
+     */
+    private function replacingInvoice(int $orderId): ?string
+    {
+        try {
+            $number = $orderId < 0
+                ? $this->connection->fetchOne(
+                    "SELECT number FROM invoice WHERE sale_order_id = ? AND invoice_type = 'F3' ORDER BY id LIMIT 1",
+                    [-$orderId]
+                )
+                : $this->connection->fetchOne(
+                    "SELECT i.number FROM invoice i JOIN order_meta o ON o.id = i.sale_order_id
+                     WHERE o.ps_order_id = ? AND i.invoice_type = 'F3' ORDER BY i.id LIMIT 1",
+                    [$orderId]
+                );
+        } catch (TableNotFoundException) {
+            return null;
+        }
+
+        return \is_string($number) && $number !== '' ? $number : null;
     }
 
     /**

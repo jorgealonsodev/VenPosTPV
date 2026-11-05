@@ -223,6 +223,10 @@ class EscPosTicketBuilder
             $printer->qrCode($ticketData->verificationUrl, Printer::QR_ECLEVEL_M, 6);
             $printer->text("\n");
         }
+        if ($ticketData->replacedByInvoice !== null) {
+            $printer->setJustification(Printer::JUSTIFY_CENTER);
+            $printer->text($this->sanitize('Sustituido por la factura ' . $ticketData->replacedByInvoice) . "\n");
+        }
         $this->printMultilineCentered($printer, $ticketData->ticketFooter !== '' ? $ticketData->ticketFooter : 'Gracias por su compra', $columns);
 
         // Cut

@@ -52,6 +52,9 @@ final class TicketData
         // when the sale has no stored lines, then the single «IVA:» line is printed.
         /** @var list<array{rate: float, base: float, vat: float}> */
         public readonly array $vatBreakdown = [],
+        // factura-completa F3.4: the full invoice that replaced this ticket, printed
+        // at the foot of a reprint («Sustituido por la factura F26000004»).
+        public readonly ?string $replacedByInvoice = null,
     ) {
     }
 
