@@ -50,10 +50,14 @@ const OrderDetailView = {
         const pdfEmail = Vue.ref('');
         const pdfEmailStatus = Vue.ref('');
         const pdfEmailSending = Vue.ref(false);
+        const pdfCustomers = Vue.ref([]);
+        let pdfSearchTimer = null;
+        let pdfSearchSeq = 0;
 
         async function openPdfChoice() {
             pdfEmail.value = '';
             pdfEmailStatus.value = '';
+            pdfCustomers.value = [];
             pdfEmailEnabled.value = false;
             pdfChoice.value = true;
             // Only a TPV sale (local order_id) can be emailed, and only with a mail account.
@@ -64,6 +68,38 @@ const OrderDetailView = {
             } catch (e) {
                 pdfEmailEnabled.value = false;
             }
+        }
+
+        // Existing customers (the till's local copy) matching what is typed in the
+        // email field: name, email or phone. Only those with an email are offered.
+        function searchPdfCustomers() {
+            const q = String(pdfEmail.value || '').trim();
+            if (pdfSearchTimer !== null) clearTimeout(pdfSearchTimer);
+            if (q.length < 2) {
+                pdfCustomers.value = [];
+                return Promise.resolve();
+            }
+            const seq = ++pdfSearchSeq;
+            return new Promise((resolve) => {
+                pdfSearchTimer = setTimeout(async () => {
+                    try {
+                        const r = await ApiClient.customerSearch(q);
+                        if (seq !== pdfSearchSeq) return;
+                        const found = (r && Array.isArray(r.data)) ? r.data : [];
+                        pdfCustomers.value = found.filter((c) => c && typeof c.email === 'string' && c.email.includes('@')).slice(0, 6);
+                    } catch (e) {
+                        if (seq === pdfSearchSeq) pdfCustomers.value = [];
+                    } finally {
+                        resolve();
+                    }
+                }, 250);
+            });
+        }
+
+        function pickPdfCustomer(customer) {
+            pdfEmail.value = customer.email;
+            pdfCustomers.value = [];
+            ++pdfSearchSeq;
         }
 
         function downloadPdf() {
@@ -95,7 +131,7 @@ const OrderDetailView = {
             return props.order.lines.reduce((sum, line) => sum + (line.qty || line.quantity || 1), 0);
         });
 
-        return { totalQty, title, canPrint, reprint, pdf, pdfChoice, pdfEmailEnabled, pdfEmail, pdfEmailStatus, pdfEmailSending, openPdfChoice, downloadPdf, sendPdfEmail };
+        return { totalQty, title, canPrint, reprint, pdf, pdfChoice, pdfEmailEnabled, pdfEmail, pdfEmailStatus, pdfEmailSending, openPdfChoice, downloadPdf, sendPdfEmail, pdfCustomers, searchPdfCustomers, pickPdfCustomer };
     },
     template: `
         <div style="display:flex; flex-direction:column; height:100%; overflow:hidden;">
@@ -170,8 +206,16 @@ const OrderDetailView = {
                         <template v-if="pdfEmailEnabled">
                             <div style="font-size:13px; color:var(--text2);">O enviarlo por email:</div>
                             <div style="display:flex; gap:8px;">
-                                <input v-model="pdfEmail" type="email" inputmode="email" placeholder="email del cliente" aria-label="Email del cliente" class="tpv-input" style="flex:1; min-width:0;" @keydown.enter.prevent="sendPdfEmail" />
+                                <input v-model="pdfEmail" type="text" inputmode="email" autocomplete="off" placeholder="email o nombre del cliente" aria-label="Email o nombre del cliente" class="tpv-input" style="flex:1; min-width:0;" @input="searchPdfCustomers" @keydown.enter.prevent="sendPdfEmail" />
                                 <button class="tpv-btn" :disabled="pdfEmailSending || !pdfEmail" @click="sendPdfEmail">{{ pdfEmailSending ? 'Enviando…' : 'Enviar' }}</button>
+                            </div>
+                            <div v-if="pdfCustomers.length" style="display:flex; flex-direction:column; gap:6px;">
+                                <button v-for="c in pdfCustomers" :key="c.local_id || c.id || c.email" class="tpv-row" style="min-height:48px; text-align:left;" @click="pickPdfCustomer(c)">
+                                    <span style="flex:1; min-width:0;">
+                                        <span style="display:block; font-weight:600; color:var(--text);">{{ c.name }}</span>
+                                        <span style="display:block; font-size:13px; color:var(--text2);">{{ c.email }}</span>
+                                    </span>
+                                </button>
                             </div>
                             <div v-if="pdfEmailStatus" style="font-size:13px; color:var(--text2);">{{ pdfEmailStatus }}</div>
                         </template>

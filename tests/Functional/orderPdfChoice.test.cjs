@@ -10,13 +10,14 @@ function ref(value) { return { value }; }
 function computed(fn) { return { get value() { return fn(); } }; }
 
 /** The order detail with a fake API: email sending on or off, and a failing send. */
-function mount(order, { emailEnabled = true, sendError = null } = {}) {
-    const calls = { pdf: [], salePdf: [], post: [], get: [] };
+function mount(order, { emailEnabled = true, sendError = null, customers = [] } = {}) {
+    const calls = { pdf: [], salePdf: [], post: [], get: [], search: [] };
     const context = {
         Vue: { ref, computed },
         ApiClient: {
             ticketSalePdf: (id) => calls.salePdf.push(id),
             ticketPdf: (id) => calls.pdf.push(id),
+            customerSearch: async (q) => { calls.search.push(q); return { data: customers }; },
             get: async (url) => { calls.get.push(url); return { data: { enabled: emailEnabled } }; },
             post: async (url, body) => {
                 calls.post.push([url, body]);
@@ -25,6 +26,7 @@ function mount(order, { emailEnabled = true, sendError = null } = {}) {
             },
         },
         JSON, String, Error, console,
+        setTimeout: (fn) => { fn(); return 1; }, clearTimeout() {},
     };
     context.globalThis = context;
     vm.runInNewContext(`${source}\nglobalThis.__view = OrderDetailView;`, context, { filename: 'OrderDetailView.js' });
@@ -93,4 +95,41 @@ test('without an outgoing mail account, or for an online order, only download is
 test('the PDF button opens the window; the reprint fallback still downloads directly', () => {
     assert.match(source, /@click="openPdfChoice"[^>]*>\s*<icon name="receipt" :size="16" \/> PDF/);
     assert.match(source, /fallback === 'pdf'\) \{\s*pdf\(\);/);
+});
+
+const ANA = { local_id: 1, id: 5, name: 'Ana Martínez', email: 'ana@example.com', phone: '600111222' };
+const SIN_EMAIL = { local_id: 2, id: 6, name: 'Luis Sin Email', email: '', phone: '' };
+
+test('typing looks up existing customers and a tap fills their email', async () => {
+    const { state, calls } = mount(SALE, { customers: [ANA, SIN_EMAIL] });
+    await state.openPdfChoice();
+
+    state.pdfEmail.value = 'ana';
+    await state.searchPdfCustomers();
+
+    assert.deepEqual(calls.search, ['ana']);
+    assert.deepEqual(JSON.parse(JSON.stringify(state.pdfCustomers.value)), [ANA], 'only customers with an email');
+
+    state.pickPdfCustomer(ANA);
+    assert.equal(state.pdfEmail.value, 'ana@example.com');
+    assert.deepEqual(JSON.parse(JSON.stringify(state.pdfCustomers.value)), [], 'the list closes');
+});
+
+test('a short text or a typed email of no customer just stays as typed', async () => {
+    const { state, calls } = mount(SALE, { customers: [] });
+    await state.openPdfChoice();
+
+    state.pdfEmail.value = 'a';
+    await state.searchPdfCustomers();
+    assert.deepEqual(calls.search, [], 'no lookup under 2 characters');
+
+    state.pdfEmail.value = 'nuevo@example.com';
+    await state.searchPdfCustomers();
+    assert.deepEqual(JSON.parse(JSON.stringify(state.pdfCustomers.value)), []);
+    assert.equal(state.pdfEmail.value, 'nuevo@example.com');
+});
+
+test('the email field searches as it is typed and lists the matches', () => {
+    assert.match(source, /v-model="pdfEmail"[^>]*@input="searchPdfCustomers"/);
+    assert.match(source, /v-for="c in pdfCustomers"[^>]*@click="pickPdfCustomer\(c\)"/);
 });
