@@ -18,6 +18,7 @@ use VenPosTPV\Service\Customer\CustomerDirectory;
 use VenPosTPV\Service\Print\PrinterService;
 use VenPosTPV\Service\Print\TicketDataResolver;
 use VenPosTPV\Service\Fiscal\FiscalRecorder;
+use VenPosTPV\Service\Sale\SaleLineWriter;
 use VenPosTPV\Service\Sale\TicketNumberer;
 use VenPosTPV\Service\Sync\Outbox;
 use VenPosTPV\Service\Sync\OutboxSyncTrigger;
@@ -65,6 +66,7 @@ class CheckoutService
         private readonly ?OutboxSyncTrigger $syncTrigger = null,
         private readonly ?CustomerDirectory $customers = null,
         private readonly ?FiscalRecorder $fiscalRecorder = null,
+        private readonly ?SaleLineWriter $saleLineWriter = null,
     ) {
     }
 
@@ -996,6 +998,23 @@ class CheckoutService
                 // Unique: a repeated payment attempt returns this sale (V32).
             ] + ($requestId !== null ? ['request_id' => $requestId] : []));
             $orderId = (int) $this->conn->lastInsertId();
+
+            // One sale_line per ticket line with its VAT (reports, full invoice).
+            $saleLines = [];
+            foreach ($breakdownLines as $index => $breakdownLine) {
+                $saleLines[] = $breakdownLine + [
+                    'price_net' => $lines[$index]['price_net'] ?? null,
+                    'discount' => max(0.0, min(100.0, (float) ($lines[$index]['discount'] ?? 0))),
+                ];
+            }
+            ($this->saleLineWriter ?? new SaleLineWriter($this->conn))->write(
+                $orderId,
+                $issuedAt,
+                (int) ($cashContext['terminal_id'] ?? 1),
+                (int) ($cashContext['session_id'] ?? 0),
+                $userId,
+                $saleLines,
+            );
 
             // The chained fiscal record of the ticket, in the same transaction (VERI*FACTU).
             ($this->fiscalRecorder ?? new FiscalRecorder($this->conn))

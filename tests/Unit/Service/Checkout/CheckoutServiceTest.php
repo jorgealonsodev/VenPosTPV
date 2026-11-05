@@ -15,6 +15,7 @@ use VenPosTPV\Service\Cash\CashSessionService;
 use VenPosTPV\Service\Cash\Exception\NoOpenCashSessionException;
 use VenPosTPV\Service\Checkout\CheckoutService;
 use VenPosTPV\Service\Fiscal\FiscalRecorder;
+use VenPosTPV\Service\Sale\SaleLineWriter;
 use VenPosTPV\Service\Checkout\Exception\CheckoutException;
 use VenPosTPV\Service\Checkout\PsOrderClient;
 use VenPosTPV\Service\Print\PrinterService;
@@ -54,6 +55,7 @@ final class CheckoutServiceTest extends TestCase
             $syncTrigger,
             null,
             $fiscalRecorder ?? $this->createMock(FiscalRecorder::class),
+            $this->createMock(SaleLineWriter::class),
         );
     }
 

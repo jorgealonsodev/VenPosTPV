@@ -121,7 +121,10 @@ CREATE TABLE IF NOT EXISTS order_meta (
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uk_order_meta_reference (reference),
     UNIQUE KEY uk_order_meta_ps_order (ps_order_id),
-    UNIQUE KEY uk_order_meta_request (request_id)
+    UNIQUE KEY uk_order_meta_request (request_id),
+    -- Version00000046: sales reports filter by date
+    KEY idx_order_meta_created (created_at),
+    KEY idx_order_meta_terminal_created (terminal_id, created_at)
 ) ENGINE=InnoDB;
 
 -- 7. offline_queue
@@ -290,7 +293,9 @@ CREATE TABLE IF NOT EXISTS refund (
     UNIQUE KEY uk_refund_credit_note (credit_note_number),
     INDEX idx_refund_order_status (ps_order_id, status),
     INDEX idx_refund_sale_status (order_id, status),
-    INDEX idx_refund_session (session_id)
+    INDEX idx_refund_session (session_id),
+    -- Version00000046: sales reports filter by completion date
+    INDEX idx_refund_status_completed (status, completed_at)
 ) ENGINE=InnoDB;
 
 -- refund_line (Version00000019): quantities already returned per sale line
@@ -559,4 +564,38 @@ CREATE TABLE IF NOT EXISTS numbering_change (
     user_id INT UNSIGNED NULL,
     created_at DATETIME NOT NULL,
     KEY idx_numbering_change_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- sale_line (Version00000046): one row per ticket line with its VAT rate, base and
+-- VAT amount (base + VAT = paid_amount), written in the sale transaction; the sales
+-- reports and the full invoice read it. approximate = 1 when data came from the
+-- current catalog (backfilled sales, unknown net price).
+CREATE TABLE IF NOT EXISTS sale_line (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    order_id BIGINT UNSIGNED NOT NULL,
+    line_index SMALLINT UNSIGNED NOT NULL,
+    sold_at DATETIME NOT NULL,
+    terminal_id INT UNSIGNED NOT NULL,
+    session_id INT UNSIGNED NOT NULL,
+    user_id INT UNSIGNED NOT NULL,
+    product_id INT UNSIGNED NULL,
+    id_product_attribute INT UNSIGNED NOT NULL DEFAULT 0,
+    reference VARCHAR(64) NULL,
+    name VARCHAR(255) NOT NULL,
+    category_id INT UNSIGNED NULL,
+    category_name VARCHAR(255) NULL,
+    quantity INT NOT NULL,
+    unit_price DECIMAL(10,2) NOT NULL,
+    line_discount_pct DECIMAL(5,2) NULL DEFAULT 0,
+    gross_amount DECIMAL(10,2) NOT NULL,
+    paid_amount DECIMAL(10,2) NOT NULL,
+    vat_rate DECIMAL(5,2) NULL,
+    base_amount DECIMAL(10,2) NULL,
+    vat_amount DECIMAL(10,2) NULL,
+    approximate TINYINT(1) NOT NULL DEFAULT 0,
+    UNIQUE KEY uk_sale_line_order_line (order_id, line_index),
+    KEY idx_sale_line_sold (sold_at),
+    KEY idx_sale_line_terminal_sold (terminal_id, sold_at),
+    KEY idx_sale_line_product_sold (product_id, id_product_attribute, sold_at),
+    KEY idx_sale_line_category_sold (category_id, sold_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

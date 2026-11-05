@@ -169,6 +169,7 @@ final class TestDatabase
         self::runMigration($connection, 'Version00000043CombinationImageAndColour');
         self::runMigration($connection, 'Version00000044NumberingChange');
         self::runMigration($connection, 'Version00000045TicketMarginsAndLogo');
+        self::runMigration($connection, 'Version00000046SaleLine');
     }
 
     private static function applyInstallSchema(Connection $connection): void
