@@ -584,6 +584,42 @@ const SettingsModal = {
             return match ? match[3] + '/' + match[2] + '/' + match[1] + ' ' + match[4] + ':' + match[5] : String(value || '');
         }
 
+        // The window can be enlarged from any corner (touch or mouse); its size is
+        // remembered on this computer.
+        const SIZE_KEY = 'tpv.settings.size';
+        const modalSize = Vue.reactive((() => {
+            try {
+                const saved = JSON.parse(localStorage.getItem(SIZE_KEY) || 'null');
+                if (saved && saved.w > 0 && saved.h > 0) return { w: saved.w, h: saved.h };
+            } catch (e) { /* default size */ }
+            return { w: null, h: null };
+        })());
+        const modalBox = Vue.ref(null);
+        const modalStyle = Vue.computed(() => (modalSize.w ? { width: modalSize.w + 'px', height: modalSize.h + 'px', maxWidth: 'none', maxHeight: 'none' } : {}));
+
+        function startResize(e, sx, sy) {
+            const box = modalBox.value;
+            if (!box) return;
+            const rect = box.getBoundingClientRect();
+            const start = { w: rect.width, h: rect.height };
+            const x0 = e.clientX;
+            const y0 = e.clientY;
+            const move = (ev) => {
+                const size = SettingsModal.resizedSize(start, ev.clientX - x0, ev.clientY - y0, sx, sy, { w: window.innerWidth, h: window.innerHeight });
+                modalSize.w = size.w;
+                modalSize.h = size.h;
+            };
+            const up = () => {
+                window.removeEventListener('pointermove', move);
+                window.removeEventListener('pointerup', up);
+                window.removeEventListener('pointercancel', up);
+                try { localStorage.setItem(SIZE_KEY, JSON.stringify({ w: modalSize.w, h: modalSize.h })); } catch (err) { /* not remembered */ }
+            };
+            window.addEventListener('pointermove', move);
+            window.addEventListener('pointerup', up);
+            window.addEventListener('pointercancel', up);
+        }
+
         Vue.onMounted(() => {
             loadEmployees();
             loadTerminal();
@@ -592,6 +628,7 @@ const SettingsModal = {
         });
 
         return {
+            modalBox, modalStyle, startResize,
             labelTestStatus, printTestLabel,
             systemPrinters,
             employees, loading, error, success,
@@ -616,7 +653,12 @@ const SettingsModal = {
         <div @click.self="emit('close')"
             style="position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:100; display:flex; align-items:center; justify-content:center; padding:24px; box-sizing:border-box;">
 
-            <div style="background:var(--surface); border:1px solid var(--border); border-radius:16px; width:100%; max-width:720px; max-height:90vh; display:flex; flex-direction:column; overflow:hidden;">
+            <div ref="modalBox" :style="modalStyle" style="position:relative; background:var(--surface); border:1px solid var(--border); border-radius:16px; width:100%; max-width:720px; max-height:90vh; display:flex; flex-direction:column; overflow:hidden;">
+                <!-- Corner handles: drag to enlarge or shrink the window -->
+                <div class="settings-resize settings-resize-nw" @pointerdown.prevent="startResize($event, -1, -1)" aria-hidden="true"></div>
+                <div class="settings-resize settings-resize-ne" @pointerdown.prevent="startResize($event, 1, -1)" aria-hidden="true"></div>
+                <div class="settings-resize settings-resize-sw" @pointerdown.prevent="startResize($event, -1, 1)" aria-hidden="true"></div>
+                <div class="settings-resize settings-resize-se" @pointerdown.prevent="startResize($event, 1, 1)" aria-hidden="true"></div>
                 <!-- Modal header -->
                 <div style="padding:20px 24px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; flex-shrink:0;">
                     <div style="font-size:16px; font-weight:700; color:var(--text);">⚙ Configuración</div>
@@ -1241,4 +1283,18 @@ const SettingsModal = {
             </div>
         </div>
     `
+};
+
+/**
+ * New size of the centred Ajustes window when a corner moves (dx, dy) from where
+ * the drag began; sx/sy are the corner's side (-1 left/top, 1 right/bottom). The
+ * window grows on both sides, so it changes by twice the drag; never below a usable
+ * size nor beyond the screen with a 16 px margin.
+ */
+SettingsModal.resizedSize = function (start, dx, dy, sx, sy, viewport) {
+    const clamp = (value, min, max) => Math.round(Math.min(Math.max(value, min), Math.max(min, max)));
+    return {
+        w: clamp(start.w + 2 * dx * sx, 560, viewport.w - 32),
+        h: clamp(start.h + 2 * dy * sy, 420, viewport.h - 32),
+    };
 };

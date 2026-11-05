@@ -732,3 +732,10 @@ html, body, #app {
 .cat-tabs::-webkit-scrollbar-thumb { background: var(--text3); border-radius: 4px; }
 .cat-arrow { flex-shrink: 0; width: 34px; border: none; background: var(--surface2); color: var(--text2); font-size: 20px; line-height: 1; cursor: pointer; font-family: inherit; }
 .cat-arrow:hover { background: var(--surface3); color: var(--text); }
+
+/* Ajustes window: corner handles to resize it (mouse and touch). */
+.settings-resize { position: absolute; width: 24px; height: 24px; z-index: 5; touch-action: none; }
+.settings-resize-nw { top: 0; left: 0; cursor: nwse-resize; }
+.settings-resize-ne { top: 0; right: 0; cursor: nesw-resize; }
+.settings-resize-sw { bottom: 0; left: 0; cursor: nesw-resize; }
+.settings-resize-se { bottom: 0; right: 0; cursor: nwse-resize; background: linear-gradient(135deg, transparent 55%, var(--text3) 55%, var(--text3) 62%, transparent 62%, transparent 72%, var(--text3) 72%, var(--text3) 79%, transparent 79%); }
