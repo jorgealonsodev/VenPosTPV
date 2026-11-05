@@ -10,7 +10,8 @@ use Doctrine\DBAL\Connection;
  * Writes the sale_line rows of sales stored before the table existed
  * (docs/prd/informes-ventas.md, I1 «Relleno de ventas antiguas»). Sales without lines
  * are read by id in batches, each batch in its own transaction, so the run can be
- * interrupted and started again: a sale that already has lines is never touched.
+ * interrupted and started again: a sale that already has lines is never touched, and
+ * any write error rolls its batch back and stops the run (no line is silently dropped).
  *
  * The reference, category and net price come from the current catalog, so every
  * backfilled line is approximate. A sale stored before paid_total spreads its total
@@ -64,7 +65,6 @@ class SaleLineBackfill
                         (int) $order['user_id'],
                         $lines,
                         approximate: true,
-                        ignoreExisting: true,
                     );
                     ++$result['sales'];
                     $result['lines'] += \count($lines);

@@ -143,16 +143,21 @@ class TicketDataResolver
      */
     private function vatBreakdown(int $orderId): array
     {
-        $rows = $orderId < 0
-            ? $this->connection->fetchAllAssociative(
-                'SELECT vat_rate, SUM(paid_amount) AS paid, MAX(approximate) AS approximate FROM sale_line WHERE order_id = ? GROUP BY vat_rate',
-                [-$orderId]
-            )
-            : $this->connection->fetchAllAssociative(
-                'SELECT s.vat_rate, SUM(s.paid_amount) AS paid, MAX(s.approximate) AS approximate FROM sale_line s
-                 JOIN order_meta o ON o.id = s.order_id WHERE o.ps_order_id = ? GROUP BY s.vat_rate',
-                [$orderId]
-            );
+        try {
+            $rows = $orderId < 0
+                ? $this->connection->fetchAllAssociative(
+                    'SELECT vat_rate, SUM(paid_amount) AS paid, MAX(approximate) AS approximate FROM sale_line WHERE order_id = ? GROUP BY vat_rate',
+                    [-$orderId]
+                )
+                : $this->connection->fetchAllAssociative(
+                    'SELECT s.vat_rate, SUM(s.paid_amount) AS paid, MAX(s.approximate) AS approximate FROM sale_line s
+                     JOIN order_meta o ON o.id = s.order_id WHERE o.ps_order_id = ? GROUP BY s.vat_rate',
+                    [$orderId]
+                );
+        } catch (TableNotFoundException) {
+            // Code deployed before Version00000046: the ticket keeps its «IVA:» line.
+            return [];
+        }
         $paidByRate = [];
         foreach ($rows as $row) {
             if ((int) ($row['approximate'] ?? 0) !== 0 || !is_numeric($row['vat_rate'] ?? null) || !is_numeric($row['paid'] ?? null)) {

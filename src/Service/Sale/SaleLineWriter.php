@@ -35,25 +35,12 @@ class SaleLineWriter
         int $userId,
         array $lines,
         bool $approximate = false,
-        bool $ignoreExisting = false,
     ): int {
         $approximateLines = 0;
         foreach (array_values($lines) as $index => $line) {
             $row = $this->row($orderId, $index, $soldAt, $terminalId, $sessionId, $userId, $line, $approximate);
             $approximateLines += $row['approximate'];
-            if ($ignoreExisting) {
-                $columns = array_keys($row);
-                $this->connection->executeStatement(
-                    sprintf(
-                        'INSERT IGNORE INTO sale_line (%s) VALUES (%s)',
-                        implode(', ', $columns),
-                        implode(', ', array_fill(0, \count($columns), '?'))
-                    ),
-                    array_values($row)
-                );
-            } else {
-                $this->connection->insert('sale_line', $row);
-            }
+            $this->connection->insert('sale_line', $row);
         }
 
         return $approximateLines;

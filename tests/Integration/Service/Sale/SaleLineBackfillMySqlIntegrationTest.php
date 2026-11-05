@@ -9,6 +9,8 @@ use PHPUnit\Framework\TestCase;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Tester\CommandTester;
 use VenPosTPV\Command\SalesBackfillLinesCommand;
+use VenPosTPV\Service\Print\TicketDataResolver;
+use VenPosTPV\Service\Print\TicketVerificationService;
 use VenPosTPV\Service\Sale\SaleLineBackfill;
 use VenPosTPV\Service\Sale\SaleLineWriter;
 use VenPosTPV\Tests\Support\TestDatabase;
@@ -154,5 +156,20 @@ final class SaleLineBackfillMySqlIntegrationTest extends TestCase
         );
         $this->assertCount(1, $this->lines($good));
         $this->assertSame([], $this->lines($broken));
+    }
+
+    public function testAReprintedBackfilledSaleKeepsTheVatItWasSoldWith(): void
+    {
+        $sale = $this->oldSale(['reference' => 'A26000001', 'total' => 45.0, 'tax' => 7.82, 'subtotal' => 50.0, 'lines' => [
+            ['name' => 'Camiseta', 'product_id' => self::SHIRT, 'id_product_attribute' => 0, 'qty' => 2, 'price' => 25.0, 'line_total' => 50.0, 'paid_total' => 45.0],
+        ]]);
+        $this->backfill();
+
+        $ticket = (new TicketDataResolver($this->connection, $this->createMock(TicketVerificationService::class), 'Tienda', ''))
+            ->resolve(TicketDataResolver::saleKey($sale));
+
+        $this->assertSame([], $ticket->vatBreakdown, 'backfilled lines are a guess: no VAT box');
+        $this->assertSame(7.82, $ticket->tax);
+        $this->assertSame(50.0, $ticket->subtotal);
     }
 }
