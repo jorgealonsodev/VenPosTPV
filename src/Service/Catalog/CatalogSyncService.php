@@ -106,9 +106,17 @@ class CatalogSyncService
             $combinationCount = $this->batchInsert(
                 'catalog_combination',
                 $combinations,
-                static function (array $comb) use ($combinationPrices): array {
+                static function (array $comb) use ($combinationPrices, $psShopUrl): array {
+                    // The first photo PrestaShop associates with this size or colour.
+                    $images = $comb['associations']['images'] ?? [];
+                    if (\is_array($images) && isset($images['id'])) {
+                        $images = [$images];
+                    }
+                    $imageId = \is_array($images) && \is_array($images[0] ?? null) ? (int) ($images[0]['id'] ?? 0) : 0;
+
                     return [
                         'id' => (int) $comb['id'],
+                        'image_url' => $imageId > 0 && $psShopUrl !== '' ? self::publicImageUrl($psShopUrl, $imageId) : null,
                         'id_product' => (int) ($comb['id_product'] ?? 0),
                         'reference' => isset($comb['reference']) && \is_string($comb['reference']) ? $comb['reference'] : null,
                         'ean13' => isset($comb['ean13']) && \is_string($comb['ean13']) ? $comb['ean13'] : null,
@@ -131,9 +139,12 @@ class CatalogSyncService
             foreach ($optionValues as $val) {
                 $groupId = (int) ($val['id_attribute_group'] ?? 0);
                 $attrName = PrestaShopApiClient::extractTranslations($val['name'] ?? '');
+                $color = isset($val['color']) && \is_string($val['color']) ? trim($val['color']) : '';
                 $valueMap[(int) $val['id']] = [
                     'group_name' => $optionMap[$groupId] ?? 'Attribute',
                     'attribute_name' => \is_string($attrName) ? $attrName : '',
+                    // Only colour values carry one; anything but a hex colour is dropped.
+                    'color' => preg_match('/^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i', $color) === 1 ? $color : null,
                 ];
             }
 
@@ -162,6 +173,7 @@ class CatalogSyncService
                         'combination_id' => $combinationId,
                         'group_name' => $valueMap[$valueId]['group_name'],
                         'attribute_name' => $valueMap[$valueId]['attribute_name'],
+                        'color' => $valueMap[$valueId]['color'],
                     ];
                 }
 

@@ -133,6 +133,7 @@ class ProductSearchService
                 'c.price_impact',
                 'c.price_ttc',
                 'c.price_net',
+                'c.image_url',
                 'COALESCE(cs.quantity, 0) AS stock',
             ])
             ->from('catalog_combination', 'c')
@@ -149,7 +150,7 @@ class ProductSearchService
 
             // Load attributes for this combination
             $attributes = $this->connection->createQueryBuilder()
-                ->select(['group_name', 'attribute_name'])
+                ->select(['group_name', 'attribute_name', 'color'])
                 ->from('catalog_combination_attribute')
                 ->where('combination_id = :combinationId')
                 ->setParameter('combinationId', $c['id'])

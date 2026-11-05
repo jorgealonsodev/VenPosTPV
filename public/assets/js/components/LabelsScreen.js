@@ -150,6 +150,9 @@ const LabelsScreen = {
             }
         }
 
+        // Photo or colour of a size/colour, as in the sale screen's variants window.
+        function comboVisual(combo) { return CombinationsModal.visual(choosing.value, combo); }
+
         function pickCombination(combo) {
             const product = choosing.value;
             added({ product_id: product.id, id_product_attribute: combo.id, name: product.name, combination: LabelPrintLogic.combinationText(combo.attributes), stock: combo.stock, image: product.image_url || '' });
@@ -209,6 +212,7 @@ const LabelsScreen = {
         }
 
         return {
+            comboVisual,
             list, query, results, choosing, previews, errors, message, busy, printing, total, printLabel,
             addByCode, pick, pickCombination, step, setQuantity, remove, preview, print, errorFor,
             combinationText: LabelPrintLogic.combinationText,
@@ -235,6 +239,12 @@ const LabelsScreen = {
                     <div v-if="choosing" style="display:flex; flex-direction:column; gap:8px;">
                         <div class="tpv-label">{{ choosing.name }}: elige talla / color</div>
                         <button v-for="combo in choosing.combinations" :key="combo.id" class="tpv-row" @click="pickCombination(combo)">
+                            <span class="label-row-img">
+                                <template v-if="comboVisual(combo)">
+                                    <img v-if="comboVisual(combo).image" :src="comboVisual(combo).image" alt="" loading="lazy" @error="$event.target.remove()" />
+                                    <span v-else class="combo-swatch" :style="{ background: comboVisual(combo).color }"></span>
+                                </template>
+                            </span>
                             <span style="flex:1; font-weight:600; color:var(--text);">{{ combinationText(combo.attributes) || ('Combinación ' + combo.id) }}</span>
                             <span style="color:var(--text2); font-size:13px;">Stock: {{ combo.stock }}</span>
                         </button>

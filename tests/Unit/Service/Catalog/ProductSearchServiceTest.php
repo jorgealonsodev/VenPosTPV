@@ -353,7 +353,7 @@ public function testSearchExposesTheTaxExcludedReducedPrice(): void
         $qb = $this->createMock(QueryBuilder::class);
         $qb->expects($this->once())
             ->method('select')
-            ->with(['group_name', 'attribute_name'])
+            ->with(['group_name', 'attribute_name', 'color'])
             ->willReturnSelf();
         $qb->expects($this->once())
             ->method('from')

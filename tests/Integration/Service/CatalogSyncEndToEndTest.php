@@ -9,6 +9,7 @@ use PHPUnit\Framework\TestCase;
 use Symfony\Component\HttpClient\MockHttpClient;
 use Symfony\Component\HttpClient\Response\MockResponse;
 use VenPosTPV\Service\Catalog\CatalogSyncService;
+use VenPosTPV\Service\Catalog\ProductSearchService;
 use VenPosTPV\Service\PrestaShop\PrestaShopApiClient;
 use VenPosTPV\Service\Sync\SyncLogRepository;
 use VenPosTPV\Tests\Support\TestDatabase;
@@ -129,5 +130,69 @@ final class CatalogSyncEndToEndTest extends TestCase
         self::assertSame(3, (int) $this->connection->fetchOne('SELECT COUNT(*) FROM catalog_stock'));
         self::assertSame('1209.987900', (string) $this->connection->fetchOne('SELECT price_ttc FROM catalog_product WHERE id = 1'));
         self::assertSame('999.990000', (string) $this->connection->fetchOne('SELECT price_net FROM catalog_product WHERE id = 1'));
+    }
+
+    /**
+     * Each size or colour can have its own photo in PrestaShop, and a colour value
+     * its colour: both reach the product sheet the variants window reads.
+     */
+    public function testCombinationPhotosAndColoursReachTheProductSheet(): void
+    {
+        if ($this->connection === null) {
+            $this->markTestSkipped('MySQL database not available for integration testing');
+        }
+
+        $price = static fn (): MockResponse => new MockResponse(json_encode(['product' => ['tpv_ttc' => '50.000000', 'tpv_net' => '41.322314']]));
+        $httpClient = new MockHttpClient([
+            new MockResponse(json_encode(['categories' => [['id' => 1, 'name' => 'Root', 'id_parent' => 0, 'active' => 1]]])),
+            new MockResponse(json_encode(['products' => [
+                ['id' => 1, 'name' => 'Aletas', 'reference' => 'ALE', 'ean13' => '', 'price' => '41.322314', 'id_category_default' => 1, 'active' => 1, 'id_default_image' => 50],
+            ]])),
+            new MockResponse(json_encode(['combinations' => [
+                // Its own photo.
+                ['id' => 10, 'id_product' => 1, 'reference' => 'ALE-NEG', 'ean13' => '', 'price' => '0', 'associations' => [
+                    'product_option_values' => [['id' => 100]],
+                    'images' => [['id' => 55], ['id' => 56]],
+                ]],
+                // A colour without a photo.
+                ['id' => 11, 'id_product' => 1, 'reference' => 'ALE-ROJ', 'ean13' => '', 'price' => '0', 'associations' => [
+                    'product_option_values' => [['id' => 101]],
+                ]],
+                // A size: neither photo nor colour.
+                ['id' => 12, 'id_product' => 1, 'reference' => 'ALE-42', 'ean13' => '', 'price' => '0', 'associations' => [
+                    'product_option_values' => [['id' => 200]],
+                ]],
+            ]])),
+            new MockResponse(json_encode(['product_options' => [['id' => 9, 'name' => 'Color'], ['id' => 8, 'name' => 'Talla']]])),
+            new MockResponse(json_encode(['product_option_values' => [
+                ['id' => 100, 'id_attribute_group' => 9, 'name' => 'Negro', 'color' => '#000000'],
+                ['id' => 101, 'id_attribute_group' => 9, 'name' => 'Rojo', 'color' => '#E84C3D'],
+                ['id' => 200, 'id_attribute_group' => 8, 'name' => '42/43', 'color' => ''],
+            ]])),
+            new MockResponse(json_encode(['stock_availables' => []])),
+            $price(), $price(), $price(), $price(),
+        ]);
+        $syncService = new CatalogSyncService(
+            new PrestaShopApiClient('http://localhost/prestashop/api', 'TEST_KEY', $httpClient),
+            $this->connection,
+            new SyncLogRepository($this->connection),
+            'https://shop.example.com',
+        );
+
+        $syncService->syncAll();
+        $sheet = (new ProductSearchService($this->connection))->findById(1);
+
+        self::assertNotNull($sheet);
+        $combinations = [];
+        foreach ($sheet['combinations'] as $combination) {
+            $combinations[$combination['id']] = $combination;
+        }
+        self::assertSame('https://shop.example.com/img/p/5/0/50-home_default.jpg', $sheet['image_url']);
+        self::assertSame('https://shop.example.com/img/p/5/5/55-home_default.jpg', $combinations[10]['image_url'], 'its first photo');
+        self::assertNull($combinations[11]['image_url']);
+        self::assertNull($combinations[12]['image_url']);
+        self::assertSame([['group_name' => 'Color', 'attribute_name' => 'Negro', 'color' => '#000000']], $combinations[10]['attributes']);
+        self::assertSame([['group_name' => 'Color', 'attribute_name' => 'Rojo', 'color' => '#E84C3D']], $combinations[11]['attributes']);
+        self::assertSame([['group_name' => 'Talla', 'attribute_name' => '42/43', 'color' => null]], $combinations[12]['attributes']);
     }
 }

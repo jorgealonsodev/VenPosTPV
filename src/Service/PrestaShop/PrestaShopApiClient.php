@@ -118,7 +118,7 @@ class PrestaShopApiClient
      */
     public function getProductOptionValues(): array
     {
-        return $this->paginate('/product_option_values?display=[id,id_attribute_group,name]&output_format=JSON');
+        return $this->paginate('/product_option_values?display=[id,id_attribute_group,name,color]&output_format=JSON');
     }
 
     /**
