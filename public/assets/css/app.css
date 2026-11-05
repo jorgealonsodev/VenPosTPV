@@ -785,3 +785,12 @@ html, body, #app {
 .reports-bar { width: 100%; min-height: 1px; background: var(--green); border-radius: 3px 3px 0 0; }
 .reports-bar.negative { background: var(--red); border-radius: 0 0 3px 3px; }
 .reports-bar-label { font-size: 10px; text-align: center; color: var(--text3); padding-top: 2px; font-family: 'IBM Plex Mono', monospace; }
+
+/* Full invoice from a ticket (InvoiceModal, docs/prd/factura-completa.md F3) */
+.invoice-modal { max-width: 560px; }
+.invoice-form-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.invoice-form-row > * { flex: 1; min-width: 120px; }
+.tpv-input.invoice-missing { border-color: var(--amber); outline: 2px solid var(--amber); outline-offset: 0; }
+.invoice-vat-table { width: 100%; border-collapse: collapse; font-family: 'IBM Plex Mono', monospace; font-size: 13px; }
+.invoice-vat-table th, .invoice-vat-table td { text-align: right; padding: 4px 6px; border-bottom: 1px solid var(--border); }
+.invoice-vat-table th { color: var(--text3); font-weight: 600; }

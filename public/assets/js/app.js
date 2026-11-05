@@ -76,6 +76,7 @@ app.component('sync-status-indicator', SyncStatusIndicator);
 app.component('sync-status-panel', SyncStatusPanel);
 app.component('ticket-list-panel', TicketListPanel);
 app.component('order-detail-view', OrderDetailView);
+app.component('invoice-modal', InvoiceModal);
 app.component('print-status-notice', PrintStatusNotice);
 app.component('print-agent-panel', PrintAgentPanel);
 app.component('print-history-panel', PrintHistoryPanel);

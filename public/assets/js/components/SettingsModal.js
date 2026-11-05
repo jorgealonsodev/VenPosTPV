@@ -2,7 +2,7 @@
  * SettingsModal — Settings page with sidebar navigation (admin only).
  * Sections: Tienda (shop data, the same on every till), Cajas (each till's name,
  * letter, printer and dataphone, which computer it is on, create a till, and where
- * the ticket and credit-note numbering continues),
+ * the ticket, credit-note and invoice numbering continues),
  * Empleados, Sincronización, Cierres de caja (the closes of the shop with their
  * Z report, to print or download again).
  */
@@ -520,11 +520,14 @@ const SettingsModal = {
             return tillsOf.find((t) => t.terminal_id === terminalId) || null;
         }
 
-        // kind: 'ticket' (the till being edited) or 'credit' (the credit notes).
+        // kind: 'ticket' (the till being edited), 'credit' (the credit notes) or
+        // 'invoice' (the shop's full invoices, «Próxima factura»).
         function startNumberingChange(kind) {
             const current = kind === 'credit'
                 ? numbering.data && numbering.data.credit_notes
-                : terminal.value && tillNumbering(terminal.value.id);
+                : kind === 'invoice'
+                    ? numbering.data && numbering.data.invoices
+                    : terminal.value && tillNumbering(terminal.value.id);
             numbering.editing = kind;
             numbering.next = current ? String(current.next_number) : '';
             numbering.reason = '';
@@ -541,7 +544,9 @@ const SettingsModal = {
             if (!kind) return false;
             const url = kind === 'credit'
                 ? '/api/numbering/credit-notes'
-                : '/api/numbering/tickets/' + encodeURIComponent(terminal.value ? terminal.value.id : '');
+                : kind === 'invoice'
+                    ? '/api/numbering/invoices'
+                    : '/api/numbering/tickets/' + encodeURIComponent(terminal.value ? terminal.value.id : '');
             numbering.saving = true;
             numbering.error = '';
             try {
@@ -1192,6 +1197,25 @@ const SettingsModal = {
                                     </div>
                                     <div v-if="numbering.editing === 'credit' && numbering.error" style="color:var(--red); font-size:12px; margin-top:4px;">{{ numbering.error }}</div>
                                     <div style="font-size:12px; color:var(--text3); margin-top:4px;">Solo puede avanzar. Úsalo tras restaurar o reinstalar para continuar la numeración donde se quedó; queda registrado.</div>
+                                </div>
+                                <div v-if="numbering.data.invoices">
+                                    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                                        <div style="font-size:13px; color:var(--text);">Próxima factura <span style="font-family:'IBM Plex Mono'; font-weight:600;">{{ numbering.data.invoices.next_code }}</span></div>
+                                        <button v-if="numbering.editing !== 'invoice'" @click="startNumberingChange('invoice')"
+                                            style="min-height:36px; padding:4px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;">Cambiar</button>
+                                    </div>
+                                    <div v-if="numbering.editing === 'invoice'" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:6px;">
+                                        <input v-model="numbering.next" type="number" min="1" max="999999" placeholder="Próximo número" aria-label="Próximo número de factura"
+                                            style="width:140px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box;">
+                                        <input v-model="numbering.reason" type="text" maxlength="255" placeholder="Motivo" aria-label="Motivo"
+                                            style="flex:1; min-width:180px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box;">
+                                        <button @click="saveNumberingChange" :disabled="numbering.saving"
+                                            style="min-height:36px; padding:4px 14px; border-radius:8px; border:none; background:var(--green); color:#000; cursor:pointer; font-family:inherit; font-size:12px; font-weight:700;">{{ numbering.saving ? 'Guardando...' : 'Guardar' }}</button>
+                                        <button @click="cancelNumberingChange"
+                                            style="min-height:36px; padding:4px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;">Cancelar</button>
+                                    </div>
+                                    <div v-if="numbering.editing === 'invoice' && numbering.error" style="color:var(--red); font-size:12px; margin-top:4px;">{{ numbering.error }}</div>
+                                    <div style="font-size:12px; color:var(--text3); margin-top:4px;">Facturas completas de la tienda (serie F, una para todas las cajas). Solo puede avanzar y queda registrado.</div>
                                 </div>
                                 <div>
                                     <div style="font-size:13px; font-weight:600; color:var(--text); margin-bottom:6px;">Cambios de numeración</div>
