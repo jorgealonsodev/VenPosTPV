@@ -1,10 +1,11 @@
 //! Platform-independent parts of the tray (A4): icon pixels and texts.
-#![cfg_attr(not(windows), allow(dead_code))]
+#![cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 
 use agent_core::ipc::{Request, Response};
 use agent_core::printer::PrinterState;
 use agent_core::state::{AgentStatus, Connection, Light};
 
+#[cfg_attr(not(windows), allow(dead_code))]
 pub const ICON_SIZE: u32 = 32;
 
 fn rgb(light: Light) -> [u8; 3] {

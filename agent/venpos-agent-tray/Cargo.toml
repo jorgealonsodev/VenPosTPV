@@ -20,3 +20,13 @@ windows = { version = "0.62.2", features = [
   "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",
 ] }
+
+# Linux: StatusNotifierItem tray over D-Bus (pure Rust, no tokio) and the
+# "VenPos Agent" window (egui on OpenGL; X11/Wayland/EGL/xkbcommon are
+# loaded with dlopen at run time, so the binary only links glibc).
+[target.'cfg(target_os = "linux")'.dependencies]
+ksni = { version = "0.3.7", default-features = false, features = ["blocking", "async-io"] }
+eframe = { version = "0.33.3", default-features = false, features = ["glow", "x11", "wayland", "default_fonts"] }
+# Same winit as eframe; its default features add wayland-dlopen and the
+# client-side title bar GNOME on Wayland needs.
+winit = "0.30"

@@ -18,12 +18,33 @@ if [ "$1" = "configure" ]; then
         echo "systemd no está activo: arranca el agente a mano con 'venpos-agent run'."
     fi
 
+    # The tray icon and the window talk to the service over
+    # /run/venpos-agent/agent.sock (group venpos-agent): add the desktop user
+    # who installs the package (sudo apt / pkexec), never root.
+    getent group venpos-agent >/dev/null || groupadd --system venpos-agent
+    desktop_user=""
+    if [ -n "${SUDO_USER:-}" ]; then
+        desktop_user=$SUDO_USER
+    elif [ -n "${PKEXEC_UID:-}" ]; then
+        desktop_user=$(getent passwd "$PKEXEC_UID" | cut -d: -f1)
+    fi
+    if [ -n "$desktop_user" ] && [ "$desktop_user" != root ] && id -u "$desktop_user" >/dev/null 2>&1; then
+        if ! id -nG "$desktop_user" | tr ' ' '\n' | grep -qx venpos-agent; then
+            usermod -a -G venpos-agent "$desktop_user"
+            echo "Usuario $desktop_user añadido al grupo venpos-agent: cierra la sesión y vuelve"
+            echo "a entrar para usar el icono y la ventana de VenPos Agent."
+        fi
+    else
+        echo "Para usar el icono y la ventana de VenPos Agent, añade tu usuario al grupo:"
+        echo "  sudo usermod -aG venpos-agent \$USER   (y vuelve a iniciar sesión)"
+    fi
+
     if [ ! -f /etc/venpos-agent/key ]; then
         echo
         echo "VenPos Agent instalado. Empareja esta caja con el código de 6 cifras"
         echo "que da el TPV en Ajustes → Cajas:"
         echo "  sudo venpos-agent pair 123456 --server https://tu-tpv"
-        echo "Y elige la impresora, por ejemplo:"
+        echo "(o abre «VenPos Agent» en el menú de aplicaciones). Y elige la impresora, por ejemplo:"
         echo "  sudo venpos-agent set-printer --target ticket --cups NOMBRE_DE_LA_COLA"
     fi
 fi

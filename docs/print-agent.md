@@ -72,7 +72,7 @@ Ve paso a paso y para en cuanto vuelva a imprimir:
 
 ## Instalar en Linux
 
-Con el paquete `venpos-agent_0.1.0_amd64.deb` (vale para cualquier Debian o Ubuntu de 64 bits):
+Con el paquete `venpos-agent_0.1.0_amd64.deb` (Debian 12 o Ubuntu 22.04 o más nuevos, de 64 bits):
 
 ```
 sudo apt install ./venpos-agent_0.1.0_amd64.deb
@@ -84,7 +84,13 @@ sudo venpos-agent test-print
 
 El paquete crea el usuario `venpos-agent` (grupo `lp`) y deja el servicio en marcha con systemd. Al actualizarlo con una versión nueva se conserva el emparejado.
 
-En el menú de aplicaciones aparece **VenPos Agent**: abre un asistente en una terminal (pide la contraseña de administrador) para emparejar la caja, elegir la impresora de tickets o de etiquetas de una lista, imprimir una prueba y ver el estado, sin escribir órdenes. También se abre con `venpos-agent-setup`.
+En el menú de aplicaciones aparece **VenPos Agent**: abre una ventana con el estado (verde, ámbar o rojo), la impresora de tickets y la de etiquetas (de la lista de impresoras del equipo, o un dispositivo USB o una impresora de red), **Imprimir prueba**, **Emparejar con el TPV** (dirección y código de 6 cifras), **Abrir ajustes del TPV** y **Ver registro**. Si vuelves a pulsarlo con la ventana abierta, la trae delante.
+
+Al iniciar sesión aparece además **el icono en la bandeja del sistema** (y también al abrir la ventana, si no estaba): enseña el estado y, con el botón derecho, deja elegir impresora, imprimir una prueba, emparejar, abrir los ajustes del TPV o ver el registro; con el botón izquierdo abre la ventana. Cerrar el icono no para el servicio.
+
+- **Tu usuario tiene que estar en el grupo `venpos-agent`** para que el icono y la ventana hablen con el servicio. Al instalar con `sudo apt install` se añade solo el usuario que lo instala; después hay que **cerrar la sesión y volver a entrar**. Para otro usuario: `sudo usermod -aG venpos-agent NOMBRE` (y que vuelva a iniciar sesión). Si falta, la ventana lo dice.
+- **GNOME** (Debian) necesita la extensión «AppIndicator and KStatusNotifierItem Support» para ver iconos en la bandeja; Ubuntu ya la trae activada. KDE, XFCE, Cinnamon, MATE y Budgie los muestran sin nada más. Sin bandeja, usa la ventana desde el menú de aplicaciones.
+- El asistente en terminal sigue disponible (pide la contraseña de administrador): botón derecho en **VenPos Agent** → **Asistente en terminal**, o `venpos-agent-setup`.
 
 Sin el paquete, también se puede instalar con el binario `venpos-agent` y el script `agent/packaging/linux/install.sh` en la misma carpeta:
 

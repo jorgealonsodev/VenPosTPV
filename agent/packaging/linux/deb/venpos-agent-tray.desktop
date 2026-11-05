@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=VenPos Agent (icono)
+Comment=Icono de VenPos Agent en la bandeja del sistema
+Exec=venpos-agent-tray
+Icon=venpos-agent
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

@@ -2,9 +2,16 @@
 Type=Application
 Name=VenPos Agent
 GenericName=Agente de impresión del TPV
-Comment=Empareja esta caja con el TPV, elige la impresora y haz una prueba
-Exec=venpos-agent-setup
-Icon=printer
-Terminal=true
+Comment=Estado del agente, impresoras de tickets y etiquetas, prueba de impresión y emparejado con el TPV
+Exec=venpos-agent-tray --panel
+Icon=venpos-agent
+Terminal=false
+StartupNotify=true
+StartupWMClass=venpos-agent
 Categories=Office;
 Keywords=TPV;impresora;ticket;etiquetas;VenPos;
+Actions=terminal;
+
+[Desktop Action terminal]
+Name=Asistente en terminal
+Exec=x-terminal-emulator -e venpos-agent-setup

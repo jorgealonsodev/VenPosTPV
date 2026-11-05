@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <title>VenPos Agent</title>
+  <!-- Ticket coming out of a receipt printer. -->
+  <path d="M20 4h24v26H20z" fill="#ffffff" stroke="#37474f" stroke-width="2"/>
+  <path d="M25 11h14M25 16h14M25 21h9" stroke="#90a4ae" stroke-width="2" stroke-linecap="round"/>
+  <rect x="6" y="26" width="52" height="26" rx="6" fill="#2e7d32"/>
+  <rect x="14" y="44" width="36" height="16" rx="2" fill="#ffffff" stroke="#37474f" stroke-width="2"/>
+  <path d="M19 50h26M19 55h18" stroke="#90a4ae" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="49" cy="34" r="3" fill="#a5d6a7"/>
+</svg>
