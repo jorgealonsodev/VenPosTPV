@@ -22,6 +22,8 @@
         }
         .center { text-align: center; }
         img { max-width: 100%; }
+{# The logo: logoWidthPct % of the text width when the till sets it (Ajustes → Cajas),
+   otherwise it only shrinks to fit. #}
         .bold { font-weight: bold; }
         .large { font-size: 16px; }
         .line {
@@ -48,7 +50,7 @@
     {% endif -%}
     {% if logoPath %}
     <div style="text-align:center; margin-bottom:8px;">
-        <img src="{{ logoPath }}" style="max-width:100%; height:auto;" alt="Logo">
+        <img src="{{ logoPath }}" style="{{ logoWidthPct is defined ? 'width:' ~ logoWidthPct ~ '%' : 'max-width:100%' }}; height:auto;" alt="Logo">
     </div>
     {% endif %}
     <div class="center bold large">{{ ticket.storeName }}</div>

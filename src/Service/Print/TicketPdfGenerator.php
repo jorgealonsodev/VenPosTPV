@@ -14,6 +14,9 @@ use VenPosTPV\Service\Fiscal\FiscalQr;
 
 class TicketPdfGenerator
 {
+    /** CSS pixels per millimetre (96 dpi). */
+    private const PX_PER_MM = 3.7795;
+
     public function __construct(
         private readonly Environment $twig,
     ) {
@@ -37,7 +40,19 @@ class TicketPdfGenerator
         // VERI*FACTU: the tax QR (error correction M) at the top of the ticket.
         $fiscalQrPath = $ticketData->fiscalQrUrl !== null ? $this->qrDataUri($ticketData->fiscalQrUrl, true) : '';
 
-        $html = $this->twig->render('ticket/print.html.twig', [
+        // Ajustes → Cajas: the till's margins (mm to CSS px) and logo width. Unset ones
+        // are left out so the template keeps its 8 px margins and full-width logo.
+        $layout = [];
+        foreach (['marginLeftPx' => $ticketData->ticketMarginLeftMm, 'marginRightPx' => $ticketData->ticketMarginRightMm] as $var => $mm) {
+            if ($mm !== null) {
+                $layout[$var] = round($mm * self::PX_PER_MM, 2);
+            }
+        }
+        if ($ticketData->ticketLogoWidthPct !== null) {
+            $layout['logoWidthPct'] = $ticketData->ticketLogoWidthPct;
+        }
+
+        $html = $this->twig->render('ticket/print.html.twig', $layout + [
             'ticket'   => $ticketData,
             'giftMode' => $giftMode,
             'qrPath'   => $qrPath,

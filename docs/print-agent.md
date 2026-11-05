@@ -50,6 +50,15 @@ Desde el icono solo se empareja por `https://` y con el mismo TPV al que ya est�
 
 Haz clic con el botón derecho en el icono → **Elegir impresoras** → **Tickets** o **Etiquetas**, y marca la impresora. Para comprobarla: botón derecho → **Imprimir prueba**.
 
+## Márgenes y logo del ticket
+
+En Ajustes → Cajas, debajo de «Ancho del ticket (px)», cada caja tiene:
+
+- **Margen izquierdo (mm)** y **Margen derecho (mm)**: de 0 a 10 mm.
+- **Tamaño del logo (% del ancho)**: de 20 a 100 % del ancho que queda entre los márgenes; el logo sale centrado y conserva su proporción.
+
+Vacío: 2 mm de margen y logo a todo el ancho (si el logo es más pequeño, no se agranda). Se aplica al ticket PDF y al ticket de la impresora térmica (ESC/POS): en la térmica, el texto se reparte en las columnas que caben entre los márgenes (unos 12 puntos por carácter, 8 puntos por mm). Requiere la migración `Version00000045`.
+
 ## Comprobar el estado
 
 - Pasa el ratón por encima del icono o ábrelo con el botón derecho: dice si está conectado y cómo están las impresoras.

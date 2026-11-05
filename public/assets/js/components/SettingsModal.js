@@ -160,6 +160,13 @@ const SettingsModal = {
                 // Labels on this till's printer (PRD L5/L6).
                 if (terminal.value.label_height_mm != null && terminal.value.label_height_mm !== '') payload.label_height_mm = Number(terminal.value.label_height_mm);
                 if (terminal.value.label_cut_each != null) payload.label_cut_each = !!terminal.value.label_cut_each;
+                // Ticket margins and logo width: sent only when the server returned them
+                // (migration V45 applied); empty means the default (2 mm, whole width).
+                ['ticket_margin_left_mm', 'ticket_margin_right_mm', 'ticket_logo_width_pct'].forEach((field) => {
+                    if (!(field in terminal.value)) return;
+                    const value = terminal.value[field];
+                    payload[field] = value === '' || value == null ? null : Number(value);
+                });
 
                 await ApiClient.terminalUpdate(terminal.value.id, payload);
                 flash('Caja guardada');
@@ -1133,6 +1140,27 @@ const SettingsModal = {
                                     <input v-model.number="terminal.ticket_width_px" type="number" min="100" max="600" placeholder="302 (80mm)"
                                         style="width:100%; max-width:200px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box;">
                                     <div style="font-size:12px; color:var(--text3); margin-top:4px;">Deja vacío para usar 80mm por defecto</div>
+                                </div>
+
+                                <div v-if="'ticket_margin_left_mm' in terminal" style="display:flex; flex-direction:column; gap:12px;">
+                                    <div style="display:flex; gap:12px; flex-wrap:wrap;">
+                                        <div>
+                                            <label for="ticket-margin-left" style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Margen izquierdo (mm)</label>
+                                            <input id="ticket-margin-left" v-model="terminal.ticket_margin_left_mm" type="number" min="0" max="10" step="0.5" placeholder="2"
+                                                style="width:100%; max-width:140px; min-height:44px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box;">
+                                        </div>
+                                        <div>
+                                            <label for="ticket-margin-right" style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Margen derecho (mm)</label>
+                                            <input id="ticket-margin-right" v-model="terminal.ticket_margin_right_mm" type="number" min="0" max="10" step="0.5" placeholder="2"
+                                                style="width:100%; max-width:140px; min-height:44px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box;">
+                                        </div>
+                                        <div>
+                                            <label for="ticket-logo-width" style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Tamaño del logo (% del ancho)</label>
+                                            <input id="ticket-logo-width" v-model="terminal.ticket_logo_width_pct" type="number" min="20" max="100" step="5" placeholder="100"
+                                                style="width:100%; max-width:140px; min-height:44px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box;">
+                                        </div>
+                                    </div>
+                                    <div style="font-size:12px; color:var(--text3);">Vacío: 2 mm de margen y logo a todo el ancho.</div>
                                 </div>
 
                                 <div>

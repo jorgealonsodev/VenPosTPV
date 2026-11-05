@@ -91,6 +91,7 @@ class TicketDataResolver
 
         $cashierName = $this->cashierName((int) $row['user_id']);
         [$storeAddress, $ticketHeader, $ticketFooter, $ticketLogo, $ticketWidthPx, $legalName, $taxId, $storeName] = $this->terminalPresentation((int) $row['terminal_id']);
+        [$marginLeftMm, $marginRightMm, $logoWidthPct] = $this->ticketLayout((int) $row['terminal_id']);
 
         return new TicketData(
             orderId: $psOrderId ?? $orderId,
@@ -118,6 +119,9 @@ class TicketDataResolver
             taxId: $taxId,
             webOrderReference: $this->webOrderReference($orderId, $reference),
             fiscalQrUrl: $this->fiscalQrUrl('order_id', $orderId < 0 ? -$orderId : null, $orderId > 0 ? $orderId : null),
+            ticketMarginLeftMm: $marginLeftMm,
+            ticketMarginRightMm: $marginRightMm,
+            ticketLogoWidthPct: $logoWidthPct,
         );
     }
 
@@ -252,6 +256,7 @@ class TicketDataResolver
             'total' => $saleTotal,
         ]);
         [$storeAddress, $ticketHeader, $ticketFooter, $ticketLogo, $ticketWidthPx, $legalName, $taxId, $storeName] = $this->terminalPresentation((int) $refund['terminal_id']);
+        [$marginLeftMm, $marginRightMm, $logoWidthPct] = $this->ticketLayout((int) $refund['terminal_id']);
 
         return new TicketData(
             orderId: (int) $refund['ps_order_id'],
@@ -290,6 +295,9 @@ class TicketDataResolver
             legalName: $legalName,
             taxId: $taxId,
             fiscalQrUrl: $this->fiscalQrUrl('refund_id', $refundId),
+            ticketMarginLeftMm: $marginLeftMm,
+            ticketMarginRightMm: $marginRightMm,
+            ticketLogoWidthPct: $logoWidthPct,
         );
     }
 
@@ -378,6 +386,33 @@ class TicketDataResolver
         $userRow = $this->connection->fetchAssociative('SELECT name FROM user WHERE id = ?', [$userId]);
 
         return $userRow !== false && isset($userRow['name']) && \is_string($userRow['name']) ? $userRow['name'] : 'Cajero';
+    }
+
+    /**
+     * Margins and logo width of the till's ticket (Ajustes → Cajas, Version00000045).
+     * Read apart, and unset when the query fails, so a ticket still prints before
+     * that migration runs.
+     *
+     * @return array{0: ?float, 1: ?float, 2: ?int} left margin, right margin, logo width
+     */
+    private function ticketLayout(int $terminalId): array
+    {
+        try {
+            $layout = $this->connection->fetchAssociative(
+                'SELECT ticket_margin_left_mm, ticket_margin_right_mm, ticket_logo_width_pct FROM terminal WHERE id = ?',
+                [$terminalId]
+            );
+        } catch (\Throwable) {
+            $layout = false;
+        }
+        $layout = \is_array($layout) ? $layout : [];
+        $number = static fn (mixed $value): ?float => is_numeric($value) ? (float) $value : null;
+
+        return [
+            $number($layout['ticket_margin_left_mm'] ?? null),
+            $number($layout['ticket_margin_right_mm'] ?? null),
+            is_numeric($layout['ticket_logo_width_pct'] ?? null) ? (int) $layout['ticket_logo_width_pct'] : null,
+        ];
     }
 
     /**

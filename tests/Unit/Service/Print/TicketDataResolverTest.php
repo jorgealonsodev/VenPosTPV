@@ -207,4 +207,40 @@ final class TicketDataResolverTest extends TestCase
             $this->assertSame($expected, $ticket->webOrderReference, sprintf('key %d, stored %s', $key, var_export($stored, true)));
         }
     }
+
+    /** Ajustes → Cajas: the till's margins and logo width reach the ticket; before migration V45 they stay unset. */
+    public function testTheTillMarginsAndLogoWidthReachTheTicket(): void
+    {
+        $order = ['ps_order_id' => 42, 'terminal_id' => 7, 'user_id' => 5, 'payment_breakdown' => json_encode(['reference' => 'R1', 'total' => 1.0, 'lines' => []]), 'created_at' => '2024-01-15 14:30:00'];
+        $cases = [
+            [['ticket_margin_left_mm' => '3.5', 'ticket_margin_right_mm' => '0.0', 'ticket_logo_width_pct' => '60'], [3.5, 0.0, 60]],
+            [['ticket_margin_left_mm' => null, 'ticket_margin_right_mm' => null, 'ticket_logo_width_pct' => null], [null, null, null]],
+            [new \RuntimeException("Unknown column 'ticket_margin_left_mm'"), [null, null, null]],
+        ];
+        foreach ($cases as [$layout, $expected]) {
+            $conn = $this->createMock(Connection::class);
+            $conn->method('fetchAssociative')->willReturnCallback(function (string $sql, array $params = []) use ($order, $layout): array|false {
+                if (str_contains($sql, 'FROM order_meta')) {
+                    return $order;
+                }
+                if (str_contains($sql, 'ticket_margin_left_mm')) {
+                    self::assertSame([7], $params, 'the layout is read from the till of the sale');
+                    if ($layout instanceof \Throwable) {
+                        throw $layout;
+                    }
+
+                    return $layout;
+                }
+
+                return false;
+            });
+            $verification = $this->createMock(TicketVerificationService::class);
+            $verification->method('buildVerificationUrl')->willReturn('http://v');
+
+            $ticket = (new TicketDataResolver($conn, $verification, 'Tienda', ''))->resolve(42);
+
+            self::assertNotNull($ticket);
+            self::assertSame($expected, [$ticket->ticketMarginLeftMm, $ticket->ticketMarginRightMm, $ticket->ticketLogoWidthPct]);
+        }
+    }
 }

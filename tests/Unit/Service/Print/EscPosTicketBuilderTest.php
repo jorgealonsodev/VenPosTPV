@@ -319,11 +319,12 @@ final class EscPosTicketBuilderTest extends TestCase
     {
         $out = $this->createBuilder()->build($this->withLogo($this->pngDataUri(1254, 1254, true)));
 
-        // GS v 0: raster bit image. xL xH is the width in bytes, at most 384 dots = 48 bytes.
+        // GS v 0: raster bit image. xL xH is the width in bytes: the logo is shrunk to
+        // the print area, 544 dots = 68 bytes with the default 2 mm margins.
         $pos = strpos($out, "\x1dv0");
         $this->assertNotFalse($pos, 'the logo is sent as a raster image');
         $widthBytes = ord($out[$pos + 4]) + 256 * ord($out[$pos + 5]);
-        $this->assertSame(48, $widthBytes);
+        $this->assertSame(68, $widthBytes);
         $this->assertLessThan(strpos($out, 'Mi Tienda'), $pos, 'logo goes above the store name');
     }
 
@@ -335,6 +336,20 @@ final class EscPosTicketBuilderTest extends TestCase
             $this->assertStringNotContainsString("\x1dv0", $out);
             $this->assertStringContainsString('Mi Tienda', $out);
         }
+    }
+
+    /**
+     * The bytes as they were before the till margins existed: the only differences
+     * since then are the default print area (GS L 16 dots, GS W 544 dots, sent once
+     * after the character table) and the separators, now as wide as its 45 columns
+     * instead of a fixed 32. Every text line of these tickets is unchanged.
+     */
+    private static function withoutPrintArea(string $bytes): string
+    {
+        $area = "\x1b\x74\x10\x1dL\x10\x00\x1dW\x20\x02";
+        self::assertSame(1, substr_count($bytes, $area), 'the default print area follows the character table once');
+
+        return str_replace([$area, "\n" . str_repeat('-', 45) . "\n"], ["\x1b\x74\x10", "\n" . str_repeat('-', 32) . "\n"], $bytes);
     }
 
     /**
@@ -357,7 +372,7 @@ final class EscPosTicketBuilderTest extends TestCase
         $out = $this->createBuilder()->build($this->documentTicket(null));
 
         // sha1 of the bytes printed before the exchange credit was added (HEAD 8f64b2a).
-        $this->assertSame('538ac0deb92143ce0c89ef764a17be8b94e52ee8', sha1($out));
+        $this->assertSame('538ac0deb92143ce0c89ef764a17be8b94e52ee8', sha1(self::withoutPrintArea($out)));
         $this->assertStringNotContainsString('Abono', $out);
     }
 
@@ -366,7 +381,7 @@ final class EscPosTicketBuilderTest extends TestCase
         $note = new CreditNoteInfo('R2026-000007', 'REF42', new \DateTimeImmutable('2026-10-30 10:00'), 'Defectuoso', 10.08, 14.1);
         $out = $this->createBuilder()->build($this->documentTicket($note, 'mixed', 0.0, 0.0));
 
-        $this->assertSame('7869077be0a458105af52ff1160d4c65f6dbd1be', sha1($out));
+        $this->assertSame('7869077be0a458105af52ff1160d4c65f6dbd1be', sha1(self::withoutPrintArea($out)));
         $this->assertStringNotContainsString('cambio', $out);
     }
 
@@ -488,8 +503,8 @@ final class EscPosTicketBuilderTest extends TestCase
     public function testATicketWithoutAWebReferencePrintsTheSameBytesAsBefore(): void
     {
         // sha1 of the bytes built before "Pedido web" existed (HEAD e868074).
-        self::assertSame('fa4af74b27a71be4d891fd22ccca15fdf83c07a5', sha1($this->createBuilder()->build($this->localSale())));
-        self::assertSame('0e1c9ffe288876ade23487e4f07824b11ab5e3e1', sha1($this->createBuilder()->build($this->localSale(), true)));
+        self::assertSame('fa4af74b27a71be4d891fd22ccca15fdf83c07a5', sha1(self::withoutPrintArea($this->createBuilder()->build($this->localSale()))));
+        self::assertSame('0e1c9ffe288876ade23487e4f07824b11ab5e3e1', sha1(self::withoutPrintArea($this->createBuilder()->build($this->localSale(), true))));
         self::assertStringNotContainsString('Pedido web', $this->createBuilder()->build($this->localSale('')));
     }
 }

@@ -43,8 +43,16 @@ final class TicketData
         public readonly ?string $webOrderReference = null,
         // VERI*FACTU on: the AEAT cotejo URL printed as «QR tributario:» at the top.
         public readonly ?string $fiscalQrUrl = null,
+        // Ajustes → Cajas: side margins in mm (0-10) and the logo width as a % of the
+        // printable width (20-100); null keeps the default (2 mm, the whole width).
+        public readonly ?float $ticketMarginLeftMm = null,
+        public readonly ?float $ticketMarginRightMm = null,
+        public readonly ?int $ticketLogoWidthPct = null,
     ) {
     }
+
+    /** Side margin used when the till sets none. */
+    public const DEFAULT_MARGIN_MM = 2.0;
 
     /**
      * Spanish label of how the sale was paid; with an exchange credit it reads

@@ -66,6 +66,14 @@ class EscPosTicketBuilder
         // Spanish charset via CP1252 (table 16) — supports ñ, á, é, í, ó, ú, €
         $printer->selectCharacterTable(16);
 
+        // Ajustes → Cajas: the side margins as GS L (left margin) and GS W (print
+        // area width); every line is then laid out in the columns left between them.
+        [$leftDots, $printableDots] = $this->printArea($ticketData);
+        $printer->setPrintLeftMargin($leftDots);
+        $printer->setPrintWidth($printableDots);
+        $columns = intdiv($printableDots, self::FONT_A_DOTS);
+        $separator = str_repeat('-', $columns) . "\n";
+
         // Header
         $printer->setJustification(Printer::JUSTIFY_CENTER);
         if ($ticketData->fiscalQrUrl !== null) {
@@ -75,23 +83,23 @@ class EscPosTicketBuilder
             $printer->qrCode($ticketData->fiscalQrUrl, Printer::QR_ECLEVEL_M, 6);
             $printer->text(FiscalQr::LEGEND . "\n\n");
         }
-        $logo = $this->logoImage($ticketData->ticketLogo);
+        $logo = $this->logoImage($ticketData->ticketLogo, $printableDots, $ticketData->ticketLogoWidthPct);
         if ($logo !== null) {
             $printer->bitImage($logo);
         }
         $printer->selectPrintMode(Printer::MODE_DOUBLE_HEIGHT | Printer::MODE_DOUBLE_WIDTH | Printer::MODE_EMPHASIZED);
-        $printer->text($this->sanitize($ticketData->storeName) . "\n");
+        $printer->text($this->wrap($this->sanitize($ticketData->storeName), intdiv($columns, 2)) . "\n");
         $printer->selectPrintMode(Printer::MODE_EMPHASIZED);
         if ($ticketData->legalName !== null && $ticketData->legalName !== $ticketData->storeName) {
-            $printer->text($this->sanitize($ticketData->legalName) . "\n");
+            $printer->text($this->wrap($this->sanitize($ticketData->legalName), $columns) . "\n");
         }
         if ($ticketData->taxId !== null) {
             $printer->text('NIF: ' . $this->sanitize($ticketData->taxId) . "\n");
         }
         if ($ticketData->storeAddress !== '') {
-            $printer->text($this->sanitize($ticketData->storeAddress) . "\n");
+            $printer->text($this->wrap($this->sanitize($ticketData->storeAddress), $columns) . "\n");
         }
-        $this->printMultilineCentered($printer, $ticketData->ticketHeader);
+        $this->printMultilineCentered($printer, $ticketData->ticketHeader, $columns);
         $printer->selectPrintMode();
         $printer->text("\n");
         $creditNote = $ticketData->creditNote;
@@ -107,7 +115,7 @@ class EscPosTicketBuilder
                 $rectifies .= ' (' . $creditNote->rectifiesDate->format('d/m/Y') . ')';
             }
             $printer->text($rectifies . "\n");
-            $printer->text('Motivo: ' . $this->sanitize($creditNote->reason) . "\n");
+            $printer->text($this->wrap('Motivo: ' . $this->sanitize($creditNote->reason), $columns) . "\n");
         } else {
             $printer->text('Ref: ' . $ticketData->reference . "\n");
             if ($ticketData->webOrderReference !== null && $ticketData->webOrderReference !== '') {
@@ -115,7 +123,7 @@ class EscPosTicketBuilder
             }
         }
         $printer->text('Cajero: ' . $this->sanitize($ticketData->cashierName) . "\n");
-        $printer->text(str_repeat('-', 32) . "\n");
+        $printer->text($separator);
 
         // Items
         $printer->setJustification(Printer::JUSTIFY_LEFT);
@@ -123,17 +131,17 @@ class EscPosTicketBuilder
             $name = $this->sanitize($line->name);
             $qty = $line->quantity;
 
-            $printer->text("{$name}\n");
+            $printer->text($this->wrap($name, $columns) . "\n");
             if (!$giftMode) {
                 $unit = number_format($line->unitPrice, 2);
                 $total = number_format($line->lineTotal, 2);
-                $printer->text("  {$qty} x {$unit} € = {$total} €\n");
+                $printer->text($this->wrap("  {$qty} x {$unit} € = {$total} €", $columns) . "\n");
             } else {
                 $printer->text("  Cant: {$qty}\n");
             }
         }
 
-        $printer->text(str_repeat('-', 32) . "\n");
+        $printer->text($separator);
 
         if ($creditNote !== null) {
             $printer->setJustification(Printer::JUSTIFY_RIGHT);
@@ -205,7 +213,7 @@ class EscPosTicketBuilder
             $printer->qrCode($ticketData->verificationUrl, Printer::QR_ECLEVEL_M, 6);
             $printer->text("\n");
         }
-        $this->printMultilineCentered($printer, $ticketData->ticketFooter !== '' ? $ticketData->ticketFooter : 'Gracias por su compra');
+        $this->printMultilineCentered($printer, $ticketData->ticketFooter !== '' ? $ticketData->ticketFooter : 'Gracias por su compra', $columns);
 
         // Cut
         $printer->cut();
@@ -214,15 +222,39 @@ class EscPosTicketBuilder
         return $connector->getData();
     }
 
-    /** Widest logo, in printer dots: about 48 mm on the 203 dpi, 80 mm paper. */
-    private const LOGO_MAX_WIDTH_DOTS = 384;
+    /** 203 dpi printers: 8 dots per mm. */
+    private const DOTS_PER_MM = 8;
+
+    /** Width of one Font A character, in dots. */
+    private const FONT_A_DOTS = 12;
+
+    /** Narrowest print area kept whatever the margins: 8 characters. */
+    private const MIN_PRINT_WIDTH_DOTS = 96;
+
+    /**
+     * Left margin and print area width, in dots, from the till's margins (2 mm each
+     * side when unset) on the printable width of the paper: 576 dots on 80 mm paper,
+     * 384 on 58 mm.
+     *
+     * @return array{int, int}
+     */
+    private function printArea(TicketData $ticketData): array
+    {
+        $paperDots = (int) ($this->config['paperWidth'] ?? 80) >= 80 ? 576 : 384;
+        $dots = static fn (?float $mm): int => (int) round(($mm ?? TicketData::DEFAULT_MARGIN_MM) * self::DOTS_PER_MM);
+        $left = $dots($ticketData->ticketMarginLeftMm);
+        $width = max(self::MIN_PRINT_WIDTH_DOTS, $paperDots - $left - $dots($ticketData->ticketMarginRightMm));
+
+        return [min($left, $paperDots - self::MIN_PRINT_WIDTH_DOTS), $width];
+    }
 
     /**
      * Turns the terminal's logo (a data: URI uploaded in Settings) into a printable
-     * raster image: transparency flattened on white and scaled to the paper. A logo
+     * raster image: transparency flattened on white and scaled to the print area,
+     * to the till's percentage of it when set, otherwise only shrunk to fit. A logo
      * that cannot be read is skipped so the ticket always prints.
      */
-    private function logoImage(?string $dataUri): ?GdEscposImage
+    private function logoImage(?string $dataUri, int $printableDots, ?int $widthPct): ?GdEscposImage
     {
         if ($dataUri === null || !\function_exists('imagecreatefromstring')
             || !preg_match('#^data:image/(?:png|jpe?g|gif|webp);base64,(.+)$#s', $dataUri, $m)) {
@@ -238,7 +270,9 @@ class EscPosTicketBuilder
 
             $width = imagesx($source);
             $height = imagesy($source);
-            $targetWidth = min(self::LOGO_MAX_WIDTH_DOTS, $width);
+            $targetWidth = $widthPct !== null
+                ? max(1, (int) round($printableDots * $widthPct / 100))
+                : min($printableDots, $width);
             $targetHeight = max(1, (int) round($height * $targetWidth / $width));
 
             $canvas = imagecreatetruecolor($targetWidth, $targetHeight);
@@ -262,7 +296,42 @@ class EscPosTicketBuilder
         return str_replace(["\n", "\r"], ' ', $text);
     }
 
-    private function printMultilineCentered(Printer $printer, string $text): void
+    /**
+     * Breaks text into lines of at most $columns characters, at spaces when it can,
+     * so the printer never cuts a word at the edge of the print area.
+     */
+    private function wrap(string $text, int $columns): string
+    {
+        $columns = max(1, $columns);
+        // A leading indent (the "  1 x 2.00 €" line) stays on the first line.
+        $indent = (string) preg_replace('/^( *).*$/su', '$1', $text);
+        $lines = [];
+        $current = $indent;
+        $started = false;
+        foreach (preg_split('/ +/u', ltrim($text, ' '), -1, PREG_SPLIT_NO_EMPTY) ?: [] as $word) {
+            $word = (string) $word;
+            $joined = $started ? $current . ' ' . $word : $current . $word;
+            if (mb_strlen($joined) <= $columns) {
+                $current = $joined;
+                $started = true;
+                continue;
+            }
+            if ($started) {
+                $lines[] = $current;
+                $current = '';
+            }
+            // A word longer than a line is split across lines.
+            $chunks = mb_str_split($current . $word, $columns);
+            $current = (string) array_pop($chunks);
+            array_push($lines, ...$chunks);
+            $started = true;
+        }
+        $lines[] = $current;
+
+        return implode("\n", $lines);
+    }
+
+    private function printMultilineCentered(Printer $printer, string $text, int $columns): void
     {
         $normalized = trim($text);
         if ($normalized === '') {
@@ -276,7 +345,7 @@ class EscPosTicketBuilder
                 continue;
             }
 
-            $printer->text($this->sanitize($line) . "\n");
+            $printer->text($this->wrap($this->sanitize($line), $columns) . "\n");
         }
     }
 }

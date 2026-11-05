@@ -31,6 +31,10 @@ CREATE TABLE IF NOT EXISTS terminal (
     ticket_footer TEXT NULL,
     ticket_logo MEDIUMTEXT NULL,
     ticket_width_px INT NULL,
+    -- Version00000045: ticket margins (0-10 mm, NULL = 2 mm) and logo width (20-100 %, NULL = 100).
+    ticket_margin_left_mm DECIMAL(3,1) NULL,
+    ticket_margin_right_mm DECIMAL(3,1) NULL,
+    ticket_logo_width_pct TINYINT UNSIGNED NULL,
     ticket_code VARCHAR(10) NOT NULL DEFAULT 'barcode',
     stock_sync_interval_seconds INT UNSIGNED NOT NULL DEFAULT 60,
     stock_push_interval_seconds INT UNSIGNED NOT NULL DEFAULT 0,

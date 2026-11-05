@@ -68,8 +68,37 @@ final class TerminalController
         $labels = $this->labelSettings->forTerminal($id);
         $row['label_height_mm'] = $labels->heightMm;
         $row['label_cut_each'] = $labels->cutEach;
+        $row += $this->ticketLayout($id);
 
         return new JsonResponse(['data' => $row]);
+    }
+
+    /**
+     * Ticket margins and logo width of the till (Version00000045). Read apart from the
+     * main row so the till still loads, without them, before that migration runs.
+     *
+     * @return array{ticket_margin_left_mm?: ?float, ticket_margin_right_mm?: ?float, ticket_logo_width_pct?: ?int}
+     */
+    private function ticketLayout(int $id): array
+    {
+        try {
+            $layout = $this->connection->fetchAssociative(
+                'SELECT ticket_margin_left_mm, ticket_margin_right_mm, ticket_logo_width_pct FROM terminal WHERE id = ?',
+                [$id]
+            );
+        } catch (\Throwable) {
+            return [];
+        }
+        if (!\is_array($layout)) {
+            return [];
+        }
+        $number = static fn (mixed $value): ?float => is_numeric($value) ? (float) $value : null;
+
+        return [
+            'ticket_margin_left_mm' => $number($layout['ticket_margin_left_mm'] ?? null),
+            'ticket_margin_right_mm' => $number($layout['ticket_margin_right_mm'] ?? null),
+            'ticket_logo_width_pct' => is_numeric($layout['ticket_logo_width_pct'] ?? null) ? (int) $layout['ticket_logo_width_pct'] : null,
+        ];
     }
 
     /**
@@ -199,6 +228,32 @@ final class TerminalController
                     return new JsonResponse(['error' => 'Ancho de ticket no válido (100-600)'], Response::HTTP_UNPROCESSABLE_ENTITY);
                 }
                 $fields['ticket_width_px'] = $widthInt;
+            }
+        }
+
+        // Margins (0-10 mm) and logo width (20-100 % of the printable width) of this
+        // till's ticket; empty goes back to the default (2 mm, full width).
+        foreach (['ticket_margin_left_mm', 'ticket_margin_right_mm'] as $key) {
+            if (array_key_exists($key, $body)) {
+                $margin = $body[$key];
+                if ($margin === null || $margin === '') {
+                    $fields[$key] = null;
+                } elseif (!is_numeric($margin) || (float) $margin < 0 || (float) $margin > 10) {
+                    return new JsonResponse(['error' => 'El margen debe estar entre 0 y 10 mm'], Response::HTTP_UNPROCESSABLE_ENTITY);
+                } else {
+                    $fields[$key] = round((float) $margin, 1);
+                }
+            }
+        }
+
+        if (array_key_exists('ticket_logo_width_pct', $body)) {
+            $pct = $body['ticket_logo_width_pct'];
+            if ($pct === null || $pct === '') {
+                $fields['ticket_logo_width_pct'] = null;
+            } elseif (!is_numeric($pct) || (float) $pct < 20 || (float) $pct > 100) {
+                return new JsonResponse(['error' => 'El tamaño del logo debe estar entre 20 y 100 %'], Response::HTTP_UNPROCESSABLE_ENTITY);
+            } else {
+                $fields['ticket_logo_width_pct'] = (int) round((float) $pct);
             }
         }
 
