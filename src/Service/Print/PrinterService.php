@@ -60,6 +60,41 @@ class PrinterService
         return $this->enqueue($terminalId, 'ticket', $bytes, 'test', null, $userId);
     }
 
+    /** The till's paper width in millimetres (80 unless its printer says 58). */
+    public function paperWidth(int $terminalId): int
+    {
+        return $this->configFor($terminalId)->paperWidth;
+    }
+
+    /**
+     * Prints ready ESC/POS bytes (the cash reports) on the till's printer, resolved
+     * like reprintTicket(): a job for its print agent, the direct printer, or
+     * ['fallback' => 'pdf'] when the till has no usable printer and the screen must
+     * open the PDF instead.
+     *
+     * @return array{print_status: string, print_job_id?: int}|array{fallback: string}
+     */
+    public function printRaw(int $terminalId, string $bytes, string $source, ?string $sourceRef = null, ?int $userId = null): array
+    {
+        $config = $this->configFor($terminalId);
+
+        if ($config->usesAgent()) {
+            return ['print_status' => 'queued', 'print_job_id' => $this->enqueue($terminalId, 'ticket', $bytes, $source, $sourceRef, $userId)];
+        }
+
+        if ($config->printsDirectly()) {
+            try {
+                $this->sendRaw($config, $bytes);
+
+                return ['print_status' => 'printed'];
+            } catch (\Throwable $e) {
+                $this->logAudit($terminalId, $source . '_escpos_failed', (string) $sourceRef, ['error' => $e->getMessage()]);
+            }
+        }
+
+        return ['fallback' => 'pdf'];
+    }
+
     public function printTicket(int $orderId, int $terminalId, bool $giftMode = false): void
     {
         $ticketData = $this->ticketDataResolver->resolve($orderId);

@@ -21,10 +21,16 @@ const app = createApp({
         }
 
         async function onCashClose(countedCash) {
+            let result;
             try {
-                await closeCash(countedCash);
+                result = await closeCash(countedCash);
             } catch (err) {
                 window.alert(err.message || 'No se pudo cerrar caja');
+                return;
+            }
+            // The till is closed either way; only the printout of its Z failed.
+            if (result && result.z_print === 'failed') {
+                window.alert('La caja se ha cerrado, pero no se ha podido imprimir el informe Z. Un administrador puede imprimirlo o descargarlo en Ajustes → Cierres de caja.');
             }
         }
 
@@ -40,6 +46,8 @@ const app = createApp({
             <login-screen v-if="session.screen === 'login'" :store-name="session.storeName" @login="onLogin" />
             <device-link-screen v-else-if="session.screen === 'deviceLink'" />
             <cash-open-screen v-else-if="session.screen === 'cashOpen'" :cashier-name="session.cashierName" @open="onOpenCash" />
+            <!-- A problem printing the Z of the close just made (print agent) stays visible here. -->
+            <print-status-notice v-if="session.screen === 'cashOpen'" placement="sale" />
             <sale-screen v-else-if="session.screen === 'sale'" :cashier-name="session.cashierName" :store-name="session.storeName" @cash-close="onCashClose" />
         </div>
     `

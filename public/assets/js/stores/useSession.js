@@ -349,10 +349,37 @@ const useSession = (function () {
         await hydrateCashSession();
     }
 
+    /**
+     * Prints the X report of the open till ('x') or the Z report of a close ('z' +
+     * its session id) on this till's printer. Answers 'queued' (print agent, the job
+     * is followed by usePrintJobs), 'printed', or 'pdf' when the till has no printer
+     * and the PDF was opened instead. Rejects when the server refuses.
+     */
+    async function printCashReport(kind, sessionId) {
+        const response = kind === 'z' ? await ApiClient.cashZPrint(sessionId) : await ApiClient.cashReportXPrint();
+        const data = (response && response.data) || {};
+        if (data.print_status === 'queued') {
+            if (typeof usePrintJobs !== 'undefined') usePrintJobs.trackResponse(data, { kind: 'cash_report' });
+            return 'queued';
+        }
+        if (data.print_status === 'printed') return 'printed';
+        if (data.fallback === 'pdf') {
+            if (kind === 'z') ApiClient.cashZPdf(sessionId);
+            else ApiClient.cashReportXPdf();
+            return 'pdf';
+        }
+        return 'unknown';
+    }
+
+    /**
+     * Closes the till, then prints its Z report. The close is done once the server
+     * answers: a printing problem never undoes it, it only comes back as z_print
+     * 'failed' (the Z stays in Ajustes → Cierres de caja).
+     */
     async function closeCash(countedCash) {
         // A close wins over any response that was already hydrating the old session.
         ++cashHydrationGeneration;
-        await ApiClient.cashClose(countedCash);
+        const response = await ApiClient.cashClose(countedCash);
         session.screen = 'cashOpen';
         session.sessionId = null;
         // terminalId stays: it is this computer's till, not the closed session's.
@@ -360,6 +387,17 @@ const useSession = (function () {
         session.openingCash = 0;
         session.cashTotals = null;
         save();
+
+        const closed = (response && response.data) || {};
+        let zPrint = 'skipped';
+        if (closed.session_id) {
+            try {
+                zPrint = await printCashReport('z', closed.session_id);
+            } catch (err) {
+                zPrint = 'failed';
+            }
+        }
+        return { ...closed, z_print: zPrint };
     }
 
     function toggleTheme() {
@@ -423,6 +461,7 @@ const useSession = (function () {
         login,
         openCash,
         closeCash,
+        printCashReport,
         hydrateCashSession,
         refreshCashTotals,
         refreshOutbox,

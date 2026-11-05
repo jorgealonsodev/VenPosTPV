@@ -1,6 +1,8 @@
 /**
  * CashCloseScreen — denomination counting and session summary, with parked tickets warning
  * and the uploads to PrestaShop still to do (PRD I2, A6): a warning, never a block.
+ * «Imprimir informe X» prints the open till without closing it (its PDF when the till
+ * has no printer); closing prints the Z report (useSession.closeCash).
  */
 const CashCloseScreen = {
     props: ['session', 'parkedCount', 'outbox'],
@@ -57,7 +59,37 @@ const CashCloseScreen = {
             return pending - Number((props.outbox && props.outbox.blocked) || 0) > 0;
         });
 
-        return { counted, denoms, total, expected, diff, handleDiscardParked, pendingUploadsText, blockedUploadsText, uploadsOnTheirOwn, incidentsText };
+        const printingX = Vue.ref(false);
+        const xStatus = Vue.ref('');
+        const xFailed = Vue.ref(false);
+        const X_MESSAGES = { queued: 'Imprimiendo informe X…', printed: 'Informe X impreso', pdf: 'Informe X descargado en PDF' };
+
+        function serverError(err) {
+            const match = /^HTTP \d+: ([\s\S]*)$/.exec((err && err.message) || '');
+            if (match) {
+                try { return JSON.parse(match[1]).error || ''; } catch (e) { return ''; }
+            }
+            return (err && err.message) || '';
+        }
+
+        async function printX() {
+            if (printingX.value) return;
+            printingX.value = true;
+            xStatus.value = '';
+            xFailed.value = false;
+            try {
+                const outcome = await useSession.printCashReport('x');
+                xStatus.value = X_MESSAGES[outcome] || 'Informe X enviado';
+            } catch (err) {
+                xFailed.value = true;
+                const detail = serverError(err);
+                xStatus.value = 'No se ha podido imprimir el informe X' + (detail ? ': ' + detail : '');
+            } finally {
+                printingX.value = false;
+            }
+        }
+
+        return { counted, denoms, total, expected, diff, handleDiscardParked, pendingUploadsText, blockedUploadsText, uploadsOnTheirOwn, incidentsText, printingX, xStatus, xFailed, printX };
     },
     template: `
         <div style="width:100%; height:100%; background:var(--bg); overflow:auto; padding:32px; display:flex; flex-direction:column; gap:24px;">
@@ -165,9 +197,10 @@ const CashCloseScreen = {
                     </div>
 
                     <div style="display:flex; flex-direction:column; gap:10px;">
-                        <button style="padding:14px; border-radius:12px; border:1px solid var(--border); background:var(--surface2); color:var(--text2); cursor:pointer; font-family:inherit; font-size:14px; display:flex; align-items:center; justify-content:center; gap:8px;">
-                            <icon name="print" :size="16" /> Imprimir informe X
+                        <button @click="printX" :disabled="printingX" style="padding:14px; border-radius:12px; border:1px solid var(--border); background:var(--surface2); color:var(--text2); cursor:pointer; font-family:inherit; font-size:14px; display:flex; align-items:center; justify-content:center; gap:8px;">
+                            <icon name="print" :size="16" /> {{ printingX ? 'Imprimiendo…' : 'Imprimir informe X' }}
                         </button>
+                        <div v-if="xStatus" :role="xFailed ? 'alert' : 'status'" style="font-size:13px; text-align:center;" :style="{ color: xFailed ? 'var(--red)' : 'var(--text2)' }">{{ xStatus }}</div>
                         <button @click="$emit('close', Number(total).toFixed(2))" style="padding:14px; border-radius:12px; border:none; background:var(--green); color:#000; cursor:pointer; font-family:inherit; font-size:15px; font-weight:700;">
                             Cerrar caja y generar informe Z →
                         </button>

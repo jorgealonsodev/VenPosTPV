@@ -98,6 +98,11 @@ services:
             $storeName: '%env(TPV_STORE_NAME)%'
             $storeAddress: '%env(TPV_STORE_ADDRESS)%'
 
+    # Informe X / Z: same store name fallback as the tickets.
+    VenPosTPV\Service\Print\CashReportService:
+        arguments:
+            $storeName: '%env(TPV_STORE_NAME)%'
+
     # Sync Log Repository
     VenPosTPV\Service\Sync\SyncLogRepository:
         arguments:

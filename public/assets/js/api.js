@@ -102,6 +102,17 @@ const ApiClient = (function () {
         cashMovement: (payload) => request('/api/cash/movement', { method: 'POST', body: JSON.stringify(payload) }),
         cashClose: (countedCash) => request('/api/cash/close', { method: 'POST', body: JSON.stringify({ counted_cash: countedCash }) }),
         cashReportX: () => request('/api/cash/report-x', { method: 'GET' }),
+        // Informe X (open till) and Z (a close): printing is never queued offline, a
+        // replay would print it again later; the PDF opens like the ticket PDFs.
+        cashReportXPrint: () => request('/api/cash/report-x/print', { method: 'POST', body: JSON.stringify({}), queueOnNetworkFailure: false }),
+        cashReportXPdf: () => {
+            window.open(BASE_URL + '/api/cash/report-x/pdf', '_blank');
+        },
+        cashZList: () => request('/api/cash/z', { method: 'GET' }),
+        cashZPrint: (sessionId) => request('/api/cash/z/' + encodeURIComponent(sessionId) + '/print', { method: 'POST', body: JSON.stringify({}), queueOnNetworkFailure: false }),
+        cashZPdf: (sessionId) => {
+            window.open(BASE_URL + '/api/cash/z/' + encodeURIComponent(sessionId) + '/pdf', '_blank');
+        },
         ticketPdf: (orderId) => {
             window.open(BASE_URL + '/api/ticket/' + encodeURIComponent(orderId) + '/pdf', '_blank');
         },

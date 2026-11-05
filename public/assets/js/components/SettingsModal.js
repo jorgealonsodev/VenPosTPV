@@ -2,7 +2,8 @@
  * SettingsModal — Settings page with sidebar navigation (admin only).
  * Sections: Tienda (shop data, the same on every till), Cajas (each till's name,
  * letter, printer and dataphone, which computer it is on, create a till),
- * Empleados, Sincronización.
+ * Empleados, Sincronización, Cierres de caja (the closes of the shop with their
+ * Z report, to print or download again).
  */
 const SettingsModal = {
     emits: ['close'],
@@ -534,6 +535,55 @@ const SettingsModal = {
             }
         }
 
+        // Ajustes → Cierres de caja: the last 50 closes of the shop, each Z printable again.
+        const cashCloses = Vue.reactive({ list: [], loading: false, error: '', printingId: null });
+
+        async function loadCashCloses() {
+            cashCloses.loading = true;
+            cashCloses.error = '';
+            try {
+                const resp = await ApiClient.cashZList();
+                cashCloses.list = (resp && resp.data) || [];
+            } catch (e) {
+                cashCloses.error = errorText(e, 'Error al cargar los cierres de caja');
+            } finally {
+                cashCloses.loading = false;
+            }
+        }
+
+        const Z_MESSAGES = { queued: 'Imprimiendo informe Z…', printed: 'Informe Z impreso', pdf: 'Informe Z descargado en PDF' };
+
+        async function printClose(sessionId) {
+            cashCloses.printingId = sessionId;
+            cashCloses.error = '';
+            try {
+                const outcome = await useSession.printCashReport('z', sessionId);
+                flash(Z_MESSAGES[outcome] || 'Informe Z enviado');
+            } catch (e) {
+                cashCloses.error = errorText(e, 'No se ha podido imprimir el informe Z');
+            } finally {
+                cashCloses.printingId = null;
+            }
+        }
+
+        function pdfClose(sessionId) {
+            ApiClient.cashZPdf(sessionId);
+        }
+
+        /** «1.234,56 €»; signed adds «+» to a positive difference. */
+        function formatMoney(value, signed) {
+            const amount = Number(value || 0);
+            const [whole, cents] = Math.abs(amount).toFixed(2).split('.');
+            const text = whole.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ',' + cents + ' €';
+            if (amount < 0) return '-' + text;
+            return signed && amount > 0 ? '+' + text : text;
+        }
+
+        function formatDateTime(value) {
+            const match = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(String(value || ''));
+            return match ? match[3] + '/' + match[2] + '/' + match[1] + ' ' + match[4] + ':' + match[5] : String(value || '');
+        }
+
         Vue.onMounted(() => {
             loadEmployees();
             loadTerminal();
@@ -557,6 +607,7 @@ const SettingsModal = {
             saveSyncInterval, saveSyncPushInterval, syncNow,
             INPUT_STYLE, mail, mailSaving, mailError, mailTestTo, mailTestStatus, saveMail, sendMailTest, loadMail,
             verifactu, loadVerifactu, saveVerifactu, checkChain,
+            cashCloses, loadCashCloses, printClose, pdfClose, formatMoney, formatDateTime,
             emit,
         };
     },
@@ -621,6 +672,12 @@ const SettingsModal = {
                             :style="activeSection === 'verifactu' ? 'background:var(--surface2); border-left-color:var(--green); color:var(--text); font-weight:600;' : ''"
                             @mouseover="$event.currentTarget.style.background='var(--surface2)'" @mouseout="$event.currentTarget.style.background=activeSection === 'verifactu' ? 'var(--surface2)' : 'transparent'">
                             <icon name="receipt" :size="18"></icon> VERI*FACTU
+                        </button>
+                        <button @click="activeSection = 'cierres'; loadCashCloses()"
+                            style="min-height:48px; padding:0 16px; background:transparent; border:none; border-left:3px solid transparent; color:var(--text2); font-family:inherit; font-size:14px; text-align:left; cursor:pointer; display:flex; align-items:center; gap:10px; transition:background .15s;"
+                            :style="activeSection === 'cierres' ? 'background:var(--surface2); border-left-color:var(--green); color:var(--text); font-weight:600;' : ''"
+                            @mouseover="$event.currentTarget.style.background='var(--surface2)'" @mouseout="$event.currentTarget.style.background=activeSection === 'cierres' ? 'var(--surface2)' : 'transparent'">
+                            <icon name="print" :size="18"></icon> Cierres de caja
                         </button>
                     </div>
 
@@ -994,6 +1051,51 @@ const SettingsModal = {
                                 <div v-else style="color:var(--red);">{{ verifactu.chain.reason }}<span v-if="verifactu.chain.broken_id"> (registro {{ verifactu.chain.broken_id }})</span></div>
                                 <div style="color:var(--text3); margin-top:4px;">{{ verifactu.chain.protected ? 'La base de datos también impide modificar o borrar registros.' : 'El servidor no permite bloquear los registros en la base de datos; la aplicación no los modifica y esta comprobación detecta cualquier cambio.' }}</div>
                             </div>
+                        </div>
+
+                        <!-- ==================== CIERRES DE CAJA ==================== -->
+                        <div v-if="activeSection === 'cierres'">
+                            <div style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; color:var(--text); margin-bottom:6px;">
+                                <icon name="print" :size="16"></icon> Cierres de caja
+                            </div>
+                            <div style="font-size:12px; color:var(--text3); margin-bottom:16px;">Los últimos 50 cierres de la tienda. «Imprimir» saca el informe Z en la impresora de esta caja (o lo descarga en PDF si no tiene impresora); «PDF» lo descarga. El informe Z muestra los importes guardados al cerrar.</div>
+                            <div v-if="cashCloses.error" style="color:var(--red); font-size:13px; margin-bottom:12px;">{{ cashCloses.error }}</div>
+                            <div v-if="cashCloses.loading" style="font-size:13px; color:var(--text3);">Cargando…</div>
+                            <div v-else-if="!cashCloses.list.length && !cashCloses.error" style="font-size:13px; color:var(--text3);">Todavía no hay cierres de caja.</div>
+                            <table v-else-if="cashCloses.list.length" style="width:100%; border-collapse:collapse; font-size:13px;">
+                                <thead>
+                                    <tr style="color:var(--text3); text-align:left; border-bottom:1px solid var(--border);">
+                                        <th style="padding:8px 6px; font-weight:600;">Fecha de cierre</th>
+                                        <th style="padding:8px 6px; font-weight:600;">Caja</th>
+                                        <th style="padding:8px 6px; font-weight:600;">Cajero</th>
+                                        <th style="padding:8px 6px; font-weight:600; text-align:right;">Contado</th>
+                                        <th style="padding:8px 6px; font-weight:600; text-align:right;">Esperado</th>
+                                        <th style="padding:8px 6px; font-weight:600; text-align:right;">Diferencia</th>
+                                        <th style="padding:8px 6px;"></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="c in cashCloses.list" :key="c.session_id" style="border-bottom:1px solid var(--border);">
+                                        <td style="padding:8px 6px; font-family:'IBM Plex Mono';">{{ formatDateTime(c.closed_at) }}</td>
+                                        <td style="padding:8px 6px;">{{ c.terminal_name }}</td>
+                                        <td style="padding:8px 6px;">{{ c.cashier || '—' }}</td>
+                                        <td style="padding:8px 6px; text-align:right; font-family:'IBM Plex Mono';">{{ formatMoney(c.counted_cash) }}</td>
+                                        <td style="padding:8px 6px; text-align:right; font-family:'IBM Plex Mono';">{{ formatMoney(c.expected_cash) }}</td>
+                                        <td style="padding:8px 6px; text-align:right; font-family:'IBM Plex Mono';"
+                                            :style="{ color: Math.abs(Number(c.difference || 0)) < 0.005 ? 'var(--green)' : Number(c.difference) > 0 ? 'var(--amber)' : 'var(--red)' }">{{ formatMoney(c.difference, true) }}</td>
+                                        <td style="padding:8px 6px; text-align:right; white-space:nowrap;">
+                                            <button @click="printClose(c.session_id)" :disabled="cashCloses.printingId === c.session_id"
+                                                style="min-height:36px; padding:0 12px; background:var(--surface2); border:1px solid var(--border); border-radius:8px; color:var(--text); font-family:inherit; font-size:13px; cursor:pointer;">
+                                                {{ cashCloses.printingId === c.session_id ? 'Imprimiendo…' : 'Imprimir' }}
+                                            </button>
+                                            <button @click="pdfClose(c.session_id)"
+                                                style="min-height:36px; padding:0 12px; margin-left:6px; background:var(--surface2); border:1px solid var(--border); border-radius:8px; color:var(--text); font-family:inherit; font-size:13px; cursor:pointer;">
+                                                PDF
+                                            </button>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
                         </div>
 
                         <div v-if="activeSection === 'email'">

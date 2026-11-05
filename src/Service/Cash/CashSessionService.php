@@ -224,6 +224,69 @@ class CashSessionService
         return $this->buildCurrentState($session);
     }
 
+    /**
+     * A closed session of this shop with what its close stored: the session row
+     * (counted, expected, difference, closed_at) and its z_report (totals, hash).
+     * Null when it is unknown, still open, or of another shop.
+     *
+     * @return array<string,mixed>|null
+     */
+    public function findClosedSession(int $sessionId): ?array
+    {
+        if ($sessionId <= 0) {
+            return null;
+        }
+        $row = $this->connection->fetchAssociative(
+            'SELECT s.id, s.terminal_id, s.user_id, s.opened_at, s.closed_at, s.opening_cash, s.counted_cash, s.expected_cash, s.difference,
+                    u.name AS opened_by, z.totals, z.signature_hash, z.generated_at
+             FROM session s
+             INNER JOIN terminal t ON t.id = s.terminal_id
+             INNER JOIN z_report z ON z.session_id = s.id
+             LEFT JOIN user u ON u.id = s.user_id
+             WHERE s.id = ? AND s.closed_at IS NOT NULL AND t.ps_shop_id = ?',
+            [$sessionId, $this->requireShopId()]
+        );
+        if ($row === false) {
+            return null;
+        }
+        $totals = json_decode((string) $row['totals'], true);
+        $row['totals'] = \is_array($totals) ? $totals : [];
+
+        return $row;
+    }
+
+    /**
+     * The closes of this shop, newest first (Ajustes → Cierres de caja).
+     *
+     * @return list<array{session_id: int, terminal_id: int, terminal_name: string, cashier: string, opened_at: string, closed_at: string, counted_cash: float, expected_cash: float, difference: float}>
+     */
+    public function listClosedSessions(int $limit = 50): array
+    {
+        $rows = $this->connection->fetchAllAssociative(
+            'SELECT s.id, s.terminal_id, t.name AS terminal_name, u.name AS opened_by, s.opened_at, s.closed_at,
+                    s.counted_cash, s.expected_cash, s.difference
+             FROM session s
+             INNER JOIN terminal t ON t.id = s.terminal_id
+             LEFT JOIN user u ON u.id = s.user_id
+             WHERE s.closed_at IS NOT NULL AND t.ps_shop_id = ?
+             ORDER BY s.closed_at DESC, s.id DESC
+             LIMIT ' . max(1, min(200, $limit)),
+            [$this->requireShopId()]
+        );
+
+        return array_map(static fn (array $row): array => [
+            'session_id' => (int) $row['id'],
+            'terminal_id' => (int) $row['terminal_id'],
+            'terminal_name' => (string) $row['terminal_name'],
+            'cashier' => (string) ($row['opened_by'] ?? ''),
+            'opened_at' => (string) $row['opened_at'],
+            'closed_at' => (string) $row['closed_at'],
+            'counted_cash' => round((float) $row['counted_cash'], 2),
+            'expected_cash' => round((float) $row['expected_cash'], 2),
+            'difference' => round((float) $row['difference'], 2),
+        ], $rows);
+    }
+
     /** @param array<string,mixed> $session */
     private function buildCurrentState(array $session, bool $lockMovements = false): array
     {
