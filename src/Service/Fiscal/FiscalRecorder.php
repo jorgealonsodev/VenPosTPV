@@ -24,12 +24,20 @@ class FiscalRecorder
     public const SALE = 'F2';
     public const CREDIT_NOTE = 'R5';
 
+    /**
+     * The issue date and the record time are Spanish time whatever the server's
+     * time zone is (a host on UTC would date a sale at 00:30 on the previous day).
+     * Peninsular time; a shop in the Canary Islands would pass Atlantic/Canary.
+     */
+    public const TIME_ZONE = 'Europe/Madrid';
+
     /** Used when the original sale's VAT is unknown (refunds without a ticket, online orders). */
     private const ASSUMED_TAX_RATE = 0.21;
 
     public function __construct(
         private readonly Connection $connection,
         private readonly LoggerInterface $logger = new NullLogger(),
+        private readonly string $timeZone = self::TIME_ZONE,
     ) {
     }
 
@@ -109,8 +117,9 @@ class FiscalRecorder
         $previousHash = \is_array($head) && $head['last_hash'] !== null ? (string) $head['last_hash'] : '';
 
         $issuerNif = strtoupper(trim((string) $this->connection->fetchOne('SELECT tax_id FROM terminal WHERE id = ?', [$record['terminal_id']])));
-        $issueDate = FiscalHash::date($issuedAt);
-        $generatedAt = FiscalHash::timestamp(new \DateTimeImmutable('now', $issuedAt->getTimezone()));
+        $zone = new \DateTimeZone($this->timeZone);
+        $issueDate = FiscalHash::date($issuedAt->setTimezone($zone));
+        $generatedAt = FiscalHash::timestamp(new \DateTimeImmutable('now', $zone));
         $hash = FiscalHash::alta($issuerNif, $record['number'], $issueDate, $record['invoice_type'], $record['tax_total'], $record['total'], $previousHash, $generatedAt);
 
         $this->connection->insert('fiscal_record', $record + [

@@ -216,6 +216,11 @@ class CheckoutService
         try {
             $numberer->prepareYear($terminalId, $date);
             [$orderId, $reference] = $this->conn->transactional(function () use ($numberer, $outbox, $terminalId, $sessionId, $date, $userId, $total, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines, $tender, $cashImpactAmount, $payload, $requestId, $customer): array {
+                if ($cashImpactAmount > 0) {
+                    // Lock order shared with refunds: session, number counter, fiscal
+                    // chain. Taking the session after the chain deadlocks with a refund.
+                    $this->cashSessionService->lockOpenSessionInTransaction($sessionId);
+                }
                 $reference = $numberer->next($terminalId, $date);
                 $orderId = $this->insertOrderMeta(null, $userId, $reference, $total, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines, null, $tender, false, $requestId);
                 if ($cashImpactAmount > 0) {
@@ -417,6 +422,10 @@ class CheckoutService
                 return $this->conn->transactional(function () use ($psOrderId, $userId, $reference, $payable, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines, $quote, $cashCollected, $cardCollected, $requestId): bool {
                     if ($this->conn->fetchOne('SELECT 1 FROM order_meta WHERE ps_order_id = ?', [$psOrderId]) !== false) {
                         return true;
+                    }
+                    if ($cashCollected > 0) {
+                        // Same lock order as refunds: session before the fiscal chain.
+                        $this->lockCouponSession($cashContext);
                     }
                     $this->insertOrderMeta($psOrderId, $userId, $reference, $payable, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines, [
                         'gross_total' => round((float) $quote['before_discount_total'], 2),
@@ -684,14 +693,20 @@ class CheckoutService
      *
      * @param array<string,mixed> $cashContext
      */
-    private function insertCouponCashMovement(array $cashContext, int $userId, float $amount, int $psOrderId): void
+    /** @param array<string, mixed> $cashContext */
+    private function lockCouponSession(array $cashContext): void
     {
-        $sessionId = (int) ($cashContext['session_id'] ?? 0);
         try {
-            $this->cashSessionService->lockOpenSessionInTransaction($sessionId);
+            $this->cashSessionService->lockOpenSessionInTransaction((int) ($cashContext['session_id'] ?? 0));
         } catch (NoOpenCashSessionException $e) {
             throw new \RuntimeException('Cash session closed during coupon checkout', 0, $e);
         }
+    }
+
+    private function insertCouponCashMovement(array $cashContext, int $userId, float $amount, int $psOrderId): void
+    {
+        $sessionId = (int) ($cashContext['session_id'] ?? 0);
+        $this->lockCouponSession($cashContext);
         $this->conn->insert('movement', [
             'session_id' => $sessionId,
             'type' => 'sale',

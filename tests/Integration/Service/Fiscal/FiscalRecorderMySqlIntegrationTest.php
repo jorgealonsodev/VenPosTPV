@@ -150,6 +150,16 @@ final class FiscalRecorderMySqlIntegrationTest extends TestCase
         self::assertSame($head, $this->connection->fetchOne('SELECT last_hash FROM fiscal_chain WHERE id = 1'));
     }
 
+    public function testTheIssueDateIsSpanishTimeWhateverTheServerZone(): void
+    {
+        \assert($this->connection !== null);
+        $this->connection->transactional(fn () => $this->recorder()->recordSale(self::ORDERS[0], self::TERMINAL, 'Z26000001', 1.0, 0.17, new \DateTimeImmutable('2026-11-05 23:30:00', new \DateTimeZone('UTC'))));
+
+        $record = $this->records()[0];
+        self::assertSame('06-11-2026', $record['issue_date']);
+        self::assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+0[12]:00$/', $record['generated_at']);
+    }
+
     public function testRecordingOutsideATransactionIsRefused(): void
     {
         $this->expectException(\LogicException::class);

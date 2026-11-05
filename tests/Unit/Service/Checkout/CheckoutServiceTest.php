@@ -35,6 +35,7 @@ final class CheckoutServiceTest extends TestCase
         bool $couponCheckoutEnabled = false,
         ?Outbox $outbox = null,
         ?OutboxSyncTrigger $syncTrigger = null,
+        ?FiscalRecorder $fiscalRecorder = null,
     ): CheckoutService {
         $numberer = $this->createMock(TicketNumberer::class);
         $numberer->method('next')->willReturn('A26000001');
@@ -52,7 +53,7 @@ final class CheckoutServiceTest extends TestCase
             $outbox ?? $this->expectedOutbox ?? $this->createMock(Outbox::class),
             $syncTrigger,
             null,
-            $this->createMock(FiscalRecorder::class),
+            $fiscalRecorder ?? $this->createMock(FiscalRecorder::class),
         );
     }
 
@@ -524,6 +525,31 @@ final class CheckoutServiceTest extends TestCase
             'lines' => [['product_id' => 1, 'qty' => 1, 'price' => 10.0]],
             'total' => 10.0,
         ], 'cash', 10.0);
+    }
+
+    /**
+     * Refunds lock the drawer's session before the credit-note counter and the
+     * fiscal chain; a cash sale must take the same order, or the two deadlock.
+     */
+    public function testACashSaleLocksTheSessionBeforeTheFiscalChain(): void
+    {
+        $conn = $this->createMock(Connection::class);
+        $this->localTransaction($conn);
+        $conn->method('fetchOne')->willReturn(10);
+        $conn->method('executeStatement')->willReturn(1);
+        $order = [];
+        $cashSession = $this->createMock(CashSessionService::class);
+        $cashSession->method('requireOpenSession')->willReturn(['session_id' => 12, 'terminal_id' => 3]);
+        $cashSession->expects($this->once())->method('lockOpenSessionInTransaction')->with(12)
+            ->willReturnCallback(static function () use (&$order): void { $order[] = 'session'; });
+        $fiscal = $this->createMock(FiscalRecorder::class);
+        $fiscal->expects($this->once())->method('recordSale')
+            ->willReturnCallback(static function () use (&$order): void { $order[] = 'fiscal'; });
+
+        $this->createService(conn: $conn, cashSessionService: $cashSession, fiscalRecorder: $fiscal)
+            ->createOrder(1, ['lines' => [['product_id' => 1, 'qty' => 1, 'price' => 10.0]], 'total' => 10.0], 'cash', 10.0);
+
+        $this->assertSame(['session', 'fiscal'], $order);
     }
 
     public function testCashSessionClosedDuringTheSaleStoresNothingAndKeepsTheCart(): void
