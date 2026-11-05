@@ -63,6 +63,12 @@ class TicketNumberer
         return self::format($letter, $year, $number);
     }
 
+    /** The letter's series of the year (A26): the ticket number without its six digits. */
+    public static function series(string $letter, int $year): string
+    {
+        return sprintf('%s%02d', $letter, $year % 100);
+    }
+
     public static function format(string $letter, int $year, int $number): string
     {
         if ($number < 1) {
@@ -72,10 +78,13 @@ class TicketNumberer
             throw new \OverflowException(sprintf('La caja %s ha agotado los números de ticket de %d', $letter, $year));
         }
 
-        return sprintf('%s%02d%06d', $letter, $year % 100, $number);
+        return sprintf('%s%06d', self::series($letter, $year), $number);
     }
 
-    private function letterOf(int $terminalId): string
+    /**
+     * @throws \DomainException when the terminal has no ticket letter
+     */
+    public function letterOf(int $terminalId): string
     {
         $letter = $this->connection->fetchOne('SELECT ticket_letter FROM terminal WHERE id = ?', [$terminalId]);
         if (!\is_string($letter) || !preg_match('/^[A-Z]$/', $letter)) {

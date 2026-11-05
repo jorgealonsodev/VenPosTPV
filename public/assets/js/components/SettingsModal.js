@@ -1,7 +1,8 @@
 /**
  * SettingsModal — Settings page with sidebar navigation (admin only).
  * Sections: Tienda (shop data, the same on every till), Cajas (each till's name,
- * letter, printer and dataphone, which computer it is on, create a till),
+ * letter, printer and dataphone, which computer it is on, create a till, and where
+ * the ticket and credit-note numbering continues),
  * Empleados, Sincronización, Cierres de caja (the closes of the shop with their
  * Z report, to print or download again).
  */
@@ -200,6 +201,8 @@ const SettingsModal = {
             try {
                 const resp = await ApiClient.terminalGet(till.id);
                 terminal.value = resp.data || null;
+                if (numbering.editing === 'ticket') numbering.editing = null;
+                loadNumbering();
             } catch (e) {
                 terminalError.value = 'Error al cargar la caja';
             } finally {
@@ -492,6 +495,63 @@ const SettingsModal = {
             }
         }
 
+        // Ajustes → Cajas: where each till's ticket series and the credit notes continue
+        // (after restoring or reinstalling). Forward only; every change is audited.
+        const numbering = Vue.reactive({ data: null, error: '', editing: null, next: '', reason: '', saving: false });
+
+        async function loadNumbering() {
+            try {
+                const resp = await ApiClient.get('/api/numbering');
+                numbering.data = (resp && resp.data) || null;
+            } catch (e) {
+                numbering.error = errorText(e, 'Error al cargar la numeración');
+            }
+        }
+
+        function tillNumbering(terminalId) {
+            const tillsOf = (numbering.data && numbering.data.tills) || [];
+            return tillsOf.find((t) => t.terminal_id === terminalId) || null;
+        }
+
+        // kind: 'ticket' (the till being edited) or 'credit' (the credit notes).
+        function startNumberingChange(kind) {
+            const current = kind === 'credit'
+                ? numbering.data && numbering.data.credit_notes
+                : terminal.value && tillNumbering(terminal.value.id);
+            numbering.editing = kind;
+            numbering.next = current ? String(current.next_number) : '';
+            numbering.reason = '';
+            numbering.error = '';
+        }
+
+        function cancelNumberingChange() {
+            numbering.editing = null;
+            numbering.error = '';
+        }
+
+        async function saveNumberingChange() {
+            const kind = numbering.editing;
+            if (!kind) return false;
+            const url = kind === 'credit'
+                ? '/api/numbering/credit-notes'
+                : '/api/numbering/tickets/' + encodeURIComponent(terminal.value ? terminal.value.id : '');
+            numbering.saving = true;
+            numbering.error = '';
+            try {
+                const next = String(numbering.next).trim();
+                await ApiClient.put(url, { next_number: /^\d+$/.test(next) ? Number(next) : next, reason: String(numbering.reason || '').trim() });
+                numbering.editing = null;
+                flash('Numeración cambiada');
+                await loadNumbering();
+                return true;
+            } catch (e) {
+                numbering.error = errorText(e, 'Error al cambiar la numeración');
+                return false;
+            } finally {
+                numbering.saving = false;
+            }
+        }
+
         // Ajustes → VERI*FACTU: the switch (QR tributario on the tickets) and the chain check.
         const verifactu = Vue.reactive({ enabled: false, available: false, unavailableReason: '', loaded: false, saving: false, error: '', chain: null, checking: false });
 
@@ -625,6 +685,7 @@ const SettingsModal = {
             loadTerminal();
             loadTills();
             loadSystemPrinters();
+            loadNumbering();
         });
 
         return {
@@ -644,6 +705,7 @@ const SettingsModal = {
             saveSyncInterval, saveSyncPushInterval, syncNow,
             INPUT_STYLE, mail, mailSaving, mailError, mailTestTo, mailTestStatus, saveMail, sendMailTest, loadMail,
             verifactu, loadVerifactu, saveVerifactu, checkChain,
+            numbering, loadNumbering, tillNumbering, startNumberingChange, cancelNumberingChange, saveNumberingChange,
             cashCloses, loadCashCloses, printClose, pdfClose, formatMoney, formatDateTime,
             emit,
         };
@@ -986,6 +1048,25 @@ const SettingsModal = {
                                     <div style="font-size:12px; color:var(--text3); margin-top:4px;">Primera letra del número de ticket (A26000123). Cada caja tiene la suya.</div>
                                 </div>
                                 <div>
+                                    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                                        <div style="font-size:13px; color:var(--text);">Próximo número de ticket: <span style="font-family:'IBM Plex Mono'; font-weight:600;">{{ (tillNumbering(terminal.id) && tillNumbering(terminal.id).next_code) || '—' }}</span></div>
+                                        <button v-if="tillNumbering(terminal.id) && tillNumbering(terminal.id).letter && numbering.editing !== 'ticket'" @click="startNumberingChange('ticket')"
+                                            style="min-height:36px; padding:4px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;">Cambiar</button>
+                                    </div>
+                                    <div v-if="numbering.editing === 'ticket'" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:6px;">
+                                        <input v-model="numbering.next" type="number" min="1" max="999999" placeholder="Próximo número" aria-label="Próximo número"
+                                            style="width:140px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box;">
+                                        <input v-model="numbering.reason" type="text" maxlength="255" placeholder="Motivo" aria-label="Motivo"
+                                            style="flex:1; min-width:180px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box;">
+                                        <button @click="saveNumberingChange" :disabled="numbering.saving"
+                                            style="min-height:36px; padding:4px 14px; border-radius:8px; border:none; background:var(--green); color:#000; cursor:pointer; font-family:inherit; font-size:12px; font-weight:700;">{{ numbering.saving ? 'Guardando...' : 'Guardar' }}</button>
+                                        <button @click="cancelNumberingChange"
+                                            style="min-height:36px; padding:4px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;">Cancelar</button>
+                                    </div>
+                                    <div v-if="numbering.editing === 'ticket' && numbering.error" style="color:var(--red); font-size:12px; margin-top:4px;">{{ numbering.error }}</div>
+                                    <div style="font-size:12px; color:var(--text3); margin-top:4px;">Solo puede avanzar. Úsalo tras restaurar o reinstalar para continuar la numeración donde se quedó; queda registrado.</div>
+                                </div>
+                                <div>
                                     <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Modo datáfono</label>
                                     <select v-model="terminal.dataphone_mode"
                                         style="width:100%; max-width:320px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; cursor:pointer; box-sizing:border-box;">
@@ -1063,6 +1144,53 @@ const SettingsModal = {
                                 </div>
                                 <div v-if="terminalError" style="color:var(--red); font-size:12px;">{{ terminalError }}</div>
                             </div>
+
+                            <div v-if="numbering.data" style="display:flex; flex-direction:column; gap:12px; border-top:1px solid var(--border); padding-top:16px; margin-top:16px;">
+                                <div>
+                                    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                                        <div style="font-size:13px; color:var(--text);">Abonos: próximo número <span style="font-family:'IBM Plex Mono'; font-weight:600;">{{ numbering.data.credit_notes.next_code }}</span></div>
+                                        <button v-if="numbering.editing !== 'credit'" @click="startNumberingChange('credit')"
+                                            style="min-height:36px; padding:4px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;">Cambiar</button>
+                                    </div>
+                                    <div v-if="numbering.editing === 'credit'" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:6px;">
+                                        <input v-model="numbering.next" type="number" min="1" max="999999" placeholder="Próximo número" aria-label="Próximo número"
+                                            style="width:140px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box;">
+                                        <input v-model="numbering.reason" type="text" maxlength="255" placeholder="Motivo" aria-label="Motivo"
+                                            style="flex:1; min-width:180px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box;">
+                                        <button @click="saveNumberingChange" :disabled="numbering.saving"
+                                            style="min-height:36px; padding:4px 14px; border-radius:8px; border:none; background:var(--green); color:#000; cursor:pointer; font-family:inherit; font-size:12px; font-weight:700;">{{ numbering.saving ? 'Guardando...' : 'Guardar' }}</button>
+                                        <button @click="cancelNumberingChange"
+                                            style="min-height:36px; padding:4px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;">Cancelar</button>
+                                    </div>
+                                    <div v-if="numbering.editing === 'credit' && numbering.error" style="color:var(--red); font-size:12px; margin-top:4px;">{{ numbering.error }}</div>
+                                    <div style="font-size:12px; color:var(--text3); margin-top:4px;">Solo puede avanzar. Úsalo tras restaurar o reinstalar para continuar la numeración donde se quedó; queda registrado.</div>
+                                </div>
+                                <div>
+                                    <div style="font-size:13px; font-weight:600; color:var(--text); margin-bottom:6px;">Cambios de numeración</div>
+                                    <div v-if="!numbering.data.changes.length" style="font-size:12px; color:var(--text3);">Todavía no se ha cambiado la numeración.</div>
+                                    <table v-else style="width:100%; border-collapse:collapse; font-size:12px;">
+                                        <thead>
+                                            <tr style="color:var(--text3); text-align:left; border-bottom:1px solid var(--border);">
+                                                <th style="padding:6px; font-weight:600;">Fecha</th>
+                                                <th style="padding:6px; font-weight:600;">Serie</th>
+                                                <th style="padding:6px; font-weight:600;">De → a</th>
+                                                <th style="padding:6px; font-weight:600;">Motivo</th>
+                                                <th style="padding:6px; font-weight:600;">Usuario</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr v-for="change in numbering.data.changes" :key="change.id" style="border-bottom:1px solid var(--border); color:var(--text2);">
+                                                <td style="padding:6px; white-space:nowrap;">{{ String(change.created_at).slice(0, 16) }}</td>
+                                                <td style="padding:6px; font-family:'IBM Plex Mono';">{{ change.series }}</td>
+                                                <td style="padding:6px; font-family:'IBM Plex Mono'; white-space:nowrap;">{{ change.previous_last }} → {{ change.new_last }}</td>
+                                                <td style="padding:6px;">{{ change.reason }}</td>
+                                                <td style="padding:6px;">{{ change.user_name || '—' }}</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div v-else-if="numbering.error" style="color:var(--red); font-size:12px; margin-top:16px;">{{ numbering.error }}</div>
                         </div>
 
                         <!-- ==================== HISTORIAL DE IMPRESIÓN ==================== -->

@@ -17,6 +17,12 @@ final class TicketNumbererTest extends TestCase
         $this->assertSame(9, \strlen(TicketNumberer::format('A', 2026, 1)));
     }
 
+    public function testSeriesIsLetterAndTwoYearDigits(): void
+    {
+        $this->assertSame('A26', TicketNumberer::series('A', 2026));
+        $this->assertSame('Z05', TicketNumberer::series('Z', 2105));
+    }
+
     public function testNumberAboveSixDigitsIsRefused(): void
     {
         $this->expectException(\OverflowException::class);

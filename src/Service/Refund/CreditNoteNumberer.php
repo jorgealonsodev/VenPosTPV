@@ -47,6 +47,17 @@ class CreditNoteNumberer
         );
         $number = (int) $this->connection->fetchOne('SELECT LAST_INSERT_ID()');
 
-        return sprintf('R%d-%06d', $year, $number);
+        return self::format($year, $number);
+    }
+
+    /** The year's series (R2026), as recorded in the numbering audit. */
+    public static function series(int $year): string
+    {
+        return sprintf('R%d', $year);
+    }
+
+    public static function format(int $year, int $number): string
+    {
+        return sprintf('%s-%06d', self::series($year), $number);
     }
 }

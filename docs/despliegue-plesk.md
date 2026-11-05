@@ -117,8 +117,12 @@ Para **restaurar** una copia:
 2. En Plesk: **Bases de datos →** la base de datos del TPV **→ Importar volcado** y elige el archivo. También sirve phpMyAdmin (**Importar**) o, con acceso por consola, `gunzip -c copia.sql.gz | mysql base_de_datos`.
 3. La copia borra y vuelve a crear cada tabla, así que se puede importar sobre la base de datos existente. Recrea también los disparadores que impiden modificar o borrar los registros fiscales; con un solo comando cada uno, sin `DELIMITER`, se importan con cualquier herramienta.
 
-Aviso fiscal: restaurar una copia antigua **pierde las ventas y los registros fiscales posteriores** a esa copia. La numeración de los tickets sigue desde los contadores de la copia restaurada, así que usa siempre la copia más reciente. No instales nunca el TPV sobre una base de datos vacía para seguir vendiendo; si se pierde la base de datos y no hay copia, cambia la letra de todas las cajas antes de vender, para que no se repitan números de ticket.
+Aviso fiscal: restaurar una copia antigua **pierde las ventas y los registros fiscales posteriores** a esa copia. La numeración de los tickets sigue desde los contadores de la copia restaurada, así que usa siempre la copia más reciente. No instales nunca el TPV sobre una base de datos vacía para seguir vendiendo sin ajustar antes la numeración.
+
+**Continuar la numeración.** Si se pierde la base de datos (o la copia restaurada es anterior a los últimos tickets), antes de la primera venta abre **Ajustes → Cajas**, edita cada caja y en «Próximo número de ticket» pulsa **Cambiar**: escribe el número siguiente al último ticket emitido con esa letra y el motivo. Haz lo mismo en «Abonos: próximo número» con el último abono (R2026-…). La numeración solo puede avanzar, nunca volver a un número ya emitido, y cada cambio queda registrado en «Cambios de numeración» con la fecha, el motivo y el usuario. Si no sabes cuál fue el último número, cambia la letra de todas las cajas: empiezan una serie nueva sin repetir números.
 
 ## Reinstalar
 
 Borra `.env` y `var/install.lock`, vuelve a subir `public/install.php` y abre de nuevo el instalador. Si la base de datos ya es del TPV, solo aplica las migraciones que falten.
+
+Si reinstalas sobre una base de datos nueva para seguir con la misma tienda, o instalas el TPV para **otra tienda** que ya emitía tickets, ajusta antes de la primera venta dónde continúa cada serie (ver [Continuar la numeración](#copias-de-seguridad-y-restauración)): en **Ajustes → Cajas**, el próximo número de ticket de cada caja y el de los abonos, o usa una letra de caja distinta de las que ya se usaron.

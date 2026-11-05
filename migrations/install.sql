@@ -543,3 +543,16 @@ CREATE TABLE IF NOT EXISTS fiscal_chain (
     last_hash CHAR(64) NULL
 ) ENGINE=InnoDB;
 INSERT IGNORE INTO fiscal_chain (id, last_record_id, last_hash) VALUES (1, NULL, NULL);
+
+-- numbering_change (Version00000044): audit of every change to the next ticket or
+-- credit-note number (series A26 / R2026), with its reason; insert-only from the app.
+CREATE TABLE IF NOT EXISTS numbering_change (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    series VARCHAR(16) NOT NULL,
+    previous_last INT UNSIGNED NOT NULL,
+    new_last INT UNSIGNED NOT NULL,
+    reason VARCHAR(255) NOT NULL,
+    user_id INT UNSIGNED NULL,
+    created_at DATETIME NOT NULL,
+    KEY idx_numbering_change_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

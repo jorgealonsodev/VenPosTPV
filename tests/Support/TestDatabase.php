@@ -167,6 +167,7 @@ final class TestDatabase
         self::runMigration($connection, 'Version00000041EnsureCashierRole');
         self::runMigration($connection, 'Version00000042FiscalRecord');
         self::runMigration($connection, 'Version00000043CombinationImageAndColour');
+        self::runMigration($connection, 'Version00000044NumberingChange');
     }
 
     private static function applyInstallSchema(Connection $connection): void
