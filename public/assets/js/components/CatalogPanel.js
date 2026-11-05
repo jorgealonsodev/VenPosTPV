@@ -69,6 +69,13 @@ const CatalogPanel = {
             this.showCombinationsModal = false;
             this.combinationsProduct = null;
         },
+        // The search box's clear button: empties the search and keeps the box ready
+        // for the next search or scan.
+        clearSearch() {
+            this.$emit('setSearch', '');
+            const input = this.$refs.searchInput;
+            if (input) input.focus();
+        },
         // On the sale screen, typing or scanning with no field focused goes to the
         // search box, replacing the previous search. Not while a window covers it
         // (payment, customer…) nor when another field has the focus.
@@ -177,8 +184,14 @@ const CatalogPanel = {
                         :value="catalog.search"
                         @input="$emit('setSearch', $event.target.value)"
                         placeholder="Buscar por nombre, SKU, EAN…"
-                        style="width:100%; background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:9px 12px 9px 38px; color:var(--text); font-family:inherit; font-size:14px; outline:none;"
+                        style="width:100%; background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:9px 48px 9px 38px; color:var(--text); font-family:inherit; font-size:14px; outline:none;"
                     />
+                    <!-- Clears the search with one tap (touch screens have no quick select-all). -->
+                    <button v-if="catalog.search" type="button" class="catalog-search-clear" @click="clearSearch"
+                        title="Borrar búsqueda" aria-label="Borrar búsqueda"
+                        style="position:absolute; right:2px; top:50%; transform:translateY(-50%); width:40px; height:36px; border:none; border-radius:8px; background:transparent; color:var(--text3); cursor:pointer; display:flex; align-items:center; justify-content:center; touch-action:manipulation;">
+                        <icon name="close" :size="18" />
+                    </button>
                 </div>
                 <button title="Escanear código" style="width:40px; height:40px; border-radius:10px; border:1px solid var(--border); background:var(--surface2); cursor:pointer; color:var(--text2); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
                     <icon name="barcode" :size="17" />
