@@ -131,6 +131,15 @@ services:
             $psShopUrl: '%ps.api.url%'
 
     # Daily database backup (tpv:backup:database), docs/despliegue-plesk.md.
+    # sale_line rows (VAT per line) written by checkout and the backfill command
+    VenPosTPV\Service\Sale\SaleLineWriter:
+        arguments:
+            $connection: '@doctrine.dbal.tpv_connection'
+
+    VenPosTPV\Service\Sale\SaleLineBackfill:
+        arguments:
+            $connection: '@doctrine.dbal.tpv_connection'
+
     VenPosTPV\Service\Backup\SqlDumper:
         arguments:
             $connection: '@doctrine.dbal.tpv_connection'

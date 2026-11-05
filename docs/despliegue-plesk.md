@@ -126,3 +126,17 @@ Aviso fiscal: restaurar una copia antigua **pierde las ventas y los registros fi
 Borra `.env` y `var/install.lock`, vuelve a subir `public/install.php` y abre de nuevo el instalador. Si la base de datos ya es del TPV, solo aplica las migraciones que falten.
 
 Si reinstalas sobre una base de datos nueva para seguir con la misma tienda, o instalas el TPV para **otra tienda** que ya emitía tickets, ajusta antes de la primera venta dónde continúa cada serie (ver [Continuar la numeración](#copias-de-seguridad-y-restauración)): en **Ajustes → Cajas**, el próximo número de ticket de cada caja y el de los abonos, o usa una letra de caja distinta de las que ya se usaron.
+
+## Líneas de venta de las ventas anteriores
+
+Desde la migración `Version00000046SaleLine`, cada venta guarda sus líneas con el tipo de IVA, la base y la cuota (tabla `sale_line`), que usan los informes de ventas y la factura completa. Las ventas anteriores a esa versión se rellenan **una vez**, después de actualizar, con una tarea programada de Plesk lanzada a mano:
+
+| Campo en Plesk | Qué poner |
+|---|---|
+| Tipo de tarea | **Ejecutar un script PHP** |
+| Ruta de acceso del script | `tpv.clubnatacion.com/bin/console` |
+| con argumentos | `tpv:sales:backfill-lines --env=prod` |
+| Usar la versión PHP | **8.5** |
+| Ejecutar | cualquiera (se lanza con **Ejecutar ahora** y después se puede borrar la tarea) |
+
+La salida dice cuántas ventas y líneas se han creado: `Sales processed: N, lines created: N, approximate lines: N`. La categoría, la referencia y el tipo de IVA de esas ventas salen del catálogo actual, así que los informes las marcan como aproximadas. Se puede parar y volver a lanzar: las ventas que ya tienen líneas no se tocan. Si alguna venta tiene las líneas ilegibles, se lista por su número interno (`order_meta.id`) y la tarea termina con error.
