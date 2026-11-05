@@ -7,7 +7,7 @@ const SaleScreen = {
     setup(props, { emit }) {
         const { session, toggleTheme, logout } = useSession;
         const { cart, add, remove, updateQty, clear, applyDiscount, setCustomer } = useCart;
-        const { catalog, setSearch, setCategory, loadMore, setOnlyInStock } = useCatalog;
+        const { catalog, setSearch, setCategory, loadMore, setOnlyInStock, setSearchInCategory } = useCatalog;
         const {
             state: parkedState,
             refresh: refreshParked,
@@ -310,7 +310,7 @@ const SaleScreen = {
             notification, listView, lastAdded, ticketCount, timeStr, lastCompletedOrder,
             hasOpenSession, printAgentNotice, hasPrintNotice,
             toggleTheme,
-            setSearch, setCategory, loadMore, setOnlyInStock,
+            setSearch, setCategory, loadMore, setOnlyInStock, setSearchInCategory,
             addProduct, remove, updateQty,
             handlePaymentComplete, handlePark, confirmParkTicket, handleVoid, confirmVoid, cancelVoid, handleReprint,
             handleDiscount, handleCustomer,
@@ -430,6 +430,7 @@ const SaleScreen = {
                         @set-category="setCategory"
                         @load-more="loadMore"
                         @set-only-in-stock="setOnlyInStock"
+                        @set-search-in-category="setSearchInCategory"
                         @add-product="addProduct"
                         @notify="handleRefundNotify"
                         @toggle-view="listView = !listView"

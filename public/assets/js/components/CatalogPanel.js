@@ -3,7 +3,7 @@
  */
 const CatalogPanel = {
     props: ['catalog', 'listView', 'lastAdded'],
-    emits: ['setSearch', 'setCategory', 'addProduct', 'toggleView', 'notify', 'loadMore', 'setOnlyInStock'],
+    emits: ['setSearch', 'setCategory', 'addProduct', 'toggleView', 'notify', 'loadMore', 'setOnlyInStock', 'setSearchInCategory'],
     components: { CombinationsModal, LabelPrintModal },
     data() {
         return {
@@ -161,6 +161,13 @@ const CatalogPanel = {
                 </div>
                 <button title="Escanear código" style="width:40px; height:40px; border-radius:10px; border:1px solid var(--border); background:var(--surface2); cursor:pointer; color:var(--text2); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
                     <icon name="barcode" :size="17" />
+                </button>
+                <button @click="$emit('setSearchInCategory', !catalog.searchInCategory)" :aria-pressed="catalog.searchInCategory ? 'true' : 'false'"
+                    :title="catalog.searchInCategory ? 'Buscando solo en la categoría elegida (pulsa para buscar en todo)' : 'Buscar solo en la categoría elegida'"
+                    aria-label="Buscar solo en la categoría elegida"
+                    style="width:40px; height:40px; border-radius:10px; cursor:pointer; display:flex; align-items:center; justify-content:center; flex-shrink:0;"
+                    :style="{ border: catalog.searchInCategory ? '1px solid var(--green)' : '1px solid var(--border)', background: catalog.searchInCategory ? 'var(--green-bg)' : 'var(--surface2)', color: catalog.searchInCategory ? 'var(--green)' : 'var(--text2)' }">
+                    <icon name="tag" :size="17" />
                 </button>
                 <button @click="$emit('setOnlyInStock', !catalog.onlyInStock)" :aria-pressed="catalog.onlyInStock ? 'true' : 'false'"
                     :title="catalog.onlyInStock ? 'Solo artículos con stock (pulsa para ver todos)' : 'Solo artículos con stock'"

@@ -119,3 +119,41 @@ test('only in stock is off by default and sends in_stock=1 when switched on, and
     assert.equal(again.store.catalog.onlyInStock, true, 'remembered on this computer');
     assert.ok(again.requests.some((u) => u.includes('in_stock=1')));
 });
+
+test('a search looks in the whole catalog: no category nor stock filter', async () => {
+    const { store, requests, flush } = loadCatalog(120);
+    await flush();
+    store.setCategory(7);
+    store.setOnlyInStock(true);
+    await flush();
+    assert.ok(requests[requests.length - 1].includes('category=7'));
+    assert.ok(requests[requests.length - 1].includes('in_stock=1'));
+
+    store.setSearch('8412345678901');
+    await flush();
+    const last = requests[requests.length - 1];
+    assert.ok(last.includes('q=8412345678901'));
+    assert.ok(!last.includes('category='), 'search ignores the chosen category');
+    assert.ok(!last.includes('in_stock'), 'search ignores the stock filter');
+
+    store.setSearch('');
+    await flush();
+    assert.ok(requests[requests.length - 1].includes('category=7'), 'clearing the search brings the filters back');
+});
+
+test('the category search button limits a search to the chosen category', async () => {
+    const { store, requests, flush } = loadCatalog(120);
+    await flush();
+    assert.equal(store.catalog.searchInCategory, false);
+    store.setCategory(7);
+    store.setSearchInCategory(true);
+    store.setSearch('azul');
+    await flush();
+    const last = requests[requests.length - 1];
+    assert.ok(last.includes('q=azul') && last.includes('category=7'));
+    assert.ok(!last.includes('in_stock'), 'the stock filter still does not apply to a search');
+
+    store.setCategory(null);
+    await flush();
+    assert.ok(!requests[requests.length - 1].includes('category='), 'with "Todo" it searches everything');
+});

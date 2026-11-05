@@ -52,6 +52,8 @@ class ProductSearchService
                     $qb->expr()->like('p.name', ':q'),
                     $qb->expr()->like('p.reference', ':q'),
                     $qb->expr()->like('p.ean13', ':q'),
+                    // Barcodes and references usually belong to each size or colour.
+                    'EXISTS (SELECT 1 FROM catalog_combination qc WHERE qc.id_product = p.id AND (qc.reference LIKE :q OR qc.ean13 LIKE :q))',
                 )
             )->setParameter('q', '%' . $query . '%');
         }
@@ -61,13 +63,13 @@ class ProductSearchService
                 ->setParameter('cat', $categoryId);
         }
 
-        // The id breaks ties so pages never repeat or skip products with the same name.
         // The till can hide what it cannot sell. Stock of id_product_attribute 0 is the
         // product's total, combinations included (PrestaShop keeps it summed).
         if ($onlyInStock) {
             $qb->andWhere('COALESCE(s.quantity, 0) > 0');
         }
 
+        // The id breaks ties so pages never repeat or skip products with the same name.
         $qb->orderBy('p.name', 'ASC');
         $qb->addOrderBy('p.id', 'ASC');
 

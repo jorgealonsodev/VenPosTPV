@@ -102,6 +102,15 @@ final class ProductSearchServiceMySqlIntegrationTest extends TestCase
         $this->assertContains(self::PRODUCT_REFERENCE_ID, $inStock);
     }
 
+    public function testACodeOfASizeOrColourFindsItsProduct(): void
+    {
+        // Barcodes and references usually belong to each size or colour.
+        $service = $this->createServiceOrSkip();
+
+        $this->assertSame([self::PRODUCT_NAME_ID], array_column($service->search('9999999999999', null, 20), 'id'));
+        $this->assertSame([self::PRODUCT_NAME_ID], array_column($service->search('EDGE-COMB-001', null, 20), 'id'));
+    }
+
     public function testFindByIdReturnsCombinationAndCombinationStock(): void
     {
         $service = $this->createServiceOrSkip();

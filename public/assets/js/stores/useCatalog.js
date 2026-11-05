@@ -18,6 +18,8 @@ const useCatalog = (function () {
         loadingMore: false,
         hasMore: false,
         onlyInStock: readOnlyInStock(),
+        // Off: a search looks in the whole catalog. On: only in the chosen category.
+        searchInCategory: false,
     });
 
     const PAGE_SIZE = 50;
@@ -26,9 +28,16 @@ const useCatalog = (function () {
 
     function searchUrl(offset) {
         const params = new URLSearchParams();
-        if (catalog.search) params.set('q', catalog.search);
-        if (catalog.activeCategory) params.set('category', String(catalog.activeCategory));
-        if (catalog.onlyInStock) params.set('in_stock', '1');
+        // A search (a name, a reference or a scanned code) looks in the whole
+        // catalog, or only in the chosen category when that button is on; the
+        // stock filter only shapes browsing.
+        if (catalog.search) {
+            params.set('q', catalog.search);
+            if (catalog.searchInCategory && catalog.activeCategory) params.set('category', String(catalog.activeCategory));
+        } else {
+            if (catalog.activeCategory) params.set('category', String(catalog.activeCategory));
+            if (catalog.onlyInStock) params.set('in_stock', '1');
+        }
         params.set('limit', String(PAGE_SIZE));
         if (offset > 0) params.set('offset', String(offset));
         return '/api/catalog/search?' + params.toString();
@@ -94,6 +103,11 @@ const useCatalog = (function () {
         loadProducts();
     }
 
+    function setSearchInCategory(on) {
+        catalog.searchInCategory = on === true;
+        if (catalog.search) loadProducts();
+    }
+
     function setCategory(catId) {
         catalog.activeCategory = catId;
         loadProducts();
@@ -109,6 +123,7 @@ const useCatalog = (function () {
         loadProducts,
         loadMore,
         setOnlyInStock,
+        setSearchInCategory,
         setSearch,
         setCategory,
     };
