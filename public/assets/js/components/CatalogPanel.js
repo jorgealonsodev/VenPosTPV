@@ -10,8 +10,8 @@ const CatalogPanel = {
             combinationsProduct: null,
             showCombinationsModal: false,
             labelProduct: null,
-            catDrag: null,
-            catDragged: false,
+            drag: null,
+            dragged: false,
         };
     },
     setup(props, { emit }) {
@@ -63,33 +63,38 @@ const CatalogPanel = {
             this.showCombinationsModal = false;
             this.combinationsProduct = null;
         },
-        // Category bar: drag with the mouse (touch scrolls natively), wheel and arrows.
-        onCatPointerDown(e) {
-            this.catDragged = false;
+        // Mouse drag scrolls the category bar (x) and the product list (y), like a
+        // finger does on a touch screen (touch scrolls natively). A drag never
+        // clicks the tab or product it ends on.
+        onDragDown(e, refName, axis) {
+            this.dragged = false;
             if (e.pointerType !== 'mouse' || e.button !== 0) return;
-            this.catDrag = { x: e.clientX, left: this.$refs.catBar.scrollLeft, id: e.pointerId };
+            const el = this.$refs[refName];
+            this.drag = { el, axis, start: axis === 'x' ? e.clientX : e.clientY, scroll: axis === 'x' ? el.scrollLeft : el.scrollTop, id: e.pointerId };
         },
-        onCatPointerMove(e) {
-            if (!this.catDrag) return;
-            const dx = e.clientX - this.catDrag.x;
-            if (!this.catDragged && Math.abs(dx) > 5) {
-                this.catDragged = true;
-                this.$refs.catBar.setPointerCapture(this.catDrag.id);
-                this.$refs.catBar.classList.add('dragging');
+        onDragMove(e) {
+            const d = this.drag;
+            if (!d) return;
+            const delta = (d.axis === 'x' ? e.clientX : e.clientY) - d.start;
+            if (!this.dragged && Math.abs(delta) > 5) {
+                this.dragged = true;
+                d.el.setPointerCapture(d.id);
+                d.el.classList.add('dragging');
             }
-            if (this.catDragged) this.$refs.catBar.scrollLeft = this.catDrag.left - dx;
+            if (!this.dragged) return;
+            if (d.axis === 'x') d.el.scrollLeft = d.scroll - delta;
+            else d.el.scrollTop = d.scroll - delta;
         },
-        onCatPointerUp() {
-            if (!this.catDrag) return;
-            this.catDrag = null;
-            this.$refs.catBar.classList.remove('dragging');
+        onDragUp() {
+            if (!this.drag) return;
+            this.drag.el.classList.remove('dragging');
+            this.drag = null;
         },
-        // A drag must not also select the category under the pointer when it ends.
-        onCatClickCapture(e) {
-            if (this.catDragged) {
+        onDragClickCapture(e) {
+            if (this.dragged) {
                 e.stopPropagation();
                 e.preventDefault();
-                this.catDragged = false;
+                this.dragged = false;
             }
         },
         onCatWheel(e) {
@@ -158,10 +163,11 @@ const CatalogPanel = {
                     <icon name="barcode" :size="17" />
                 </button>
                 <button @click="$emit('setOnlyInStock', !catalog.onlyInStock)" :aria-pressed="catalog.onlyInStock ? 'true' : 'false'"
-                    :title="catalog.onlyInStock ? 'Mostrando solo artículos con stock' : 'Mostrar solo artículos con stock'"
-                    style="height:40px; padding:0 12px; border-radius:10px; cursor:pointer; font-family:inherit; font-size:13px; font-weight:600; white-space:nowrap; flex-shrink:0; display:flex; align-items:center; gap:6px;"
+                    :title="catalog.onlyInStock ? 'Solo artículos con stock (pulsa para ver todos)' : 'Solo artículos con stock'"
+                    :aria-label="'Solo artículos con stock'"
+                    style="width:40px; height:40px; border-radius:10px; cursor:pointer; display:flex; align-items:center; justify-content:center; flex-shrink:0;"
                     :style="{ border: catalog.onlyInStock ? '1px solid var(--green)' : '1px solid var(--border)', background: catalog.onlyInStock ? 'var(--green-bg)' : 'var(--surface2)', color: catalog.onlyInStock ? 'var(--green)' : 'var(--text2)' }">
-                    <span aria-hidden="true">{{ catalog.onlyInStock ? '✓' : '○' }}</span> Solo con stock
+                    <icon name="box" :size="17" />
                 </button>
                 <button @click="$emit('toggleView')" style="width:40px; height:40px; border-radius:10px; border:1px solid var(--border); background:var(--surface2); cursor:pointer; color:var(--text2); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
                     <icon :name="listView ? 'grid' : 'list'" :size="16" />
@@ -172,8 +178,8 @@ const CatalogPanel = {
             <div style="display:flex; align-items:stretch; border-bottom:1px solid var(--border); flex-shrink:0;">
                 <button class="cat-arrow" @click="stepCategories(-1)" aria-label="Categorías anteriores">‹</button>
                 <div ref="catBar" class="cat-tabs"
-                    @pointerdown="onCatPointerDown" @pointermove="onCatPointerMove" @pointerup="onCatPointerUp" @pointercancel="onCatPointerUp"
-                    @click.capture="onCatClickCapture" @wheel="onCatWheel">
+                    @pointerdown="onDragDown($event, 'catBar', 'x')" @pointermove="onDragMove" @pointerup="onDragUp" @pointercancel="onDragUp"
+                    @click.capture="onDragClickCapture" @wheel="onCatWheel">
                     <button data-cat
                         @click="$emit('setCategory', null)"
                         style="padding:10px 14px; background:transparent; border:none; cursor:pointer; font-family:inherit; font-size:13px; white-space:nowrap; transition:all .12s; flex-shrink:0;"
@@ -191,7 +197,10 @@ const CatalogPanel = {
             </div>
 
             <!-- Products -->
-            <div @scroll="onProductsScroll" style="flex:1; overflow-y:auto; padding:12px; -webkit-overflow-scrolling:touch; touch-action:pan-y; min-height:0;">
+            <div ref="productList" class="product-list" @scroll="onProductsScroll"
+                @pointerdown="onDragDown($event, 'productList', 'y')" @pointermove="onDragMove" @pointerup="onDragUp" @pointercancel="onDragUp"
+                @click.capture="onDragClickCapture" @dragstart.prevent
+                style="flex:1; overflow-y:auto; padding:12px; -webkit-overflow-scrolling:touch; touch-action:pan-y; min-height:0;">
                 <div v-if="catalog.products.length === 0 && !catalog.loading" style="text-align:center; color:var(--text3); margin-top:48px; font-size:14px;">
                     Sin resultados
                 </div>
@@ -207,7 +216,7 @@ const CatalogPanel = {
                         :class="{ 'no-stock': stockTag(p.stock) === 'no-stock', 'animate-pulse-green': lastAdded === p.id }"
                     >
                         <div style="width:100%; aspect-ratio:1/1; border-radius:8px; background:var(--surface2); display:flex; align-items:center; justify-content:center; font-size:10px; color:var(--text3); letter-spacing:0.05em; font-family:'IBM Plex Mono'; border:1px dashed var(--border); overflow:hidden;">
-                            <template v-if="p.image_url"><img :src="p.image_url" :alt="p.name" style="width:100%;height:100%;object-fit:cover;border-radius:6px 6px 0 0;" @error="$event.target.parentElement.textContent='IMG'" /></template>
+                            <template v-if="p.image_url"><img draggable="false" :src="p.image_url" :alt="p.name" style="width:100%;height:100%;object-fit:cover;border-radius:6px 6px 0 0;" @error="$event.target.parentElement.textContent='IMG'" /></template>
                             <template v-else>IMG</template>
                         </div>
                         <div style="font-size:12px; font-weight:600; color:var(--text); line-height:1.3; text-wrap:pretty;">{{ p.name }}</div>
@@ -231,7 +240,7 @@ const CatalogPanel = {
                         @mouseout="!$event.currentTarget.classList.contains('no-stock') && ($event.currentTarget.style.background='var(--surface)')"
                     >
                         <div style="width:36px; height:36px; border-radius:6px; background:var(--surface2); border:1px dashed var(--border); display:flex; align-items:center; justify-content:center; flex-shrink:0; font-size:9px; color:var(--text3); font-family:'IBM Plex Mono'; overflow:hidden;">
-                            <template v-if="p.image_url"><img :src="p.image_url" :alt="p.name" style="width:100%;height:100%;object-fit:cover;border-radius:6px;" @error="$event.target.parentElement.textContent='IMG'" /></template>
+                            <template v-if="p.image_url"><img draggable="false" :src="p.image_url" :alt="p.name" style="width:100%;height:100%;object-fit:cover;border-radius:6px;" @error="$event.target.parentElement.textContent='IMG'" /></template>
                             <template v-else>IMG</template>
                         </div>
                         <div style="flex:1; min-width:0;">

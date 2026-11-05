@@ -717,6 +717,9 @@ html, body, #app {
 .cat-tabs { flex: 1; min-width: 0; display: flex; overflow-x: auto; overflow-y: hidden; cursor: grab; user-select: none; scrollbar-width: thin; scrollbar-color: var(--text3) transparent; touch-action: pan-x; }
 .cat-tabs.dragging { cursor: grabbing; }
 .cat-tabs.dragging button { pointer-events: none; }
+.product-list { user-select: none; }
+.product-list.dragging { cursor: grabbing; }
+.product-list.dragging button { pointer-events: none; }
 .cat-tabs::-webkit-scrollbar { height: 8px; }
 .cat-tabs::-webkit-scrollbar-thumb { background: var(--text3); border-radius: 4px; }
 .cat-arrow { flex-shrink: 0; width: 34px; border: none; background: var(--surface2); color: var(--text2); font-size: 20px; line-height: 1; cursor: pointer; font-family: inherit; }
