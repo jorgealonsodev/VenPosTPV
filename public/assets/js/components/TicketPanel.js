@@ -45,7 +45,11 @@ const TicketPanel = {
                 </div>
                 <div v-for="line in cart.lines" :key="line.id"
                     style="background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:8px 10px; display:flex; flex-direction:column; gap:6px; transition:all .12s;">
-                    <div style="display:flex; align-items:flex-start; gap:6px;">
+                    <div style="display:flex; align-items:flex-start; gap:8px;">
+                        <div style="width:40px; height:40px; border-radius:6px; background:var(--surface); border:1px solid var(--border); flex-shrink:0; overflow:hidden; display:flex; align-items:center; justify-content:center; color:var(--text3); font-size:8px; font-family:'IBM Plex Mono';">
+                            <img v-if="line.image_url" :src="line.image_url" alt="" draggable="false" loading="lazy" style="width:100%; height:100%; object-fit:cover;" @error="$event.target.style.display='none'" />
+                            <span v-else>IMG</span>
+                        </div>
                         <div style="flex:1; min-width:0;">
                             <div style="font-size:12px; font-weight:500; color:var(--text); line-height:1.3;">{{ line.name }}</div>
                             <div v-if="line.reference" style="font-size:10px; color:var(--text3); font-family:'IBM Plex Mono'; margin-top:2px;">{{ line.reference }}</div>

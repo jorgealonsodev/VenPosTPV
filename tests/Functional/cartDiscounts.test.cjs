@@ -79,12 +79,22 @@ function testZeroDiscountClearsPreviousDiscount() {
     assert.equal(useCart.cart.total, 40);
 }
 
+function testTicketLineKeepsTheProductImage() {
+    const useCart = loadCart();
+    useCart.add({ id: 7, name: 'Red', price: 32, stock: 5, image_url: 'https://shop.example.com/img/p/1/2/12-home_default.jpg' });
+    useCart.add({ id: 8, name: 'Sin foto', price: 5, stock: 5 });
+
+    assert.equal(useCart.cart.lines[0].image_url, 'https://shop.example.com/img/p/1/2/12-home_default.jpg');
+    assert.equal(useCart.cart.lines[1].image_url, null);
+}
+
 function main() {
     testPercentageDiscountIsClampedTo100();
     testNegativeDiscountIsIgnored();
     testAmountDiscountNeverExceedsSubtotal();
     testZeroDiscountClearsPreviousDiscount();
-    console.log('cartDiscounts functional harness: 4 passed');
+    testTicketLineKeepsTheProductImage();
+    console.log('cartDiscounts functional harness: 5 passed');
 }
 
 try {

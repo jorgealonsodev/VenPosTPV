@@ -106,6 +106,8 @@ const useCart = (function () {
                     ? product.name + ' (' + product.combination_label + ')'
                     : product.name,
                 reference: product.reference || '',
+                // Thumbnail shown on the ticket line; display only.
+                image_url: product.image_url || null,
                 price: product.price,
                 net_price: product.net_price === undefined || product.net_price === null
                     ? null
