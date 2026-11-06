@@ -1,6 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <title>VenPosTPV</title>
-  <rect x="1" y="1" width="62" height="62" rx="14" fill="#fff" stroke="#d4d9d6" stroke-width="2"/>
-  <!-- Bold V -->
-  <path d="M13 14h11l8 24 8-24h11L37.5 51h-11z" fill="#1b7a2f"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-labelledby="t"><title id="t">VenPosTPV</title><path d="M2 15a13 13 0 0 1 13-13h34a13 13 0 0 1 13 13v41l-5 5-5-5-5 5-5-5-5 5-5-5-5 5-5-5-5 5-5-5-5 5-5-5z" fill="#1b7a2f"/><path d="M14 13h10.5l7.5 23 7.5-23H50L37.5 48h-11z" fill="#fff"/></svg>
