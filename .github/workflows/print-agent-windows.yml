@@ -6,6 +6,8 @@ name: print-agent
 
 on:
   push:
+    # Branches only: a release tag runs this workflow through release.yml.
+    branches: ["**"]
     paths:
       - "agent/**"
       - ".github/workflows/print-agent-windows.yml"
@@ -14,6 +16,7 @@ on:
       - "agent/**"
       - ".github/workflows/print-agent-windows.yml"
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
