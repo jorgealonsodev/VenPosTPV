@@ -99,7 +99,9 @@ jobs:
       - name: Build the installer
         run: |
           $makensis = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'
-          & $makensis /V3 "/DVERSION=$env:AGENT_VERSION" installer\venpos-agent.nsi
+          # The script is UTF-8 without BOM: without /INPUTCHARSET makensis
+          # reads it as the ANSI code page and the installer shows mojibake.
+          & $makensis /V3 /INPUTCHARSET UTF8 "/DVERSION=$env:AGENT_VERSION" installer\venpos-agent.nsi
           if ($LASTEXITCODE -ne 0) { throw "makensis exit $LASTEXITCODE" }
           $setup = Resolve-Path "dist\VenPosAgent-$env:AGENT_VERSION-setup.exe"
           "SETUP=$setup" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
