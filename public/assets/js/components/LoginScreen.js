@@ -160,6 +160,7 @@ const LoginScreen = {
         });
 
         return {
+            brandBase: (window.TPV_BASE || '') + '/assets/img/brand',
             tab, theme, toggleTheme,
             adminUser, adminPass, adminError, adminLoading, handleAdminLogin,
             empQuery, empSearchError, empSearchLoading, handleEmployeeLookup,
@@ -180,7 +181,7 @@ const LoginScreen = {
             <!-- Header -->
             <div style="text-align:center;">
                 <div style="font-size:12px; letter-spacing:0.2em; color:var(--text3); text-transform:uppercase; margin-bottom:6px;">Terminal Punto de Venta</div>
-                <div style="font-size:30px; font-weight:700; color:var(--text); letter-spacing:-0.02em;">VenPosTPV</div>
+                <h1 style="margin:0; line-height:0;"><img class="brand-logo--dark" :src="brandBase + '/venpostpv-logo-dark.svg'" alt="VenPosTPV" style="height:48px; width:auto;"><img class="brand-logo--light" :src="brandBase + '/venpostpv-logo.svg'" alt="VenPosTPV" style="height:48px; width:auto;"></h1>
             </div>
 
             <!-- Tabs -->

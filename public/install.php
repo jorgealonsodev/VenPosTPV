@@ -15,7 +15,7 @@ header('Cache-Control: no-store');
 header('X-Frame-Options: DENY');
 header('X-Content-Type-Options: nosniff');
 header('X-Robots-Tag: noindex, nofollow');
-header("Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; form-action 'self'; frame-ancestors 'none'");
+header("Content-Security-Policy: default-src 'none'; img-src data:; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; form-action 'self'; frame-ancestors 'none'");
 
 $projectDir = dirname(__DIR__);
 
@@ -34,6 +34,7 @@ function page(string $title, string $body): never
         . '<meta name="viewport" content="width=device-width, initial-scale=1">'
         . '<meta name="color-scheme" content="light dark">'
         . '<title>' . h($title) . ' · VenPosTPV</title>'
+        . '<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByb2xlPSJpbWciIGFyaWEtbGFiZWxsZWRieT0idCI+PHRpdGxlIGlkPSJ0Ij5WZW5Qb3NUUFY8L3RpdGxlPjxwYXRoIGQ9Ik0yIDE1YTEzIDEzIDAgMCAxIDEzLTEzaDM0YTEzIDEzIDAgMCAxIDEzIDEzdjQxbC01IDUtNS01LTUgNS01LTUtNSA1LTUtNS01IDUtNS01LTUgNS01LTUtNSA1LTUtNXoiIGZpbGw9IiMxYjdhMmYiLz48cGF0aCBkPSJNMTQgMTNoMTAuNWw3LjUgMjMgNy41LTIzSDUwTDM3LjUgNDhoLTExeiIgZmlsbD0iI2ZmZiIvPjwvc3ZnPgo=">'
         . '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
         . '<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">'
         . '<style>'

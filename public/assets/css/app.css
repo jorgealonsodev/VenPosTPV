@@ -724,3 +724,8 @@ html, body, #app {
 .cat-tabs::-webkit-scrollbar-thumb { background: var(--text3); border-radius: 4px; }
 .cat-arrow { flex-shrink: 0; width: 34px; border: none; background: var(--surface2); color: var(--text2); font-size: 20px; line-height: 1; cursor: pointer; font-family: inherit; }
 .cat-arrow:hover { background: var(--surface3); color: var(--text); }
+
+/* Brand logo: the dark wordmark is for the dark theme, the light one for the light theme. */
+.brand-logo--light { display: none; }
+[data-theme="light"] .brand-logo--light { display: inline-block; }
+[data-theme="light"] .brand-logo--dark { display: none; }

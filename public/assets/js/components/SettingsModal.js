@@ -542,6 +542,7 @@ const SettingsModal = {
         });
 
         return {
+            brandBase: (window.TPV_BASE || '') + '/assets/img/brand',
             labelTestStatus, printTestLabel,
             systemPrinters,
             employees, loading, error, success,
@@ -621,6 +622,12 @@ const SettingsModal = {
                             :style="activeSection === 'verifactu' ? 'background:var(--surface2); border-left-color:var(--green); color:var(--text); font-weight:600;' : ''"
                             @mouseover="$event.currentTarget.style.background='var(--surface2)'" @mouseout="$event.currentTarget.style.background=activeSection === 'verifactu' ? 'var(--surface2)' : 'transparent'">
                             <icon name="receipt" :size="18"></icon> VERI*FACTU
+                        </button>
+                        <button @click="activeSection = 'acerca'"
+                            style="min-height:48px; padding:0 16px; background:transparent; border:none; border-left:3px solid transparent; color:var(--text2); font-family:inherit; font-size:14px; text-align:left; cursor:pointer; display:flex; align-items:center; gap:10px; transition:background .15s;"
+                            :style="activeSection === 'acerca' ? 'background:var(--surface2); border-left-color:var(--green); color:var(--text); font-weight:600;' : ''"
+                            @mouseover="$event.currentTarget.style.background='var(--surface2)'" @mouseout="$event.currentTarget.style.background=activeSection === 'acerca' ? 'var(--surface2)' : 'transparent'">
+                            <icon name="note" :size="18"></icon> Acerca de
                         </button>
                     </div>
 
@@ -1132,6 +1139,18 @@ const SettingsModal = {
                             </div>
 
                             <div v-if="syncError" style="color:var(--red); font-size:12px; margin-top:4px;">{{ syncError }}</div>
+                        </div>
+
+                        <!-- ==================== ACERCA DE ==================== -->
+                        <div v-if="activeSection === 'acerca'">
+                            <div style="margin-bottom:8px; line-height:0;"><img class="brand-logo--dark" :src="brandBase + '/venpostpv-logo-dark.svg'" alt="VenPosTPV" style="height:40px; width:auto;"><img class="brand-logo--light" :src="brandBase + '/venpostpv-logo.svg'" alt="VenPosTPV" style="height:40px; width:auto;"></div>
+                            <div style="font-size:13px; color:var(--text3); margin-bottom:20px;">Punto de venta web para tiendas con PrestaShop.</div>
+                            <div style="background:var(--surface2); border-radius:12px; padding:16px; display:grid; grid-template-columns:auto 1fr; gap:10px 16px; font-size:13px; max-width:480px;">
+                                <span style="color:var(--text3);">Creador</span>
+                                <span style="color:var(--text); font-weight:600;">Jorge Alonso</span>
+                                <span style="color:var(--text3);">GitHub</span>
+                                <a href="https://github.com/jorgealonsodev" target="_blank" rel="noopener noreferrer" style="color:var(--green); font-weight:600; text-decoration:none;">github.com/jorgealonsodev</a>
+                            </div>
                         </div>
 
                     </div>
