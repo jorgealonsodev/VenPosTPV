@@ -4,7 +4,7 @@
  *   Step 1: Enter name or code → lookup via /api/auth/employee-lookup
  *   Step 2: PIN keypad → submit login
  * On 3 failed PINs: account locked → show message (the login answers 403 {locked:true}).
- * Too many attempts from this computer (429): ask to wait.
+ * Too many attempts (429: from this computer, or 10 wrong admin passwords from anywhere): ask to wait.
  * On success: redirect to /app/pos.
  */
 const TOO_MANY_ATTEMPTS = 'Demasiados intentos. Espera un poco y vuelve a probar.';
