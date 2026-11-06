@@ -17,7 +17,7 @@ cargo test --workspace
 `dist/windows-x86_64/*.exe`:
 
 ```
-makensis -DVERSION=0.1.0 installer/venpos-agent.nsi
+makensis -DVERSION=0.1.1 installer/venpos-agent.nsi
 ```
 
 Wizard: TPV address + 6-digit code (or "Emparejar más tarde"), ticket/label printer
@@ -57,7 +57,7 @@ dlopen; `build-deb.sh` reads the minimum glibc with `objdump -T` and the package
 depends on those libraries. On the till:
 
 ```
-sudo apt install ./venpos-agent_0.1.0_amd64.deb
+sudo apt install ./venpos-agent_0.1.1_amd64.deb
 sudo venpos-agent pair 123456 --server https://tu-tpv
 sudo venpos-agent set-printer --target ticket --cups NOMBRE_DE_LA_COLA
 ```

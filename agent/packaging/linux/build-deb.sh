@@ -4,7 +4,7 @@
 # desktop tray/window dist/linux-x86_64-gnu/venpos-agent-tray
 # (packaging/linux/build-gui.sh). Needs dpkg-deb and objdump (binutils).
 #
-#   sudo apt install ./venpos-agent_0.1.0_amd64.deb
+#   sudo apt install ./venpos-agent_0.1.1_amd64.deb
 #   sudo venpos-agent pair 123456 --server https://tu-tpv
 set -euo pipefail
 cd "$(dirname "$0")/../.."

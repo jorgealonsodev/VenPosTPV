@@ -72,10 +72,10 @@ Ve paso a paso y para en cuanto vuelva a imprimir:
 
 ## Instalar en Linux
 
-Con el paquete `venpos-agent_0.1.0_amd64.deb` (Debian 12 o Ubuntu 22.04 o más nuevos, de 64 bits):
+Con el paquete `venpos-agent_0.1.1_amd64.deb` (Debian 12 o Ubuntu 22.04 o más nuevos, de 64 bits):
 
 ```
-sudo apt install ./venpos-agent_0.1.0_amd64.deb
+sudo apt install ./venpos-agent_0.1.1_amd64.deb
 sudo venpos-agent pair <código> --server https://tu-tpv
 sudo venpos-agent list-printers
 sudo venpos-agent set-printer --target ticket --cups Epson_TM-T20II   # o --device /dev/usb/lp0

@@ -1,7 +1,7 @@
 ; VenPos Agent installer (PRD I1, I2, AC9). Unsigned on purpose (I2).
 ;
 ; Build (from agent/, after ./build.sh or cargo build --release):
-;   makensis -DVERSION=0.1.0 installer/venpos-agent.nsi
+;   makensis -DVERSION=0.1.1 installer/venpos-agent.nsi
 ; Optional defines: BINDIR (folder with both .exe), OUTFILE.
 ;
 ; Silent install (CI, mass deployment):
@@ -29,7 +29,7 @@ SetCompressor /SOLID lzma
 !include "WinMessages.nsh"
 
 !ifndef VERSION
-  !define VERSION "0.1.0"
+  !define VERSION "0.1.1"
 !endif
 !ifndef BINDIR
   !define BINDIR "..\dist\windows-x86_64"
