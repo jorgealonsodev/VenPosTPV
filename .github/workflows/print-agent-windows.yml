@@ -38,8 +38,21 @@ jobs:
         working-directory: agent
     steps:
       - uses: actions/checkout@v4
+      # The Azure apt mirror is sometimes very slow (a 35 MB package took over
+      # 7 minutes): keep the downloaded .deb files and retry stalled downloads.
+      - uses: actions/cache@v4
+        with:
+          path: ~/apt-archives
+          key: apt-mingw-${{ runner.os }}-ubuntu-24.04-v1
       - name: Install mingw-w64 (Windows gnu cross-build)
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64
+        timeout-minutes: 12
+        run: |
+          mkdir -p ~/apt-archives/partial
+          apt_opts=(-o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o "Dir::Cache::Archives=$HOME/apt-archives")
+          sudo apt-get "${apt_opts[@]}" update
+          sudo apt-get "${apt_opts[@]}" install -y --no-install-recommends gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64
+          sudo chown -R "$USER" ~/apt-archives
+          rm -f ~/apt-archives/lock
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-unknown-linux-gnu,x86_64-pc-windows-gnu
