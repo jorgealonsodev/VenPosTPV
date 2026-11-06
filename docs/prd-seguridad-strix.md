@@ -117,7 +117,8 @@ Además, cualquiera puede bloquear a cualquier empleado con 3 PIN erróneos, por
 - Limitar los intentos por IP reutilizando `src/Service/PrintAgent/RateLimiter.php` (tabla `rate_limit`) y devolver 429 con `Retry-After`, igual que `AgentApiController`:
   - búsqueda: unos 20 por minuto;
   - login de empleado: unos 10 por minuto y 30 cada 15 minutos;
-  - login de admin: unos 5 por minuto.
+  - login de admin: unos 5 por minuto;
+  - login de admin, además, en total desde todas las IP (añadido el 2026-11-06): con 10 contraseñas erróneas en 15 minutos responde 429 (`Retry-After: 900`) a todos, también con la contraseña correcta, hasta que esos fallos pasan de 15 minutos. Frena un ataque repartido entre muchas IP. El login con PIN de los empleados no se ve afectado.
   Si la tabla no existe, se deja pasar (como hace el agente).
 - Admin: `hash_equals`.
 - **No** exigir la cookie de dispositivo en la búsqueda: rompería el primer login en un ordenador nuevo (`adoptOnlyTill`).

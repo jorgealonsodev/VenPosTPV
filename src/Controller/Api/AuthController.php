@@ -26,6 +26,14 @@ final class AuthController
     private const EMPLOYEE_LOGINS_PER_QUARTER_HOUR = 30;
     private const QUARTER_HOUR = 900;
     private const ADMIN_LOGINS_PER_MINUTE = 5;
+    /**
+     * Wrong admin passwords from every IP share one count, so a guess spread over
+     * many IPs is stopped too: at this many failures in a quarter of an hour the
+     * admin login answers 429 to everyone (right password included) until they age out.
+     */
+    private const ADMIN_FAILURES_PER_QUARTER_HOUR = 10;
+    private const ADMIN_FAILURES_SCOPE = 'auth_admin_failures';
+    private const ADMIN_FAILURES_SUBJECT = 'all';
 
     public function __construct(
         private readonly Connection $connection,
@@ -114,6 +122,10 @@ final class AuthController
         if (($limited = $this->rateLimited($request, 'auth_admin', self::ADMIN_LOGINS_PER_MINUTE)) !== null) {
             return $limited;
         }
+        // Checked before the password, so a guess made during the lock is never confirmed.
+        if ($this->adminFailures() >= self::ADMIN_FAILURES_PER_QUARTER_HOUR) {
+            return self::tooManyRequests(self::QUARTER_HOUR);
+        }
 
         $username = trim((string) ($body['username'] ?? ''));
         $password = (string) ($body['password'] ?? '');
@@ -122,6 +134,8 @@ final class AuthController
         $valid = hash_equals($this->adminUser, $username) & hash_equals($this->adminPassword, $password);
         // Unset .env credentials close admin login instead of accepting empty ones.
         if ($valid !== 1 || $this->adminUser === '' || $this->adminPassword === '') {
+            $this->countAdminFailure();
+
             return new JsonResponse(['error' => 'Credenciales incorrectas'], Response::HTTP_UNAUTHORIZED);
         }
 
@@ -316,6 +330,24 @@ final class AuthController
         }
 
         return null;
+    }
+
+    /** Wrong admin passwords from any IP in the last quarter of an hour (0 without the `rate_limit` table). */
+    private function adminFailures(): int
+    {
+        try {
+            return $this->limiter->countWithin(self::ADMIN_FAILURES_SCOPE, self::ADMIN_FAILURES_SUBJECT, self::QUARTER_HOUR);
+        } catch (TableNotFoundException) {
+            return 0;
+        }
+    }
+
+    private function countAdminFailure(): void
+    {
+        try {
+            $this->limiter->hit(self::ADMIN_FAILURES_SCOPE, self::ADMIN_FAILURES_SUBJECT);
+        } catch (TableNotFoundException) {
+        }
     }
 
     private static function tooManyRequests(int $retryAfter): JsonResponse
