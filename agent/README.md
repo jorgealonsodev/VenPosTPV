@@ -17,7 +17,7 @@ cargo test --workspace
 `dist/windows-x86_64/*.exe`:
 
 ```
-makensis -DVERSION=0.1.0 installer/venpos-agent.nsi
+makensis -INPUTCHARSET UTF8 -DVERSION=0.1.0 installer/venpos-agent.nsi
 ```
 
 Wizard: TPV address + 6-digit code (or "Emparejar más tarde"), ticket/label printer

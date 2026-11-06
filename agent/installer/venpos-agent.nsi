@@ -1,7 +1,9 @@
 ; VenPos Agent installer (PRD I1, I2, AC9). Unsigned on purpose (I2).
 ;
 ; Build (from agent/, after ./build.sh or cargo build --release):
-;   makensis -DVERSION=0.1.0 installer/venpos-agent.nsi
+;   makensis -INPUTCHARSET UTF8 -DVERSION=0.1.0 installer/venpos-agent.nsi
+;   (the script is UTF-8 without BOM; without -INPUTCHARSET UTF8, makensis on
+;   Windows reads it as the ANSI code page and garbles accents and arrows)
 ; Optional defines: BINDIR (folder with both .exe), OUTFILE.
 ;
 ; Silent install (CI, mass deployment):
