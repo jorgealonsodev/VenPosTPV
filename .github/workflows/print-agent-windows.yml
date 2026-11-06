@@ -31,7 +31,8 @@ env:
 jobs:
   linux:
     name: Linux tests and cross-build (build.sh)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: agent
@@ -59,6 +60,7 @@ jobs:
   windows:
     name: Windows installer (silent install, service, exact RAW bytes)
     runs-on: windows-latest
+    timeout-minutes: 30
     defaults:
       run:
         shell: pwsh
