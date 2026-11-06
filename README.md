@@ -33,6 +33,6 @@ PHP 8.4 o superior con `pdo_mysql`, MySQL o MariaDB y PrestaShop 1.7 u 8.
 
 ## Documentación
 
-- [Instalar en Plesk](docs/despliegue-plesk.md)
+- [Instalar en un hosting](docs/despliegue-hosting.md)
 - [Agente de impresión](docs/print-agent.md)
 - [VERI\*FACTU](docs/verifactu.md)

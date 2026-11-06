@@ -11,7 +11,7 @@ use Symfony\Component\Clock\NativeClock;
 /**
  * Fixed one-minute windows stored in `rate_limit` (PRD E7): pairing attempts and
  * invalid agent keys per IP. The database keeps the count, so every PHP process
- * (and every Plesk worker) shares it. Old windows are removed by PrintRetention.
+ * (and every PHP-FPM worker) shares it. Old windows are removed by PrintRetention.
  */
 class RateLimiter
 {

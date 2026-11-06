@@ -1,4 +1,4 @@
-# Behind a reverse proxy (Plesk's nginx in front of Apache) every request comes
+# Behind a reverse proxy (e.g. nginx in front of Apache, as many hosting panels set up) every request comes
 # from the proxy. TRUSTED_PROXIES lists the proxies to trust, comma separated
 # (e.g. "127.0.0.1,::1"; Symfony also accepts "private_ranges" or "REMOTE_ADDR");
 # their X-Forwarded-For and X-Forwarded-Proto then give the real client IP and

@@ -10,7 +10,7 @@ use Symfony\Component\HttpFoundation\Request;
 use VenPosTPV\Kernel;
 
 /**
- * Behind Plesk's nginx every request comes from the proxy: with TRUSTED_PROXIES the
+ * Behind a hosting nginx every request comes from the proxy: with TRUSTED_PROXIES the
  * real client IP (X-Forwarded-For) is what the print agent's rate limits and last_ip
  * use (E6, E7). Without it nothing changes.
  */

@@ -33,7 +33,7 @@ Thumbs.db
 /.playwright-mcp/
 ###< playwright-mcp ###
 
-# Plesk packages (bin/build-plesk.sh)
+# Hosting packages (bin/build-hosting.sh)
 /dist/
 
 # Strix

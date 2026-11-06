@@ -128,7 +128,7 @@ final class AgentApiController
                 echo json_encode($this->jobsBody($jobs, $wait), \JSON_THROW_ON_ERROR);
             }, Response::HTTP_OK, [
                 'Content-Type' => 'application/json',
-                // Plesk's nginx passes each space on at once, so it notices a client that has gone.
+                // A proxy such as nginx passes each space on at once, so it notices a client that has gone.
                 'X-Accel-Buffering' => 'no',
             ]);
 

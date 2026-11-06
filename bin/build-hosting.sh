@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Builds the Plesk upload packages from the working tree (tracked and new,
+# Builds the hosting upload packages from the working tree (tracked and new,
 # non-ignored files; uncommitted changes are included and reported):
-#   dist/venpostpv-plesk.zip  TPV app with production vendor/ and the web installer
+#   dist/venpostpv-hosting.zip  TPV app with production vendor/ and the web installer
 #   dist/tpvconnect.zip       PrestaShop module (without its tests)
-# Usage: bin/build-plesk.sh            (PHP_BIN overrides the PHP used for Composer)
+# Usage: bin/build-hosting.sh            (PHP_BIN overrides the PHP used for Composer)
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -29,20 +29,20 @@ copy_tree "$APP" bin/console config migrations public src templates composer.jso
 copy_tree "$WORK/mod" modules/tpvconnect
 rm -rf "$WORK/mod/modules/tpvconnect/tests"
 
-# Local-only XAMPP wrapper out, Plesk .htaccess files in.
+# Local-only XAMPP wrapper out, hosting .htaccess files in.
 rm -f "$APP/public/php85.cgi" "$APP/public/assets/.gitkeep"
-cp deploy/plesk/public.htaccess "$APP/public/.htaccess"
-cp deploy/plesk/root.htaccess "$APP/.htaccess"
-cp deploy/plesk/root-install.php "$APP/install.php"
-cp docs/despliegue-plesk.md "$APP/LEEME-PLESK.md"
+cp deploy/hosting/public.htaccess "$APP/public/.htaccess"
+cp deploy/hosting/root.htaccess "$APP/.htaccess"
+cp deploy/hosting/root-install.php "$APP/install.php"
+cp docs/despliegue-hosting.md "$APP/LEEME-HOSTING.md"
 mkdir -p "$APP/var/cache" "$APP/var/log"
 
 (cd "$APP" && COMPOSER_HOME="$WORK/composer-home" "$PHP_BIN" "$COMPOSER" install \
-    --no-dev --optimize-autoloader --no-interaction --no-progress --quiet)
+    --no-dev --optimize-autoloader --no-interaction --no-progress)
 
-rm -f "$DIST/venpostpv-plesk.zip" "$DIST/tpvconnect.zip"
+rm -f "$DIST/venpostpv-hosting.zip" "$DIST/tpvconnect.zip"
 # No top folder: extracted straight into the subdomain folder, it is ready.
-(cd "$APP" && zip -qr "$DIST/venpostpv-plesk.zip" .)
+(cd "$APP" && zip -qr "$DIST/venpostpv-hosting.zip" .)
 (cd "$WORK/mod/modules" && zip -qr "$DIST/tpvconnect.zip" tpvconnect)
 
 DIRTY="$(git status --porcelain -- bin/console config migrations public src templates composer.json composer.lock modules/tpvconnect | grep -v "tests/" || true)"

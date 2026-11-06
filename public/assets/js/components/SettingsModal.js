@@ -1000,7 +1000,7 @@ const SettingsModal = {
                             <div style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; color:var(--text); margin-bottom:6px;">
                                 <icon name="mail" :size="16"></icon> Cuenta de correo de la tienda
                             </div>
-                            <div style="font-size:12px; color:var(--text3); margin-bottom:16px;">Desde esta cuenta se envía el ticket en PDF a los clientes cuando la caja no tiene impresora. Usa los datos SMTP de tu correo (en Plesk: Correo → la cuenta → Configuración del cliente de correo).</div>
+                            <div style="font-size:12px; color:var(--text3); margin-bottom:16px;">Desde esta cuenta se envía el ticket en PDF a los clientes cuando la caja no tiene impresora. Usa los datos SMTP de tu correo (los muestra el panel del hosting en la configuración de la cuenta de correo).</div>
                             <div v-if="mailError" style="color:var(--red); font-size:13px; margin-bottom:12px;">{{ mailError }}</div>
                             <div style="display:flex; flex-direction:column; gap:14px;">
                                 <div style="display:flex; gap:10px; flex-wrap:wrap;">

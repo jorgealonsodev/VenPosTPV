@@ -39,7 +39,7 @@ final class WebInstaller
 
     /**
      * The web server may serve public/ itself, or this folder when its .htaccess
-     * forwards every request into public/ (deploy/plesk/root.htaccess). Anything
+     * forwards every request into public/ (deploy/hosting/root.htaccess). Anything
      * else could expose .env, vendor/ or the install key.
      */
     public function isSafeDocumentRoot(string $documentRoot): bool
@@ -253,7 +253,7 @@ final class WebInstaller
         $handle = @fopen($env, 'x');
         if ($handle === false) {
             throw new InstallException(is_file($env)
-                ? 'Ya existe un archivo .env: el TPV ya está instalado. Para reinstalar, sigue los pasos de docs/despliegue-plesk.md.'
+                ? 'Ya existe un archivo .env: el TPV ya está instalado. Para reinstalar, sigue los pasos de docs/despliegue-hosting.md.'
                 : 'No se pudo crear el archivo .env: revisa los permisos de la carpeta del TPV.');
         }
         @chmod($env, 0600);

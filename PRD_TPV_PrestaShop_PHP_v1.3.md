@@ -875,7 +875,7 @@ Esta separación garantiza que un fallo de seguridad en el TPV **no compromete**
 
 **Hostings compatibles:**
 - VPS y servidores dedicados: 100% compatibles.
-- Hosting compartido con cPanel/Plesk: compatible si permite crear subdominios con DocumentRoot personalizado y acceso a cron.
+- Hosting compartido con panel (cPanel u otros): compatible si permite crear subdominios con DocumentRoot personalizado y acceso a cron.
 - Hosting administrado de PrestaShop: validar caso por caso. La capacidad de crear subdominios con DocumentRoot independiente es el requisito clave.
 
 ### 14.2 Instalación

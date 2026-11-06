@@ -11,7 +11,7 @@ use Doctrine\Migrations\AbstractMigration;
 /**
  * Print agent (docs/prd/agente-impresion.md v2): the program on each till's computer
  * that fetches that till's print jobs over HTTPS and prints them on the shop's
- * printers, so the TPV can run on Plesk.
+ * printers, so the TPV can run on a web hosting.
  *
  * - `terminal.printer_type` accepts `agent`.
  * - `print_job`: the queue of each till (T0-T9). Claimed with a conditional UPDATE

@@ -14,7 +14,7 @@ use VenPosTPV\Kernel;
 use VenPosTPV\Service\Install\WebInstaller;
 
 /**
- * A Plesk install has only the settings the web installer writes. Every API
+ * A hosting install has only the settings the web installer writes. Every API
  * controller must build with them: a missing one (APP_URL) made checkout answer
  * 500 "Environment variable not found" in production. Requests carry no session,
  * so a built controller answers 401 and never reaches the database.

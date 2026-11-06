@@ -82,7 +82,7 @@ function page(string $title, string $body): never
 
 if (PHP_VERSION_ID < 80400) {
     page('Instalación del TPV', '<p class="err">Este TPV necesita PHP 8.4 o superior y el servidor usa PHP ' . h(PHP_VERSION)
-        . '. En Plesk: <em>Sitios web y dominios → el subdominio → Configuración de PHP</em> y elige 8.4.</p>');
+        . '. Elige PHP 8.4 o superior para el subdominio en la configuración de PHP del panel del hosting.</p>');
 }
 if (!extension_loaded('pdo_mysql')) {
     page('Instalación del TPV', '<p class="err">Falta la extensión <code>pdo_mysql</code> de PHP. Actívala en la configuración de PHP del subdominio.</p>');
@@ -111,7 +111,7 @@ $isLocal = in_array($host, ['localhost', '127.0.0.1'], true) && in_array($remote
 $isHttps = (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off')
     || (in_array($remote, ['127.0.0.1', '::1'], true) && strtolower((string) ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '')) === 'https');
 if (!$isHttps && !$isLocal) {
-    page('Instalación del TPV', '<p class="err">Abre el instalador con <strong>https://</strong>. Las contraseñas no deben viajar sin cifrar. En Plesk: <em>Certificados SSL/TLS</em> → Let\'s Encrypt para el subdominio.</p>');
+    page('Instalación del TPV', '<p class="err">Abre el instalador con <strong>https://</strong>. Las contraseñas no deben viajar sin cifrar. Activa un certificado SSL para el subdominio en el panel del hosting (por ejemplo, Let\'s Encrypt).</p>');
 }
 
 if (!$installer->isSafeDocumentRoot((string) ($_SERVER['DOCUMENT_ROOT'] ?? ''))) {
@@ -145,7 +145,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
 
     if (!$installer->checkInstallKey((string) ($_POST['install_key'] ?? ''))) {
         usleep(500000);
-        $errors[] = 'La clave de instalación no es correcta. Está en el archivo INSTALL_KEY de la carpeta del subdominio (ábrelo con el Administrador de archivos de Plesk).';
+        $errors[] = 'La clave de instalación no es correcta. Está en el archivo INSTALL_KEY de la carpeta del subdominio (ábrelo con el administrador de archivos del panel o por FTP).';
     } else {
         $result = $installer->validate($_POST);
         $errors = $result['errors'];
@@ -163,7 +163,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 $errors[] = $e->getMessage();
             } catch (\Throwable $e) {
                 error_log('TPV installer: ' . $e::class . ': ' . $e->getMessage());
-                $errors[] = 'La instalación falló. El detalle está en el registro de errores de PHP (Plesk: Registros del subdominio). '
+                $errors[] = 'La instalación falló. El detalle está en el registro de errores de PHP (en los registros del subdominio del panel). '
                     . 'Si se crearon tablas, vacía la base de datos antes de volver a intentarlo.';
             }
 
@@ -171,23 +171,24 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 $deleted = @unlink(__FILE__);
                 @unlink($projectDir . '/install.php'); // stub of a root-folder install
                 $root = $projectDir;
-                // "Ejecutar un comando" runs in a chrooted shell on many Plesk hosts,
-                // where /opt/plesk/php does not exist; "Ejecutar un script PHP"
-                // picks the PHP version itself. Its path is relative to the webspace.
+                // Panels that run "a PHP script" pick the PHP version themselves and,
+                // under /var/www/vhosts, take the path relative to the webspace;
+                // panels that only run a command get the full cron line.
                 $script = preg_match('#^/var/www/vhosts/[^/]+/(.+)$#', $root, $m) === 1 ? $m[1] . '/bin/console' : $root . '/bin/console';
                 $phpVersion = PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION;
                 $task = static fn (string $when, string $args): string => '<tr><td>' . $when . '</td><td><code>' . h($args) . '</code></td></tr>';
                 $tpvUrl = $result['values']['TPV_URL'];
                 page('TPV instalado', '<p class="ok">Base de datos preparada (' . (int) $executed . ' migraciones aplicadas) y configuración guardada en <code>.env</code>.</p>'
                     . ($deleted ? '' : '<p class="err">No se pudo borrar <code>public/install.php</code>. Bórralo a mano; de todas formas ya está bloqueado.</p>')
-                    . '<h2>1. Tareas programadas</h2><p>En Plesk: <em>Tareas programadas → Añadir tarea → <strong>Ejecutar un script PHP</strong></em>. '
-                    . 'Ruta del script: <code>' . h($script) . '</code>, PHP <strong>' . h($phpVersion) . '</strong>, en «Con argumentos» lo de la tabla y notificar solo errores. Cuatro tareas:</p>'
+                    . '<h2>1. Tareas programadas</h2><p>Crea cuatro tareas programadas (cron) en el panel del hosting y notifica solo los errores. '
+                    . 'Si el panel ejecuta un script PHP: ruta <code>' . h($script) . '</code>, PHP <strong>' . h($phpVersion) . '</strong> y como argumentos lo de la tabla. '
+                    . 'Si solo admite un comando: <code>php ' . h($root . '/bin/console') . '</code> seguido de los argumentos (en algunos paneles el binario es <code>php' . h($phpVersion) . '</code>).</p>'
                     . '<div class="table"><table><tr><th>Ejecutar</th><th>Con argumentos</th></tr>'
                     . $task('Estilo cron <code>* * * * *</code>', 'tpv:sync:outbox --env=prod')
                     . $task('Estilo cron <code>* * * * *</code>', 'tpv:catalog:sync --stock-only --env=prod')
                     . $task('Diariamente 03:00', 'tpv:catalog:sync --full --env=prod')
                     . $task('Diariamente 03:30', 'tpv:customers:sync --env=prod')
-                    . '</table></div><p>En la tarea del catálogo completo pulsa también «Ejecutar ahora» para cargar los productos.</p>'
+                    . '</table></div><p>En la tarea del catálogo completo ejecútala también una vez a mano para cargar los productos.</p>'
                     . '<h2>2. PHP del subdominio</h2><p><code>max_execution_time</code> = 35 como mínimo y <code>pm.max_children</code> ≥ número de cajas + 6.</p>'
                     . '<h2>3. PrestaShop</h2><p>En el módulo <strong>TPV Connect</strong>, pon como URL del TPV <code>' . h($tpvUrl) . '</code>'
                     . ($result['values']['SSO_SHARED_SECRET'] === '' ? ' y copia su secreto SSO en <code>SSO_SHARED_SECRET</code> del archivo <code>.env</code>.' : '.') . '</p>'
@@ -202,9 +203,9 @@ $errHtml = $errors === [] ? '' : '<div class="err"><strong>Revisa esto:</strong>
 
 page('Instalación del TPV', $errHtml . '<form method="post" autocomplete="off">'
     . '<h2>Clave de instalación</h2>'
-    . '<label>Clave <small>— está en el archivo <code>INSTALL_KEY</code> de la carpeta del subdominio (Administrador de archivos de Plesk)</small></label>'
+    . '<label>Clave <small>— está en el archivo <code>INSTALL_KEY</code> de la carpeta del subdominio (administrador de archivos del panel o FTP)</small></label>'
     . '<input name="install_key" required>'
-    . '<h2>Base de datos del TPV</h2><p><small>Créala vacía en Plesk (<em>Bases de datos → Añadir base de datos</em>). No uses la de PrestaShop.</small></p>'
+    . '<h2>Base de datos del TPV</h2><p><small>Créala vacía en el panel del hosting. No uses la de PrestaShop.</small></p>'
     . '<div class="row"><div><label>Servidor</label><input name="db_host" value="' . $v('db_host') . '" required></div>'
     . '<div class="narrow"><label>Puerto</label><input name="db_port" value="' . $v('db_port') . '" required></div></div>'
     . '<label>Nombre de la base de datos</label><input name="db_name" value="' . $v('db_name') . '" required>'

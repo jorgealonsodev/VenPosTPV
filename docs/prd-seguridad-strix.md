@@ -29,7 +29,7 @@ Hallazgo nuevo, que no está en el informe: **el login por SSO probablemente no 
 
 ## 3. Requisitos
 
-Prioridades: **P0** antes de desplegar en Plesk; **P1** en la misma entrega si es posible; **P2** endurecimiento posterior.
+Prioridades: **P0** antes de desplegar en el hosting; **P1** en la misma entrega si es posible; **P2** endurecimiento posterior.
 
 ### R1 · P0 · Venta mixta: el efectivo debe estar acotado (vuln-0006, real)
 
@@ -211,7 +211,7 @@ X-Frame-Options: DENY · X-Content-Type-Options: nosniff · Referrer-Policy: sam
 
 **Aceptación.** `composer audit` sin avisos.
 
-### R13 · P2 · Instalador de Plesk (no estaba en el alcance de Strix)
+### R13 · P2 · Instalador web del hosting (no estaba en el alcance de Strix)
 
 1. Si `realpath(DOCUMENT_ROOT)` falla, tratarlo como error, no saltarse la comprobación.
 2. Crear `.env` con `fopen($env, 'x')`, que no sobrescribe un fichero que ya exista, en lugar de `rename`.
@@ -253,7 +253,7 @@ Cada bloque se entrega en su propio commit, con sus tests:
 | 9 | `chore(deps): firebase/php-jwt 7` | R12 | 5 |
 | 10 | `fix(install): installer hardening` | R13 | 5 |
 
-Los commits 0 a 4 (P0) tienen que estar hechos **antes de desplegar en Plesk**. Después hay que volver a generar `dist/venpostpv-plesk.zip`.
+Los commits 0 a 4 (P0) tienen que estar hechos **antes de desplegar en el hosting**. Después hay que volver a generar `dist/venpostpv-hosting.zip`.
 
 ## 7. Verificación
 
