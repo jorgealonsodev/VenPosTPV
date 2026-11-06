@@ -77,15 +77,12 @@ jobs:
         run: |
           agent="$(basename release/VenPosAgent-*-setup.exe | sed 's/^VenPosAgent-\(.*\)-setup\.exe$/\1/')"
           module="$(sed -n "s/.*this->version = '\(.*\)'.*/\1/p" modules/tpvconnect/tpvconnect.php)"
-          {
-            echo "| Paquete | Versión | Uso |"
-            echo "|---|---|---|"
-            echo "| \`VenPosAgent-${agent}-setup.exe\` | ${agent} | Agente de impresión para Windows (PC de la tienda) |"
-            echo "| \`venpostpv-hosting.zip\` | ${GITHUB_REF_NAME} | TPV para el hosting; ver \`LEEME-HOSTING.md\` dentro del zip |"
-            echo "| \`tpvconnect.zip\` | ${module} | Módulo de PrestaShop |"
-            echo
-            echo "\`SHA256SUMS.txt\` lleva las sumas de los ficheros."
-          } > notes.md
+          docs="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/docs"
+          # Template: .github/release-notes.md (@TAG@, @AGENT@, @MODULE@, @DOCS@).
+          sed -e "s|@TAG@|${GITHUB_REF_NAME}|g" -e "s|@AGENT@|${agent}|g" \
+              -e "s|@MODULE@|${module}|g" -e "s|@DOCS@|${docs}|g" \
+              .github/release-notes.md > notes.md
+          if grep -q '@[A-Z]*@' notes.md; then echo "unfilled placeholder in notes.md" >&2; exit 1; fi
           cat notes.md
       - name: Create the release
         env:

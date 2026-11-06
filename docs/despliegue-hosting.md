@@ -48,4 +48,6 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
+Las notas de la release salen de la plantilla `.github/release-notes.md`, que enlaza la [guía de instalación](instalacion.md) de esa versión.
+
 Lanzado a mano desde la pestaña Actions («Run workflow»), genera los paquetes como artefactos sin publicar nada. Mientras el repositorio sea privado, las descargas de la release necesitan una cuenta con acceso.
