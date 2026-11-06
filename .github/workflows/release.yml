@@ -1,6 +1,8 @@
 # Release: pushing a tag vX.Y.Z (vX.Y.Z-rc.N for a prerelease) builds the
-# three downloadable packages and publishes them as a GitHub Release:
+# downloadable packages and publishes them as a GitHub Release:
 #   VenPosAgent-<agent version>-setup.exe  Windows print agent installer
+#   venpos-agent_<ver>_amd64.deb           Linux print agent (Debian 12 / Ubuntu 22.04+)
+#   venpos-agent-<ver>-linux-x86_64.tar.gz static Linux agent + install.sh
 #   venpostpv-hosting.zip                  TPV app for the web hosting
 #   tpvconnect.zip                         PrestaShop module
 # Run it by hand (workflow_dispatch) to build the packages as artifacts
@@ -53,10 +55,47 @@ jobs:
             dist/tpvconnect.zip
           if-no-files-found: error
 
+  agent-linux:
+    name: Print agent Linux packages (.deb and static binary)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v4
+      - name: Static service (musl, rust:alpine container)
+        run: packaging/linux/build-musl.sh
+      - name: Desktop tray and window (glibc, Debian 12 container)
+        run: packaging/linux/build-gui.sh
+      - name: Debian package (packaging/linux/build-deb.sh)
+        run: packaging/linux/build-deb.sh
+      - name: Static binary archive (any x86_64 Linux, with install.sh)
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          name="venpos-agent-${version}-linux-x86_64"
+          mkdir -p "dist/$name"
+          cp dist/linux-x86_64-musl/venpos-agent packaging/linux/install.sh "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+      - name: Check the packages
+        run: |
+          file dist/linux-x86_64-musl/venpos-agent | grep -Eq 'statically linked|static-pie linked'
+          dist/linux-x86_64-musl/venpos-agent version
+          dpkg-deb --contents dist/venpos-agent_*_amd64.deb | grep -q '/usr/bin/venpos-agent$'
+          dpkg-deb --contents dist/venpos-agent_*_amd64.deb | grep -q '/usr/bin/venpos-agent-tray$'
+          tar -tzf dist/venpos-agent-*-linux-x86_64.tar.gz | grep -q '/install.sh$'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: venpos-agent-linux
+          path: |
+            agent/dist/venpos-agent_*_amd64.deb
+            agent/dist/venpos-agent-*-linux-x86_64.tar.gz
+          if-no-files-found: error
+
   publish:
     name: Publish the GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [agent, hosting]
+    needs: [agent, agent-linux, hosting]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -70,6 +109,7 @@ jobs:
         run: |
           mkdir -p release
           cp artifacts/venpos-agent-windows/VenPosAgent-*-setup.exe release/
+          cp artifacts/venpos-agent-linux/venpos-agent_*_amd64.deb artifacts/venpos-agent-linux/venpos-agent-*-linux-x86_64.tar.gz release/
           cp artifacts/venpostpv-hosting/venpostpv-hosting.zip artifacts/venpostpv-hosting/tpvconnect.zip release/
           (cd release && sha256sum * > SHA256SUMS.txt)
           ls -l release

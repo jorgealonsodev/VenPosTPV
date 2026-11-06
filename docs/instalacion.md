@@ -7,7 +7,7 @@ Una instalación completa son tres piezas, en este orden: el **módulo de Presta
 1. **Módulo**: en PrestaShop, sube `tpvconnect.zip` e instálalo. Genera la clave del webservice y copia el secreto SSO.
 2. **TPV**: crea un subdominio con SSL y una base de datos vacía. Sube `venpostpv-hosting.zip` al subdominio, extráelo y abre `https://tu-subdominio/install.php`.
 3. **Unir los dos**: en el módulo, pon la dirección del TPV.
-4. **Cajas**: en cada ordenador de caja, instala `VenPosAgent-<versión>-setup.exe` y emparéjalo con el código de **Ajustes → Cajas**.
+4. **Cajas**: en cada ordenador de caja, instala el agente (`VenPosAgent-<versión>-setup.exe` en Windows, el `.deb` en Linux) y emparéjalo con el código de **Ajustes → Cajas**.
 5. **Prueba**: haz una venta. Debe salir el ticket y abrirse el cajón.
 
 ## Qué descargar
@@ -17,6 +17,8 @@ Una instalación completa son tres piezas, en este orden: el **módulo de Presta
 | `tpvconnect.zip` | Tu PrestaShop (1.7 u 8) | Paso 1, abajo |
 | `venpostpv-hosting.zip` | Un subdominio de tu hosting (cPanel, DirectAdmin u otro panel) | [Instalar en un hosting](despliegue-hosting.md) |
 | `VenPosAgent-<versión>-setup.exe` | Cada ordenador de caja con Windows | [Agente de impresión](print-agent.md) |
+| `venpos-agent_<versión>_amd64.deb` | Cajas con Debian 12, Ubuntu 22.04 o más nuevos | [Instalar en Linux](print-agent.md#instalar-en-linux) |
+| `venpos-agent-<versión>-linux-x86_64.tar.gz` | Cualquier otro Linux de 64 bits (sin ventana ni icono) | [Instalar en Linux](print-agent.md#instalar-en-linux) |
 | `SHA256SUMS.txt` | Opcional: para comprobar que las descargas están completas | — |
 
 > Mientras el repositorio sea privado, para descargar hay que entrar en GitHub con una cuenta que tenga acceso.

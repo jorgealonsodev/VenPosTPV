@@ -72,7 +72,7 @@ Ve paso a paso y para en cuanto vuelva a imprimir:
 
 ## Instalar en Linux
 
-Con el paquete `venpos-agent_0.1.1_amd64.deb` (Debian 12 o Ubuntu 22.04 o más nuevos, de 64 bits):
+Con el paquete `venpos-agent_<versión>_amd64.deb` de la última release de GitHub (Debian 12 o Ubuntu 22.04 o más nuevos, de 64 bits):
 
 ```
 sudo apt install ./venpos-agent_0.1.1_amd64.deb
@@ -92,7 +92,7 @@ Al iniciar sesión aparece además **el icono en la bandeja del sistema** (y tam
 - **GNOME** (Debian) necesita la extensión «AppIndicator and KStatusNotifierItem Support» para ver iconos en la bandeja; Ubuntu ya la trae activada. KDE, XFCE, Cinnamon, MATE y Budgie los muestran sin nada más. Sin bandeja, usa la ventana desde el menú de aplicaciones.
 - El asistente en terminal sigue disponible (pide la contraseña de administrador): botón derecho en **VenPos Agent** → **Asistente en terminal**, o `venpos-agent-setup`.
 
-Sin el paquete, también se puede instalar con el binario `venpos-agent` y el script `agent/packaging/linux/install.sh` en la misma carpeta:
+Sin el paquete, también se puede instalar con el binario `venpos-agent` y el script `agent/packaging/linux/install.sh` en la misma carpeta. Los dos vienen juntos en `venpos-agent-<versión>-linux-x86_64.tar.gz` de la release (`tar -xzf` y entra en la carpeta):
 
 ```
 sudo ./install.sh ./venpos-agent --server https://tu-tpv --code 123456
