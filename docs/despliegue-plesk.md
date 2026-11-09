@@ -7,7 +7,7 @@ El paquete `venpostpv-hosting.zip` lleva el TPV con sus dependencias y un instal
 - Un subdominio (por ejemplo `tpv.tutienda.com`) con certificado SSL. En Plesk: **Certificados SSL/TLS → Let's Encrypt**.
 - **PHP 8.4 o superior** en el subdominio, con `pdo_mysql`.
 - Una **base de datos MySQL vacía** solo para el TPV (**Bases de datos → Añadir base de datos**). No uses la de PrestaShop: el instalador se niega a usar una base de datos con tablas que no son del TPV.
-- En PrestaShop, el módulo **TPV Connect** instalado o actualizado con `tpvconnect.zip`. De él salen la clave del webservice («Generar clave») y el secreto SSO.
+- En PrestaShop, el módulo **TPV Connect 0.8.0 o superior**, instalado o actualizado con `tpvconnect.zip`. No hay que copiar ninguna clave: el instalador del TPV se empareja con el módulo con un código.
 
 ## Pasos
 
@@ -15,7 +15,7 @@ El paquete `venpostpv-hosting.zip` lleva el TPV con sus dependencias y un instal
 2. (Opcional) Si prefieres, la raíz del documento también puede ser la carpeta `public` del paquete.
 3. **Configuración de PHP** del subdominio: versión 8.4 o superior, `max_execution_time` = 35 como mínimo y `pm.max_children` ≥ número de cajas + 6.
 4. Abre `https://tu-subdominio/install.php`. La primera visita crea el archivo `INSTALL_KEY` en la carpeta del subdominio. Ábrelo en el Administrador de archivos y copia la clave en el formulario.
-5. Rellena la base de datos, el usuario administrador, la tienda y PrestaShop. Pulsa **Instalar**: el instalador prueba la conexión, crea las tablas, escribe `.env`, prepara el resto de la instalación (por ejemplo, los productos genéricos del artículo libre en PrestaShop), se bloquea y borra `install.php`. La página final muestra en «Estado de la instalación» qué pasos están hechos y cuáles siguen pendientes y por qué. Es normal que los de PrestaShop queden pendientes hasta configurar el módulo TPV Connect (paso 7): la tarea 1 (`tpv:sync:outbox`, cada minuto) los completa sola en cuanto la tienda responde (ver [Actualizar el TPV](#actualizar-el-tpv)).
+5. Rellena la base de datos, el usuario administrador y la tienda. En **PrestaShop** escribe la **Dirección de la tienda** (`https://tutienda.com`) y el **Código de emparejamiento**: en el panel de PrestaShop, **Módulos → Gestor de módulos → TPV Connect → Configurar → Emparejar con un TPV** (6 cifras, vale 10 minutos y una sola vez). Pulsa **Instalar**: el instalador prueba la base de datos, se empareja con la tienda (le da la dirección del TPV y recibe sus claves), crea las tablas, escribe `.env`, prepara el resto de la instalación (por ejemplo, los productos genéricos del artículo libre en PrestaShop), se bloquea y borra `install.php`. La página final muestra en «Estado de la instalación» qué pasos están hechos y cuáles siguen pendientes y por qué. Un paso pendiente lo completa sola la tarea 1 (`tpv:sync:outbox`, cada minuto) en cuanto la tienda responde (ver [Actualizar el TPV](#actualizar-el-tpv)). Qué se intercambia, los mensajes de error y cómo volver a emparejar: [Emparejar el TPV con la tienda](despliegue-hosting.md#emparejar-el-tpv-con-la-tienda). Sin emparejar, el enlace **Introducir las claves a mano** pide las claves como antes.
 6. Crea las **tareas programadas**: cinco, una por una. En Plesk, dentro del dominio: **Tareas programadas → Añadir tarea**. Se abre la pantalla «Programación de una tarea»: rellénala como indica cada tabla y pulsa **Aceptar**.
 
    Dos avisos para todas:
@@ -90,7 +90,7 @@ El paquete `venpostpv-hosting.zip` lleva el TPV con sus dependencias y un instal
    | Notificar | **Solo errores** |
 
    Comprueba cada tarea con **Ejecutar ahora**, en la misma pantalla: el resultado aparece al momento y, si hay un error, Plesk lo muestra (y lo envía por correo con **Solo errores**).
-7. En el módulo TPV Connect, pon como URL del TPV la del subdominio. Si no pusiste el secreto SSO en el instalador, cópialo en `SSO_SHARED_SECRET` del `.env`.
+7. Si emparejaste en el paso 5, no hay nada que hacer en el módulo: ya tiene la dirección del TPV. Si usaste «Introducir las claves a mano», empareja ahora desde el TPV: **Ajustes → Acerca de → Volver a emparejar con la tienda** con un código nuevo del módulo.
 8. Entra en el TPV, empareja el agente de impresión de cada caja (**Ajustes → Cajas**, ver `docs/print-agent.md`) y haz una venta de prueba.
 
 ## Qué escribe el instalador

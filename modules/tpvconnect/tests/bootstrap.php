@@ -25,10 +25,24 @@ if (!class_exists('Tools', false)) {
 if (!class_exists('Configuration', false)) {
     class Configuration
     {
+        /** This request's static cache: what get() answers. */
         public static array $values = [];
-        public static function updateValue(string $key, mixed $value, bool $html = false, int $idShopGroup = 0, int $idShop = 0): bool { self::$values[$key] = $value; return true; }
+        /**
+         * The configuration table every request shares. A test can model another
+         * request by giving $values a snapshot taken earlier: that stale cache
+         * keeps keys this store has since lost, as in a real shop.
+         */
+        public static array $db = [];
+        public static function updateValue(string $key, mixed $value, bool $html = false, int $idShopGroup = 0, int $idShop = 0): bool { self::$values[$key] = $value; self::$db[$key] = $value; return true; }
         public static function get(string $key, int $idLang = 0, int $idShopGroup = 0, int $idShop = 0, mixed $default = false): mixed { return self::$values[$key] ?? $default; }
-        public static function deleteByName(string $key): bool { unset(self::$values[$key]); return true; }
+        public static function deleteByName(string $key): bool { unset(self::$values[$key], self::$db[$key]); return true; }
+        /**
+         * Native (PrestaShop 9.2): merges the table rows into the static cache and
+         * never drops a cached key whose row another request deleted.
+         */
+        public static function loadConfiguration(): void { self::$values = array_replace(self::$values, self::$db); }
+        /** The id_configuration the fake table gives a key. */
+        public static function idOf(string $key): int { return crc32($key) & 0x7FFFFFFF; }
     }
 }
 
@@ -155,11 +169,44 @@ if (!class_exists('Db', false)) {
         /** What a SELECT on webservice_permission answers. */
         public static array $permissionRows = [];
         public function insert(string $table, array $data, bool $nullValues = false, bool $useCache = true, int $type = 1): bool { self::$inserted[] = ['table' => $table, 'data' => $data]; return true; }
+        /** @var list<array{sql: string, use_cache: bool}> getRow() calls on the configuration table */
+        public static array $configurationReads = [];
+        /** A configuration row comes from Configuration::$db, never from the static cache. */
+        public function getRow(string $sql, bool $useCache = true): array|false
+        {
+            if (preg_match("/FROM `?" . _DB_PREFIX_ . "configuration`? .*`?name`? = '([^']+)'/s", $sql, $matches)) {
+                self::$configurationReads[] = ['sql' => $sql, 'use_cache' => $useCache];
+                $key = stripslashes($matches[1]);
+                return array_key_exists($key, Configuration::$db)
+                    ? ['id_configuration' => (string) Configuration::idOf($key), 'value' => Configuration::$db[$key]]
+                    : false;
+            }
+            return false;
+        }
+        /** An update by id_configuration changes the table row only, like a real UPDATE. */
+        public function update(string $table, array $data, string $where = '', int $limit = 0, bool $nullValues = false, bool $useCache = true, bool $addPrefix = true): bool
+        {
+            if ($table === 'configuration' && preg_match('/`?id_configuration`? = (\d+)/', $where, $matches)) {
+                foreach (array_keys(Configuration::$db) as $key) {
+                    if (Configuration::idOf((string) $key) === (int) $matches[1]) {
+                        Configuration::$db[$key] = $data['value'];
+                    }
+                }
+            }
+            return true;
+        }
     }
 }
 
 if (!class_exists('Shop', false)) {
-    class Shop { public int $id; public function __construct(int $id = 0) { $this->id = $id; } }
+    class Shop
+    {
+        public int $id;
+        public function __construct(int $id = 0) { $this->id = $id; }
+        /** Native: null without multistore when asked for the null value. */
+        public static function getContextShopID(bool $nullValueWithoutMultishop = false): ?int { return null; }
+        public static function getContextShopGroupID(bool $nullValueWithoutMultishop = false): ?int { return null; }
+    }
 }
 if (!class_exists('Customer', false)) {
     class Customer
@@ -392,6 +439,60 @@ if (!class_exists('Language', false)) {
     class Language { public static function getIdByIso(string $iso): int|false { return $iso === 'es' ? 1 : false; } }
 }
 
+if (!class_exists('WebserviceKey', false)) {
+    /** Webservice keys by id: key value, active flag and description. */
+    class WebserviceKey
+    {
+        /** @var array<int, array{key: string, active: bool, description: string}> */
+        public static array $keys = [];
+        public int $id = 0;
+        public string $key = '';
+        public bool $active = true;
+        public string $description = '';
+        public bool $loaded = false;
+        public function __construct(int $id = 0)
+        {
+            if ($id > 0 && isset(self::$keys[$id])) {
+                $this->id = $id;
+                $this->key = self::$keys[$id]['key'];
+                $this->active = self::$keys[$id]['active'];
+                $this->description = self::$keys[$id]['description'];
+                $this->loaded = true;
+            }
+        }
+        public static function keyExists(string $key): bool
+        {
+            foreach (self::$keys as $row) { if ($row['key'] === $key) { return true; } }
+            return false;
+        }
+        public function add(): bool
+        {
+            if (self::keyExists($this->key)) { return false; }
+            $this->id = (self::$keys === [] ? 100 : max(array_keys(self::$keys))) + 1;
+            self::$keys[$this->id] = ['key' => $this->key, 'active' => (bool) $this->active, 'description' => $this->description];
+            $this->loaded = true;
+            return true;
+        }
+        public function update(): bool
+        {
+            self::$keys[$this->id] = ['key' => $this->key, 'active' => (bool) $this->active, 'description' => $this->description];
+            return true;
+        }
+    }
+}
+if (!class_exists('PrestaShopLogger', false)) {
+    class PrestaShopLogger
+    {
+        /** @var list<array{message: string, severity: int}> */
+        public static array $logs = [];
+        public static function addLog($message, $severity = 1, $errorCode = null, $objectType = null, $objectId = null, $allowDuplicate = false, $idEmployee = null): bool
+        {
+            self::$logs[] = ['message' => (string) $message, 'severity' => (int) $severity];
+            return true;
+        }
+    }
+}
+
 require_once __DIR__ . '/../classes/SsoToken.php';
 require_once __DIR__ . '/../install/install.php';
 require_once __DIR__ . '/../classes/CouponCheckout.php';
@@ -407,7 +508,7 @@ if (is_file(__DIR__ . '/../classes/RestockProcessor.php')) {
 if (is_file(__DIR__ . '/../classes/ReferencedOrderCreator.php')) {
     require_once __DIR__ . '/../classes/ReferencedOrderCreator.php';
 }
-foreach (['FreeItemOrderLines', 'FreeItemProductSetup', 'LeftoverVoucher'] as $class) {
+foreach (['FreeItemOrderLines', 'FreeItemProductSetup', 'LeftoverVoucher', 'TpvPairing'] as $class) {
     if (is_file(__DIR__ . '/../classes/' . $class . '.php')) {
         require_once __DIR__ . '/../classes/' . $class . '.php';
     }

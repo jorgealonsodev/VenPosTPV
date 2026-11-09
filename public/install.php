@@ -74,6 +74,8 @@ function page(string $title, string $body): never
         . 'th{background:var(--sunken);font-weight:600;color:var(--muted);font-size:13px}tr:last-child td{border-bottom:0}td code{overflow-wrap:anywhere}'
         . 'code,pre{font-family:"IBM Plex Mono",ui-monospace,monospace;background:var(--sunken);border:1px solid var(--border);border-radius:5px;padding:1px 5px;font-size:13px}'
         . 'pre{padding:10px;overflow-x:auto;white-space:pre-wrap;word-break:break-all}'
+        . '.mode{position:absolute;opacity:0;pointer-events:none;width:1px;height:1px;min-height:0}.ps-manual{display:none}#ps-mode-manual:checked~.ps-manual{display:block}#ps-mode-manual:checked~.ps-pair{display:none}'
+        . 'label.link{display:inline;margin:0;color:var(--brand-text);text-decoration:underline;text-underline-offset:3px;cursor:pointer;font-weight:600}'
         . '@media (max-width:600px){body{padding:20px 12px 40px}main{padding:22px 18px 26px;border-radius:12px}h1{font-size:21px}.row{flex-direction:column;gap:0}.row>.narrow{flex:auto}button{width:100%}}'
         . '@media (prefers-reduced-motion:reduce){*{transition:none!important}}'
         . '</style></head><body><header class="brand">' . venpostpv_installer_logo(__DIR__) . '</header>'
@@ -135,14 +137,17 @@ $defaults = [
     'ps_currency' => '1',
     'ps_shop' => '1',
     'timezone' => 'Europe/Madrid',
+    'ps_mode' => 'pair',
 ];
 $form = $defaults;
 $errors = [];
 
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
-    foreach (['tpv_url', 'db_host', 'db_port', 'db_name', 'db_user', 'admin_user', 'store_name', 'store_address', 'ps_url', 'ps_api_key', 'sso_secret', 'ps_currency', 'ps_shop', 'timezone'] as $k) {
+    foreach (['tpv_url', 'db_host', 'db_port', 'db_name', 'db_user', 'admin_user', 'store_name', 'store_address', 'ps_url', 'ps_api_key', 'sso_secret', 'ps_currency', 'ps_shop', 'timezone', 'pair_code'] as $k) {
         $form[$k] = (string) ($_POST[$k] ?? '');
     }
+    $form['ps_mode'] = ($_POST['ps_mode'] ?? '') === 'manual' ? 'manual' : 'pair';
+    $_POST['ps_mode'] = $form['ps_mode'];
 
     if (!$installer->checkInstallKey((string) ($_POST['install_key'] ?? ''))) {
         usleep(500000);
@@ -156,6 +161,10 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             try {
                 $conn = $installer->connect($result['values']);
                 $installer->assertDatabaseUsable($conn);
+                // After the database checks, so a typo there never spends the code.
+                if ($result['pairing'] !== null) {
+                    $result['values'] = $installer->pair($result['values'], $result['pairing'], new \VenPosTPV\Service\PrestaShop\PairingClient(\Symfony\Component\HttpClient\HttpClient::create()));
+                }
                 $executed = $installer->migrate($conn);
                 $installer->finish($result['values']);
             } catch (\Doctrine\DBAL\Exception\ConnectionException $e) {
@@ -195,8 +204,10 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                     . $task('Diariamente 04:00', 'tpv:backup:database --env=prod')
                     . '</table></div><p>En la tarea del catálogo completo ejecútala también una vez a mano para cargar los productos. La última guarda cada día una copia de la base de datos en <code>backups/</code> (las 7 más recientes); descarga de vez en cuando una copia y el archivo <code>.env</code> fuera del servidor.</p>'
                     . '<h2>2. PHP del subdominio</h2><p><code>max_execution_time</code> = 35 como mínimo y <code>pm.max_children</code> ≥ número de cajas + 6.</p>'
-                    . '<h2>3. PrestaShop</h2><p>En el módulo <strong>TPV Connect</strong>, pon como URL del TPV <code>' . h($tpvUrl) . '</code>'
-                    . ($result['values']['SSO_SHARED_SECRET'] === '' ? ' y copia su secreto SSO en <code>SSO_SHARED_SECRET</code> del archivo <code>.env</code>.' : '.') . '</p>'
+                    . '<h2>3. PrestaShop</h2>'
+                    . ($result['pairing'] !== null
+                        ? '<p>El TPV y la tienda <code>' . h($result['values']['PS_SHOP_URL']) . '</code> ya están emparejados: el módulo <strong>TPV Connect</strong> tiene la dirección del TPV y el TPV, las claves de la tienda. No hay que copiar nada.</p>'
+                        : '<p>Para unir el módulo <strong>TPV Connect</strong> con el TPV sin copiar nada: en el módulo pulsa <strong>Emparejar con un TPV</strong> y escribe el código en el TPV, en <strong>Ajustes → Acerca de → Volver a emparejar con la tienda</strong>.</p>')
                     . '<h2>4. Entrar</h2><p><a href="' . h($tpvUrl) . '/app/login">' . h($tpvUrl) . '/app/login</a> con el usuario administrador que acabas de crear.</p>');
             }
         }
@@ -204,6 +215,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
 }
 
 $v = static fn (string $k): string => h((string) ($form[$k] ?? ''));
+$mode = $form['ps_mode'] === 'manual' ? 'manual' : 'pair';
 $errHtml = $errors === [] ? '' : '<div class="err"><strong>Revisa esto:</strong><ul><li>' . implode('</li><li>', array_map('h', $errors)) . '</li></ul></div>';
 
 page('Instalación del TPV', $errHtml . '<form method="post" autocomplete="off">'
@@ -221,12 +233,25 @@ page('Instalación del TPV', $errHtml . '<form method="post" autocomplete="off">
     . '<div class="row"><div><label>Usuario administrador</label><input name="admin_user" value="' . $v('admin_user') . '" required></div>'
     . '<div><label>Contraseña <small>(mín. 12)</small></label><input type="password" name="admin_password" minlength="12" required></div></div>'
     . '<label>Nombre de la tienda <small>(sale en los tickets)</small></label><input name="store_name" value="' . $v('store_name') . '" required>'
-    . '<label>Dirección de la tienda</label><input name="store_address" value="' . $v('store_address') . '">'
+    . '<label>Dirección postal <small>(sale en los tickets)</small></label><input name="store_address" value="' . $v('store_address') . '">'
     . '<h2>PrestaShop</h2>'
-    . '<label>Dirección de la tienda online</label><input name="ps_url" value="' . $v('ps_url') . '" placeholder="https://tutienda.com" required>'
-    . '<label>Clave del webservice <small>— módulo TPV Connect → «Generar clave»</small></label><input name="ps_api_key" value="' . $v('ps_api_key') . '" required>'
-    . '<label>Secreto SSO <small>— módulo TPV Connect (opcional, puedes ponerlo luego en .env)</small></label><input name="sso_secret" value="' . $v('sso_secret') . '">'
+    // Two modes without JavaScript (the page's CSP allows none): the radios switch
+    // which block is shown; the hidden block's fields are not required.
+    . '<input type="radio" name="ps_mode" value="pair" id="ps-mode-pair" class="mode"' . ($mode === 'pair' ? ' checked' : '') . '>'
+    . '<input type="radio" name="ps_mode" value="manual" id="ps-mode-manual" class="mode"' . ($mode === 'manual' ? ' checked' : '') . '>'
+    . '<label for="ps_url">Dirección de la tienda <small>— la de tu PrestaShop, la que sale en el módulo TPV Connect</small></label><input id="ps_url" name="ps_url" value="' . $v('ps_url') . '" placeholder="https://tutienda.com" required>'
+    . '<div class="ps-pair">'
+    . '<label for="pair_code">Código de emparejamiento <small>— en PrestaShop, módulo TPV Connect → «Emparejar con un TPV» (vale 10 minutos)</small></label>'
+    . '<input id="pair_code" name="pair_code" value="' . $v('pair_code') . '" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="123456">'
+    . '<p><small>El TPV pide a la tienda sus claves con este código y le da la dirección del TPV. No hay que copiar nada más.</small></p>'
+    . '<p><label for="ps-mode-manual" class="link">Introducir las claves a mano</label></p>'
+    . '</div>'
+    . '<div class="ps-manual">'
+    . '<label for="ps_api_key">Clave del webservice <small>— módulo TPV Connect → «Generar clave API»</small></label><input id="ps_api_key" name="ps_api_key" value="' . $v('ps_api_key') . '">'
+    . '<label for="sso_secret">Secreto SSO <small>— módulo TPV Connect (opcional, puedes ponerlo luego en .env)</small></label><input id="sso_secret" name="sso_secret" value="' . $v('sso_secret') . '">'
     . '<div class="row"><div><label>ID de moneda</label><input name="ps_currency" value="' . $v('ps_currency') . '"></div>'
     . '<div><label>ID de tienda</label><input name="ps_shop" value="' . $v('ps_shop') . '"></div>'
     . '<div><label>Zona horaria</label><input name="timezone" value="' . $v('timezone') . '"></div></div>'
+    . '<p><label for="ps-mode-pair" class="link">Emparejar con un código</label></p>'
+    . '</div>'
     . '<button type="submit">Instalar</button></form>');

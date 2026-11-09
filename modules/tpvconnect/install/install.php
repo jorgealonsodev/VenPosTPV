@@ -358,6 +358,10 @@ class TpvConnectInstaller
             'TPV_OS_REFUND_PENDING',
             'TPVCONNECT_WS_KEY_ID',
             'TPVCONNECT_ANONYMOUS_CUSTOMER_ID',
+            // Pairing code (TpvPairing): its hash, expiry and attempt counter.
+            'TPVCONNECT_PAIR_CODE',
+            'TPVCONNECT_PAIR_EXPIRES',
+            'TPVCONNECT_PAIR_ATTEMPTS',
         ];
 
         foreach ($keys as $key) {

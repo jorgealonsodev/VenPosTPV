@@ -4,9 +4,9 @@ Una instalación completa son tres piezas, en este orden: el **módulo de Presta
 
 ## Camino rápido
 
-1. **Módulo**: en PrestaShop, sube `tpvconnect.zip` e instálalo. Genera la clave del webservice y copia el secreto SSO.
+1. **Módulo**: en PrestaShop, sube `tpvconnect.zip` e instálalo. En su configuración pulsa **Emparejar con un TPV**: sale un código de 6 cifras.
 2. **TPV**: crea un subdominio con SSL y una base de datos vacía. Sube `venpostpv-hosting.zip` al subdominio, extráelo y abre `https://tu-subdominio/install.php`.
-3. **Unir los dos**: en el módulo, pon la dirección del TPV.
+3. **Unir los dos**: en el instalador, escribe la dirección de la tienda y el código. El TPV y la tienda se intercambian solos las claves y las direcciones.
 4. **Cajas**: en cada ordenador de caja, instala el agente (`VenPosAgent-<versión>-setup.exe` en Windows, el `.deb` en Linux) y emparéjalo con el código de **Ajustes → Cajas**.
 5. **Prueba**: haz una venta. Debe salir el ticket y abrirse el cajón.
 
@@ -27,10 +27,9 @@ Una instalación completa son tres piezas, en este orden: el **módulo de Presta
 
 1. En el panel de PrestaShop: **Módulos → Gestor de módulos → Subir un módulo**, y elige `tpvconnect.zip`. Si ya estaba instalado, la subida lo actualiza.
 2. Abre **Configurar** en **TPV Connect**.
-3. Pulsa **Generar clave** para crear la clave del webservice y cópiala.
-4. Copia también el **secreto SSO**.
+3. Pulsa **Emparejar con un TPV**. Sale un código de 6 cifras y la dirección de la tienda: los escribirás en el instalador del TPV. El código vale 10 minutos y una sola vez; si caduca, pulsa otra vez el botón.
 
-Guarda las dos: el instalador del TPV las pide.
+No hay que copiar claves. Si no puedes emparejar, el instalador tiene el enlace **Introducir las claves a mano** y el módulo, el apartado **Configuración manual** («Generar clave API» y el secreto SSO).
 
 ## 2. TPV en el hosting
 
@@ -41,11 +40,11 @@ Necesitas:
 - una base de datos MySQL **vacía**, solo para el TPV;
 - poder crear tareas programadas (cron).
 
-Sube el zip, ejecuta el instalador web y crea las cuatro tareas programadas que te muestra al terminar. Los pasos completos están en [Instalar en un hosting](despliegue-hosting.md).
+Sube el zip, ejecuta el instalador web (con la dirección de la tienda y el código del módulo) y crea las tareas programadas que te muestra al terminar. Los pasos completos están en [Instalar en un hosting](despliegue-hosting.md).
 
 ## 3. Unir PrestaShop y el TPV
 
-En **TPV Connect**, pon como URL del TPV la del subdominio (`https://tpv.tutienda.com`). Si no pusiste el secreto SSO en el instalador, cópialo en `SSO_SHARED_SECRET` del archivo `.env` del TPV.
+Con el código, el instalador ya los ha unido: el módulo tiene la dirección del TPV y el TPV, las claves de la tienda. Para unirlos más tarde (otra tienda, claves nuevas o una instalación con las claves a mano): pulsa **Emparejar con un TPV** en el módulo y escribe el código en el TPV, en **Ajustes → Acerca de → Volver a emparejar con la tienda**. Detalles y mensajes de error: [Emparejar el TPV con la tienda](despliegue-hosting.md#emparejar-el-tpv-con-la-tienda).
 
 ## 4. Agente de impresión en cada caja
 

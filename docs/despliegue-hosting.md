@@ -9,7 +9,7 @@ El paquete `venpostpv-hosting.zip` lleva el TPV con sus dependencias y un instal
 - Un subdominio (por ejemplo `tpv.tutienda.com`) con certificado SSL (la mayoría de los paneles lo emiten gratis con Let's Encrypt).
 - **PHP 8.4 o superior** en el subdominio, con `pdo_mysql`.
 - Una **base de datos MySQL vacía** solo para el TPV (en el apartado de bases de datos del panel). No uses la de PrestaShop: el instalador se niega a usar una base de datos con tablas que no son del TPV.
-- En PrestaShop, el módulo **TPV Connect** instalado o actualizado con `tpvconnect.zip`. De él salen la clave del webservice («Generar clave») y el secreto SSO.
+- En PrestaShop, el módulo **TPV Connect 0.8.0 o superior**, instalado o actualizado con `tpvconnect.zip`. No hay que copiar ninguna clave: el instalador del TPV se empareja con el módulo con un código (ver [Emparejar el TPV con la tienda](#emparejar-el-tpv-con-la-tienda)).
 
 ## Pasos
 
@@ -17,12 +17,35 @@ El paquete `venpostpv-hosting.zip` lleva el TPV con sus dependencias y un instal
 2. (Opcional) Si prefieres, la raíz del documento también puede ser la carpeta `public` del paquete.
 3. **Configuración de PHP** del subdominio en el panel: versión 8.4 o superior, `max_execution_time` = 35 como mínimo y `pm.max_children` ≥ número de cajas + 6.
 4. Abre `https://tu-subdominio/install.php`. La primera visita crea el archivo `INSTALL_KEY` en la carpeta del subdominio. Ábrelo en el administrador de archivos y copia la clave en el formulario.
-5. Rellena la base de datos, el usuario administrador, la tienda y PrestaShop. Pulsa **Instalar**: el instalador prueba la conexión, crea las tablas, escribe `.env`, prepara el resto de la instalación (por ejemplo, los productos genéricos del artículo libre en PrestaShop), se bloquea y borra `install.php`. La página final muestra en «Estado de la instalación» qué pasos están hechos y cuáles siguen pendientes y por qué. Es normal que los de PrestaShop queden pendientes hasta configurar el módulo TPV Connect (paso 7): la tarea `tpv:sync:outbox` de cada minuto los completa sola en cuanto la tienda responde (ver [Actualizar el TPV](#actualizar-el-tpv)).
+5. Rellena la base de datos, el usuario administrador y la tienda. En **PrestaShop** escribe la **Dirección de la tienda** (`https://tutienda.com`) y el **Código de emparejamiento**: en el panel de PrestaShop, **Módulos → Gestor de módulos → TPV Connect → Configurar → Emparejar con un TPV**. El código tiene 6 cifras, vale 10 minutos y una sola vez. Pulsa **Instalar**: el instalador prueba la base de datos, se empareja con la tienda (le da la dirección del TPV y recibe sus claves), crea las tablas, escribe `.env`, prepara el resto de la instalación (por ejemplo, los productos genéricos del artículo libre en PrestaShop), se bloquea y borra `install.php`. La página final muestra en «Estado de la instalación» qué pasos están hechos y cuáles siguen pendientes y por qué. Un paso pendiente lo completa sola la tarea `tpv:sync:outbox` de cada minuto en cuanto la tienda responde (ver [Actualizar el TPV](#actualizar-el-tpv)).
 6. Crea las tareas programadas que muestra la página final (en Plesk, paso a paso: `docs/despliegue-plesk.md`) en el apartado de tareas programadas (cron) del panel. Si el panel ofrece ejecutar un script PHP, usa la ruta `bin/console` del TPV, la versión de PHP del subdominio y la orden como argumentos; si solo admite un comando, usa la línea completa que muestra la página (`php <ruta>/bin/console <orden> --env=prod`; en algunos paneles el binario se llama `php8.4` o tiene una ruta propia):
    - cada minuto: `tpv:sync:outbox` (sube las ventas a PrestaShop, limpia el historial de impresión y completa los pasos pendientes de la instalación o de una actualización) y `tpv:catalog:sync --stock-only`;
    - cada noche: `tpv:catalog:sync --full` y `tpv:customers:sync`. Ejecuta el catálogo completo una vez al terminar (o ejecútalo a mano desde el panel).
-7. En el módulo TPV Connect, pon como URL del TPV la del subdominio. Si no pusiste el secreto SSO en el instalador, cópialo en `SSO_SHARED_SECRET` del `.env`.
+7. Si emparejaste en el paso 5, no hay nada que hacer en el módulo: ya tiene la dirección del TPV. Si usaste «Introducir las claves a mano», empareja ahora desde el TPV: **Ajustes → Acerca de → Volver a emparejar con la tienda** con un código nuevo del módulo.
 8. Entra en el TPV, empareja el agente de impresión de cada caja (**Ajustes → Cajas**, ver `docs/print-agent.md`) y haz una venta de prueba.
+
+## Emparejar el TPV con la tienda
+
+El módulo TPV Connect y el TPV se intercambian solos las claves y las direcciones con un código de un solo uso:
+
+1. En PrestaShop, **TPV Connect → Configurar → Emparejar con un TPV**. El módulo muestra un código de 6 cifras y la dirección de la tienda. Vale 10 minutos y una sola vez; pulsar otra vez el botón anula el anterior. Con 5 códigos equivocados se anula también.
+2. En el instalador del TPV (o, con el TPV ya instalado, en **Ajustes → Acerca de → Volver a emparejar con la tienda**), escribe la dirección de la tienda y el código.
+
+El TPV llama a `POST /module/tpvconnect/pair` de la tienda (solo por `https://`, salvo `localhost`). El módulo activa el webservice si estaba apagado, usa la clave del webservice del TPV si ya existe (no cambia su valor; le añade los permisos que le falten) o crea una, crea el secreto SSO solo si no había ninguno (nunca lo cambia), guarda la dirección del TPV y responde la clave, el secreto, el id de la tienda, la moneda y la zona horaria. El TPV los guarda en `.env` (`PS_SHOP_URL`, `PS_API_KEY`, `SSO_SHARED_SECRET`, `PS_DEFAULT_SHOP`, `PS_DEFAULT_CURRENCY`, `PS_SHOP_TIMEZONE`). El registro de PrestaShop (**Parámetros avanzados → Registros**) anota cada código generado y cada emparejamiento, sin el código ni las claves.
+
+Si algo falla, el instalador lo dice y no escribe nada:
+
+| Mensaje | Qué hacer |
+|---|---|
+| «El código de emparejamiento no es correcto o ha caducado» | Pulsa otra vez «Emparejar con un TPV» y escribe el código nuevo antes de 10 minutos. |
+| «No se pudo conectar con la tienda» | Revisa la dirección de la tienda (con `https://`) y que la tienda esté en línea. |
+| «La tienda no tiene el módulo TPV Connect 0.8.0 o superior» | Sube `tpvconnect.zip` en **Módulos → Gestor de módulos → Subir un módulo** (actualiza el que hay) y vuelve a intentarlo. |
+| «La tienda redirige a …» | Escribe la dirección que dice el mensaje (por ejemplo, con `www`). |
+| «La tienda está ocupada o ha recibido demasiados intentos» | Espera un minuto. |
+
+**Volver a emparejar** (Ajustes → Acerca de, solo administradores) sirve para cambiar de tienda o cuando el TPV deja de conectar con ella. Reescribe en `.env` solo esas seis claves, de golpe (archivo temporal y cambio de nombre), y deja el anterior al lado como `.env.bak-<fecha>-<hora>` (permisos 0600; bórralo cuando compruebes que todo va bien). No muestra ninguna clave en el navegador. Se niega si alguna de esas claves está en `.env.local`, en `.env.local.php` o en una variable de entorno del servidor, porque el cambio no se aplicaría.
+
+Sin emparejar, el enlace **Introducir las claves a mano** del instalador pide la clave del webservice («Generar clave API» en el módulo, apartado «Configuración manual»), el secreto SSO, los ids de moneda y tienda y la zona horaria, como antes.
 
 ## Qué escribe el instalador
 
