@@ -203,6 +203,12 @@ class EscPosTicketBuilder
             if ($ticketData->changeDue > 0) {
                 $printer->text('Cambio: ' . number_format($ticketData->changeDue, 2) . " €\n");
             }
+            if ($ticketData->leftoverVoucher !== null) {
+                // The code page has no long dash: «-» instead of «—».
+                $printer->setEmphasis(true);
+                $printer->text($this->sanitize('Saldo pendiente del vale: ' . $ticketData->leftoverVoucher['code']) . ' - ' . number_format($ticketData->leftoverVoucher['amount'], 2) . " €\n");
+                $printer->setEmphasis(false);
+            }
 
             $printer->text("\n");
         }

@@ -42,6 +42,16 @@ const PaymentModal = {
         // PRD V5: PrestaShop did not answer for the coupon; nothing was booked and the
         // same cart can be charged without it ("Cobrar sin cupón").
         const couponOffline = Vue.ref(false);
+        // A voucher worth more than the sale leaves a new one with the rest (issued
+        // coupon): its slip is printed, opened as PDF, sent by email or WhatsApp.
+        const leftoverVoucher = Vue.ref(null);
+        const leftoverPrintable = Vue.computed(() => !!(leftoverVoucher.value && Number.isInteger(leftoverVoucher.value.id) && leftoverVoucher.value.id > 0));
+        const leftoverEmailEnabled = Vue.ref(false);
+        const leftoverEmailOpen = Vue.ref(false);
+        const leftoverEmail = Vue.ref('');
+        const leftoverWhatsappOpen = Vue.ref(false);
+        const leftoverBusy = Vue.ref(false);
+        const leftoverStatus = Vue.ref('');
         const completedTotal = Vue.ref(null);
         const completedChange = Vue.ref(null);
         const isSubmitting = Vue.ref(false);
@@ -297,6 +307,13 @@ const PaymentModal = {
                     ticketPhone.value = String((useCart.cart.customer && useCart.cart.customer.phone) || '');
                     whatsappOpen.value = false;
                     emailStatus.value = '';
+                    const leftover = response.data.leftover_voucher;
+                    leftoverVoucher.value = leftover && typeof leftover.code === 'string' && leftover.code !== '' ? leftover : null;
+                    leftoverEmail.value = ticketEmail.value;
+                    leftoverEmailOpen.value = false;
+                    leftoverWhatsappOpen.value = false;
+                    leftoverStatus.value = '';
+                    leftoverEmailEnabled.value = leftoverPrintable.value && await ticketEmailEnabled();
                     completedTotal.value = Object.prototype.hasOwnProperty.call(response.data, 'total')
                         ? Number(response.data.total)
                         : null;
@@ -314,7 +331,8 @@ const PaymentModal = {
                         });
                         followsDrawer = !!response.data.drawer_job_id;
                         step.value = 'done';
-                        closeWhenPrinted();
+                        // The voucher rest stays on screen until «Nueva venta».
+                        if (!leftoverVoucher.value) closeWhenPrinted();
                         return;
                     }
                     if (pt === 'escpos' || pt === 'system') {
@@ -335,6 +353,11 @@ const PaymentModal = {
                     if (pt === 'pdf' || pt === 'none') {
                         completedSale = doneSale;
                         emailEnabled.value = !!lastSaleId.value && await ticketEmailEnabled();
+                        return;
+                    }
+                    // A voucher rest waits for the cashier («Terminar») to hand its slip over.
+                    if (leftoverVoucher.value) {
+                        completedSale = doneSale;
                         return;
                     }
                     setTimeout(() => {
@@ -399,6 +422,52 @@ const PaymentModal = {
             } finally {
                 emailSending.value = false;
             }
+        }
+
+        async function leftoverAction(action) {
+            if (!leftoverPrintable.value || leftoverBusy.value) return;
+            leftoverBusy.value = true;
+            leftoverStatus.value = '';
+            try {
+                leftoverStatus.value = await action();
+            } catch (e) {
+                const match = /^HTTP \d+: ([\s\S]*)$/.exec((e && e.message) || '');
+                let text = 'No se pudo completar la acción';
+                if (match) { try { text = JSON.parse(match[1]).error || text; } catch (err) { /* keep default */ } }
+                leftoverStatus.value = text;
+            } finally {
+                leftoverBusy.value = false;
+            }
+        }
+
+        function printLeftover() {
+            return leftoverAction(async () => {
+                const id = leftoverVoucher.value.id;
+                const response = await ApiClient.couponPrint(id);
+                const data = (response && response.data) || {};
+                if (data.fallback === 'pdf') {
+                    ApiClient.couponPdf(id);
+                    return 'Esta caja no tiene impresora: se abre el PDF.';
+                }
+                return data.print_status === 'queued' ? 'Vale enviado a la impresora de la caja.' : 'Vale impreso.';
+            });
+        }
+
+        function openLeftoverPdf() {
+            if (leftoverPrintable.value) ApiClient.couponPdf(leftoverVoucher.value.id);
+        }
+
+        function sendLeftoverEmail() {
+            const address = String(leftoverEmail.value || '').trim();
+            if (!address) {
+                leftoverStatus.value = 'Introduce el email del cliente.';
+                return Promise.resolve();
+            }
+            return leftoverAction(async () => {
+                await ApiClient.couponEmail(leftoverVoucher.value.id, address);
+                leftoverEmailOpen.value = false;
+                return 'Vale enviado a ' + address;
+            });
         }
 
         function downloadTicket() {
@@ -486,7 +555,7 @@ const PaymentModal = {
             cashInput.value = props.total.toFixed(2).replace('.', ',');
         }
 
-        return { method, cashInput, card1, card2, step, errorMsg, errorRetry, lastOrderId, lastSaleId, methods, cashParsed, change, cardParsed, card2Parsed, dataphoneMode, printerType, voucherCode, voucherPreview, voucherBusy, voucherError, voucherTender, voucherCashInput, voucherPayable, voucherDiscount, voucherGross, voucherCashParsed, voucherChange, voucherReconciliationRequired, couponOffline, chargeWithoutCoupon, completedTotal, completedChange, doneTotal, doneChange, isSubmitting, canConfirm, handleConfirm, retryCheckout, returnToSelection, appendNum, exacto, downloadTicket, emailEnabled, ticketEmail, ticketPhone, whatsappOpen, emailStatus, emailSending, sendTicketEmail, applyVoucher, invalidateVoucher, hasFreeItem, freeItemCouponMessage: FREE_ITEM_COUPON_MESSAGE, keypadKeys, quickAmounts, eur, drawerWarning, finish, onBackdrop };
+        return { method, cashInput, card1, card2, step, errorMsg, errorRetry, lastOrderId, lastSaleId, methods, cashParsed, change, cardParsed, card2Parsed, dataphoneMode, printerType, voucherCode, voucherPreview, voucherBusy, voucherError, voucherTender, voucherCashInput, voucherPayable, voucherDiscount, voucherGross, voucherCashParsed, voucherChange, voucherReconciliationRequired, couponOffline, chargeWithoutCoupon, completedTotal, completedChange, doneTotal, doneChange, isSubmitting, canConfirm, handleConfirm, retryCheckout, returnToSelection, appendNum, exacto, downloadTicket, emailEnabled, ticketEmail, ticketPhone, whatsappOpen, emailStatus, emailSending, sendTicketEmail, applyVoucher, invalidateVoucher, hasFreeItem, freeItemCouponMessage: FREE_ITEM_COUPON_MESSAGE, keypadKeys, quickAmounts, eur, drawerWarning, finish, onBackdrop, leftoverVoucher, leftoverPrintable, leftoverEmailEnabled, leftoverEmailOpen, leftoverEmail, leftoverWhatsappOpen, leftoverBusy, leftoverStatus, printLeftover, openLeftoverPdf, sendLeftoverEmail };
     },
     template: `
         <div class="modal-backdrop" @click.self="onBackdrop">
@@ -501,6 +570,23 @@ const PaymentModal = {
                     Cambio: <span class="pay-num" style="color:var(--amber); font-weight:700;">{{ eur(doneChange) }}</span>
                 </div>
                 <div v-if="drawerWarning" class="print-drawer-warning" role="alert">{{ drawerWarning }}</div>
+                <!-- The rest of a voucher worth more than the sale: a new voucher to hand over -->
+                <div v-if="leftoverVoucher" class="pay-leftover-voucher">
+                    <div class="pay-leftover-voucher-line">Saldo pendiente del vale: {{ leftoverVoucher.code }} — {{ eur(leftoverVoucher.amount) }}</div>
+                    <div v-if="leftoverPrintable" class="pay-leftover-voucher-actions">
+                        <button @click="printLeftover" :disabled="leftoverBusy" class="tpv-btn">Imprimir vale</button>
+                        <button @click="openLeftoverPdf" :disabled="leftoverBusy" class="tpv-btn">PDF</button>
+                        <button v-if="leftoverEmailEnabled" @click="leftoverEmailOpen = !leftoverEmailOpen" :disabled="leftoverBusy" class="tpv-btn" :aria-expanded="leftoverEmailOpen ? 'true' : 'false'">Email</button>
+                        <button @click="leftoverWhatsappOpen = !leftoverWhatsappOpen" :disabled="leftoverBusy" class="tpv-btn" :aria-expanded="leftoverWhatsappOpen ? 'true' : 'false'">WhatsApp</button>
+                    </div>
+                    <div v-if="leftoverPrintable && leftoverEmailEnabled && leftoverEmailOpen" class="pay-leftover-voucher-email">
+                        <input v-model="leftoverEmail" type="email" placeholder="email del cliente" aria-label="Email del cliente para el vale" @keydown.enter.prevent="sendLeftoverEmail">
+                        <button @click="sendLeftoverEmail" :disabled="leftoverBusy || !leftoverEmail" class="tpv-btn">{{ leftoverBusy ? 'Enviando…' : 'Enviar' }}</button>
+                    </div>
+                    <whatsapp-share v-if="leftoverWhatsappOpen" kind="coupon" :doc-id="leftoverVoucher.id" :initial-phone="ticketPhone" />
+                    <div v-if="leftoverStatus" class="pay-leftover-voucher-status">{{ leftoverStatus }}</div>
+                    <div v-if="!leftoverPrintable" class="pay-leftover-voucher-status">Anota el código: este TPV no ha podido guardar el vale para imprimirlo.</div>
+                </div>
                 <template v-if="printerType === 'agent'">
                     <print-status-notice placement="payment" />
                     <button @click="finish" class="tpv-btn tpv-btn-primary print-btn-lg" style="margin-top:4px;">Nueva venta</button>
@@ -508,6 +594,7 @@ const PaymentModal = {
                 <div v-else-if="printerType === 'escpos' || printerType === 'system'" style="color:var(--text3); font-size:13px;">
                     Ticket enviado a impresora
                 </div>
+                <button v-if="leftoverVoucher && printerType !== 'pdf' && printerType !== 'none' && printerType !== 'agent'" @click="finish" class="tpv-btn tpv-btn-primary" style="margin-top:4px;">Terminar</button>
                 <!-- No printer: the cashier chooses how the customer gets the ticket -->
                 <div v-if="printerType === 'pdf' || printerType === 'none'"
                     style="display:flex; flex-direction:column; gap:6px; margin-top:6px; width:100%; max-width:340px;">

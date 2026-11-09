@@ -14,6 +14,7 @@ require_once _PS_MODULE_DIR_ . 'tpvconnect/classes/SsoToken.php';
 require_once _PS_MODULE_DIR_ . 'tpvconnect/classes/CouponCheckout.php';
 require_once _PS_MODULE_DIR_ . 'tpvconnect/classes/ReferencedOrderCreator.php';
 require_once _PS_MODULE_DIR_ . 'tpvconnect/classes/FreeItemOrderLines.php';
+require_once _PS_MODULE_DIR_ . 'tpvconnect/classes/LeftoverVoucher.php';
 
 /**
  * Front controller for order creation endpoint.
@@ -72,6 +73,11 @@ class TpvconnectOrdersModuleFrontController extends ModuleFrontController
             // idempotency key: a retry replays the existing order (200).
             $creator = new ReferencedOrderCreator(new PsReferencedOrderGateway());
             $result = $creator->create($data, fn (): array => $this->createOrder($data, $secret));
+            if (array_key_exists('coupon', $data)) {
+                // The rest of a voucher worth more than the sale, made usable by
+                // anyone; the same one again on a replayed request.
+                $result = (new LeftoverVoucher(new PsLeftoverVoucherGateway()))->attachTo($result);
+            }
             $this->jsonResponse($result, ($result['replayed'] ?? false) === true ? 200 : 201);
         } catch (ReferencedOrderException $e) {
             $this->jsonResponse(['error' => $e->getMessage(), 'details' => $e->getDetails()], $e->getHttpCode());

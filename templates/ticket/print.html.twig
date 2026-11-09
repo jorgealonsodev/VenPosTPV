@@ -124,6 +124,7 @@
         {% if ticket.paymentMethod != 'exchange' %}<div>Entrega: {{ ticket.amountTendered|number_format(2, ',', '.') }} €</div>
         {% endif %}{% if ticket.changeDue > 0 %}
             <div>Cambio: {{ ticket.changeDue|number_format(2, ',', '.') }} €</div>
+        {% endif %}{% if ticket.leftoverVoucher %}<div class="bold">Saldo pendiente del vale: {{ ticket.leftoverVoucher.code }} — {{ ticket.leftoverVoucher.amount|number_format(2, ',', '.') }} €</div>
         {% endif %}
     {% endif %}
 

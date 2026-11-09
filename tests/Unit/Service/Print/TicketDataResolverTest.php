@@ -210,6 +210,29 @@ final class TicketDataResolverTest extends TestCase
         }
     }
 
+    public function testTheVoucherRestOfTheSaleReachesTheTicketAndReprints(): void
+    {
+        $cases = [
+            [['issued_coupon_id' => 31, 'code' => 'ABCD1234-2', 'amount' => 14, 'expires_at' => '2027-06-30 23:59:59'], ['code' => 'ABCD1234-2', 'amount' => 14.0]],
+            [null, null],
+            [['code' => '', 'amount' => 14], null],
+            [['code' => 'ABCD1234-2', 'amount' => 0], null],
+        ];
+        foreach ($cases as [$stored, $expected]) {
+            $breakdown = ['reference' => 'XKBKNABJK', 'total' => 0.0, 'lines' => []] + ($stored !== null ? ['leftover_voucher' => $stored] : []);
+            $order = ['ps_order_id' => 42, 'terminal_id' => 7, 'user_id' => 5, 'payment_breakdown' => json_encode($breakdown), 'created_at' => '2026-11-09 12:00:00'];
+            $conn = $this->createMock(Connection::class);
+            $conn->method('fetchAssociative')->willReturnCallback(fn (string $sql) => str_contains($sql, 'FROM order_meta') ? $order : false);
+            $conn->method('fetchOne')->willReturn(false);
+            $verification = $this->createMock(TicketVerificationService::class);
+            $verification->method('buildVerificationUrl')->willReturn('http://v');
+
+            $ticket = (new TicketDataResolver($conn, $verification, 'Tienda', ''))->resolve(42);
+
+            $this->assertSame($expected, $ticket->leftoverVoucher, json_encode($stored));
+        }
+    }
+
     /** Ajustes → Cajas: the till's margins and logo width reach the ticket; before migration V45 they stay unset. */
     public function testTheTillMarginsAndLogoWidthReachTheTicket(): void
     {

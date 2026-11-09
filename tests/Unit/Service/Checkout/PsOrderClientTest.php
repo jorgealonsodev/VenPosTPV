@@ -283,4 +283,24 @@ final class PsOrderClientTest extends TestCase
         $this->assertCount(3, $parts);
         $this->assertSame($expectedSignature, $parts[2]);
     }
+    public function testACouponOrderReturnsTheLeftoverVoucherPrestaShopKept(): void
+    {
+        $client = $this->createClient([new MockResponse(json_encode([
+            'order_id' => 42, 'reference' => 'XKBKNABJK', 'total_paid' => 0.0,
+            'leftover_voucher' => ['id' => 41, 'code' => 'ABCD1234-2', 'amount' => 14.0, 'expires_at' => '2027-06-30 23:59:59'],
+        ]), ['http_code' => 201])]);
+
+        $result = $client->createCouponOrder(['products' => []]);
+
+        $this->assertSame(['order_id' => 42, 'reference' => 'XKBKNABJK', 'total_paid' => 0.0, 'leftover_voucher' => ['id' => 41, 'code' => 'ABCD1234-2', 'amount' => 14.0, 'expires_at' => '2027-06-30 23:59:59']], $result);
+    }
+
+    public function testACouponOrderWithoutAUsableLeftoverHasNone(): void
+    {
+        foreach ([null, ['id' => 0, 'code' => 'X-2', 'amount' => 1.0, 'expires_at' => '2027-01-01 00:00:00'], ['id' => 41, 'code' => '', 'amount' => 1.0, 'expires_at' => '2027-01-01 00:00:00'], ['id' => 41, 'code' => 'X-2', 'amount' => 0, 'expires_at' => '2027-01-01 00:00:00'], ['id' => 41, 'code' => 'X-2', 'amount' => 3.0]] as $leftover) {
+            $client = $this->createClient([new MockResponse(json_encode(['order_id' => 42, 'reference' => 'XKBKNABJK', 'total_paid' => 10.0, 'leftover_voucher' => $leftover]), ['http_code' => 201])]);
+
+            $this->assertSame(['order_id' => 42, 'reference' => 'XKBKNABJK', 'total_paid' => 10.0], $client->createCouponOrder(['products' => []]));
+        }
+    }
 }

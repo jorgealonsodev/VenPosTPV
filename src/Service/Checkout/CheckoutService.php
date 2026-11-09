@@ -14,6 +14,7 @@ use VenPosTPV\Service\Cash\Exception\NoOpenCashSessionException;
 use VenPosTPV\Service\Catalog\CatalogPriceResolver;
 use VenPosTPV\Service\Catalog\Exception\ProductNotInCatalogException;
 use VenPosTPV\Service\Checkout\Exception\CheckoutException;
+use VenPosTPV\Service\Coupon\IssuedCouponStore;
 use VenPosTPV\Service\Customer\CustomerDirectory;
 use VenPosTPV\Service\Print\PrinterService;
 use VenPosTPV\Service\Print\TicketDataResolver;
@@ -67,6 +68,7 @@ class CheckoutService
         private readonly ?FiscalRecorder $fiscalRecorder = null,
         private readonly ?SaleLineWriter $saleLineWriter = null,
         private readonly ?FreeItemSettingsStore $freeItemSettings = null,
+        private readonly ?IssuedCouponStore $issuedCoupons = null,
     ) {
     }
 
@@ -188,7 +190,31 @@ class CheckoutService
             'saga_error' => false,
             'stock_warnings' => [],
             'replayed' => true,
-        ];
+        ] + self::leftoverResponse($breakdown);
+    }
+
+    /**
+     * The checkout response field of the voucher rest a coupon sale left
+     * (`leftover_voucher`: local issued coupon id, code, amount, expiry), read from
+     * the sale's payment breakdown; nothing when it left none.
+     *
+     * @param array<string, mixed> $breakdown
+     *
+     * @return array<string, mixed>
+     */
+    private static function leftoverResponse(array $breakdown): array
+    {
+        $leftover = $breakdown['leftover_voucher'] ?? null;
+        if (!is_array($leftover) || !is_string($leftover['code'] ?? null)) {
+            return [];
+        }
+
+        return ['leftover_voucher' => [
+            'id' => isset($leftover['issued_coupon_id']) ? (int) $leftover['issued_coupon_id'] : null,
+            'code' => $leftover['code'],
+            'amount' => (float) ($leftover['amount'] ?? 0),
+            'expires_at' => (string) ($leftover['expires_at'] ?? ''),
+        ]];
     }
 
     /**
@@ -440,15 +466,17 @@ class CheckoutService
         $sagaError = false;
         $alreadyRecorded = false;
         try {
-            $alreadyRecorded = $this->withCouponOrderLock($psOrderId, function () use ($psOrderId, $userId, $reference, $payable, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines, $quote, $cashCollected, $cardCollected, $requestId): bool {
+            $leftover = is_array($psResponse['leftover_voucher'] ?? null) ? $psResponse['leftover_voucher'] : null;
+            $alreadyRecorded = $this->withCouponOrderLock($psOrderId, function () use ($psOrderId, $userId, $reference, $payable, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines, $quote, $cashCollected, $cardCollected, $requestId, $leftover): bool {
                 // CashSessionService and this service share the configured TPV
                 // DBAL connection. Its public mutation helper correctly rejects
                 // nested transactions, so keep these three local writes on the
                 // same connection and transaction here.
-                return $this->conn->transactional(function () use ($psOrderId, $userId, $reference, $payable, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines, $quote, $cashCollected, $cardCollected, $requestId): bool {
+                return $this->conn->transactional(function () use ($psOrderId, $userId, $reference, $payable, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines, $quote, $cashCollected, $cardCollected, $requestId, $leftover): bool {
                     if ($this->conn->fetchOne('SELECT 1 FROM order_meta WHERE ps_order_id = ?', [$psOrderId]) !== false) {
                         return true;
                     }
+                    $leftoverBreakdown = $leftover !== null ? $this->recordLeftoverVoucher($leftover, $cashContext, $userId) : null;
                     if ($cashCollected > 0) {
                         // Same lock order as refunds: session before the fiscal chain.
                         $this->lockCouponSession($cashContext);
@@ -459,7 +487,7 @@ class CheckoutService
                         'payable' => $payable,
                         'cash_collected' => $cashCollected,
                         'card_collected' => $cardCollected,
-                    ], ['cash' => $cashCollected, 'card' => $cardCollected], true, $requestId);
+                    ], ['cash' => $cashCollected, 'card' => $cardCollected], true, $requestId, $leftoverBreakdown);
                     if ($cashCollected > 0) {
                         $this->insertCouponCashMovement($cashContext, $userId, $cashCollected, $psOrderId);
                     }
@@ -496,7 +524,9 @@ class CheckoutService
             $this->cart->clear();
         }
 
-        $orderId = $sagaError ? false : $this->conn->fetchOne('SELECT id FROM order_meta WHERE ps_order_id = ?', [$psOrderId]);
+        $sale = $sagaError ? false : $this->conn->fetchAssociative('SELECT id, payment_breakdown FROM order_meta WHERE ps_order_id = ?', [$psOrderId]);
+        $orderId = $sale !== false ? $sale['id'] : false;
+        $saleBreakdown = $sale !== false ? json_decode((string) $sale['payment_breakdown'], true) : null;
 
         return [
             'order_id' => is_numeric($orderId) ? (int) $orderId : null,
@@ -508,7 +538,41 @@ class CheckoutService
             'payment_method' => $paymentMethod,
             'terminal_id' => $terminalId,
             'saga_error' => $sagaError,
-        ] + ($print ?? []) + ($requestId !== null ? ['replayed' => $alreadyRecorded] : []);
+        ] + self::leftoverResponse(is_array($saleBreakdown) ? $saleBreakdown : []) + ($print ?? []) + ($requestId !== null ? ['replayed' => $alreadyRecorded] : []);
+    }
+
+    /**
+     * The rest of a voucher worth more than the sale (TPV Connect 0.7.1): PrestaShop
+     * kept it as a new cart rule anyone can use once. It is kept as an issued coupon,
+     * so its slip is printed, sent by email or WhatsApp like a «Crear cupón» one,
+     * and returned for the sale's payment breakdown (tickets and reprints print it).
+     * A failed local copy keeps the code on the sale without a slip (id null).
+     *
+     * @param array{id: int, code: string, amount: float, expires_at: string} $leftover
+     * @param array<string, mixed> $cashContext
+     *
+     * @return array{issued_coupon_id: ?int, code: string, amount: float, expires_at: string}
+     */
+    private function recordLeftoverVoucher(array $leftover, array $cashContext, int $userId): array
+    {
+        $issuedId = ($this->issuedCoupons ?? new IssuedCouponStore($this->conn))->record(
+            (int) $leftover['id'],
+            (string) $leftover['code'],
+            'amount',
+            (float) $leftover['amount'],
+            (string) $leftover['expires_at'],
+            1,
+            1,
+            isset($cashContext['terminal_id']) ? (int) $cashContext['terminal_id'] : null,
+            $userId,
+        );
+
+        return [
+            'issued_coupon_id' => $issuedId,
+            'code' => (string) $leftover['code'],
+            'amount' => round((float) $leftover['amount'], 2),
+            'expires_at' => (string) $leftover['expires_at'],
+        ];
     }
 
     /**
@@ -978,6 +1042,7 @@ class CheckoutService
         array $tender = ['cash' => 0.0, 'card' => 0.0],
         bool $synced = true,
         ?string $requestId = null,
+        ?array $leftoverVoucher = null,
     ): int {
         try {
             $breakdownLines = [];
@@ -1059,7 +1124,8 @@ class CheckoutService
                     ] + (isset($tender['exchange_credit']) ? ['exchange_credit' => round((float) $tender['exchange_credit'], 2)] : []),
                     // Deliberately excludes bearer coupon code and quote.
                     'coupon' => $coupon,
-                ], JSON_THROW_ON_ERROR),
+                    // The voucher rest the customer takes away: printed on the ticket and reprints.
+                ] + ($leftoverVoucher !== null ? ['leftover_voucher' => $leftoverVoucher] : []), JSON_THROW_ON_ERROR),
                 'printed' => 0,
                 'synced' => $synced ? 1 : 0,
                 'created_at' => $issuedAt->format('Y-m-d H:i:s'),

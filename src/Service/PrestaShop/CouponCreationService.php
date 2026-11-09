@@ -82,12 +82,20 @@ class CouponCreationService
      * A failed local copy never turns a created coupon into an error: the code is
      * returned with `printable` false (no slip can be printed for it).
      *
+     * An amount (€) coupon is a balance voucher: whatever uses were sent, it is
+     * created for one use (quantity 1, quantity per user 1) with partial use, so
+     * PrestaShop keeps what a smaller purchase leaves as a new voucher. Percentage
+     * coupons keep the uses chosen and no partial use.
+     *
      * @param array<string, mixed> $input
      *
      * @return array{id:int,code:string,type:string,value:float,expires_at:string,quantity:int,quantity_per_user:int,local_id:?int,printable:bool}
      */
     public function createIssued(array $input, int $shopId, ?int $terminalId, ?int $userId): array
     {
+        if (($input['discount_type'] ?? null) === 'amount') {
+            $input = ['quantity' => 1, 'quantity_per_user' => 1, 'partial_use' => true] + $input;
+        }
         $coupon = $this->create($input, $shopId);
         $localId = $this->issuedCoupons?->record(
             $coupon['id'],

@@ -37,14 +37,36 @@ async function testAmountAndPercentageAreEditableAndSubmitThePublicPayload() {
     state.quantity.value = '3';
     state.quantityPerUser.value = '2';
     await state.submit();
-    assert.deepEqual(JSON.parse(JSON.stringify(payloads[0])), { discount_type: 'amount', value: 12.5, expires_at: '2027-05-03', quantity: 3, quantity_per_user: 2 });
+    // An amount coupon is a balance voucher: one use that keeps its rest, whatever the hidden fields held.
+    assert.deepEqual(JSON.parse(JSON.stringify(payloads[0])), { discount_type: 'amount', value: 12.5, expires_at: '2027-05-03', quantity: 1, quantity_per_user: 1, partial_use: true });
     assert.equal(state.createdCode.value, 'TPV-ABCD');
     state.reset();
     state.discountType.value = 'percentage';
     state.value.value = '15';
+    state.quantity.value = '3';
+    state.quantityPerUser.value = '2';
     await state.submit();
-    assert.equal(payloads[1].discount_type, 'percentage');
-    assert.equal(payloads[1].value, 15);
+    assert.deepEqual(JSON.parse(JSON.stringify(payloads[1])), { discount_type: 'percentage', value: 15, expires_at: payloads[1].expires_at, quantity: 3, quantity_per_user: 2 });
+}
+
+/** «Usos totales» and «Usos por cliente» are asked for percentage coupons only. */
+function testUsesAreHiddenForAmountCoupons() {
+    const { modal, createInstance } = loadModal(async () => ({}));
+    const uses = modal.template.match(/<div v-if="([^"]+)"[^>]*>\s*<label[^>]*>Usos totales/);
+    assert.ok(uses, 'the uses fields sit in a conditional block');
+    assert.equal(uses[1], "discountType === 'percentage'");
+    assert.match(modal.template, /<label[^>]*>Usos por cliente/);
+    assert.equal(modal.template.split('Usos por cliente').length - 1, 1);
+    assert.match(modal.template, /<div v-if="discountType === 'amount'"[^>]*>Vale de un solo uso\. Si la compra es menor, el saldo que sobra queda en un vale nuevo\.<\/div>/);
+    // Invalid uses left in the hidden fields never block an amount coupon.
+    const state = createInstance();
+    state.discountType.value = 'amount';
+    state.value.value = '20';
+    state.quantity.value = '0';
+    state.quantityPerUser.value = '0';
+    assert.equal(state.validationError(), '');
+    state.discountType.value = 'percentage';
+    assert.match(state.validationError(), /usos/i);
 }
 
 async function testInvalidFormNeverRequestsAndPendingOrAmbiguousCreationCannotBeResubmitted() {
@@ -181,12 +203,13 @@ async function testAmbiguousBackendJsonErrorIsShownAsCleanSpanishText() {
 
 async function main() {
     await testAmountAndPercentageAreEditableAndSubmitThePublicPayload();
+    testUsesAreHiddenForAmountCoupons();
     await testAmbiguousBackendJsonErrorIsShownAsCleanSpanishText();
     await testInvalidFormNeverRequestsAndPendingOrAmbiguousCreationCannotBeResubmitted();
     await testAmbiguousCreationKeepsReopenedModalLocked();
     testSaleScreenShowsCouponEntryToBothAuthorizedRolesOnly();
     await testDefinitiveCreationFailuresKeepTheModalReusable();
-    console.log('couponCreation functional harness: 5 passed');
+    console.log('couponCreation functional harness: 6 passed');
 }
 
 main().catch((error) => { console.error(error); process.exitCode = 1; });

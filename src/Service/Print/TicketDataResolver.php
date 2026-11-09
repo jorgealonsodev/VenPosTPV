@@ -131,7 +131,27 @@ class TicketDataResolver
             ticketLogoWidthPct: $logoWidthPct,
             vatBreakdown: $vatBreakdown,
             replacedByInvoice: $this->replacingInvoice($orderId),
+            leftoverVoucher: self::leftoverVoucher($breakdown),
         );
+    }
+
+    /**
+     * The voucher rest a coupon sale left (payment_breakdown.leftover_voucher), as
+     * the ticket prints it; null when the sale left none.
+     *
+     * @param array<string, mixed> $breakdown
+     *
+     * @return array{code: string, amount: float}|null
+     */
+    private static function leftoverVoucher(array $breakdown): ?array
+    {
+        $leftover = $breakdown['leftover_voucher'] ?? null;
+        if (!\is_array($leftover) || !\is_string($leftover['code'] ?? null) || trim($leftover['code']) === ''
+            || !is_numeric($leftover['amount'] ?? null) || (float) $leftover['amount'] <= 0) {
+            return null;
+        }
+
+        return ['code' => trim($leftover['code']), 'amount' => round((float) $leftover['amount'], 2)];
     }
 
     /**
