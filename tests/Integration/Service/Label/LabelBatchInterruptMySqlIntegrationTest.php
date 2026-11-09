@@ -56,7 +56,8 @@ final class LabelBatchInterruptMySqlIntegrationTest extends TestCase
         $first = $queue->claim($till);
         $this->assertSame(['label'], array_column($first, 'type'), 'one label job per poll');
         $strip = base64_decode($first[0]['payload_b64'], true);
-        $this->assertSame(10, substr_count((string) $strip, "\x1dk"), 'the first strip holds 10 labels');
+        // One code-zone raster (GS v 0, 576 dots) per label; the 2-row ones are the dotted lines.
+        $this->assertSame(10, preg_match_all('/\x1Dv0\x00\x48\x00(?!\x02\x00)/', (string) $strip), 'the first strip holds 10 labels');
         $this->assertSame(1, substr_count((string) $strip, "\x1dV\x41\x00"), 'with its own cut');
 
         $sale = $queue->enqueue($till, 'ticket', 'SALE', 'sale', '1');

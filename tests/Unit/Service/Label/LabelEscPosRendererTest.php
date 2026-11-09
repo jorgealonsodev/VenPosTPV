@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace VenPosTPV\Tests\Unit\Service\Label;
 
 use PHPUnit\Framework\TestCase;
+use VenPosTPV\Service\Label\BarcodeModules;
 use VenPosTPV\Service\Label\BarcodeSelector;
 use VenPosTPV\Service\Label\Label;
+use VenPosTPV\Service\Label\LabelCodeZone;
 use VenPosTPV\Service\Label\LabelEscPosRenderer;
 use VenPosTPV\Service\Label\LabelSettings;
 
@@ -14,8 +16,9 @@ use VenPosTPV\Service\Label\LabelSettings;
  * docs/prd/agente-impresion.md L3, L5-L7, AC5, AC6: ESC/POS labels for the TM-T20,
  * checked byte for byte. Full width (576 dots), height 25-60 mm (8 dots per mm),
  * one strip per job with a dotted line between labels and a single cut at the end
- * (or one cut per label when the till asks for it), the printer's own barcode
- * commands (GS k) and character table 16 (WPC1252) for "€".
+ * (or one cut per label when the till asks for it), the code zone (bars, their
+ * text and a QR with the same data beside them) as one GS v 0 raster image and
+ * character table 16 (WPC1252) for "€".
  *
  * The golden files in tests/Fixtures/labels/ are regenerated with
  * UPDATE_LABEL_FIXTURES=1 and must then be reviewed byte by byte (xxd).
@@ -46,7 +49,8 @@ final class LabelEscPosRendererTest extends TestCase
             . "M \xB7 Azul\n"
             . "\x1D!\x11" . "\x1BE\x01" . "\x1B3\x30" . "23,14 \x80\n" . "\x1D!\x00" . "\x1BE\x00" . "\x1B3\x18"
             // 240 dots - 8 (separator) - 8 top - 24 name - 24 combination - 48 price - 24 HRI = 104
-            . "\x1Dh\x68" . "\x1Dw\x03" . "\x1DH\x02" . "\x1Df\x00" . "\x1Dk\x43\x0C" . '841234567890';
+            // bars; the raster is the bars and their text: 128 rows of 72 bytes (576 dots).
+            . "\x1Dv0\x00" . "\x48\x00" . "\x80\x00" . LabelCodeZone::for($this->shirt()->barcode, 104)->raster();
 
         self::assertSame(self::INIT . $label . "\x1BJ\x08" . self::CUT, $bytes);
     }
@@ -79,21 +83,81 @@ final class LabelEscPosRendererTest extends TestCase
         self::assertGolden('strip-30mm-cut-each.bin', $bytes);
     }
 
-    public function testANumericReferenceIsSentAsCode128SetCPairs(): void
+    public function testTheCodeIsARasterImageInsteadOfThePrinterBarcodeCommands(): void
     {
-        $bytes = (new LabelEscPosRenderer())->render([$this->cap()], new LabelSettings(30, false));
+        $bytes = (new LabelEscPosRenderer())->render([$this->shirt(), $this->cap()], new LabelSettings(30, false));
 
-        // GS k 73 n "{C" 00 12 34 56
-        self::assertStringContainsString("\x1Dk\x49\x06{C\x00\x0C\x22\x38", $bytes);
+        self::assertStringNotContainsString("\x1Dk", $bytes, 'no GS k');
+        self::assertStringNotContainsString("\x1Dh", $bytes, 'no GS h');
+        self::assertStringNotContainsString("\x1DH", $bytes, 'no GS H');
+        $zones = array_values(array_filter(self::tape($bytes)['rasters'], static fn (array $r): bool => $r['height'] > 2));
+        self::assertCount(2, $zones);
+        foreach ($zones as $raster) {
+            self::assertSame(576, $raster['width']);
+            // Bars 40-255 dots plus 24 of text.
+            self::assertGreaterThanOrEqual(64, $raster['height']);
+            self::assertLessThanOrEqual(279, $raster['height']);
+        }
+    }
+
+    public function testTheBarsAndTheQrOfTheRasterCarryTheSameEan(): void
+    {
+        $label = $this->shirt();
+        $bytes = (new LabelEscPosRenderer())->render([$label], new LabelSettings(30, false));
+        $zone = LabelCodeZone::for($label->barcode, 104);
+        $bitmap = self::zoneBitmap($bytes);
+
+        self::assertSame(self::expand(BarcodeModules::ean13('8412345678905'), 3), substr($bitmap[0], $zone->barsLeft, $zone->barsWidth));
+        self::assertTrue($zone->hasQr());
+        LabelCodeZoneTest::assertQrIs('8412345678905', $zone, $bitmap);
+    }
+
+    public function testANumericReferenceIsCode128SetCWithTheReferenceInTheQr(): void
+    {
+        $settings = new LabelSettings(30, false);
+        $bytes = (new LabelEscPosRenderer())->render([$this->cap()], $settings);
+        $zone = LabelCodeZone::for($this->cap()->barcode, (new LabelEscPosRenderer())->layout($this->cap(), $settings)['bars']);
+        $bitmap = self::zoneBitmap($bytes);
+
+        self::assertSame(self::expand(BarcodeModules::code128('00123456', 'C'), 3), substr($bitmap[0], $zone->barsLeft, $zone->barsWidth));
+        LabelCodeZoneTest::assertQrIs('00123456', $zone, $bitmap);
         self::assertStringContainsString("9,50 \x80\n", $bytes);
     }
 
-    public function testATextReferenceIsSentAsCode128SetBWithBracesDoubled(): void
+    public function testATextReferenceIsCode128SetBWithTheReferenceInTheQr(): void
     {
         $label = new Label('Bolsa', null, 1.0, (new BarcodeSelector())->select(null, null, 'A{1'));
-        $bytes = (new LabelEscPosRenderer())->render([$label], new LabelSettings(30, false));
+        $settings = new LabelSettings(30, false);
+        $bytes = (new LabelEscPosRenderer())->render([$label], $settings);
+        $zone = LabelCodeZone::for($label->barcode, (new LabelEscPosRenderer())->layout($label, $settings)['bars']);
+        $bitmap = self::zoneBitmap($bytes);
 
-        self::assertStringContainsString("\x1Dk\x49\x06{BA{{1", $bytes);
+        self::assertSame(self::expand(BarcodeModules::code128('A{1', 'B'), 3), substr($bitmap[0], $zone->barsLeft, $zone->barsWidth));
+        LabelCodeZoneTest::assertQrIs('A{1', $zone, $bitmap);
+    }
+
+    public function testACode128WithNoRoomForTheQrPrintsTheSameBarsWithoutIt(): void
+    {
+        $reference = str_repeat('A', 21);
+        $label = new Label('Bolsa', null, 1.0, (new BarcodeSelector())->select(null, null, $reference));
+        $bitmap = self::zoneBitmap((new LabelEscPosRenderer())->render([$label], new LabelSettings(30, false)));
+
+        // 286 modules at 2 dots, centred: the whole row is the bars.
+        self::assertSame('00' . self::expand(BarcodeModules::code128($reference, 'B'), 2) . '00', $bitmap[0]);
+    }
+
+    public function testEveryLabelFeedsExactlyItsHeightOnThePaper(): void
+    {
+        $renderer = new LabelEscPosRenderer();
+
+        foreach ([25, 30, 40, 60] as $mm) {
+            foreach ([$this->shirt(), $this->cap()] as $label) {
+                $one = self::tape($renderer->render([$label], new LabelSettings($mm, true)));
+                self::assertSame($mm * 8, $one['dots'], $mm . ' mm, cut after it');
+            }
+            $strip = self::tape($renderer->render([$this->shirt(), $this->cap(), $this->shirt()], new LabelSettings($mm, false)));
+            self::assertSame(3 * $mm * 8, $strip['dots'], $mm . ' mm strip');
+        }
     }
 
     public function testEveryLabelTakesItsConfiguredHeight(): void
@@ -137,6 +201,87 @@ final class LabelEscPosRendererTest extends TestCase
         self::assertSame(60, LabelSettings::validated(60, false)->heightMm);
         // A stored value out of bounds (edited by hand) prints with the default.
         self::assertSame(30, LabelSettings::fromStored(200, 0)->heightMm);
+    }
+
+    private static function expand(string $modules, int $dots): string
+    {
+        $out = '';
+        foreach (str_split($modules) as $module) {
+            $out .= str_repeat($module, $dots);
+        }
+
+        return $out;
+    }
+
+    /** @return list<string> the rows of the only code-zone raster, '1' for a black dot */
+    private static function zoneBitmap(string $bytes): array
+    {
+        $zones = array_values(array_filter(self::tape($bytes)['rasters'], static fn (array $r): bool => $r['height'] > 2));
+        self::assertCount(1, $zones);
+
+        return $zones[0]['rows'];
+    }
+
+    /**
+     * Plays the bytes like the printer does with the commands the renderer uses and
+     * returns the dots of paper fed and the raster images.
+     *
+     * @return array{dots: int, rasters: list<array{width: int, height: int, rows: list<string>}>}
+     */
+    private static function tape(string $bytes): array
+    {
+        $dots = 0;
+        $spacing = 30; // ESC @ default (1/6 inch); every job sets it with ESC 3.
+        $rasters = [];
+        $n = \strlen($bytes);
+        for ($i = 0; $i < $n;) {
+            $c = $bytes[$i];
+            if ($c === "\x1B") {
+                $cmd = $bytes[$i + 1];
+                if ($cmd === '@') {
+                    $i += 2;
+                    continue;
+                }
+                if ($cmd === '3') {
+                    $spacing = \ord($bytes[$i + 2]);
+                } elseif ($cmd === 'J') {
+                    $dots += \ord($bytes[$i + 2]);
+                } elseif (!\in_array($cmd, ['t', 'a', 'E'], true)) {
+                    self::fail(sprintf('Unexpected ESC %s at %d', bin2hex($cmd), $i));
+                }
+                $i += 3;
+            } elseif ($c === "\x1D") {
+                $cmd = $bytes[$i + 1];
+                if ($cmd === 'v') {
+                    $widthBytes = \ord($bytes[$i + 4]) + 256 * \ord($bytes[$i + 5]);
+                    $height = \ord($bytes[$i + 6]) + 256 * \ord($bytes[$i + 7]);
+                    $rows = [];
+                    for ($y = 0; $y < $height; ++$y) {
+                        $row = '';
+                        foreach (str_split(substr($bytes, $i + 8 + $y * $widthBytes, $widthBytes)) as $byte) {
+                            $row .= str_pad(decbin(\ord($byte)), 8, '0', STR_PAD_LEFT);
+                        }
+                        $rows[] = $row;
+                    }
+                    $rasters[] = ['width' => 8 * $widthBytes, 'height' => $height, 'rows' => $rows];
+                    $dots += $height;
+                    $i += 8 + $widthBytes * $height;
+                } elseif ($cmd === '!') {
+                    $i += 3;
+                } elseif ($cmd === 'V') {
+                    $i += 4;
+                } else {
+                    self::fail(sprintf('Unexpected GS %s at %d', bin2hex($cmd), $i));
+                }
+            } else {
+                if ($c === "\n") {
+                    $dots += $spacing;
+                }
+                ++$i;
+            }
+        }
+
+        return ['dots' => $dots, 'rasters' => $rasters];
     }
 
     private static function assertGolden(string $file, string $bytes): void

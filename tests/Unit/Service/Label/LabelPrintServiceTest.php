@@ -9,6 +9,7 @@ use PHPUnit\Framework\TestCase;
 use VenPosTPV\Service\Label\BarcodeSelector;
 use VenPosTPV\Service\Label\Label;
 use VenPosTPV\Service\Label\LabelCatalog;
+use VenPosTPV\Service\Label\LabelCodeZone;
 use VenPosTPV\Service\Label\LabelEscPosRenderer;
 use VenPosTPV\Service\Label\LabelException;
 use VenPosTPV\Service\Label\LabelPrintException;
@@ -88,6 +89,12 @@ final class LabelPrintServiceTest extends TestCase
         };
     }
 
+    /** The raster of one label's code zone (EAN 8412345678905, 30 mm: 104 dots of bars). */
+    private static function codeZone(): string
+    {
+        return "\x1Dv0\x00\x48\x00\x80\x00" . LabelCodeZone::for((new BarcodeSelector())->select('8412345678905', null, null), 104)->raster();
+    }
+
     /** @return list<array{product_id: int, id_product_attribute: int, quantity: int}> */
     private static function items(int ...$quantities): array
     {
@@ -102,7 +109,7 @@ final class LabelPrintServiceTest extends TestCase
         [$terminal, $type, $payload, $source, $sourceRef, $user] = $this->enqueued[0];
         self::assertSame([3, 'label', 'label', '10', 12], [$terminal, $type, $source, $sourceRef, $user]);
         self::assertSame(1, substr_count((string) $payload, "\x1DV\x41\x00"), 'one cut for the whole strip');
-        self::assertSame(10, substr_count((string) $payload, "\x1Dk\x43\x0C841234567890"));
+        self::assertSame(10, substr_count((string) $payload, self::codeZone()));
         self::assertSame(['jobs' => [501], 'print_status' => 'queued', 'labels' => 10, 'errors' => []], $result);
         self::assertSame([], $this->sent);
     }
@@ -115,7 +122,7 @@ final class LabelPrintServiceTest extends TestCase
         self::assertSame(array_fill(0, 20, '10'), array_map(static fn (array $job): string => (string) $job[4], $this->enqueued));
         foreach ($this->enqueued as $job) {
             self::assertSame(1, substr_count((string) $job[2], "\x1DV\x41\x00"), 'one cut per strip');
-            self::assertSame(10, substr_count((string) $job[2], "\x1Dk\x43\x0C841234567890"));
+            self::assertSame(10, substr_count((string) $job[2], self::codeZone()));
         }
         self::assertSame(range(501, 520), $result['jobs']);
         self::assertSame(200, $result['labels']);
@@ -131,7 +138,7 @@ final class LabelPrintServiceTest extends TestCase
 
         self::assertSame('printed', $result['print_status']);
         self::assertCount(3, $this->sent);
-        self::assertSame([10, 10, 5], array_map(static fn (string $bytes): int => substr_count($bytes, "\x1Dk\x43\x0C841234567890"), $this->sent));
+        self::assertSame([10, 10, 5], array_map(static fn (string $bytes): int => substr_count($bytes, self::codeZone()), $this->sent));
     }
 
     public function testMoreThanAHundredOnOneLineIsRefused(): void

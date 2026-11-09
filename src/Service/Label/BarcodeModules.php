@@ -9,8 +9,8 @@ use VenPosTPV\Service\Print\Code128Encoder;
 /**
  * The bars of a label code as a module string ('1' bar, '0' space) with its quiet
  * zones: EAN-13, EAN-8, UPC-A and Code128 sets B and C. Used to check that a code
- * fits the paper at a given module width and to draw the preview; the printer
- * draws the real bars itself (GS k).
+ * fits the paper at a given module width and to draw the bars of the code zone
+ * (LabelCodeZone) that both the printer raster and the preview use.
  */
 final class BarcodeModules
 {
