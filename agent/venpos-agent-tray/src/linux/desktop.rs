@@ -32,6 +32,24 @@ pub fn restart_service() -> Result<(), String> {
     }
 }
 
+/// `pkexec systemctl stop venpos-agent`: nothing prints until it is started again
+/// (or the computer restarts: the service stays enabled).
+pub fn stop_service_argv(has: impl Fn(&str) -> bool) -> Option<Vec<String>> {
+    has("pkexec").then(|| argv(["pkexec", "systemctl", "stop", "venpos-agent"]))
+}
+
+/// Runs the stop and waits for it (the password dialog may take a while).
+pub fn stop_service() -> Result<(), String> {
+    let Some(cmd) = stop_service_argv(on_path) else {
+        return Err("Falta pkexec: detenlo con sudo systemctl stop venpos-agent".to_owned());
+    };
+    match Command::new(&cmd[0]).args(&cmd[1..]).stdin(Stdio::null()).status() {
+        Ok(st) if st.success() => Ok(()),
+        Ok(_) => Err("No se detuvo el servicio (contraseña cancelada o incorrecta)".to_owned()),
+        Err(e) => Err(format!("No se pudo detener el servicio: {e}")),
+    }
+}
+
 /// The terminal assistant in the first available terminal emulator.
 pub fn assistant_argv(has: impl Fn(&str) -> bool) -> Option<Vec<String>> {
     let term = TERMINALS.into_iter().find(|t| has(t))?;
@@ -128,6 +146,20 @@ mod tests {
             ])
         );
         assert_eq!(restart_service_argv(having(&[])), None);
+    }
+
+    #[test]
+    fn stop_uses_pkexec_only_when_present() {
+        assert_eq!(
+            stop_service_argv(having(&["pkexec"])),
+            Some(vec![
+                "pkexec".to_owned(),
+                "systemctl".to_owned(),
+                "stop".to_owned(),
+                "venpos-agent".to_owned()
+            ])
+        );
+        assert_eq!(stop_service_argv(having(&[])), None);
     }
 
     #[test]

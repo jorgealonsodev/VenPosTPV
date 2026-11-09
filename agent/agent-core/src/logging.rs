@@ -24,6 +24,7 @@ impl RotatingFile {
             std::fs::create_dir_all(dir)?;
         }
         let file = OpenOptions::new().create(true).append(true).open(&path)?;
+        share_with_group(&file)?;
         let size = file.metadata()?.len();
         Ok(Self {
             path,
@@ -57,7 +58,9 @@ impl RotatingFile {
         } else {
             std::fs::remove_file(&self.path)?;
         }
-        self.file = Some(OpenOptions::new().create(true).append(true).open(&self.path)?);
+        let file = OpenOptions::new().create(true).append(true).open(&self.path)?;
+        share_with_group(&file)?;
+        self.file = Some(file);
         self.size = 0;
         Ok(())
     }
@@ -115,6 +118,21 @@ pub fn init_stderr() {
         .try_init();
 }
 
+/// The service runs with UMask=0077, so a new log is 0600 and the till user's
+/// window cannot open it. 0640 lets the venpos-agent group read it (the group a
+/// desktop user joins to use the agent); the configuration and its key stay
+/// private. set_permissions is not limited by the umask.
+#[cfg(unix)]
+fn share_with_group(file: &File) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    file.set_permissions(std::fs::Permissions::from_mode(0o640))
+}
+
+#[cfg(not(unix))]
+fn share_with_group(_file: &File) -> io::Result<()> {
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,6 +155,12 @@ mod tests {
         assert_eq!(names, ["agent.log", "agent.log.1", "agent.log.2"]);
         for n in &names {
             assert!(std::fs::metadata(dir.join(n)).unwrap().len() <= 100, "{n} too big");
+        }
+        #[cfg(unix)]
+        for n in &names {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(dir.join(n)).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o640, "{n}: the venpos-agent group reads the log");
         }
         let newest = std::fs::read_to_string(&path).unwrap();
         assert!(newest.contains("19 "), "{newest}");
