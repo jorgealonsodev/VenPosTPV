@@ -199,6 +199,26 @@ final class CheckoutControllerTest extends TestCase
         $this->assertSame('dispatched', $data['print_status']);
     }
 
+    public function testACouponSaleAnswersTheLeftoverVoucherForTheDoneScreen(): void
+    {
+        $cashService = $this->createMock(CashSessionService::class);
+        $cashService->method('requireOpenSession')->willReturn(self::OPEN_SESSION);
+        $leftover = ['id' => 31, 'code' => 'ABCD1234-2', 'amount' => 14.0, 'expires_at' => '2027-06-30 23:59:59'];
+        $checkoutService = $this->createMock(CheckoutService::class);
+        $checkoutService->method('createOrder')->willReturn([
+            'order_id' => 7, 'ps_order_id' => 42, 'reference' => 'XKBKNABJK', 'total' => 0.0, 'change_due' => 0.0,
+            'payment_method' => 'cash', 'terminal_id' => 1, 'saga_error' => false, 'leftover_voucher' => $leftover,
+        ]);
+
+        $response = (new CheckoutController($checkoutService, $cashService))->checkout($this->makeRequest([
+            'payment_method' => 'cash', 'amount_tendered' => 0.0,
+            'cart_data' => ['lines' => [['product_id' => 1, 'qty' => 1, 'price' => 36.0]], 'total' => 36.0, 'coupon' => ['code' => 'ABCD1234', 'preview_cart_id' => 17, 'quote' => 'q']],
+        ], 1));
+
+        $this->assertSame(Response::HTTP_OK, $response->getStatusCode());
+        $this->assertEquals($leftover, $this->decode($response)['data']['leftover_voucher'], 'JSON writes 14.0 as 14');
+    }
+
     public function testCheckoutReturns422OnValidationError(): void
     {
         $cashService = $this->createMock(CashSessionService::class);

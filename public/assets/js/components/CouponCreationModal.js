@@ -50,18 +50,23 @@ const CouponCreationModal = {
             if (!Number.isFinite(discountValue) || discountValue <= 0) return 'Introduce un importe válido.';
             if (discountType.value === 'percentage' && discountValue > 100) return 'El porcentaje no puede superar 100.';
             if (!/^\d{4}-\d{2}-\d{2}$/.test(expiresAt.value)) return 'Selecciona una fecha de caducidad válida.';
+            if (discountType.value === 'amount') return '';
             if (!Number.isInteger(Number(quantity.value)) || Number(quantity.value) <= 0) return 'El número total de usos debe ser mayor que cero.';
             if (!Number.isInteger(Number(quantityPerUser.value)) || Number(quantityPerUser.value) <= 0) return 'Los usos por cliente deben ser mayores que cero.';
             return '';
         }
 
+        // An amount coupon is a balance voucher: one use, and PrestaShop keeps what a
+        // smaller purchase leaves as a new voucher (partial use). The server enforces it too.
         function payload() {
+            const amount = discountType.value === 'amount';
             return {
                 discount_type: discountType.value,
                 value: Number(String(value.value).replace(',', '.')),
                 expires_at: expiresAt.value,
-                quantity: Number(quantity.value),
-                quantity_per_user: Number(quantityPerUser.value),
+                quantity: amount ? 1 : Number(quantity.value),
+                quantity_per_user: amount ? 1 : Number(quantityPerUser.value),
+                ...(amount ? { partial_use: true } : {}),
             };
         }
 
@@ -232,7 +237,8 @@ const CouponCreationModal = {
                     <label style="font-size:12px; color:var(--text2);">Caducidad
                         <input v-model="expiresAt" type="date" :disabled="pending || reconciliationRequired" style="width:100%; box-sizing:border-box; margin-top:5px; background:var(--surface2); border:1px solid var(--border2); border-radius:8px; padding:9px 12px; color:var(--text); font-family:inherit; outline:none;" />
                     </label>
-                    <div style="display:flex; gap:10px;">
+                    <div v-if="discountType === 'amount'" style="font-size:12px; color:var(--text3); line-height:1.4;">Vale de un solo uso. Si la compra es menor, el saldo que sobra queda en un vale nuevo.</div>
+                    <div v-if="discountType === 'percentage'" style="display:flex; gap:10px;">
                         <label style="flex:1; font-size:12px; color:var(--text2);">Usos totales<input v-model="quantity" type="number" min="1" step="1" :disabled="pending || reconciliationRequired" style="width:100%; box-sizing:border-box; margin-top:5px; background:var(--surface2); border:1px solid var(--border2); border-radius:8px; padding:9px 10px; color:var(--text); font-family:'IBM Plex Mono'; outline:none;" /></label>
                         <label style="flex:1; font-size:12px; color:var(--text2);">Usos por cliente<input v-model="quantityPerUser" type="number" min="1" step="1" :disabled="pending || reconciliationRequired" style="width:100%; box-sizing:border-box; margin-top:5px; background:var(--surface2); border:1px solid var(--border2); border-radius:8px; padding:9px 10px; color:var(--text); font-family:'IBM Plex Mono'; outline:none;" /></label>
                     </div>

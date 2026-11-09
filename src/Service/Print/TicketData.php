@@ -55,6 +55,10 @@ final class TicketData
         // factura-completa F3.4: the full invoice that replaced this ticket, printed
         // at the foot of a reprint («Sustituido por la factura F26000004»).
         public readonly ?string $replacedByInvoice = null,
+        // A voucher worth more than the sale: the new voucher with the rest, printed
+        // as «Saldo pendiente del vale: <code> — <amount> €». Null for every other ticket.
+        /** @var array{code: string, amount: float}|null */
+        public readonly ?array $leftoverVoucher = null,
     ) {
     }
 

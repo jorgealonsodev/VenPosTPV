@@ -192,15 +192,55 @@ final class CouponCreationServiceTest extends TestCase
     {
         $store = $this->createMock(IssuedCouponStore::class);
         $store->expects(self::once())->method('record')
-            ->with(45, self::matchesRegularExpression('/^[A-HJ-NP-Z2-9]{8}$/'), 'amount', 12.5, '2030-06-30', 10, 2, 4, 9)
+            ->with(45, self::matchesRegularExpression('/^[A-HJ-NP-Z2-9]{8}$/'), 'percentage', 12.5, '2030-06-30', 10, 2, 4, 9)
             ->willReturn(31);
         $service = new CouponCreationService('https://shop.test', 'key', $this->creatingClient(), 2, 'Europe/Madrid', $store);
 
-        $result = $service->createIssued($this->validInput(), 3, 4, 9);
+        $result = $service->createIssued(['discount_type' => 'percentage'] + $this->validInput(), 3, 4, 9);
 
         self::assertSame(45, $result['id']);
         self::assertSame(31, $result['local_id']);
         self::assertTrue($result['printable']);
+    }
+
+    /**
+     * «entonces no tiene sentido que un vale de importe pueda usarse mas de una vez no?»:
+     * an amount coupon from «Crear cupón» is a balance voucher, used once and keeping
+     * its rest, whatever uses were sent.
+     */
+    public function testAnIssuedAmountCouponIsABalanceVoucherUsedOnceThatKeepsItsRest(): void
+    {
+        [$service, $bodies] = $this->capturingService();
+
+        $result = $service->createIssued($this->validInput() + ['partial_use' => false], 3, 4, 9);
+
+        self::assertStringContainsString('<quantity>1</quantity><quantity_per_user>1</quantity_per_user>', $bodies[0]);
+        self::assertStringContainsString('<partial_use>1</partial_use>', $bodies[0]);
+        self::assertSame(1, $result['quantity']);
+        self::assertSame(1, $result['quantity_per_user']);
+    }
+
+    public function testAnIssuedPercentageCouponKeepsItsUsesAndIsSingleUse(): void
+    {
+        [$service, $bodies] = $this->capturingService();
+
+        $result = $service->createIssued(['discount_type' => 'percentage'] + $this->validInput(), 3, 4, 9);
+
+        self::assertStringContainsString('<quantity>10</quantity><quantity_per_user>2</quantity_per_user>', $bodies[0]);
+        self::assertStringContainsString('<partial_use>0</partial_use>', $bodies[0]);
+        self::assertSame(10, $result['quantity']);
+        self::assertSame(2, $result['quantity_per_user']);
+    }
+
+    public function testAnIssuedAmountCouponStoresItsSingleUseLocally(): void
+    {
+        $store = $this->createMock(IssuedCouponStore::class);
+        $store->expects(self::once())->method('record')
+            ->with(45, self::anything(), 'amount', 12.5, '2030-06-30', 1, 1, 4, 9)
+            ->willReturn(32);
+        $service = new CouponCreationService('https://shop.test', 'key', $this->creatingClient(), 2, 'Europe/Madrid', $store);
+
+        self::assertSame(32, $service->createIssued($this->validInput(), 3, 4, 9)['local_id']);
     }
 
     public function testACouponCreatedInPrestaShopIsStillReturnedWhenTheLocalCopyFails(): void

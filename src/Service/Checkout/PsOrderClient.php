@@ -313,6 +313,30 @@ class PsOrderClient
     }
 
     /** @return array{order_id: int, reference: string, total_paid: float} */
+    /**
+     * TPV Connect 0.7.1: the rest of a voucher worth more than the sale, which
+     * PrestaShop kept as a new cart rule anyone can use. Null when the module sent
+     * none or an incomplete one (an older module sends none).
+     *
+     * @return array{id: int, code: string, amount: float, expires_at: string}|null
+     */
+    private static function leftoverVoucher(mixed $leftover): ?array
+    {
+        if (!is_array($leftover) || !is_int($leftover['id'] ?? null) || $leftover['id'] < 1
+            || !is_string($leftover['code'] ?? null) || trim($leftover['code']) === ''
+            || !is_numeric($leftover['amount'] ?? null) || (float) $leftover['amount'] <= 0 || !is_finite((float) $leftover['amount'])
+            || !is_string($leftover['expires_at'] ?? null) || strtotime($leftover['expires_at']) === false) {
+            return null;
+        }
+
+        return [
+            'id' => $leftover['id'],
+            'code' => trim($leftover['code']),
+            'amount' => round((float) $leftover['amount'], 2),
+            'expires_at' => $leftover['expires_at'],
+        ];
+    }
+
     private function handleOrderResponse(ResponseInterface $response, bool $coupon): array
     {
         try {
@@ -333,11 +357,13 @@ class PsOrderClient
                 throw CheckoutException::couponReconciliationRequired('Coupon order response is incomplete; reconcile before charging again');
             }
 
+            $leftover = $coupon ? self::leftoverVoucher($data['leftover_voucher'] ?? null) : null;
+
             return [
                 'order_id' => (int) ($data['order_id'] ?? 0),
                 'reference' => (string) ($data['reference'] ?? ''),
                 'total_paid' => (float) ($data['total_paid'] ?? 0),
-            ];
+            ] + ($leftover !== null ? ['leftover_voucher' => $leftover] : []);
         }
 
         if ($statusCode === 401) {
