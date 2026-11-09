@@ -19,7 +19,9 @@ use VenPosTPV\Service\Checkout\FreeItemSetupService;
  * Needs module tpvconnect 0.7.0 and, in PrestaShop, an active tax rules group for
  * each VAT rate in free_item.vat_rates (21 % and 10 % by default). Safe to run
  * again: it returns the same ids. Until it has run, sales with a free item wait in
- * the outbox with «Falta configurar el artículo libre en PrestaShop».
+ * the outbox with «Falta configurar el artículo libre en PrestaShop». The
+ * installer, the minute task and tpv:provision run the same setup on their own
+ * while it is pending (the «free-item-products» step, docs/provisioning.md).
  */
 #[AsCommand(name: 'tpv:free-item:setup', description: 'Create or check the PrestaShop products free items are uploaded with')]
 final class FreeItemSetupCommand extends Command

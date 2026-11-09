@@ -45,6 +45,7 @@ PHP 8.4 o superior con `pdo_mysql`, MySQL o MariaDB y PrestaShop 1.7 u 8.
 
 - [Guía de instalación](docs/instalacion.md)
 - [Instalar en un hosting](docs/despliegue-hosting.md)
+- [Pasos de instalación y actualización](docs/provisioning.md) (desarrollo: toda funcionalidad que necesite preparar algo añade su paso)
 - [Agente de impresión](docs/print-agent.md)
 - [VERI\*FACTU](docs/verifactu.md)
 

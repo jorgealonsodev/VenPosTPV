@@ -15,14 +15,14 @@ El paquete `venpostpv-hosting.zip` lleva el TPV con sus dependencias y un instal
 2. (Opcional) Si prefieres, la raíz del documento también puede ser la carpeta `public` del paquete.
 3. **Configuración de PHP** del subdominio: versión 8.4 o superior, `max_execution_time` = 35 como mínimo y `pm.max_children` ≥ número de cajas + 6.
 4. Abre `https://tu-subdominio/install.php`. La primera visita crea el archivo `INSTALL_KEY` en la carpeta del subdominio. Ábrelo en el Administrador de archivos y copia la clave en el formulario.
-5. Rellena la base de datos, el usuario administrador, la tienda y PrestaShop. Pulsa **Instalar**: el instalador prueba la conexión, crea las tablas, escribe `.env`, se bloquea y borra `install.php`.
+5. Rellena la base de datos, el usuario administrador, la tienda y PrestaShop. Pulsa **Instalar**: el instalador prueba la conexión, crea las tablas, escribe `.env`, prepara el resto de la instalación (por ejemplo, los productos genéricos del artículo libre en PrestaShop), se bloquea y borra `install.php`. La página final muestra en «Estado de la instalación» qué pasos están hechos y cuáles siguen pendientes y por qué. Es normal que los de PrestaShop queden pendientes hasta configurar el módulo TPV Connect (paso 7): la tarea 1 (`tpv:sync:outbox`, cada minuto) los completa sola en cuanto la tienda responde (ver [Actualizar el TPV](#actualizar-el-tpv)).
 6. Crea las **tareas programadas**: cinco, una por una. En Plesk, dentro del dominio: **Tareas programadas → Añadir tarea**. Se abre la pantalla «Programación de una tarea»: rellénala como indica cada tabla y pulsa **Aceptar**.
 
    Dos avisos para todas:
    - El tipo de tarea tiene que ser **Ejecutar un script PHP**. «Ejecutar un comando» falla en muchos Plesk porque se ejecuta en un entorno aislado donde no existe `/opt/plesk/php`.
    - Cambia siempre **Usar la versión PHP** a la del subdominio (8.4 o superior; en loading.es, 8.5). Por defecto sale **5.3** y con ella la tarea falla con «Unsupported declare strict_types».
 
-   **Tarea 1 — Subir ventas a PrestaShop.** Sube las ventas, devoluciones y clientes nuevos a PrestaShop y limpia el historial de impresión.
+   **Tarea 1 — Subir ventas a PrestaShop.** Sube las ventas, devoluciones y clientes nuevos a PrestaShop, limpia el historial de impresión y completa los pasos pendientes de la instalación o de una actualización (ver [Actualizar el TPV](#actualizar-el-tpv)).
 
    | Campo en Plesk | Qué poner |
    |---|---|
@@ -120,6 +120,19 @@ Para **restaurar** una copia:
 Aviso fiscal: restaurar una copia antigua **pierde las ventas y los registros fiscales posteriores** a esa copia. La numeración de los tickets sigue desde los contadores de la copia restaurada, así que usa siempre la copia más reciente. No instales nunca el TPV sobre una base de datos vacía para seguir vendiendo sin ajustar antes la numeración.
 
 **Continuar la numeración.** Si se pierde la base de datos (o la copia restaurada es anterior a los últimos tickets), antes de la primera venta abre **Ajustes → Cajas**, edita cada caja y en «Próximo número de ticket» pulsa **Cambiar**: escribe el número siguiente al último ticket emitido con esa letra y el motivo. Haz lo mismo en «Abonos: próximo número» con el último abono (R2026-…). La numeración solo puede avanzar, nunca volver a un número ya emitido, y cada cambio queda registrado en «Cambios de numeración» con la fecha, el motivo y el usuario. Si no sabes cuál fue el último número, cambia la letra de todas las cajas: empiezan una serie nueva sin repetir números.
+
+## Actualizar el TPV
+
+1. Si puedes, hazlo fuera del horario de venta. Sube el nuevo `venpostpv-hosting.zip` a la carpeta del subdominio y extráelo **encima**, sustituyendo los archivos. No borres `.env`, `var/install.lock` ni la carpeta `backups/`.
+2. Borra la carpeta `var/cache/prod` (o ejecuta `php bin/console cache:clear --env=prod`), para que la aplicación use el código nuevo.
+3. Ya está: la tarea 1 (`tpv:sync:outbox`, cada minuto) aplica en su siguiente ejecución todo lo que la nueva versión necesita, en orden, y solo cuando falta algo:
+   - **las migraciones de la base de datos**, siempre después de una copia de seguridad automática en `backups/` (cuenta dentro de las 7 copias). Si la copia falla o su comprobación encuentra problemas, **no migra**: lo indica en Ajustes y lo reintenta cada 15 minutos. Dos ejecuciones nunca migran a la vez;
+   - **lo que haya que preparar en PrestaShop** (por ejemplo, los productos genéricos del artículo libre). Si la tienda no responde, lo reintenta cada 15 minutos.
+
+   Para no esperar al minuto siguiente, o para ver el detalle, ejecuta `php bin/console tpv:provision --env=prod` (en Plesk, una tarea «Ejecutar un script PHP» con esos argumentos y **Ejecutar ahora**). Con `--status` solo informa.
+4. Comprueba en el TPV **Ajustes → Acerca de → Estado de la instalación** que todos los pasos dicen «Hecho». Un paso «Pendiente» muestra debajo el motivo y qué hacer.
+
+Las nuevas funcionalidades que necesitan preparar algo añaden su paso a esta misma lista (ver `docs/provisioning.md`), así que una actualización nunca requiere órdenes manuales aparte.
 
 ## Reinstalar
 

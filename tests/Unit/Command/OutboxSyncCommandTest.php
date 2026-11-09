@@ -9,6 +9,9 @@ use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Tester\CommandTester;
 use VenPosTPV\Command\OutboxSyncCommand;
 use VenPosTPV\Service\PrintAgent\PrintRetention;
+use VenPosTPV\Service\Provisioning\ProvisioningReport;
+use VenPosTPV\Service\Provisioning\ProvisioningRunner;
+use VenPosTPV\Service\Provisioning\StepStatus;
 use VenPosTPV\Service\Sync\OutboxSync;
 
 final class OutboxSyncCommandTest extends TestCase
@@ -73,5 +76,62 @@ final class OutboxSyncCommandTest extends TestCase
 
         $this->assertSame(Command::SUCCESS, $tester->execute([]));
         $this->assertSame("Outbox sync: 1 uploaded, 0 to retry, 0 incidents, 0 recovered\n", $tester->getDisplay());
+    }
+
+    public function testThePendingInstallationStepsRunThrottledBeforeTheUploads(): void
+    {
+        $log = [];
+        $sync = $this->createMock(OutboxSync::class);
+        $sync->method('run')->willReturnCallback(static function () use (&$log): array {
+            $log[] = 'sync';
+
+            return ['uploaded' => 0, 'retried' => 0, 'incidents' => 0, 'recovered' => 0];
+        });
+        $provisioning = $this->createMock(ProvisioningRunner::class);
+        $provisioning->expects($this->once())->method('run')->with(true)->willReturnCallback(static function () use (&$log): ProvisioningReport {
+            $log[] = 'provision';
+
+            return new ProvisioningReport([new StepStatus('migrations', 'Actualizar la base de datos (migraciones)', StepStatus::DONE)]);
+        });
+        $tester = new CommandTester(new OutboxSyncCommand($sync, null, $provisioning));
+
+        $this->assertSame(Command::SUCCESS, $tester->execute([]));
+        $this->assertSame(['provision', 'sync'], $log, 'migrations and setup go first, so the uploads use them');
+        $this->assertSame("Outbox sync: 0 uploaded, 0 to retry, 0 incidents, 0 recovered\n", $tester->getDisplay(), 'nothing attempted, nothing printed');
+    }
+
+    public function testAnAttemptedInstallationStepIsPrintedWithoutChangingTheExitCode(): void
+    {
+        $sync = $this->createMock(OutboxSync::class);
+        $sync->method('run')->willReturn(['uploaded' => 0, 'retried' => 0, 'incidents' => 0, 'recovered' => 0]);
+        $provisioning = $this->createMock(ProvisioningRunner::class);
+        $provisioning->method('run')->willReturn(new ProvisioningReport([
+            new StepStatus('migrations', 'Actualizar la base de datos (migraciones)', StepStatus::DONE, attempted: true),
+            new StepStatus('free-item-products', 'Productos genéricos del artículo libre en PrestaShop', StepStatus::FAILED, 'Sin conexión con PrestaShop.', new \DateTimeImmutable(), true),
+        ]));
+        $tester = new CommandTester(new OutboxSyncCommand($sync, null, $provisioning));
+
+        $this->assertSame(Command::SUCCESS, $tester->execute([]));
+        $this->assertSame(
+            "Provisioning: migrations done\n"
+            . "Provisioning: free-item-products failed: Sin conexión con PrestaShop.\n"
+            . "Outbox sync: 0 uploaded, 0 to retry, 0 incidents, 0 recovered\n",
+            $tester->getDisplay()
+        );
+    }
+
+    public function testAProvisioningErrorNeverStopsTheUploads(): void
+    {
+        $sync = $this->createMock(OutboxSync::class);
+        $sync->expects($this->once())->method('run')->willReturn(['uploaded' => 1, 'retried' => 0, 'incidents' => 0, 'recovered' => 0]);
+        $provisioning = $this->createMock(ProvisioningRunner::class);
+        $provisioning->method('run')->willThrowException(new \RuntimeException('Connection refused'));
+        $tester = new CommandTester(new OutboxSyncCommand($sync, null, $provisioning));
+
+        $this->assertSame(Command::SUCCESS, $tester->execute([]));
+        $this->assertSame(
+            "Provisioning failed: Connection refused\nOutbox sync: 1 uploaded, 0 to retry, 0 incidents, 0 recovered\n",
+            $tester->getDisplay()
+        );
     }
 }

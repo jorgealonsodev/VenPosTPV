@@ -157,6 +157,16 @@ services:
         arguments:
             $directory: '%kernel.project_dir%/backups'
 
+    # Installation and upgrade steps (docs/provisioning.md). Every class that
+    # implements ProvisioningStep is registered by autoconfiguration; the runner is
+    # public because the web installer takes it from the booted kernel.
+    VenPosTPV\Service\Install\MigrationRunner:
+        arguments:
+            $migrationsDirectory: '%kernel.project_dir%/migrations'
+
+    VenPosTPV\Service\Provisioning\ProvisioningRunner:
+        public: true
+
     # Twig
     Twig\Loader\LoaderInterface:
         class: Twig\Loader\FilesystemLoader
