@@ -90,6 +90,8 @@ const ApiClient = (function () {
         pendingCount: () => offlineQueue.length,
         flush: () => flushQueue(),
         checkout: (payload) => request('/api/checkout', { method: 'POST', body: JSON.stringify(payload) }),
+        // docs/prd/articulo-libre.md A1.1, A7: whether this cashier may add a free item.
+        freeItemSettings: () => request('/api/checkout/free-item-settings', { method: 'GET' }),
         couponPreview: (payload) => request('/api/checkout/coupon-preview', { method: 'POST', body: JSON.stringify(payload), queueOnNetworkFailure: false }),
         couponCheckout: (payload) => request('/api/checkout', { method: 'POST', body: JSON.stringify(payload), queueOnNetworkFailure: false }),
         createCoupon: (payload) => request('/api/coupons', { method: 'POST', body: JSON.stringify(payload), queueOnNetworkFailure: false }),

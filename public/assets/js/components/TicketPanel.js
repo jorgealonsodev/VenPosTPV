@@ -3,8 +3,9 @@
  */
 const TicketPanel = {
     // stockByKey: local stock by "<product>:<combination>" of what the sale screen added.
-    props: ['cart', 'stockByKey'],
-    emits: ['remove', 'updateQty', 'showPayment', 'showDiscount', 'showCustomer', 'park', 'void'],
+    // freeItemAllowed: show «Artículo libre» (docs/prd/articulo-libre.md A1.1).
+    props: ['cart', 'stockByKey', 'freeItemAllowed'],
+    emits: ['remove', 'updateQty', 'showPayment', 'showDiscount', 'showCustomer', 'showFreeItem', 'park', 'void'],
     setup(props) {
         const totalLines = Vue.computed(() => {
             return props.cart.lines.reduce((s, l) => s + (l.qty || 1), 0);
@@ -45,15 +46,18 @@ const TicketPanel = {
                 </div>
                 <div v-for="line in cart.lines" :key="line.id"
                     style="background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:8px 10px 8px 8px; display:flex; gap:10px; transition:all .12s;">
-                    <!-- Thumbnail: a column as tall as the line -->
-                    <div style="width:56px; align-self:stretch; min-height:56px; border-radius:6px; background:var(--surface); border:1px solid var(--border); flex-shrink:0; overflow:hidden; display:flex; align-items:center; justify-content:center; color:var(--text3); font-size:8px; font-family:'IBM Plex Mono';">
+                    <!-- Thumbnail: a column as tall as the line; a free item has none (A1.4) -->
+                    <div v-if="!line.free_item" style="width:56px; align-self:stretch; min-height:56px; border-radius:6px; background:var(--surface); border:1px solid var(--border); flex-shrink:0; overflow:hidden; display:flex; align-items:center; justify-content:center; color:var(--text3); font-size:8px; font-family:'IBM Plex Mono';">
                         <img v-if="line.image_url" :src="line.image_url" alt="" draggable="false" loading="lazy" style="width:100%; height:100%; object-fit:cover;" @error="$event.target.style.display='none'" />
                         <span v-else>IMG</span>
                     </div>
                     <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:6px;">
                     <div style="display:flex; align-items:flex-start; gap:6px;">
                         <div style="flex:1; min-width:0;">
-                            <div style="font-size:12px; font-weight:500; color:var(--text); line-height:1.3;">{{ line.name }}</div>
+                            <div style="font-size:12px; font-weight:500; color:var(--text); line-height:1.3;">
+                                <span v-if="line.free_item" class="ticket-free-badge" title="Artículo libre: no está en el catálogo">Libre</span>
+                                {{ line.name }}
+                            </div>
                             <div v-if="line.reference" style="font-size:10px; color:var(--text3); font-family:'IBM Plex Mono'; margin-top:2px;">{{ line.reference }}</div>
                             <span v-if="outOfStock(line)" class="tpv-tag" style="margin-top:4px; font-size:12px;" title="Se puede vender igualmente; revisa el inventario">Sin stock en el TPV</span>
                         </div>
@@ -100,6 +104,9 @@ const TicketPanel = {
 
             <!-- Action bar -->
             <div style="padding:8px 12px 12px; border-top: cart.lines.length > 0 ? 'none' : '1px solid var(--border)'; display:flex; flex-direction:column; gap:8px;">
+                <button v-if="freeItemAllowed" @click="$emit('showFreeItem')" class="tpv-btn ticket-free-button">
+                    <icon name="plus" :size="14" /> Artículo libre
+                </button>
                 <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px;">
                     <button @click="$emit('showDiscount')"
                         style="padding:9px 6px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px; display:flex; align-items:center; justify-content:center; gap:5px; transition:all .1s;"

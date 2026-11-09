@@ -799,3 +799,22 @@ html, body, #app {
 .brand-logo--light { display: none; }
 [data-theme="light"] .brand-logo--light { display: inline-block; }
 [data-theme="light"] .brand-logo--dark { display: none; }
+
+/* Free item (FreeItemModal, docs/prd/articulo-libre.md A1) */
+.free-item-modal {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: 24px;
+    width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto;
+    display: flex; flex-direction: column; gap: 16px;
+}
+.free-item-body { display: flex; gap: 20px; flex-wrap: wrap; }
+.free-item-fields { flex: 1 1 280px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.free-item-keypad { flex: 0 1 240px; align-self: flex-end; }
+.free-item-input { width: 100%; min-height: 48px; font-size: 17px; }
+.free-item-input.is-active { border-color: var(--amber); }
+.free-item-rate { flex: 1; min-height: 48px; justify-content: center; font-size: 16px; }
+.free-item-step { min-width: 52px; min-height: 48px; display: flex; align-items: center; justify-content: center; }
+.ticket-free-badge {
+    display: inline-block; margin-right: 4px; padding: 1px 6px; border-radius: 4px;
+    background: var(--blue-bg); color: var(--blue); font-size: 10px; font-weight: 700; vertical-align: 1px;
+}
+.ticket-free-button { width: 100%; min-height: 44px; display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 13px; }

@@ -121,6 +121,41 @@ const useCart = (function () {
         return true;
     }
 
+    /**
+     * docs/prd/articulo-libre.md A1.3-A1.5, A2.1: a free item is a new line every
+     * time (never merged), with no PrestaShop product. Its net price comes from its
+     * own VAT rate so recalc() never falls back to IVA_RATE for it. The dialog
+     * (FreeItemModal) validates the values; the checkout validates them again.
+     */
+    function addFree({ concept, price, vatRate, qty }) {
+        const text = String(concept || '');
+        const unitPrice = Math.round((Number(price) || 0) * 100) / 100;
+        const rate = Number(vatRate) || 0;
+        cart.lines.push({
+            id: 'line_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+            free_item: true,
+            concept: text,
+            name: text,
+            product_id: 0,
+            id_product_attribute: 0,
+            reference: '',
+            image_url: null,
+            price: unitPrice,
+            vat_rate: rate,
+            net_price: freeNetPrice(unitPrice, rate),
+            qty: Math.max(1, parseInt(qty, 10) || 1),
+            discount: 0,
+        });
+        recalc();
+        save();
+        return true;
+    }
+
+    /** Tax-excluded unit price of a free item, as the server computes it (6 decimals). */
+    function freeNetPrice(price, rate) {
+        return Math.round((Number(price) || 0) / (1 + (Number(rate) || 0) / 100) * 1e6) / 1e6;
+    }
+
     function remove(lineId) {
         cart.lines = cart.lines.filter(l => l.id !== lineId);
         recalc();
@@ -333,6 +368,8 @@ const useCart = (function () {
     return {
         cart,
         add,
+        addFree,
+        freeNetPrice,
         remove,
         updateQty,
         clear,

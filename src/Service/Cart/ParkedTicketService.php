@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace VenPosTPV\Service\Cart;
 
 use Doctrine\DBAL\Connection;
+use VenPosTPV\Service\Checkout\FreeItemLine;
 
 class ParkedTicketService
 {
@@ -64,7 +65,7 @@ class ParkedTicketService
             $lineDiscount = max(0.0, min(100.0, (float) ($line['discount'] ?? 0)));
             $subtotal += $price * $qty * (1.0 - $lineDiscount / 100.0);
 
-            $normalizedLines[] = [
+            $normalized = [
                 'id' => (string) ($line['id'] ?? ('line_' . $idx)),
                 'product_id' => (int) ($line['product_id'] ?? $line['id_product'] ?? 0),
                 'id_product_attribute' => (int) ($line['id_product_attribute'] ?? 0),
@@ -74,6 +75,14 @@ class ParkedTicketService
                 'qty' => $qty,
                 'discount' => $lineDiscount,
             ];
+            // docs/prd/articulo-libre.md A9: a free item keeps its concept and VAT rate;
+            // the checkout validates them again when the ticket is charged.
+            if (FreeItemLine::isFree($line)) {
+                $normalized['free_item'] = true;
+                $normalized['concept'] = (string) ($line['concept'] ?? $line['name'] ?? '');
+                $normalized['vat_rate'] = round((float) ($line['vat_rate'] ?? 0), 2);
+            }
+            $normalizedLines[] = $normalized;
         }
 
         if (count($normalizedLines) === 0) {

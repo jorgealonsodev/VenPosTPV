@@ -110,6 +110,46 @@ class ParkedTicketServiceTest extends TestCase
         $this->assertSame('pct', $created['discount']['type']);
     }
 
+    /** docs/prd/articulo-libre.md A9: a parked ticket keeps its free item fields. */
+    public function testParkTicketKeepsTheFreeItemFieldsOnlyOnFreeLines(): void
+    {
+        $conn = $this->createMock(Connection::class);
+        $conn->method('fetchAssociative')->willReturn(false);
+        $stored = null;
+        $conn->expects($this->once())
+            ->method('insert')
+            ->with('parked_ticket', $this->callback(function (array $data) use (&$stored): bool {
+                $stored = json_decode((string) $data['lines_json'], true, 512, JSON_THROW_ON_ERROR);
+
+                return true;
+            }));
+        $conn->method('lastInsertId')->willReturn('43');
+
+        $service = new ParkedTicketService($conn);
+        $created = $service->park([
+            'client_ref' => 'parked_free',
+            'lines' => [
+                ['id' => 'l1', 'product_id' => 12, 'name' => 'Abrigo', 'price' => 100.0, 'qty' => 1, 'discount' => 0, 'vat_rate' => 99, 'concept' => 'x'],
+                ['id' => 'l2', 'free_item' => true, 'concept' => 'Arreglo bajo', 'name' => 'Arreglo bajo', 'product_id' => 0, 'id_product_attribute' => 0, 'price' => 10.0, 'vat_rate' => 10, 'qty' => 3, 'discount' => 5],
+            ],
+        ]);
+
+        $free = $created['lines'][1];
+        $this->assertTrue($free['free_item']);
+        $this->assertSame('Arreglo bajo', $free['concept']);
+        $this->assertSame('Arreglo bajo', $free['name']);
+        $this->assertSame(10.0, $free['vat_rate']);
+        $this->assertSame(10.0, $free['price']);
+        $this->assertSame(3, $free['qty']);
+        $this->assertSame(0, $free['product_id']);
+        $this->assertEquals($created['lines'], $stored, 'the stored lines are the returned ones');
+
+        $catalog = $created['lines'][0];
+        $this->assertArrayNotHasKey('free_item', $catalog);
+        $this->assertArrayNotHasKey('concept', $catalog);
+        $this->assertArrayNotHasKey('vat_rate', $catalog);
+    }
+
     public function testParkTicketIsIdempotentOnExistingClientRef(): void
     {
         $conn = $this->createMock(Connection::class);

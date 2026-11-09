@@ -182,7 +182,17 @@ const PaymentModal = {
             };
         }
 
+        // docs/prd/articulo-libre.md A9: a PrestaShop coupon cannot be combined with a
+        // free item; the checkout refuses it with the same message.
+        const FREE_ITEM_COUPON_MESSAGE = 'No se puede usar un cupón con un artículo libre';
+        const hasFreeItem = Vue.computed(() => useCart.cart.lines.some((line) => line && line.free_item === true));
+
         async function applyVoucher() {
+            if (hasFreeItem.value) {
+                invalidateVoucher();
+                voucherError.value = FREE_ITEM_COUPON_MESSAGE;
+                return;
+            }
             if (voucherReconciliationRequired.value) {
                 voucherError.value = 'El resultado del cobro anterior debe reconciliarse antes de validar otro cupón.';
                 return;
@@ -234,7 +244,8 @@ const PaymentModal = {
             if (method.value === 'card') return true;
             if (method.value === 'mixed') return (cardParsed.value + card2Parsed.value) >= props.total - 0.01;
             if (method.value === 'voucher') {
-                return !voucherReconciliationRequired.value
+                return !hasFreeItem.value
+                    && !voucherReconciliationRequired.value
                     && voucherPreview.value !== null
                     && (voucherTender.value === 'card' || voucherCashParsed.value >= voucherPayable.value);
             }
@@ -470,7 +481,7 @@ const PaymentModal = {
             cashInput.value = props.total.toFixed(2).replace('.', ',');
         }
 
-        return { method, cashInput, card1, card2, step, errorMsg, errorRetry, lastOrderId, lastSaleId, methods, cashParsed, change, cardParsed, card2Parsed, dataphoneMode, printerType, voucherCode, voucherPreview, voucherBusy, voucherError, voucherTender, voucherCashInput, voucherPayable, voucherDiscount, voucherGross, voucherCashParsed, voucherChange, voucherReconciliationRequired, couponOffline, chargeWithoutCoupon, completedTotal, completedChange, doneTotal, doneChange, isSubmitting, canConfirm, handleConfirm, retryCheckout, returnToSelection, appendNum, exacto, downloadTicket, emailEnabled, ticketEmail, emailStatus, emailSending, sendTicketEmail, applyVoucher, invalidateVoucher, keypadKeys, quickAmounts, eur, drawerWarning, finish, onBackdrop };
+        return { method, cashInput, card1, card2, step, errorMsg, errorRetry, lastOrderId, lastSaleId, methods, cashParsed, change, cardParsed, card2Parsed, dataphoneMode, printerType, voucherCode, voucherPreview, voucherBusy, voucherError, voucherTender, voucherCashInput, voucherPayable, voucherDiscount, voucherGross, voucherCashParsed, voucherChange, voucherReconciliationRequired, couponOffline, chargeWithoutCoupon, completedTotal, completedChange, doneTotal, doneChange, isSubmitting, canConfirm, handleConfirm, retryCheckout, returnToSelection, appendNum, exacto, downloadTicket, emailEnabled, ticketEmail, emailStatus, emailSending, sendTicketEmail, applyVoucher, invalidateVoucher, hasFreeItem, freeItemCouponMessage: FREE_ITEM_COUPON_MESSAGE, keypadKeys, quickAmounts, eur, drawerWarning, finish, onBackdrop };
     },
     template: `
         <div class="modal-backdrop" @click.self="onBackdrop">
@@ -610,7 +621,8 @@ const PaymentModal = {
                         <template v-if="method === 'voucher'">
                             <div style="flex:1; display:flex; flex-direction:column; gap:12px;">
                                 <div class="tpv-label">Cupón de descuento PrestaShop</div>
-                                <div style="display:flex; gap:8px;">
+                                <div v-if="hasFreeItem" role="alert" style="color:var(--red); font-size:14px;">{{ freeItemCouponMessage }}</div>
+                                <div v-else style="display:flex; gap:8px;">
                                     <input v-model="voucherCode" @keyup.enter="applyVoucher" placeholder="CÓDIGO DEL CUPÓN"
                                         :disabled="voucherBusy" class="tpv-input"
                                         style="flex:1; font-family:'IBM Plex Mono', monospace; font-size:17px; letter-spacing:0.05em;" />

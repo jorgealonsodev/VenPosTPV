@@ -2,6 +2,9 @@
  * SaleScreen — main 3-zone layout shell with header, catalog, ticket, and action bar.
  */
 const SaleScreen = {
+    // FreeItemModal.js is loaded before this file (templates/pos.html.twig); without it
+    // the sale screen still works and «Artículo libre» stays hidden.
+    components: typeof FreeItemModal !== 'undefined' ? { 'free-item-modal': FreeItemModal } : {},
     props: ['cashierName', 'storeName'],
     emits: ['cashClose', 'notify'],
     setup(props, { emit }) {
@@ -18,6 +21,22 @@ const SaleScreen = {
 
         const showPayment = Vue.ref(false);
         const showDiscount = Vue.ref(false);
+        // docs/prd/articulo-libre.md A1.1: «Artículo libre» only when the server says
+        // this cashier may use it; any error keeps it hidden (fail closed).
+        const showFreeItem = Vue.ref(false);
+        const freeItemSettings = Vue.ref(null);
+        const freeItemAllowed = Vue.computed(() => {
+            const s = freeItemSettings.value;
+            return !!(typeof FreeItemModal !== 'undefined' && s && s.enabled === true && s.allowed === true && Array.isArray(s.vat_rates) && s.vat_rates.length > 0);
+        });
+        function loadFreeItemSettings() {
+            if (typeof ApiClient === 'undefined' || !ApiClient || typeof ApiClient.freeItemSettings !== 'function') {
+                return Promise.resolve();
+            }
+            return ApiClient.freeItemSettings()
+                .then((response) => { freeItemSettings.value = response && response.data ? response.data : null; })
+                .catch(() => { freeItemSettings.value = null; });
+        }
         const showCustomer = Vue.ref(false);
         const showCouponCreation = Vue.ref(false);
         const showCashClose = Vue.ref(false);
@@ -56,6 +75,7 @@ const SaleScreen = {
 
         Vue.onMounted(() => {
             refreshParked();
+            loadFreeItemSettings();
             // The cart is restored from localStorage with the prices captured when
             // each line was added; re-price them so a stale snapshot never reaches
             // the checkout, which validates against the current catalog.
@@ -317,6 +337,7 @@ const SaleScreen = {
             addProduct, remove, updateQty,
             handlePaymentComplete, handlePark, confirmParkTicket, handleVoid, confirmVoid, cancelVoid, handleReprint,
             handleDiscount, handleCustomer,
+            showFreeItem, freeItemSettings, freeItemAllowed,
             handleCashClose, handleCashCloseDone, handleCashCloseBack, handleDiscardParkedOnClose,
             handleRefund, handleRefundBack, handleRefundNotify,
             handleLogout, handleLogoutConfirmed,
@@ -469,6 +490,8 @@ const SaleScreen = {
                         @update-qty="updateQty"
                         @show-payment="showPayment = true"
                         @show-discount="showDiscount = true"
+                        :free-item-allowed="freeItemAllowed"
+                        @show-free-item="showFreeItem = true"
                         @show-customer="showCustomer = true"
                         @park="handlePark"
                         @void="handleVoid"
@@ -530,6 +553,9 @@ const SaleScreen = {
 
             <!-- Discount Modal -->
             <discount-modal v-if="showDiscount" @apply="handleDiscount" @close="showDiscount = false" />
+
+            <!-- Free item (docs/prd/articulo-libre.md A1) -->
+            <free-item-modal v-if="showFreeItem && freeItemAllowed" :settings="freeItemSettings" @close="showFreeItem = false" />
 
             <!-- Customer Modal -->
             <customer-modal v-if="showCustomer" @select="handleCustomer" @close="showCustomer = false" />

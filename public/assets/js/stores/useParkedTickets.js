@@ -21,6 +21,31 @@ const useParkedTickets = (function () {
         );
     }
 
+    function normalizeLine(l) {
+        const line = {
+            id: l.id || ('line_' + Math.random().toString(36).slice(2, 7)),
+            product_id: Number(l.product_id || l.id_product || 0),
+            id_product_attribute: Number(l.id_product_attribute || 0),
+            name: String(l.name || ''),
+            reference: String(l.reference || ''),
+            price: Number(l.price || 0),
+            qty: Number(l.qty || l.quantity || 1),
+            discount: Number(l.discount || 0),
+        };
+        // docs/prd/articulo-libre.md A9: a free item keeps its concept and VAT rate,
+        // and its net price is recomputed from that rate (reprice skips it).
+        if (l.free_item === true) {
+            line.free_item = true;
+            line.concept = String(l.concept || l.name || '');
+            line.vat_rate = Number(l.vat_rate || 0);
+            line.image_url = null;
+            line.net_price = typeof useCart !== 'undefined' && useCart && typeof useCart.freeNetPrice === 'function'
+                ? useCart.freeNetPrice(line.price, line.vat_rate)
+                : null;
+        }
+        return line;
+    }
+
     function normalizeTicket(raw) {
         if (!raw || typeof raw !== 'object') {
             return null;
@@ -29,16 +54,7 @@ const useParkedTickets = (function () {
             ? String(raw.client_ref)
             : 'parked_' + String(raw.id || Date.now());
         const lines = Array.isArray(raw.lines)
-            ? raw.lines.map(l => ({
-                id: l.id || ('line_' + Math.random().toString(36).slice(2, 7)),
-                product_id: Number(l.product_id || l.id_product || 0),
-                id_product_attribute: Number(l.id_product_attribute || 0),
-                name: String(l.name || ''),
-                reference: String(l.reference || ''),
-                price: Number(l.price || 0),
-                qty: Number(l.qty || l.quantity || 1),
-                discount: Number(l.discount || 0),
-            }))
+            ? raw.lines.map(normalizeLine)
             : [];
         if (lines.length === 0) {
             return null;
