@@ -108,6 +108,9 @@ const ApiClient = (function () {
         },
         couponEmail: (couponId, email) => request('/api/coupons/' + encodeURIComponent(couponId) + '/email', { method: 'POST', body: JSON.stringify({ email }), queueOnNetworkFailure: false }),
         ticketEmailEnabled: () => request('/api/ticket/email-enabled', { method: 'GET' }),
+        // «WhatsApp»: {data: {url, message}} for a sale ticket, an invoice ({consent}) or a
+        // coupon. Never queued offline: the till opens WhatsApp with the answer right away.
+        whatsappLink: (kind, id, body) => request(({ ticket: '/api/ticket/sale/', invoice: '/api/invoices/', coupon: '/api/coupons/' })[kind] + encodeURIComponent(id) + '/whatsapp', { method: 'POST', body: JSON.stringify(body || {}), queueOnNetworkFailure: false }),
         // PRD C1, C2: the till's local customer copy; a new customer is stored locally and
         // uploaded before its sale. Never queued offline: the server itself stores it.
         customerSearch: (query) => request('/api/customers?q=' + encodeURIComponent(query || ''), { method: 'GET' }),

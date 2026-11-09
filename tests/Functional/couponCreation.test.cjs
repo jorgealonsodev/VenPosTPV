@@ -78,7 +78,7 @@ function testSaleScreenShowsCouponEntryToBothAuthorizedRolesOnly() {
     assert.doesNotMatch(source, /<icon name="tag"[^>]*\/> Crear cupón/);
     assert.doesNotMatch(source, /showSettings = true[\s\S]{0,160}Crear cupón/);
     assert.match(appSource, /app\.component\('coupon-creation-modal', CouponCreationModal\)/);
-    assert.match(pageSource, /components\/CouponCreationModal\.js\?v=[^"']*coupon-creation-v3/);
+    assert.match(pageSource, /components\/CouponCreationModal\.js\?v=20261109-[a-z0-9-]+/);
     assert.match(pageSource, /SaleScreen\.js\?v=[^"']+/);
 }
 

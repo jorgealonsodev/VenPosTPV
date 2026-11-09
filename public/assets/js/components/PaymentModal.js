@@ -4,6 +4,7 @@
 const PaymentModal = {
     props: ['total'],
     emits: ['complete', 'close', 'error'],
+    components: typeof WhatsAppShare !== 'undefined' ? { 'whatsapp-share': WhatsAppShare } : {},
     setup(props, { emit }) {
         const method = Vue.ref('cash');
         const cashInput = Vue.ref('');
@@ -25,6 +26,9 @@ const PaymentModal = {
         // Ticket by email when the till has no printer (Ajustes → Email).
         const emailEnabled = Vue.ref(false);
         const ticketEmail = Vue.ref('');
+        // «WhatsApp» next to the email: a link to the ticket PDF (WhatsAppShare).
+        const ticketPhone = Vue.ref('');
+        const whatsappOpen = Vue.ref(false);
         const emailStatus = Vue.ref('');
         const emailSending = Vue.ref(false);
         const voucherCode = Vue.ref('');
@@ -290,6 +294,8 @@ const PaymentModal = {
                     // Prefill with the customer's email; the account may be configured meanwhile.
                     const customerEmail = (useCart.cart.customer && useCart.cart.customer.email) || '';
                     ticketEmail.value = String(customerEmail).includes('@') ? String(customerEmail) : '';
+                    ticketPhone.value = String((useCart.cart.customer && useCart.cart.customer.phone) || '');
+                    whatsappOpen.value = false;
                     emailStatus.value = '';
                     completedTotal.value = Object.prototype.hasOwnProperty.call(response.data, 'total')
                         ? Number(response.data.total)
@@ -481,7 +487,7 @@ const PaymentModal = {
             cashInput.value = props.total.toFixed(2).replace('.', ',');
         }
 
-        return { method, cashInput, card1, card2, step, errorMsg, errorRetry, lastOrderId, lastSaleId, methods, cashParsed, change, cardParsed, card2Parsed, dataphoneMode, printerType, voucherCode, voucherPreview, voucherBusy, voucherError, voucherTender, voucherCashInput, voucherPayable, voucherDiscount, voucherGross, voucherCashParsed, voucherChange, voucherReconciliationRequired, couponOffline, chargeWithoutCoupon, completedTotal, completedChange, doneTotal, doneChange, isSubmitting, canConfirm, handleConfirm, retryCheckout, returnToSelection, appendNum, exacto, downloadTicket, emailEnabled, ticketEmail, emailStatus, emailSending, sendTicketEmail, applyVoucher, invalidateVoucher, hasFreeItem, freeItemCouponMessage: FREE_ITEM_COUPON_MESSAGE, keypadKeys, quickAmounts, eur, drawerWarning, finish, onBackdrop };
+        return { method, cashInput, card1, card2, step, errorMsg, errorRetry, lastOrderId, lastSaleId, methods, cashParsed, change, cardParsed, card2Parsed, dataphoneMode, printerType, voucherCode, voucherPreview, voucherBusy, voucherError, voucherTender, voucherCashInput, voucherPayable, voucherDiscount, voucherGross, voucherCashParsed, voucherChange, voucherReconciliationRequired, couponOffline, chargeWithoutCoupon, completedTotal, completedChange, doneTotal, doneChange, isSubmitting, canConfirm, handleConfirm, retryCheckout, returnToSelection, appendNum, exacto, downloadTicket, emailEnabled, ticketEmail, ticketPhone, whatsappOpen, emailStatus, emailSending, sendTicketEmail, applyVoucher, invalidateVoucher, hasFreeItem, freeItemCouponMessage: FREE_ITEM_COUPON_MESSAGE, keypadKeys, quickAmounts, eur, drawerWarning, finish, onBackdrop };
     },
     template: `
         <div class="modal-backdrop" @click.self="onBackdrop">
@@ -516,8 +522,10 @@ const PaymentModal = {
                         <button @click="sendTicketEmail" :disabled="emailSending || !ticketEmail" class="tpv-btn" style="display:flex; align-items:center; gap:6px;">
                             <icon name="mail" :size="16" /> {{ emailSending ? 'Enviando…' : 'Enviar' }}
                         </button>
+                        <button @click="whatsappOpen = !whatsappOpen" class="tpv-btn" :aria-expanded="whatsappOpen ? 'true' : 'false'">WhatsApp</button>
                     </div>
                     <div v-if="emailStatus" style="font-size:12px; color:var(--text2);">{{ emailStatus }}</div>
+                    <whatsapp-share v-if="whatsappOpen" kind="ticket" :doc-id="lastSaleId" :initial-phone="ticketPhone" />
                     <button @click="finish" class="tpv-btn tpv-btn-primary" style="margin-top:4px;">Terminar</button>
                 </div>
             </div>

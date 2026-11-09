@@ -17,7 +17,7 @@ Esta es la fase 1 del PRD (`docs/prd/factura-completa.md`). Todavía no hay fact
    - **cliente extranjero:** cambia el país (código de dos letras, p. ej. `FR`) y elige el tipo de documento: `02` NIF-IVA, `03` pasaporte, `04` documento oficial del país de residencia, `05` certificado de residencia o `06` otro documento. El número no se comprueba.
    - El NIF español se comprueba con su letra o dígito de control: «El NIF no es válido».
 3. **Resumen.** Muestra el ticket, su fecha e importe, el cliente, el cuadro de IVA (base, tipo y cuota por cada tipo) y el número que tendrá la factura. Marca **«El cliente acepta recibir la factura por email»** si el cliente quiere recibirla por email.
-4. Pulsa **Emitir factura**. Se abre la ventana para **descargar el PDF** (A4) o **enviarlo por email**.
+4. Pulsa **Emitir factura**. Se abre la ventana para **descargar el PDF** (A4), **enviarlo por email** o **por WhatsApp** ([enviar-por-whatsapp.md](enviar-por-whatsapp.md)).
 
 El detalle de la venta muestra desde entonces **«Sustituido por F26000001»** y el botón **Factura F26000001**, que vuelve a abrir esa ventana. Una copia (descarga o reenvío) es siempre el mismo documento, con los datos guardados al emitirla: editar después el cliente no cambia facturas ya emitidas.
 
@@ -30,6 +30,10 @@ El IVA sale de las líneas guardadas al cobrar, con la misma regla que el ticket
 ## Email
 
 Solo con el consentimiento del cliente (art. 9.2): la casilla del resumen o la de la ventana de envío. El consentimiento queda guardado con la factura. Sin él, el TPV no la envía: «El cliente no ha aceptado recibir la factura por email». Hace falta la cuenta de correo de Ajustes → Email.
+
+## WhatsApp
+
+Con el mismo consentimiento que el email (la casilla de la ventana de envío dice «El cliente acepta recibir la factura por email o WhatsApp» y se guarda igual con la factura). Sin él no se crea el enlace: «El cliente no ha aceptado recibir la factura en formato electrónico». No hace falta cuenta de correo. Ver [enviar-por-whatsapp.md](enviar-por-whatsapp.md).
 
 ## Cuándo no se puede canjear
 

@@ -1,6 +1,7 @@
 /**
  * CouponCreationModal — creates a server-generated TPV coupon, then hands its slip
- * over: printed on the till's ticket printer, as a PDF, or by email.
+ * over: printed on the till's ticket printer, as a PDF, by email, or by WhatsApp
+ * (WhatsAppShare: a link to the slip's PDF).
  */
 
 // Page-session ambiguity guard. After a 409 or a lost response the coupon may
@@ -12,6 +13,7 @@ const couponReconciliationGuard = Vue.ref({ required: false, message: '' });
 
 const CouponCreationModal = {
     emits: ['close'],
+    components: typeof WhatsAppShare !== 'undefined' ? { 'whatsapp-share': WhatsAppShare } : {},
     setup(props, { emit }) {
         function defaultExpiry() {
             const date = new Date();
@@ -38,6 +40,7 @@ const CouponCreationModal = {
         const emailEnabled = Vue.ref(false);
         const emailOpen = Vue.ref(false);
         const emailAddress = Vue.ref('');
+        const whatsappOpen = Vue.ref(false);
         const slipBusy = Vue.ref(false);
         const slipMessage = Vue.ref('');
         const slipError = Vue.ref('');
@@ -204,12 +207,13 @@ const CouponCreationModal = {
             emailEnabled.value = false;
             emailOpen.value = false;
             emailAddress.value = '';
+            whatsappOpen.value = false;
             slipBusy.value = false;
             slipMessage.value = '';
             slipError.value = '';
         }
 
-        return { discountType, value, expiresAt, quantity, quantityPerUser, pending, error, createdCode, reconciliationRequired, copied, couponId, printable, emailEnabled, emailOpen, emailAddress, slipBusy, slipMessage, slipError, printSlip, openPdf, sendEmail, submit, copyCode, reset, validationError, close: () => emit('close') };
+        return { discountType, value, expiresAt, quantity, quantityPerUser, pending, error, createdCode, reconciliationRequired, copied, couponId, printable, emailEnabled, emailOpen, emailAddress, whatsappOpen, slipBusy, slipMessage, slipError, printSlip, openPdf, sendEmail, submit, copyCode, reset, validationError, close: () => emit('close') };
     },
     template: `
         <div class="modal-backdrop" style="backdrop-filter:blur(3px); -webkit-backdrop-filter:blur(3px);" @click.self="!pending && $emit('close')">
@@ -244,7 +248,9 @@ const CouponCreationModal = {
                             <button @click="printSlip" :disabled="slipBusy" style="flex:1; padding:9px 6px; border-radius:8px; border:1px solid var(--border2); background:var(--surface2); color:var(--text); cursor:pointer; font-family:inherit; font-size:13px;">Imprimir ticket</button>
                             <button @click="openPdf" :disabled="slipBusy" style="flex:1; padding:9px 6px; border-radius:8px; border:1px solid var(--border2); background:var(--surface2); color:var(--text); cursor:pointer; font-family:inherit; font-size:13px;">PDF</button>
                             <button v-if="emailEnabled" @click="emailOpen = !emailOpen" :disabled="slipBusy" style="flex:1; padding:9px 6px; border-radius:8px; border:1px solid var(--border2); background:var(--surface2); color:var(--text); cursor:pointer; font-family:inherit; font-size:13px;">Enviar por email</button>
+                            <button @click="whatsappOpen = !whatsappOpen" :disabled="slipBusy" style="flex:1; padding:9px 6px; border-radius:8px; border:1px solid var(--border2); background:var(--surface2); color:var(--text); cursor:pointer; font-family:inherit; font-size:13px;">WhatsApp</button>
                         </div>
+                        <whatsapp-share v-if="whatsappOpen" kind="coupon" :doc-id="couponId" />
                         <div v-if="emailEnabled && emailOpen" style="display:flex; gap:8px;">
                             <input v-model="emailAddress" type="email" placeholder="email@cliente.com" :disabled="slipBusy" @keyup.enter="sendEmail" style="flex:1; min-width:0; box-sizing:border-box; background:var(--surface2); border:1px solid var(--border2); border-radius:8px; padding:9px 12px; color:var(--text); font-family:inherit; font-size:13px; outline:none;" />
                             <button @click="sendEmail" :disabled="slipBusy" style="padding:9px 14px; border-radius:8px; border:0; background:var(--amber); color:#000; cursor:pointer; font-family:inherit; font-size:13px; font-weight:700;">{{ slipBusy ? 'Enviando…' : 'Enviar' }}</button>

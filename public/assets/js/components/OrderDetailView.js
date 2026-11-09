@@ -6,11 +6,13 @@
  * A TPV sale can be redeemed for a full invoice («Factura completa», InvoiceModal;
  * docs/prd/factura-completa.md F3). Once redeemed the detail shows «Sustituido por
  * F26000004» and the PDF window downloads or emails the A4 invoice, by email only
- * with the customer's consent (F6).
+ * with the customer's consent (F6). A TPV sale's ticket or invoice can also go by
+ * WhatsApp (WhatsAppShare: a link to the PDF), with the same consent for the invoice.
  */
 const OrderDetailView = {
     props: ['order'],
     emits: ['back', 'notify'],
+    components: typeof WhatsAppShare !== 'undefined' ? { 'whatsapp-share': WhatsAppShare } : {},
     setup(props, { emit }) {
         const title = Vue.computed(() => {
             const order = props.order || {};
@@ -82,6 +84,10 @@ const OrderDetailView = {
         const pdfEmailStatus = Vue.ref('');
         const pdfEmailSending = Vue.ref(false);
         const pdfCustomers = Vue.ref([]);
+        // «WhatsApp»: any TPV sale, with or without a mail account.
+        const pdfWhatsappEnabled = Vue.ref(false);
+        const pdfWhatsapp = Vue.ref(false);
+        const pdfPhone = Vue.ref('');
         let pdfSearchTimer = null;
         let pdfSearchSeq = 0;
 
@@ -93,6 +99,9 @@ const OrderDetailView = {
             pdfEmailStatus.value = '';
             pdfCustomers.value = [];
             pdfEmailEnabled.value = false;
+            pdfWhatsapp.value = false;
+            pdfPhone.value = saleCustomerPhone();
+            pdfWhatsappEnabled.value = !!(props.order && props.order.order_id);
             pdfChoice.value = true;
             // Only a TPV sale (local order_id) can be emailed, and only with a mail account.
             if (!(props.order && props.order.order_id)) return;
@@ -102,6 +111,16 @@ const OrderDetailView = {
             } catch (e) {
                 pdfEmailEnabled.value = false;
             }
+        }
+
+        function saleCustomerPhone() {
+            const order = props.order || {};
+            return String(order.customer_phone || (order.customer && order.customer.phone) || '');
+        }
+
+        // The invoice consent given for WhatsApp is now stored with the invoice.
+        async function onWhatsappShared() {
+            if (pdfDoc.value === 'invoice') await loadInvoice();
         }
 
         // Existing customers (the till's local copy) matching what is typed in the
@@ -184,7 +203,7 @@ const OrderDetailView = {
 
         loadInvoice();
 
-        return { invoice, showInvoice, canInvoice, loadInvoice, onInvoiceIssued, pdfDoc, pdfConsent, totalQty, title, canPrint, reprint, pdf, pdfChoice, pdfEmailEnabled, pdfEmail, pdfEmailStatus, pdfEmailSending, openPdfChoice, downloadPdf, sendPdfEmail, pdfCustomers, searchPdfCustomers, pickPdfCustomer };
+        return { invoice, showInvoice, canInvoice, loadInvoice, onInvoiceIssued, pdfDoc, pdfConsent, totalQty, title, canPrint, reprint, pdf, pdfChoice, pdfEmailEnabled, pdfEmail, pdfEmailStatus, pdfEmailSending, openPdfChoice, downloadPdf, sendPdfEmail, pdfCustomers, searchPdfCustomers, pickPdfCustomer, pdfWhatsappEnabled, pdfWhatsapp, pdfPhone, onWhatsappShared };
     },
     template: `
         <div style="display:flex; flex-direction:column; height:100%; overflow:hidden;">
@@ -252,7 +271,7 @@ const OrderDetailView = {
                 </div>
             </div>
 
-            <!-- PDF: download or send by email -->
+            <!-- PDF: download, send by email or by WhatsApp -->
             <div v-if="pdfChoice" class="combinations-modal-backdrop" @click.self="pdfChoice = false">
                 <div class="combinations-modal" role="dialog" :aria-label="pdfDoc === 'invoice' ? 'Factura en PDF' : 'Ticket en PDF'" style="max-width:420px;">
                     <div class="combinations-modal-header">
@@ -267,10 +286,6 @@ const OrderDetailView = {
                                 <input v-model="pdfEmail" type="text" inputmode="email" autocomplete="off" placeholder="email o nombre del cliente" aria-label="Email o nombre del cliente" class="tpv-input" style="flex:1; min-width:0;" @input="searchPdfCustomers" @keydown.enter.prevent="sendPdfEmail" />
                                 <button class="tpv-btn" :disabled="pdfEmailSending || !pdfEmail || (pdfDoc === 'invoice' && !pdfConsent)" @click="sendPdfEmail">{{ pdfEmailSending ? 'Enviando…' : 'Enviar' }}</button>
                             </div>
-                            <label v-if="pdfDoc === 'invoice'" style="display:flex; gap:8px; align-items:center; min-height:44px; font-size:13px; color:var(--text2); cursor:pointer;">
-                                <input type="checkbox" v-model="pdfConsent" :disabled="!!(invoice && invoice.email_consent_at)" style="width:20px; height:20px;" />
-                                El cliente acepta recibir la factura por email
-                            </label>
                             <div v-if="pdfCustomers.length" style="display:flex; flex-direction:column; gap:6px;">
                                 <button v-for="c in pdfCustomers" :key="c.local_id || c.id || c.email" class="tpv-row" style="min-height:48px; text-align:left;" @click="pickPdfCustomer(c)">
                                     <span style="flex:1; min-width:0;">
@@ -282,6 +297,14 @@ const OrderDetailView = {
                             <div v-if="pdfEmailStatus" style="font-size:13px; color:var(--text2);">{{ pdfEmailStatus }}</div>
                         </template>
                         <div v-else style="font-size:12px; color:var(--text3);">{{ order && order.order_id ? 'Para enviarlo por email, configura la cuenta de correo en Ajustes → Email.' : 'Los pedidos online solo se pueden descargar.' }}</div>
+                        <label v-if="pdfDoc === 'invoice' && (pdfEmailEnabled || pdfWhatsappEnabled)" style="display:flex; gap:8px; align-items:center; min-height:44px; font-size:13px; color:var(--text2); cursor:pointer;">
+                            <input type="checkbox" v-model="pdfConsent" :disabled="!!(invoice && invoice.email_consent_at)" style="width:20px; height:20px;" />
+                            El cliente acepta recibir la factura por email o WhatsApp
+                        </label>
+                        <template v-if="pdfWhatsappEnabled">
+                            <button class="tpv-btn" style="min-height:48px;" :aria-expanded="pdfWhatsapp ? 'true' : 'false'" @click="pdfWhatsapp = !pdfWhatsapp">WhatsApp</button>
+                            <whatsapp-share v-if="pdfWhatsapp" :key="pdfDoc" :kind="pdfDoc === 'invoice' ? 'invoice' : 'ticket'" :doc-id="pdfDoc === 'invoice' ? invoice.id : order.order_id" :initial-phone="pdfPhone" :consent="pdfConsent" @shared="onWhatsappShared" />
+                        </template>
                     </div>
                 </div>
             </div>
