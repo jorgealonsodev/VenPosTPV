@@ -92,7 +92,8 @@ const OrderDetailView = {
         let pdfSearchSeq = 0;
 
         // kind 'invoice' opens it for the full invoice; anything else (the click event) the ticket.
-        async function openPdfChoice(kind) {
+        // channel 'whatsapp' opens it with the WhatsApp panel already shown.
+        async function openPdfChoice(kind, channel) {
             pdfDoc.value = kind === 'invoice' && invoice.value ? 'invoice' : 'ticket';
             pdfConsent.value = !!(pdfDoc.value === 'invoice' && invoice.value.email_consent_at);
             pdfEmail.value = '';
@@ -102,6 +103,7 @@ const OrderDetailView = {
             pdfWhatsapp.value = false;
             pdfPhone.value = saleCustomerPhone();
             pdfWhatsappEnabled.value = !!(props.order && props.order.order_id);
+            pdfWhatsapp.value = channel === 'whatsapp' && pdfWhatsappEnabled.value;
             pdfChoice.value = true;
             // Only a TPV sale (local order_id) can be emailed, and only with a mail account.
             if (!(props.order && props.order.order_id)) return;
@@ -264,6 +266,10 @@ const OrderDetailView = {
                 <div v-if="canPrint" style="display:flex; gap:8px; margin-top:8px;">
                     <button class="tpv-btn" style="flex:1;" @click="reprint"><icon name="receipt" :size="16" /> Reimprimir</button>
                     <button class="tpv-btn" style="flex:1;" @click="openPdfChoice"><icon name="receipt" :size="16" /> PDF</button>
+                </div>
+                <div v-if="order.order_id" class="order-share-actions" style="display:flex; gap:8px; margin-top:8px;">
+                    <button class="tpv-btn" style="flex:1;" @click="openPdfChoice('ticket', 'email')"><icon name="mail" :size="16" /> Enviar por email</button>
+                    <button class="tpv-btn" style="flex:1;" @click="openPdfChoice('ticket', 'whatsapp')">WhatsApp</button>
                 </div>
                 <div v-if="canInvoice || invoice" style="display:flex; gap:8px; margin-top:8px;">
                     <button v-if="canInvoice" class="tpv-btn" style="flex:1;" @click="showInvoice = true"><icon name="receipt" :size="16" /> Factura completa</button>

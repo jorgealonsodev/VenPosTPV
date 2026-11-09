@@ -133,3 +133,22 @@ test('the email field searches as it is typed and lists the matches', () => {
     assert.match(source, /v-model="pdfEmail"[^>]*@input="searchPdfCustomers"/);
     assert.match(source, /v-for="c in pdfCustomers"[^>]*@click="pickPdfCustomer\(c\)"/);
 });
+
+// «Enviar por email» and «WhatsApp» are on the sale detail itself, not only inside «PDF».
+test('the sale detail shows Enviar por email and WhatsApp next to Reimprimir and PDF', () => {
+    assert.match(source, /@click="openPdfChoice\('ticket', 'email'\)"[^>]*>[\s\S]*?Enviar por email/);
+    assert.match(source, /@click="openPdfChoice\('ticket', 'whatsapp'\)"[^>]*>[\s\S]*?WhatsApp/);
+    assert.match(source, /v-if="order\.order_id"[^>]*class="order-share-actions"|class="order-share-actions"[^>]*v-if="order\.order_id"/, 'only for a TPV sale');
+});
+
+test('WhatsApp opens the window with the WhatsApp panel already open', async () => {
+    const { state } = mount(SALE);
+    await state.openPdfChoice('ticket', 'whatsapp');
+    assert.equal(state.pdfChoice.value, true);
+    assert.equal(state.pdfDoc.value, 'ticket');
+    assert.equal(state.pdfWhatsapp.value, true);
+
+    await state.openPdfChoice('ticket', 'email');
+    assert.equal(state.pdfWhatsapp.value, false, 'email opens with WhatsApp closed');
+    assert.equal(state.pdfEmailEnabled.value, true);
+});
