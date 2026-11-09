@@ -21,10 +21,20 @@ Descarga los tres paquetes de la [última release](https://github.com/jorgealons
 
 ## Qué incluye
 
-- **Venta en caja:** cobro en efectivo y tarjeta, cupones, vales, devoluciones, apertura y cierre de caja (informe Z).
+- **Venta en caja:** cobro en efectivo, tarjeta, mixto y con cupón o vale; si un vale vale más que la compra, el saldo queda en un vale nuevo de un solo uso. Tickets aparcados, devoluciones y cambios.
+- **Artículo libre:** cobrar algo que no está en el catálogo escribiendo concepto, precio e IVA; se sube a PrestaShop con su concepto y su IVA.
+- **Tickets y documentos:** ticket impreso, PDF, email o WhatsApp (enlace seguro que caduca); sin impresora, el TPV pregunta cómo entregarlo. El ticket indica quién atendió.
+- **Factura completa** en A4 desde un ticket, con los datos fiscales del cliente.
+- **Cupones:** crear cupones de PrestaShop desde la caja e imprimirlos, descargarlos o enviarlos.
+- **Caja:** apertura, informe X, cierre con informe Z contando por monedas y billetes o por importe total.
+- **Informes de ventas:** por día, forma de pago, producto, categoría, IVA, hora y cajero, con exportación a CSV.
+- **Catálogo:** búsqueda y escaneo; modo edición para administradores (stock en la web, EAN y referencia solo en el TPV).
+- **Etiquetas** con código de barras y un QR con el mismo código, en la impresora de tickets.
 - **Venta sin conexión:** las ventas se guardan en local y se envían cuando vuelve la red.
 - **Impresión en tienda:** un agente para Windows y Linux recoge tickets, aperturas de cajón y etiquetas, y los manda a las impresoras ESC/POS de cada caja.
-- **Módulo TPV Connect** para PrestaShop: emparejamiento con el TPV con un código de 6 cifras (sin copiar claves), clave del webservice, inicio de sesión único (SSO) y cupones.
+- **Módulo TPV Connect** para PrestaShop: emparejamiento con el TPV con un código de 6 cifras (sin copiar claves), clave del webservice, inicio de sesión único (SSO), cupones y artículos libres.
+- **Instalación y actualizaciones** sin pasos manuales: las migraciones y la preparación de cada funcionalidad se aplican solas (con copia de seguridad antes) y su estado se ve en Ajustes.
+- **Copias de seguridad** diarias de la base de datos.
 - **VERI\*FACTU:** implementado en parte y desactivado hasta disponer del certificado.
 
 ## Estructura
@@ -39,7 +49,7 @@ Descarga los tres paquetes de la [última release](https://github.com/jorgealons
 
 ## Requisitos
 
-PHP 8.4 o superior con `pdo_mysql`, MySQL o MariaDB y PrestaShop 1.7 u 8.
+PHP 8.4 o superior con `pdo_mysql`, MySQL o MariaDB y PrestaShop 1.7.7 a 9 (probado con 9.2).
 
 ## Documentación
 
@@ -47,6 +57,10 @@ PHP 8.4 o superior con `pdo_mysql`, MySQL o MariaDB y PrestaShop 1.7 u 8.
 - [Instalar en un hosting](docs/despliegue-hosting.md)
 - [Pasos de instalación y actualización](docs/provisioning.md) (desarrollo: toda funcionalidad que necesite preparar algo añade su paso)
 - [Agente de impresión](docs/print-agent.md)
+- [Informes de ventas](docs/informes-ventas.md)
+- [Factura completa](docs/factura-completa.md)
+- [Cupones en el cobro](docs/tpv-coupon-checkout.md)
+- [Enviar por WhatsApp](docs/enviar-por-whatsapp.md)
 - [VERI\*FACTU](docs/verifactu.md)
 
 ## Autor
