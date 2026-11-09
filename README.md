@@ -24,7 +24,7 @@ Descarga los tres paquetes de la [última release](https://github.com/jorgealons
 - **Venta en caja:** cobro en efectivo y tarjeta, cupones, vales, devoluciones, apertura y cierre de caja (informe Z).
 - **Venta sin conexión:** las ventas se guardan en local y se envían cuando vuelve la red.
 - **Impresión en tienda:** un agente para Windows y Linux recoge tickets, aperturas de cajón y etiquetas, y los manda a las impresoras ESC/POS de cada caja.
-- **Módulo TPV Connect** para PrestaShop: clave del webservice, inicio de sesión único (SSO) y cupones.
+- **Módulo TPV Connect** para PrestaShop: emparejamiento con el TPV con un código de 6 cifras (sin copiar claves), clave del webservice, inicio de sesión único (SSO) y cupones.
 - **VERI\*FACTU:** implementado en parte y desactivado hasta disponer del certificado.
 
 ## Estructura

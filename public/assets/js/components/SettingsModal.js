@@ -5,7 +5,9 @@
  * the ticket, credit-note and invoice numbering continues),
  * Empleados, Sincronización, Cierres de caja (the closes of the shop with their
  * Z report, to print or download again), Acerca de (with «Estado de la
- * instalación»: the installation steps still pending and why, docs/provisioning.md).
+ * instalación»: the installation steps still pending and why, docs/provisioning.md;
+ * and «Volver a emparejar con la tienda»: TPV Connect's pairing code rewrites the
+ * shop keys in .env).
  */
 const SettingsModal = {
     emits: ['close'],
@@ -77,6 +79,45 @@ const SettingsModal = {
         function provisioningLabel(step) {
             if (step && step.status === 'done') return 'Hecho';
             return step && step.status === 'blocked' ? 'Bloqueado' : 'Pendiente';
+        }
+
+        // Acerca de → «Volver a emparejar con la tienda»: the code of TPV Connect's
+        // «Emparejar con un TPV»; the server writes the shop's keys into .env and
+        // answers no secret (POST /api/settings/prestashop/pair, admins only).
+        const pairing = Vue.reactive({ open: false, shopUrl: '', code: '', running: false, error: '', done: '' });
+
+        async function openPairing() {
+            pairing.open = true;
+            pairing.error = '';
+            pairing.done = '';
+            pairing.code = '';
+            try {
+                const resp = await ApiClient.get('/api/settings/prestashop');
+                pairing.shopUrl = (resp && resp.data && resp.data.shop_url) || '';
+            } catch (e) {
+                pairing.error = errorText(e, 'No se pudo cargar la dirección de la tienda');
+            }
+        }
+
+        async function runPairing() {
+            const code = String(pairing.code || '').replace(/[\s-]+/g, '');
+            pairing.error = '';
+            if (!/^\d{6}$/.test(code)) {
+                pairing.error = 'El código de emparejamiento tiene 6 cifras.';
+                return;
+            }
+            pairing.running = true;
+            try {
+                const resp = await ApiClient.post('/api/settings/prestashop/pair', { shop_url: String(pairing.shopUrl || '').trim(), code });
+                const data = (resp && resp.data) || {};
+                pairing.done = `Emparejado con ${data.shop_url} (TPV Connect ${data.module_version}). Las claves nuevas ya están en .env; la copia del anterior es ${data.backup}.`;
+                pairing.open = false;
+                pairing.code = '';
+            } catch (e) {
+                pairing.error = errorText(e, 'No se pudo emparejar con la tienda');
+            } finally {
+                pairing.running = false;
+            }
         }
 
         async function loadEmployees() {
@@ -750,6 +791,7 @@ const SettingsModal = {
             numbering, loadNumbering, tillNumbering, startNumberingChange, cancelNumberingChange, saveNumberingChange,
             cashCloses, loadCashCloses, printClose, pdfClose, formatMoney, formatDateTime,
             provisioning, provisioningLoading, provisioningError, loadProvisioning, provisioningLabel,
+            pairing, openPairing, runPairing,
             emit,
         };
     },
@@ -1529,6 +1571,33 @@ const SettingsModal = {
                                         <span :style="step.status === 'done' ? 'color:var(--green); font-weight:600;' : 'color:var(--red); font-weight:600;'" style="flex-shrink:0;">{{ provisioningLabel(step) }}</span>
                                     </div>
                                     <div v-if="step.status !== 'done' && step.reason" style="margin-top:4px; font-size:12px; color:var(--text3); overflow-wrap:anywhere;">{{ step.reason }}</div>
+                                </div>
+                            </div>
+
+                            <div style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; color:var(--text); margin:24px 0 6px;">
+                                <icon name="sync" :size="16"></icon> Tienda PrestaShop
+                            </div>
+                            <div style="font-size:12px; color:var(--text3); margin-bottom:12px; max-width:480px;">Si cambias de tienda o el TPV deja de conectar con ella: en PrestaShop, módulo TPV Connect, pulsa «Emparejar con un TPV» y escribe aquí el código. El TPV guarda las claves nuevas en <code>.env</code> y deja una copia del anterior.</div>
+                            <div v-if="pairing.done" style="font-size:12px; color:var(--green); margin-bottom:10px; max-width:480px; overflow-wrap:anywhere;">{{ pairing.done }}</div>
+                            <button v-if="!pairing.open" @click="openPairing()"
+                                style="padding:8px 16px; border-radius:9px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer; font-family:inherit; font-size:13px; font-weight:600;">
+                                Volver a emparejar con la tienda
+                            </button>
+                            <div v-else style="background:var(--surface2); border-radius:12px; padding:14px 16px; max-width:480px; display:flex; flex-direction:column; gap:8px;">
+                                <label style="font-size:12px; color:var(--text3);">Dirección de la tienda</label>
+                                <input v-model="pairing.shopUrl" type="url" placeholder="https://tutienda.com" autocomplete="off" :style="INPUT_STYLE">
+                                <label style="font-size:12px; color:var(--text3);">Código de emparejamiento</label>
+                                <input v-model="pairing.code" inputmode="numeric" maxlength="7" placeholder="123456" autocomplete="one-time-code" :style="INPUT_STYLE" @keyup.enter="runPairing()">
+                                <div v-if="pairing.error" style="font-size:12px; color:var(--red); overflow-wrap:anywhere;">{{ pairing.error }}</div>
+                                <div style="display:flex; gap:8px; margin-top:4px;">
+                                    <button @click="runPairing()" :disabled="pairing.running"
+                                        style="padding:8px 16px; border-radius:9px; border:none; background:var(--green); color:#fff; cursor:pointer; font-family:inherit; font-size:13px; font-weight:600;">
+                                        {{ pairing.running ? 'Emparejando…' : 'Emparejar' }}
+                                    </button>
+                                    <button @click="pairing.open = false" :disabled="pairing.running"
+                                        style="padding:8px 16px; border-radius:9px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:13px;">
+                                        Cancelar
+                                    </button>
                                 </div>
                             </div>
                         </div>

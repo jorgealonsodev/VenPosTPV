@@ -8,6 +8,8 @@ use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
 use Symfony\Component\Dotenv\Dotenv;
 use VenPosTPV\Kernel;
+use VenPosTPV\Service\PrestaShop\PairingClient;
+use VenPosTPV\Service\PrestaShop\PairingException;
 use VenPosTPV\Service\Provisioning\ProvisioningReport;
 use VenPosTPV\Service\Provisioning\ProvisioningRunner;
 
@@ -84,14 +86,20 @@ final class WebInstaller
     }
 
     /**
+     * The PrestaShop section has two modes: "pair" (the form's default: the shop
+     * address and the code the TPV Connect module shows; pair() then asks the shop
+     * for the keys) and "manual" (the keys typed by hand). Without ps_mode the
+     * input is manual, as before pairing existed.
+     *
      * @param array<string, mixed> $input raw form fields
      *
-     * @return array{errors: list<string>, values: array<string, string>}
+     * @return array{errors: list<string>, values: array<string, string>, pairing: array{shop_url: string, code: string}|null}
      */
     public function validate(array $input): array
     {
         $get = static fn (string $k, string $default = ''): string => trim((string) ($input[$k] ?? $default));
         $errors = [];
+        $pairing = ($input['ps_mode'] ?? 'manual') === 'pair';
 
         $tpvUrl = rtrim($get('tpv_url'), '/');
         if (!$this->isAllowedUrl($tpvUrl)) {
@@ -100,6 +108,10 @@ final class WebInstaller
         $psUrl = rtrim($get('ps_url'), '/');
         if (!$this->isAllowedUrl($psUrl)) {
             $errors[] = 'La dirección de PrestaShop debe ser una URL https:// válida.';
+        }
+        $code = $pairing ? PairingClient::normalizeCode($get('pair_code')) : null;
+        if ($pairing && $code === null) {
+            $errors[] = 'El código de emparejamiento tiene 6 cifras. Pulsa «Emparejar con un TPV» en el módulo TPV Connect de PrestaShop para ver uno.';
         }
         foreach (['db_host' => 'el servidor', 'db_name' => 'el nombre', 'db_user' => 'el usuario'] as $k => $label) {
             if ($get($k) === '') {
@@ -119,20 +131,21 @@ final class WebInstaller
         if ($get('store_name') === '') {
             $errors[] = 'Falta el nombre de la tienda.';
         }
-        if ($get('ps_api_key') === '') {
+        if (!$pairing && $get('ps_api_key') === '') {
             $errors[] = 'Falta la clave del webservice de PrestaShop.';
         }
-        $sso = $get('sso_secret');
+        // Pairing: the shop gives the keys, the ids and the timezone (pair()).
+        $sso = $pairing ? '' : $get('sso_secret');
         if ($sso !== '' && \strlen($sso) < 32) {
             $errors[] = 'El secreto SSO del módulo debe tener al menos 32 caracteres.';
         }
         foreach (['ps_currency' => 'La moneda', 'ps_shop' => 'La tienda'] as $k => $label) {
-            $v = $get($k, '1');
+            $v = $pairing ? '1' : $get($k, '1');
             if (!ctype_digit($v) || (int) $v < 1) {
                 $errors[] = "{$label} de PrestaShop debe ser un número de 1 en adelante.";
             }
         }
-        $tz = $get('timezone', 'Europe/Madrid');
+        $tz = $pairing ? 'Europe/Madrid' : $get('timezone', 'Europe/Madrid');
         if (!\in_array($tz, \DateTimeZone::listIdentifiers(), true)) {
             $errors[] = 'La zona horaria no es válida.';
         }
@@ -157,9 +170,9 @@ final class WebInstaller
             'TPV_STORE_NAME' => $get('store_name'),
             'TPV_STORE_ADDRESS' => $get('store_address'),
             'PS_SHOP_URL' => $psUrl,
-            'PS_API_KEY' => $get('ps_api_key'),
-            'PS_DEFAULT_CURRENCY' => $get('ps_currency', '1'),
-            'PS_DEFAULT_SHOP' => $get('ps_shop', '1'),
+            'PS_API_KEY' => $pairing ? '' : $get('ps_api_key'),
+            'PS_DEFAULT_CURRENCY' => $pairing ? '1' : $get('ps_currency', '1'),
+            'PS_DEFAULT_SHOP' => $pairing ? '1' : $get('ps_shop', '1'),
             'PS_SHOP_TIMEZONE' => $tz,
             'TPV_COUPON_CHECKOUT_ENABLED' => '0',
             'MESSENGER_TRANSPORT_DSN' => 'doctrine://default',
@@ -173,7 +186,34 @@ final class WebInstaller
             }
         }
 
-        return ['errors' => $errors, 'values' => $values];
+        return [
+            'errors' => $errors,
+            'values' => $values,
+            'pairing' => $pairing && $code !== null ? ['shop_url' => $psUrl, 'code' => $code] : null,
+        ];
+    }
+
+    /**
+     * Pairs with the shop (TPV Connect's code): the shop stores this TPV's address
+     * and answers its keys and ids, which replace the PrestaShop values of the
+     * .env to write. Nothing is written here.
+     *
+     * @param array<string, string>                   $values  output of validate()
+     * @param array{shop_url: string, code: string}   $pairing output of validate()
+     *
+     * @return array<string, string>
+     *
+     * @throws InstallException with the reason, in Spanish
+     */
+    public function pair(array $values, array $pairing, PairingClient $client): array
+    {
+        try {
+            $result = $client->pair($pairing['shop_url'], $pairing['code'], $values['TPV_URL']);
+        } catch (PairingException $e) {
+            throw new InstallException($e->getMessage(), 0, $e);
+        }
+
+        return array_replace($values, $result->envValues());
     }
 
     /**

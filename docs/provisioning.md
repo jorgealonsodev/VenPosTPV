@@ -25,7 +25,7 @@ Solo vuelve a intentarse:
 - con `php bin/console tpv:provision --env=prod` a mano (una vez por ejecución; si falla, queda bloqueado otra vez con el nuevo motivo), o
 - desde la tarea de cada minuto, si el paso implementa `BlockableProvisioningStep` y su `blockKey()` ya no es el del bloqueo (en `migrations`: otro conjunto de migraciones pendientes, es decir, una versión nueva).
 
-Los pasos pendientes y su motivo se ven en **Ajustes → Acerca de → Estado de la instalación** (`GET /api/settings/provisioning`, solo administradores) y en la última página del instalador. En la instalación es normal que los pasos que necesitan PrestaShop queden pendientes: el módulo TPV Connect se configura después. La instalación no falla por ellos.
+Los pasos pendientes y su motivo se ven en **Ajustes → Acerca de → Estado de la instalación** (`GET /api/settings/provisioning`, solo administradores) y en la última página del instalador. Con el emparejamiento (código del módulo TPV Connect) el TPV ya tiene las claves de la tienda al instalar, así que los pasos que necesitan PrestaShop suelen quedar hechos; con las claves a mano, o si la tienda no responde, quedan pendientes. La instalación no falla por ellos.
 
 ## Pasos actuales
 

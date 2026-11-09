@@ -7,6 +7,9 @@ namespace VenPosTPV\Tests\Unit\Service\Install;
 use Doctrine\DBAL\DriverManager;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Dotenv\Dotenv;
+use Symfony\Component\HttpClient\MockHttpClient;
+use Symfony\Component\HttpClient\Response\MockResponse;
+use VenPosTPV\Service\PrestaShop\PairingClient;
 use VenPosTPV\Service\Install\InstallException;
 use VenPosTPV\Service\Install\WebInstaller;
 
@@ -188,5 +191,110 @@ final class WebInstallerTest extends TestCase
         $conn->executeStatement('CREATE TABLE doctrine_migration_versions (version VARCHAR(191))');
         $installer->assertDatabaseUsable($conn);
         $this->addToAssertionCount(1);
+    }
+
+    /** @return array<string, string> the form as the pairing path sends it */
+    private function pairingInput(): array
+    {
+        $input = $this->validInput();
+        unset($input['ps_api_key'], $input['sso_secret'], $input['ps_currency'], $input['ps_shop'], $input['timezone']);
+
+        return ['ps_mode' => 'pair', 'ps_url' => 'https://shop.example.com/', 'pair_code' => '123 456'] + $input;
+    }
+
+    private static function pairingHttp(array &$requests = []): MockHttpClient
+    {
+        return new MockHttpClient(static function (string $method, string $url, array $options) use (&$requests): MockResponse {
+            $requests[] = ['url' => $url, 'body' => json_decode($options['body'], true)];
+
+            return new MockResponse((string) json_encode([
+                'api_key' => 'PAIREDKEY0123456789ABCDEF0123456', 'sso_secret' => str_repeat('f', 64),
+                'shop_id' => 3, 'shop_url' => 'https://shop.example.com', 'currency_id' => 2,
+                'timezone' => 'Atlantic/Canary', 'module_version' => '0.8.0',
+            ]), ['http_code' => 200]);
+        });
+    }
+
+    public function testThePairingPathNeedsTheShopAddressAndTheCodeButNoKeys(): void
+    {
+        $result = (new WebInstaller($this->dir))->validate($this->pairingInput());
+
+        self::assertSame([], $result['errors']);
+        self::assertSame(['shop_url' => 'https://shop.example.com', 'code' => '123456'], $result['pairing']);
+    }
+
+    public function testThePairingPathRefusesAMissingOrMalformedCode(): void
+    {
+        $input = ['pair_code' => '12a'] + $this->pairingInput();
+
+        self::assertContains('El código de emparejamiento tiene 6 cifras. Pulsa «Emparejar con un TPV» en el módulo TPV Connect de PrestaShop para ver uno.', (new WebInstaller($this->dir))->validate($input)['errors']);
+    }
+
+    public function testPairingFillsTheShopValuesOfTheEnvItself(): void
+    {
+        $installer = new WebInstaller($this->dir);
+        $installer->ensureInstallKey();
+        $result = $installer->validate($this->pairingInput());
+        $requests = [];
+
+        $values = $installer->pair($result['values'], $result['pairing'], new PairingClient(self::pairingHttp($requests)));
+        $installer->finish($values);
+
+        self::assertSame('https://shop.example.com/module/tpvconnect/pair', $requests[0]['url']);
+        self::assertSame(['code' => '123456', 'tpv_url' => 'https://tpv.example.com'], $requests[0]['body']);
+        $env = (new Dotenv())->parse((string) file_get_contents($this->dir . '/.env'));
+        self::assertSame('https://shop.example.com', $env['PS_SHOP_URL']);
+        self::assertSame('PAIREDKEY0123456789ABCDEF0123456', $env['PS_API_KEY']);
+        self::assertSame(str_repeat('f', 64), $env['SSO_SHARED_SECRET']);
+        self::assertSame('3', $env['PS_DEFAULT_SHOP']);
+        self::assertSame('2', $env['PS_DEFAULT_CURRENCY']);
+        self::assertSame('Atlantic/Canary', $env['PS_SHOP_TIMEZONE']);
+        self::assertSame('prod', $env['APP_ENV']);
+        self::assertSame(" p'w\$X ", $env['TPV_DB_PASSWORD']);
+    }
+
+    public function testAPairingFailureIsAnInstallErrorAndWritesNothing(): void
+    {
+        $installer = new WebInstaller($this->dir);
+        $result = $installer->validate($this->pairingInput());
+        $http = new MockHttpClient([new MockResponse((string) json_encode(['error' => 'invalid_code']), ['http_code' => 403])]);
+
+        try {
+            $installer->pair($result['values'], $result['pairing'], new PairingClient($http));
+            self::fail('A refused code must stop the install.');
+        } catch (InstallException $e) {
+            self::assertStringContainsString('no es correcto o ha caducado', $e->getMessage());
+        }
+        self::assertFileDoesNotExist($this->dir . '/.env');
+    }
+
+    public function testTheManualFallbackKeepsTheTypedKeysAndNeedsNoPairing(): void
+    {
+        $result = (new WebInstaller($this->dir))->validate(['ps_mode' => 'manual', 'pair_code' => ''] + $this->validInput());
+
+        self::assertSame([], $result['errors']);
+        self::assertNull($result['pairing']);
+        self::assertSame('KEY', $result['values']['PS_API_KEY']);
+        self::assertSame('https://shop.example.com', $result['values']['PS_SHOP_URL']);
+    }
+
+    public function testTheManualFallbackStillNeedsTheWebserviceKey(): void
+    {
+        $input = ['ps_mode' => 'manual', 'ps_api_key' => ''] + $this->validInput();
+
+        self::assertContains('Falta la clave del webservice de PrestaShop.', (new WebInstaller($this->dir))->validate($input)['errors']);
+    }
+
+    public function testTheInstallPageDefaultsToPairingAndOffersTheManualLink(): void
+    {
+        $page = (string) file_get_contents(\dirname(__DIR__, 4) . '/public/install.php');
+
+        self::assertStringContainsString('Dirección de la tienda', $page);
+        self::assertStringContainsString('Código de emparejamiento', $page);
+        self::assertStringContainsString('Introducir las claves a mano', $page);
+        self::assertStringContainsString('name="pair_code"', $page);
+        self::assertMatchesRegularExpression('/value="pair"[^>]*\'\s*\.\s*\(\$mode === \'pair\' \? \' checked\'/', $page, 'pairing is the default mode');
+        self::assertStringNotContainsString('copia su secreto SSO en', $page, 'the final page no longer asks to paste the SSO secret');
+        self::assertStringNotContainsString('pon como URL del TPV', $page, 'the final page no longer asks to type the TPV URL in the module');
     }
 }
