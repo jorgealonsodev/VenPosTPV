@@ -4,7 +4,8 @@
  * letter, printer and dataphone, which computer it is on, create a till, and where
  * the ticket, credit-note and invoice numbering continues),
  * Empleados, Sincronización, Cierres de caja (the closes of the shop with their
- * Z report, to print or download again).
+ * Z report, to print or download again), Acerca de (with «Estado de la
+ * instalación»: the installation steps still pending and why, docs/provisioning.md).
  */
 const SettingsModal = {
     emits: ['close'],
@@ -53,6 +54,29 @@ const SettingsModal = {
         const syncError = Vue.ref('');
         const syncNowRunning = Vue.ref(false);
         const syncLastResult = Vue.ref(null);
+
+        // Acerca de → Estado de la instalación (GET /api/settings/provisioning, read-only)
+        const provisioning = Vue.ref(null);
+        const provisioningLoading = Vue.ref(false);
+        const provisioningError = Vue.ref('');
+
+        async function loadProvisioning() {
+            provisioningLoading.value = true;
+            provisioningError.value = '';
+            try {
+                const resp = await ApiClient.get('/api/settings/provisioning');
+                provisioning.value = resp?.data || null;
+            } catch (e) {
+                provisioning.value = null;
+                provisioningError.value = errorText(e, 'No se pudo cargar el estado de la instalación');
+            } finally {
+                provisioningLoading.value = false;
+            }
+        }
+
+        function provisioningLabel(step) {
+            return step && step.status === 'done' ? 'Hecho' : 'Pendiente';
+        }
 
         async function loadEmployees() {
             loading.value = true;
@@ -724,6 +748,7 @@ const SettingsModal = {
             verifactu, loadVerifactu, saveVerifactu, checkChain,
             numbering, loadNumbering, tillNumbering, startNumberingChange, cancelNumberingChange, saveNumberingChange,
             cashCloses, loadCashCloses, printClose, pdfClose, formatMoney, formatDateTime,
+            provisioning, provisioningLoading, provisioningError, loadProvisioning, provisioningLabel,
             emit,
         };
     },
@@ -800,7 +825,7 @@ const SettingsModal = {
                             @mouseover="$event.currentTarget.style.background='var(--surface2)'" @mouseout="$event.currentTarget.style.background=activeSection === 'cierres' ? 'var(--surface2)' : 'transparent'">
                             <icon name="print" :size="18"></icon> Cierres de caja
                         </button>
-                        <button @click="activeSection = 'acerca'"
+                        <button @click="activeSection = 'acerca'; loadProvisioning()"
                             style="min-height:48px; padding:0 16px; background:transparent; border:none; border-left:3px solid transparent; color:var(--text2); font-family:inherit; font-size:14px; text-align:left; cursor:pointer; display:flex; align-items:center; gap:10px; transition:background .15s;"
                             :style="activeSection === 'acerca' ? 'background:var(--surface2); border-left-color:var(--green); color:var(--text); font-weight:600;' : ''"
                             @mouseover="$event.currentTarget.style.background='var(--surface2)'" @mouseout="$event.currentTarget.style.background=activeSection === 'acerca' ? 'var(--surface2)' : 'transparent'">
@@ -1488,6 +1513,22 @@ const SettingsModal = {
                                 <span style="color:var(--text); font-weight:600;">Jorge Alonso</span>
                                 <span style="color:var(--text3);">GitHub</span>
                                 <a href="https://github.com/jorgealonsodev" target="_blank" rel="noopener noreferrer" style="color:var(--green); font-weight:600; text-decoration:none;">github.com/jorgealonsodev</a>
+                            </div>
+
+                            <div style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; color:var(--text); margin:24px 0 6px;">
+                                <icon name="sync" :size="16"></icon> Estado de la instalación
+                            </div>
+                            <div style="font-size:12px; color:var(--text3); margin-bottom:12px; max-width:480px;">Pasos que la instalación y las actualizaciones hacen solos (base de datos, PrestaShop). Los pendientes se reintentan cada 15 minutos con la tarea programada de cada minuto.</div>
+                            <div v-if="provisioningLoading" style="font-size:12px; color:var(--text3);">Comprobando…</div>
+                            <div v-else-if="provisioningError" style="font-size:12px; color:var(--red);">{{ provisioningError }}</div>
+                            <div v-else-if="provisioning" style="background:var(--surface2); border-radius:12px; padding:4px 16px; max-width:480px;">
+                                <div v-for="step in provisioning.steps" :key="step.id" style="padding:10px 0; border-bottom:1px solid var(--border); font-size:13px;">
+                                    <div style="display:flex; justify-content:space-between; gap:12px;">
+                                        <span style="color:var(--text);">{{ step.description }}</span>
+                                        <span :style="step.status === 'done' ? 'color:var(--green); font-weight:600;' : 'color:var(--red); font-weight:600;'" style="flex-shrink:0;">{{ provisioningLabel(step) }}</span>
+                                    </div>
+                                    <div v-if="step.status !== 'done' && step.reason" style="margin-top:4px; font-size:12px; color:var(--text3); overflow-wrap:anywhere;">{{ step.reason }}</div>
+                                </div>
                             </div>
                         </div>
 
