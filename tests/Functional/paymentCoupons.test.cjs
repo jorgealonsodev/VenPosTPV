@@ -51,6 +51,7 @@ async function testAppliedCouponUsesAuthoritativePayableAndNetCash() {
     assert.equal(received.amount_tendered, 13.14);
     assert.equal(received.cart_data.cash_amount, 13.14);
     assert.equal(received.cart_data.coupon.quote, 'signed.quote');
+    state.finish(); // without a printer the sale completes on «Terminar»
     assert.equal(emitted[0][0], 'complete');
 }
 

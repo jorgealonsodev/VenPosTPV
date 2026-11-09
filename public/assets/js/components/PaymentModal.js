@@ -317,9 +317,7 @@ const PaymentModal = {
                         closeWhenPrinted();
                         return;
                     }
-                    if (pt === 'pdf') {
-                        downloadTicket();
-                    } else if (pt === 'escpos' || pt === 'system') {
+                    if (pt === 'escpos' || pt === 'system') {
                         const printing = lastSaleId.value
                             ? ApiClient.ticketReprintSale(lastSaleId.value)
                             : (lastOrderId.value ? ApiClient.ticketReprint(lastOrderId.value) : null);
@@ -331,11 +329,12 @@ const PaymentModal = {
                     }
                     step.value = 'done';
                     const doneSale = { ...response.data, payment_method: paymentMethod };
-                    // No printer and an email account: stay open so the ticket can be
-                    // emailed; "Terminar" (or the backdrop) completes the sale.
-                    if ((pt === 'pdf' || pt === 'none') && lastSaleId.value && await ticketEmailEnabled()) {
+                    // No printer: nothing is downloaded on its own. The screen stays open so
+                    // the cashier chooses the PDF, email or WhatsApp; "Terminar" (or the
+                    // backdrop) completes the sale.
+                    if (pt === 'pdf' || pt === 'none') {
                         completedSale = doneSale;
-                        emailEnabled.value = true;
+                        emailEnabled.value = !!lastSaleId.value && await ticketEmailEnabled();
                         return;
                     }
                     setTimeout(() => {
@@ -506,24 +505,25 @@ const PaymentModal = {
                     <print-status-notice placement="payment" />
                     <button @click="finish" class="tpv-btn tpv-btn-primary print-btn-lg" style="margin-top:4px;">Nueva venta</button>
                 </template>
-                <div v-else-if="printerType !== 'none'" style="color:var(--text3); font-size:13px;">
-                    {{ printerType === 'escpos' ? 'Ticket enviado a impresora' : 'Abriendo ticket PDF...' }}
+                <div v-else-if="printerType === 'escpos' || printerType === 'system'" style="color:var(--text3); font-size:13px;">
+                    Ticket enviado a impresora
                 </div>
-                <button v-if="(lastSaleId || lastOrderId) && printerType === 'pdf'" @click="downloadTicket" class="tpv-btn" style="margin-top:8px;">
-                    <icon name="print" :size="18" /> Descargar ticket PDF
-                </button>
-                <!-- No printer: the ticket can go by email -->
-                <div v-if="lastSaleId && emailEnabled && (printerType === 'pdf' || printerType === 'none')"
-                    style="display:flex; flex-direction:column; gap:6px; margin-top:10px; width:100%; max-width:340px;">
-                    <div style="display:flex; gap:6px;">
+                <!-- No printer: the cashier chooses how the customer gets the ticket -->
+                <div v-if="printerType === 'pdf' || printerType === 'none'"
+                    style="display:flex; flex-direction:column; gap:6px; margin-top:6px; width:100%; max-width:340px;">
+                    <div style="color:var(--text3); font-size:13px; text-align:center;">¿Cómo quieres el ticket?</div>
+                    <button v-if="lastSaleId || lastOrderId" @click="downloadTicket" class="tpv-btn" style="display:flex; align-items:center; justify-content:center; gap:6px;">
+                        <icon name="print" :size="18" /> Descargar ticket PDF
+                    </button>
+                    <div v-if="lastSaleId && emailEnabled" style="display:flex; gap:6px;">
                         <input v-model="ticketEmail" type="email" placeholder="email del cliente" aria-label="Email del cliente"
                             @keydown.enter.prevent="sendTicketEmail"
                             style="flex:1; min-width:0; padding:9px 12px; border-radius:9px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-family:inherit; font-size:14px; outline:none;">
                         <button @click="sendTicketEmail" :disabled="emailSending || !ticketEmail" class="tpv-btn" style="display:flex; align-items:center; gap:6px;">
                             <icon name="mail" :size="16" /> {{ emailSending ? 'Enviando…' : 'Enviar' }}
                         </button>
-                        <button @click="whatsappOpen = !whatsappOpen" class="tpv-btn" :aria-expanded="whatsappOpen ? 'true' : 'false'">WhatsApp</button>
                     </div>
+                    <button v-if="lastSaleId" @click="whatsappOpen = !whatsappOpen" class="tpv-btn" :aria-expanded="whatsappOpen ? 'true' : 'false'">WhatsApp</button>
                     <div v-if="emailStatus" style="font-size:12px; color:var(--text2);">{{ emailStatus }}</div>
                     <whatsapp-share v-if="whatsappOpen" kind="ticket" :doc-id="lastSaleId" :initial-phone="ticketPhone" />
                     <button @click="finish" class="tpv-btn tpv-btn-primary" style="margin-top:4px;">Terminar</button>

@@ -59,8 +59,28 @@ async function testUnsyncedSaleDownloadsItsPdfByLocalId() {
     const { api, calls } = apiSpy({ order_id: 16, ps_order_id: null, reference: 'A26000002', total: 10, change_due: 0 });
     const { state } = loadPayment(api, 'pdf');
     await pay(state);
+    assert.deepEqual(calls, [], 'without a printer nothing is downloaded on its own');
     state.downloadTicket();
-    assert.deepEqual(calls, [['ticketSalePdf', 16], ['ticketSalePdf', 16]]);
+    assert.deepEqual(calls, [['ticketSalePdf', 16]]);
+}
+
+// Without a printer the «Cobro completado» screen stays open and lets the cashier
+// choose: download the PDF, email, WhatsApp, or «Terminar».
+async function testWithoutAPrinterTheDoneScreenWaitsForTheChoice() {
+    for (const printerType of ['pdf', 'none']) {
+        const { api, calls } = apiSpy({ order_id: 17, ps_order_id: null, reference: 'A26000003', total: 10, change_due: 0 });
+        const { state, emitted } = loadPayment(api, printerType);
+        await pay(state);
+        assert.equal(state.step.value, 'done');
+        assert.deepEqual(calls, [], printerType + ': no automatic download');
+        assert.deepEqual(emitted, [], printerType + ': the sale is completed only by «Terminar»');
+        state.finish();
+        assert.equal(emitted.length, 1);
+        assert.equal(emitted[0][0], 'complete');
+        assert.equal(emitted[0][1].order_id, 17);
+    }
+    const source = fs.readFileSync(path.resolve(__dirname, '../../public/assets/js/components/PaymentModal.js'), 'utf8');
+    assert.ok(!source.includes('Abriendo ticket PDF'), 'the screen no longer announces an automatic PDF');
 }
 
 async function testResponseWithOnlyAPrestaShopIdKeepsThePreviousCalls() {
@@ -68,7 +88,7 @@ async function testResponseWithOnlyAPrestaShopIdKeepsThePreviousCalls() {
     const { state } = loadPayment(api, 'pdf');
     await pay(state);
     state.downloadTicket();
-    assert.deepEqual(calls, [['ticketPdf', 88], ['ticketPdf', 88]]);
+    assert.deepEqual(calls, [['ticketPdf', 88]]);
 
     const escpos = apiSpy({ ps_order_id: 89, total: 10, change_due: 0 });
     const loaded = loadPayment(escpos.api, 'system');
@@ -145,6 +165,7 @@ async function testEveryRetryOfOnePaymentAttemptCarriesTheSameRequestId() {
     await testEveryRetryOfOnePaymentAttemptCarriesTheSameRequestId();
     await testUnsyncedSalePrintsByLocalIdOnEscPos();
     await testUnsyncedSaleDownloadsItsPdfByLocalId();
+    await testWithoutAPrinterTheDoneScreenWaitsForTheChoice();
     await testResponseWithOnlyAPrestaShopIdKeepsThePreviousCalls();
     await testSaleScreenReprintsTheLastSaleByLocalIdOrPrestaShopId();
     console.log('localSaleTicket: OK');

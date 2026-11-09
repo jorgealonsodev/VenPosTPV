@@ -94,6 +94,7 @@ async function testCheckoutOfflineByCardChargesTheSameCartLocallyWithoutTheCoupo
     assert.deepEqual(sale.cart_data.customer, { local_id: 3, id: null, name: 'Marta Ruiz' });
     assert.notEqual(sale.request_id, calls.coupon[0].request_id, 'a new payment attempt');
     assert.equal(state.step.value, 'done');
+    state.finish(); // without a printer the sale completes on «Terminar»
     assert.equal(emitted[0][0], 'complete');
 }
 
