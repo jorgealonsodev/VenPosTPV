@@ -9,14 +9,19 @@ namespace VenPosTPV\Service\Label;
  * the full 72 mm width (576 dots at 203 dpi), each label exactly its configured
  * height (8 dots per mm), all the labels of a job in one strip separated by a
  * dotted line and a single cut at the end; or a cut after every label when the till
- * asks for it. Codes use the printer's own commands (GS k), text character table 16
- * (WPC1252) for "€", like the ticket.
+ * asks for it. Text uses character table 16 (WPC1252) for "€", like the ticket.
+ *
+ * The code goes as one GS v 0 raster image (LabelCodeZone): the bars, their text
+ * and a small QR with the same data beside them. ESC/POS cannot put a GS k barcode
+ * and a QR side by side, so the printer's own barcode commands are not used; the
+ * bars stay module-aligned (integer dots per module, never scaled).
  *
  * Layout of one label, top to bottom: 8 dots of margin, the name in bold (1-2 lines
  * of 24 dots), the combination (24), the price in double size (48; triple, 72, from
- * 40 mm), the bars and their text (24) and the separator (8 dots: the dotted line,
- * or plain paper before a cut). The bars take the height left, 40 to 255 dots; any
- * remainder is fed so every label has the same pitch.
+ * 40 mm), the code zone (the bars and their text, 24, with the QR beside both) and
+ * the separator (8 dots: the dotted line, or plain paper before a cut). The bars
+ * take the height left, 40 to 255 dots; any remainder is fed so every label has the
+ * same pitch. A raster feeds the paper exactly its height.
  */
 final class LabelEscPosRenderer
 {
@@ -24,7 +29,7 @@ final class LabelEscPosRenderer
     private const GS = "\x1D";
     private const LINE_DOTS = 24;
     private const TOP_DOTS = 8;
-    private const HRI_DOTS = 24;
+    private const HRI_DOTS = LabelCodeZone::TEXT_DOTS;
     private const SEPARATOR_DOTS = 8;
     private const MIN_BAR_DOTS = 40;
     private const MAX_BAR_DOTS = 255;
@@ -93,8 +98,7 @@ final class LabelEscPosRenderer
             . LabelText::toWpc1252($label->priceText()) . "\n"
             . self::GS . "!\x00" . self::ESC . "E\x00" . self::ESC . '3' . \chr(self::LINE_DOTS);
 
-        $bytes .= self::GS . 'h' . \chr($layout['bars']) . self::GS . 'w' . \chr($label->barcode->moduleDots)
-            . self::GS . "H\x02" . self::GS . "f\x00" . self::barcode($label->barcode);
+        $bytes .= self::raster(LabelCodeZone::for($label->barcode, $layout['bars']));
 
         return $bytes . self::feed($layout['fill']);
     }
@@ -104,19 +108,13 @@ final class LabelEscPosRenderer
         return $label->combination !== null ? LabelText::clean($label->combination) : '';
     }
 
-    /** GS k m n d1..dn (function B); EAN and UPC without their check digit, which the printer adds. */
-    private static function barcode(LabelBarcode $barcode): string
+    /** GS v 0 0 xL xH yL yH d1..dk: the code zone at normal size, 72 bytes per row. */
+    private static function raster(LabelCodeZone $zone): string
     {
-        [$m, $data] = match ($barcode->type) {
-            LabelBarcode::EAN13 => [67, substr($barcode->data, 0, 12)],
-            LabelBarcode::EAN8 => [68, substr($barcode->data, 0, 7)],
-            LabelBarcode::UPCA => [65, substr($barcode->data, 0, 11)],
-            default => [73, $barcode->codeSet === 'C'
-                ? '{C' . implode('', array_map(static fn (string $pair): string => \chr((int) $pair), str_split($barcode->data, 2)))
-                : '{B' . str_replace('{', '{{', $barcode->data)],
-        };
+        $widthBytes = intdiv($zone->width, 8);
 
-        return self::GS . 'k' . \chr($m) . \chr(\strlen($data)) . $data;
+        return self::GS . "v0\x00" . \chr($widthBytes % 256) . \chr(intdiv($widthBytes, 256))
+            . \chr($zone->height % 256) . \chr(intdiv($zone->height, 256)) . $zone->raster();
     }
 
     /** 8 dots: 3 of paper, a 2-dot dotted line across the 576 dots, 3 of paper. */

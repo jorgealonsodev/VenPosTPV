@@ -86,7 +86,8 @@ final class LabelPendingMySqlIntegrationTest extends TestCase
         $claimed = $this->queue->claim($this->till);
         self::assertCount(1, $claimed);
         self::assertSame(['label', 'label'], [$claimed[0]['type'], $claimed[0]['target']]);
-        self::assertSame(7, substr_count((string) base64_decode($claimed[0]['payload_b64'], true), "\x1Dk\x43\x0C"));
+        // One code-zone raster (GS v 0, 576 dots) per label; the 2-row ones are the dotted lines.
+        self::assertSame(7, preg_match_all('/\x1Dv0\x00\x48\x00(?!\x02\x00)/', (string) base64_decode($claimed[0]['payload_b64'], true)));
     }
 
     public function testDiscardedLabelsAreCancelledAndNeverPrinted(): void

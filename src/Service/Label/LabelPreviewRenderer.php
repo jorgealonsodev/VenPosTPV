@@ -7,8 +7,9 @@ namespace VenPosTPV\Service\Label;
 /**
  * The preview of a label (docs/prd/agente-impresion.md L1, L2): a PNG of the same
  * layout as LabelEscPosRenderer at 203 dpi, one pixel per printer dot (576 wide,
- * 8 per mm high), drawn with GD like the ticket logo. The bars are drawn module by
- * module at the module width the printer will use.
+ * 8 per mm high), drawn with GD like the ticket logo. The code zone (bars, their
+ * text and the QR beside them) is the same LabelCodeZone bitmap the printer gets,
+ * painted dot for dot.
  */
 final class LabelPreviewRenderer
 {
@@ -56,16 +57,13 @@ final class LabelPreviewRenderer
         $this->text($image, $label->priceText(), $y, $layout['price_dots'], $layout['price_dots'] === 72 ? 38 : 26, true, $black);
         $y += $layout['price_dots'];
 
-        $modules = $label->barcode->modules();
-        $module = $label->barcode->moduleDots;
-        $left = intdiv(self::WIDTH - \strlen($modules) * $module, 2);
-        foreach (str_split($modules) as $i => $bar) {
-            if ($bar === '1') {
-                imagefilledrectangle($image, $left + $i * $module, $y, $left + ($i + 1) * $module - 1, $y + $layout['bars'] - 1, $black);
+        foreach (LabelCodeZone::for($label->barcode, $layout['bars'])->bitmap() as $row => $dots) {
+            // Runs of black dots, one rectangle each.
+            preg_match_all('/1+/', $dots, $runs, \PREG_OFFSET_CAPTURE);
+            foreach ($runs[0] as [$run, $x]) {
+                imagefilledrectangle($image, $x, $y + $row, $x + \strlen($run) - 1, $y + $row, $black);
             }
         }
-        $y += $layout['bars'];
-        $this->text($image, $label->barcode->text, $y, 24, 11, false, $black);
 
         // Where the dotted line (or the cut) goes.
         for ($x = 0; $x < self::WIDTH; $x += 8) {

@@ -29,7 +29,7 @@ Para ello, un programa pequeño (el **agente**) se instala en el ordenador de ca
 | Sin agente al cobrar | **Cobra y ofrece el PDF.** La venta nunca se bloquea. |
 | Ticket pendiente tras dar el PDF | **Se imprime si el agente vuelve a tiempo** (antes de caducar). |
 | Caducidad | **Cajón 15 s, ticket 2 min, etiquetas 24 h** (al reconectar pregunta si imprimirlas). |
-| Etiquetas | **Precio + código de barras**: nombre, talla/color, precio actual con IVA (sin tachado), código y su texto. |
+| Etiquetas | **Precio + código de barras**: nombre, talla/color, precio actual con IVA (sin tachado), código y su texto, con un QR del mismo código al lado. |
 | Tamaño en la TM-T20 | **Ancho fijo (72 mm), alto ajustable** (25–60 mm, 30 mm por defecto). Plantillas 50×30/40×25 y medidas a mano solo para impresoras de etiquetas. |
 | Varias etiquetas en la TM-T20 | **Tiras de 10 con corte** (2026-11-03, tras la verificación): hasta 10 etiquetas por tira, separadas por línea de puntos; cada tira con su corte. |
 | Compatibilidad | «Hazlo lo máximo compatible posible»: ESC/POS (TM-T20) en fase 1; ZPL (Zebra) y TSPL (TSC, Xprinter) en fase 2; impresoras con driver (Brother QL, Dymo) en fase 2. |
@@ -120,11 +120,15 @@ Para ello, un programa pequeño (el **agente**) se instala en el ordenador de ca
 ### 5.4 Etiquetas
 - **L1.** Desde la ficha: tabla de tallas/colores con una cantidad por fila, botón «Cantidad = stock», vista previa y «Imprimir N etiquetas».
 - **L2.** Pantalla «Etiquetas»: añadir productos escaneando o buscando, cantidad por línea, vista previa e imprimir todo. La lista se conserva hasta imprimir y se vacía al terminar.
-- **L3.** Contenido: nombre del producto en un máximo de 2 líneas; combinación («M · Azul»); precio actual con IVA en grande («23,14 €»), ya con la oferta vigente y sin precio tachado; código de barras y su texto. Refleja el precio de la última sincronización.
+- **L3.** Contenido: nombre del producto en un máximo de 2 líneas; combinación («M · Azul»); precio actual con IVA en grande («23,14 €»), ya con la oferta vigente y sin precio tachado; código de barras y su texto y, a su lado y en las mismas líneas, un QR pequeño con el mismo código (las cifras del EAN, o la referencia si va en Code128). Refleja el precio de la última sincronización.
 - **L4.** Código: el `ean13` de la combinación y, si no hay, el del producto. Se valida el dígito de control: 13 cifras EAN-13, 8 EAN-8, 12 UPC-A. Si no es válido o no existe, la referencia en Code128. Si el código no cabe con un módulo mínimo de 0,25 mm, o no hay ni EAN ni referencia, no se imprime y se avisa con el motivo.
 - **L5.** En la TM-T20: ancho completo (72 mm, 576 puntos a 203 ppp), alto configurable de 25 a 60 mm (30 mm por defecto).
 - **L6.** En la TM-T20, hasta 10 etiquetas por tira; cada tira con su corte. Cada trabajo es una tira: las etiquetas separadas por una línea de puntos y un corte al final (200 etiquetas, 20 tiras). Opción «cortar cada etiqueta» desactivada por defecto.
-- **L7.** ESC/POS: códigos con los comandos de la impresora y tabla de caracteres 16 (WPC1252) para «€», como el ticket.
+- **L7.** ESC/POS: tabla de caracteres 16 (WPC1252) para «€», como el ticket. La zona del código (barras, su texto debajo y el QR al lado) va como una sola imagen de trama (`GS v 0`, 1 bit por punto, 576 puntos de ancho), porque los comandos de código de la impresora (`GS k`) no permiten poner un QR al lado de las barras. La vista previa pinta la misma imagen, punto por punto.
+  - Barras: cada módulo es un número entero de puntos (3, o 2 = 0,25 mm), sin escalar, con sus zonas en blanco; mismo alto que antes (40 a 255 puntos). El texto va dibujado en la imagen, centrado bajo las barras.
+  - QR: corrección de errores M, módulos de un número entero de puntos (2 a 5), margen en blanco de 2 módulos alrededor, centrado en vertical, como mucho 15 mm (120 puntos) y nunca más alto que las barras y su texto (en 30 mm, unos 13 mm). Barras y QR se centran juntos.
+  - Si un Code128 no deja sitio para el QR, se estrecha su módulo hasta el mínimo (0,25 mm); si aun así no cabe, esa etiqueta sale sin QR y con las barras de siempre.
+  - Sin configuración nueva: no hay nada que instalar ni ajustar (docs/provisioning.md no cambia).
 - **L8.** Límites: 100 por línea y 10 por trabajo (una tira, L6); más se reparte en varios trabajos. Ajustes → Cajas: «Imprimir etiqueta de prueba».
 - **L9.** Al reconectar con etiquetas pendientes, el TPV pregunta «Hay N etiquetas pendientes. ¿Imprimirlas?».
 - **L10 (fase 2).** ZPL (`^CI28`, `^BE`, `^BC`) y TSPL (`CODEPAGE 1252`, `BARCODE "EAN13"`/`"128"`, `SIZE`, `GAP`/`BLINE`, `DENSITY`), resolución 203 o 300 ppp, plantillas 50×30 y 40×25 y medidas a mano, con calibración inicial. Impresoras con driver (Brother QL, Dymo) mediante el driver del sistema.
