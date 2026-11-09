@@ -452,9 +452,7 @@ class TicketDataResolver
 
     private function cashierName(int $userId): string
     {
-        $userRow = $this->connection->fetchAssociative('SELECT name FROM user WHERE id = ?', [$userId]);
-
-        return $userRow !== false && isset($userRow['name']) && \is_string($userRow['name']) ? $userRow['name'] : 'Cajero';
+        return CashierName::of($this->connection, $userId);
     }
 
     /**

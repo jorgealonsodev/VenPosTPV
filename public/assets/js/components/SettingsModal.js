@@ -19,13 +19,13 @@ const SettingsModal = {
 
         // Create form
         const showCreateForm = Vue.ref(false);
-        const createForm = Vue.reactive({ name: '', code: '', pin: '', role: 'cashier' });
+        const createForm = Vue.reactive({ name: '', full_name: '', code: '', pin: '', role: 'cashier' });
         const createError = Vue.ref('');
         const creating = Vue.ref(false);
 
         // Edit form
         const editingId = Vue.ref(null);
-        const editForm = Vue.reactive({ name: '', code: '', pin: '', role: 'cashier', active: true });
+        const editForm = Vue.reactive({ name: '', full_name: '', code: '', pin: '', role: 'cashier', active: true });
         const editError = Vue.ref('');
         const saving = Vue.ref(false);
 
@@ -381,8 +381,11 @@ const SettingsModal = {
             try {
                 const body = { name: createForm.name, pin: createForm.pin, role: createForm.role };
                 if (createForm.code.trim()) body.code = createForm.code.trim();
+                // «Nombre y apellidos» is printed on the ticket as the cashier; optional.
+                if ((createForm.full_name || '').trim()) body.full_name = createForm.full_name.trim();
                 await ApiClient.post('/api/employees', body);
                 createForm.name = '';
+                createForm.full_name = '';
                 createForm.code = '';
                 createForm.pin = '';
                 createForm.role = 'cashier';
@@ -400,6 +403,7 @@ const SettingsModal = {
         function startEdit(emp) {
             editingId.value = emp.id;
             editForm.name = emp.name;
+            editForm.full_name = emp.full_name || '';
             editForm.code = emp.code || '';
             editForm.pin = '';
             editForm.role = emp.role;
@@ -418,7 +422,7 @@ const SettingsModal = {
             if (editForm.pin && editForm.pin.length < 8) { editError.value = 'PIN inválido'; return; }
             saving.value = true;
             try {
-                const body = { name: editForm.name, code: editForm.code, role: editForm.role, active: editForm.active };
+                const body = { name: editForm.name, full_name: (editForm.full_name || '').trim(), code: editForm.code, role: editForm.role, active: editForm.active };
                 if (editForm.pin) body.pin = editForm.pin;
                 await ApiClient.put('/api/employees/' + id, body);
                 editingId.value = null;
@@ -821,8 +825,10 @@ const SettingsModal = {
                             <div v-if="showCreateForm" style="background:var(--surface2); border:1px solid var(--border); border-radius:12px; padding:16px; margin-bottom:20px; display:flex; flex-direction:column; gap:12px;">
                                 <div style="font-size:13px; font-weight:600; color:var(--text);">Nuevo empleado</div>
                                 <div style="display:flex; gap:10px; flex-wrap:wrap;">
-                                    <input v-model="createForm.name" type="text" placeholder="Nombre"
+                                    <input v-model="createForm.name" type="text" placeholder="Nombre de usuario" title="Nombre de usuario"
                                         style="flex:1; min-width:140px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none;">
+                                    <input v-model="createForm.full_name" type="text" maxlength="128" placeholder="Nombre y apellidos" title="Nombre y apellidos (sale en el ticket)"
+                                        style="flex:1; min-width:180px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none;">
                                     <input v-model="createForm.code" type="text" placeholder="Código (opcional)"
                                         style="width:140px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none;">
                                     <input v-model="createForm.pin" type="password" placeholder="PIN"
@@ -855,6 +861,7 @@ const SettingsModal = {
                                                 {{ emp.name }}
                                                 <span v-if="emp.code" style="font-size:11px; color:var(--text3); font-weight:400; margin-left:6px;">#{{ emp.code }}</span>
                                             </div>
+                                            <div v-if="emp.full_name" style="font-size:12px; color:var(--text2); margin-top:2px;">{{ emp.full_name }}</div>
                                             <div style="font-size:12px; color:var(--text3); margin-top:2px;">
                                                 {{ emp.role === 'admin' ? 'Administrador' : 'Cajero' }}
                                                 <span v-if="emp.locked" style="color:var(--red); margin-left:6px;">• bloqueado</span>
@@ -879,8 +886,10 @@ const SettingsModal = {
                                     <!-- Edit mode -->
                                     <div v-else style="display:flex; flex-direction:column; gap:10px;">
                                         <div style="display:flex; gap:10px; flex-wrap:wrap;">
-                                            <input v-model="editForm.name" type="text" placeholder="Nombre"
+                                            <input v-model="editForm.name" type="text" placeholder="Nombre de usuario" title="Nombre de usuario"
                                                 style="flex:1; min-width:140px; padding:7px 11px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:13px; outline:none;">
+                                            <input v-model="editForm.full_name" type="text" maxlength="128" placeholder="Nombre y apellidos" title="Nombre y apellidos (sale en el ticket)"
+                                                style="flex:1; min-width:180px; padding:7px 11px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:13px; outline:none;">
                                             <input v-model="editForm.code" type="text" placeholder="Código (opcional)"
                                                 style="width:130px; padding:7px 11px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:13px; outline:none;">
                                             <input v-model="editForm.pin" type="password" placeholder="Nuevo PIN (opcional)"

@@ -94,8 +94,8 @@ async function testTheCreditNoteSeriesIsChangedAndTheServerErrorIsShown() {
 }
 
 function testTheScriptVersionWasBumped() {
-    const match = TEMPLATE.match(/components\/SettingsModal\.js\?v=(20261105-[a-z0-9-]+)/);
-    assert.ok(match, 'SettingsModal.js has a 20261105- version');
+    const match = TEMPLATE.match(/components\/SettingsModal\.js\?v=(2026110[5-9]-[a-z0-9-]+)/);
+    assert.ok(match, 'SettingsModal.js has a 20261105- or later version');
     assert.notEqual(match[1], '20261105-backup-alert-v1', 'browsers load the new SettingsModal.js');
 }
 

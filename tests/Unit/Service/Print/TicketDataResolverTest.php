@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace VenPosTPV\Tests\Unit\Service\Print;
 
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Driver\Exception as DriverException;
+use Doctrine\DBAL\Exception\InvalidFieldNameException;
 use PHPUnit\Framework\TestCase;
 use VenPosTPV\Service\Print\TicketDataResolver;
 use VenPosTPV\Service\Print\TicketVerificationService;
@@ -62,9 +64,9 @@ final class TicketDataResolverTest extends TestCase
                     ],
                 ],
                 [
-                    'SELECT name FROM user WHERE id = ?',
+                    'SELECT full_name, name FROM user WHERE id = ?',
                     [5],
-                    ['name' => 'Juan'],
+                    ['full_name' => null, 'name' => 'Juan'],
                 ],
                 [
                     'SELECT store_name, store_address, legal_name, tax_id, ticket_header, ticket_footer, ticket_logo, ticket_width_px FROM terminal WHERE id = ?',
@@ -135,7 +137,7 @@ final class TicketDataResolverTest extends TestCase
                     ],
                 ],
                 [
-                    'SELECT name FROM user WHERE id = ?',
+                    'SELECT full_name, name FROM user WHERE id = ?',
                     [99],
                     false,
                 ],
@@ -178,7 +180,7 @@ final class TicketDataResolverTest extends TestCase
             $conn = $this->createMock(Connection::class);
             $conn->method('fetchAssociative')->willReturnMap([
                 ['SELECT ps_order_id, terminal_id, user_id, payment_breakdown, created_at FROM order_meta WHERE ps_order_id = ?', [42], ['ps_order_id' => 42, 'terminal_id' => 7, 'user_id' => 5, 'payment_breakdown' => json_encode(['reference' => 'R', 'total' => 1.0, 'lines' => []]), 'created_at' => '2024-01-15 14:30:00']],
-                ['SELECT name FROM user WHERE id = ?', [5], ['name' => 'Juan']],
+                ['SELECT full_name, name FROM user WHERE id = ?', [5], ['full_name' => null, 'name' => 'Juan']],
                 ['SELECT store_name, store_address, legal_name, tax_id, ticket_header, ticket_footer, ticket_logo, ticket_width_px FROM terminal WHERE id = ?', [7], $terminal + ['store_address' => '', 'tax_id' => null, 'ticket_header' => null, 'ticket_footer' => null, 'ticket_logo' => null, 'ticket_width_px' => null]],
             ]);
             $verification = $this->createMock(TicketVerificationService::class);
@@ -241,6 +243,47 @@ final class TicketDataResolverTest extends TestCase
 
             self::assertNotNull($ticket);
             self::assertSame($expected, [$ticket->ticketMarginLeftMm, $ticket->ticketMarginRightMm, $ticket->ticketLogoWidthPct]);
+        }
+    }
+
+    /** Ajustes → Empleados: the ticket prints the cashier's «Nombre y apellidos», else the user name, else «Cajero». */
+    public function testTheTicketShowsTheCashierFullNameAndFallsBackToTheUserName(): void
+    {
+        $order = ['ps_order_id' => 42, 'terminal_id' => 7, 'user_id' => 5, 'payment_breakdown' => json_encode(['reference' => 'R1', 'total' => 1.0, 'lines' => []]), 'created_at' => '2024-01-15 14:30:00'];
+        $cases = [
+            [['full_name' => 'Juan Pérez García', 'name' => 'juan'], 'Juan Pérez García'],
+            [['full_name' => null, 'name' => 'juan'], 'juan'],
+            [['full_name' => '  ', 'name' => 'juan'], 'juan'],
+            [false, 'Cajero'],
+            // Code deployed before Version00000049: the old query still names the cashier.
+            [new InvalidFieldNameException($this->createMock(DriverException::class), null), 'juan'],
+        ];
+        foreach ($cases as [$user, $expected]) {
+            $conn = $this->createMock(Connection::class);
+            $conn->method('fetchAssociative')->willReturnCallback(function (string $sql, array $params = []) use ($order, $user): array|false {
+                if (str_contains($sql, 'FROM order_meta')) {
+                    return $order;
+                }
+                if ($sql === 'SELECT full_name, name FROM user WHERE id = ?') {
+                    self::assertSame([5], $params, 'the cashier of the sale');
+                    if ($user instanceof \Throwable) {
+                        throw $user;
+                    }
+
+                    return $user;
+                }
+                if ($sql === 'SELECT name FROM user WHERE id = ?') {
+                    return ['name' => 'juan'];
+                }
+
+                return false;
+            });
+            $verification = $this->createMock(TicketVerificationService::class);
+            $verification->method('buildVerificationUrl')->willReturn('http://v');
+
+            $ticket = (new TicketDataResolver($conn, $verification, 'Tienda', ''))->resolve(42);
+
+            self::assertSame($expected, $ticket?->cashierName, var_export($user instanceof \Throwable ? 'exception' : $user, true));
         }
     }
 }

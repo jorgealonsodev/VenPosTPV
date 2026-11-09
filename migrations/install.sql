@@ -54,6 +54,8 @@ CREATE TABLE IF NOT EXISTS user (
     ps_employee_id INT UNSIGNED NULL,
     role_id INT UNSIGNED NOT NULL,
     name VARCHAR(128) NOT NULL,
+    -- Version00000049: «Nombre y apellidos», printed as the cashier (NULL = the user name)
+    full_name VARCHAR(128) NULL,
     code VARCHAR(32) NULL,
     pin_hash VARCHAR(255) NOT NULL,
     active TINYINT(1) NOT NULL DEFAULT 1,

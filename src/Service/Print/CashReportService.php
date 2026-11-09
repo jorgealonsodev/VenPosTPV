@@ -35,7 +35,7 @@ class CashReportService
             CashReport::X,
             (int) $state['session_id'],
             (int) $state['terminal_id'],
-            (string) ($state['opened_by'] ?? ''),
+            $this->cashier($state['opened_by_user_id'] ?? null, $state['opened_by'] ?? null),
             (string) $state['opened_at'],
             null,
             $totals,
@@ -54,7 +54,7 @@ class CashReportService
             CashReport::Z,
             (int) $row['id'],
             (int) $row['terminal_id'],
-            (string) ($row['opened_by'] ?? ''),
+            $this->cashier($row['user_id'] ?? null, $row['opened_by'] ?? null),
             (string) $row['opened_at'],
             (string) $row['closed_at'],
             $row['totals'],
@@ -80,6 +80,17 @@ class CashReportService
     public function pdf(CashReport $report): string
     {
         return $this->pdf->generate($report);
+    }
+
+    /**
+     * The cashier who opened the till, named like on the ticket (CashierName); the
+     * user name the session query already read stays the fallback.
+     */
+    private function cashier(mixed $userId, mixed $openedBy): string
+    {
+        $fallback = (string) ($openedBy ?? '');
+
+        return is_numeric($userId) && (int) $userId > 0 ? CashierName::of($this->connection, (int) $userId, $fallback) : $fallback;
     }
 
     /** @param array<string, mixed> $totals */
