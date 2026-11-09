@@ -75,7 +75,8 @@ const SettingsModal = {
         }
 
         function provisioningLabel(step) {
-            return step && step.status === 'done' ? 'Hecho' : 'Pendiente';
+            if (step && step.status === 'done') return 'Hecho';
+            return step && step.status === 'blocked' ? 'Bloqueado' : 'Pendiente';
         }
 
         async function loadEmployees() {
@@ -1518,7 +1519,7 @@ const SettingsModal = {
                             <div style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; color:var(--text); margin:24px 0 6px;">
                                 <icon name="sync" :size="16"></icon> Estado de la instalación
                             </div>
-                            <div style="font-size:12px; color:var(--text3); margin-bottom:12px; max-width:480px;">Pasos que la instalación y las actualizaciones hacen solos (base de datos, PrestaShop). Los pendientes se reintentan cada 15 minutos con la tarea programada de cada minuto.</div>
+                            <div style="font-size:12px; color:var(--text3); margin-bottom:12px; max-width:480px;">Pasos que la instalación y las actualizaciones hacen solos (base de datos, PrestaShop). Los pendientes se reintentan cada 15 minutos con la tarea programada de cada minuto; los bloqueados, no: revisa el motivo y ejecuta <code>tpv:provision</code>.</div>
                             <div v-if="provisioningLoading" style="font-size:12px; color:var(--text3);">Comprobando…</div>
                             <div v-else-if="provisioningError" style="font-size:12px; color:var(--red);">{{ provisioningError }}</div>
                             <div v-else-if="provisioning" style="background:var(--surface2); border-radius:12px; padding:4px 16px; max-width:480px;">

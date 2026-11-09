@@ -185,4 +185,72 @@ final class DatabaseBackupTest extends TestCase
 
         $this->assertSame(['.htaccess', 'venpostpv-20261003-040000-REVISAR.sql.gz', 'venpostpv-20261105-040000.sql.gz'], $this->files());
     }
+
+    public function testAPreMigrationBackupIsNamedApartAndTheDailyRetentionNeverDeletesIt(): void
+    {
+        $backup = new DatabaseBackup($this->dumper('SELECT 1;', 1), new BackupRetention(), $this->health(), $this->dir);
+
+        $result = $backup->runPreMigration(new \DateTimeImmutable('2026-11-09 10:00:00'));
+        for ($day = 10; $day <= 19; ++$day) {
+            $backup->run(7, new \DateTimeImmutable(sprintf('2026-11-%02d 04:00:00', $day)));
+        }
+
+        $this->assertSame('venpostpv-premigrate-20261109-100000.sql.gz', $result->fileName());
+        $this->assertSame(0600, fileperms($result->path) & 0777);
+        $files = $this->files();
+        $this->assertContains('venpostpv-premigrate-20261109-100000.sql.gz', $files, 'ten daily backups later it is still there');
+        $this->assertCount(7, preg_grep(BackupRetention::PATTERN, $files), 'the daily copies keep their own 7');
+    }
+
+    public function testOnlyTheNewestPreMigrationBackupsAreKept(): void
+    {
+        $backup = new DatabaseBackup($this->dumper('SELECT 1;', 1), new BackupRetention(), $this->health(), $this->dir);
+        $backup->run(7, new \DateTimeImmutable('2026-11-01 04:00:00'));
+
+        for ($minute = 0; $minute < 5; ++$minute) {
+            $backup->runPreMigration(new \DateTimeImmutable(sprintf('2026-11-09 10:%02d:00', $minute)));
+        }
+
+        $this->assertSame(3, DatabaseBackup::PREMIGRATE_KEEP);
+        $this->assertSame([
+            '.htaccess',
+            'venpostpv-20261101-040000.sql.gz',
+            'venpostpv-premigrate-20261109-100200.sql.gz',
+            'venpostpv-premigrate-20261109-100300.sql.gz',
+            'venpostpv-premigrate-20261109-100400.sql.gz',
+        ], $this->files(), 'the daily copy is not touched either');
+    }
+
+    public function testPreMigrationBackupsMarkedForReviewAreCappedWithoutDeletingTheGoodOnes(): void
+    {
+        $good = new DatabaseBackup($this->dumper('SELECT 1;', 1), new BackupRetention(), $this->health(), $this->dir);
+        $good->runPreMigration(new \DateTimeImmutable('2026-11-09 09:00:00'));
+        $bad = new DatabaseBackup($this->dumper('SELECT 1;', 1), new BackupRetention(), $this->health(['Table sale: Corrupt']), $this->dir);
+
+        for ($minute = 0; $minute < 5; ++$minute) {
+            $result = $bad->runPreMigration(new \DateTimeImmutable(sprintf('2026-11-09 10:%02d:00', $minute)));
+        }
+
+        $this->assertSame('venpostpv-premigrate-20261109-100400-REVISAR.sql.gz', $result->fileName());
+        $this->assertSame([
+            '.htaccess',
+            'venpostpv-premigrate-20261109-090000.sql.gz',
+            'venpostpv-premigrate-20261109-100200-REVISAR.sql.gz',
+            'venpostpv-premigrate-20261109-100300-REVISAR.sql.gz',
+            'venpostpv-premigrate-20261109-100400-REVISAR.sql.gz',
+        ], $this->files());
+    }
+
+    public function testACopyTakenInTheSameSecondNeverReplacesTheEarlierOne(): void
+    {
+        $backup = new DatabaseBackup($this->dumper('SELECT 1;', 1), new BackupRetention(), $this->health(), $this->dir);
+        $at = new \DateTimeImmutable('2026-11-09 10:00:00');
+
+        $first = $backup->runPreMigration($at);
+        $second = $backup->runPreMigration($at);
+
+        $this->assertSame('venpostpv-premigrate-20261109-100000.sql.gz', $first->fileName());
+        $this->assertSame('venpostpv-premigrate-20261109-100001.sql.gz', $second->fileName());
+        $this->assertFileExists($first->path);
+    }
 }

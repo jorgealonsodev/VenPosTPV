@@ -10,8 +10,10 @@ final class StepStatus
     public const DONE = 'done';
     /** Not done and not failed yet (never tried, or another run is doing it). */
     public const PENDING = 'pending';
-    /** Not done: the last attempt failed for $reason. */
+    /** Not done: the last attempt failed for $reason ($blocked: the minute task no longer retries it). */
     public const FAILED = 'failed';
+    /** How toArray() reports a blocked failure (Ajustes, the API). */
+    public const BLOCKED = 'blocked';
 
     public function __construct(
         public readonly string $id,
@@ -23,6 +25,10 @@ final class StepStatus
         public readonly bool $attempted = false,
         // When the minute task will try a failed step again.
         public readonly ?\DateTimeImmutable $nextAttemptAt = null,
+        // A blocked failure: only tpv:provision (or a new release) tries it again.
+        public readonly bool $blocked = false,
+        // The minute task would have retried it now: it reports the block instead.
+        public readonly bool $reported = false,
     ) {
     }
 
@@ -37,7 +43,7 @@ final class StepStatus
         return [
             'id' => $this->id,
             'description' => $this->description,
-            'status' => $this->status,
+            'status' => $this->blocked ? self::BLOCKED : $this->status,
             'reason' => $this->reason,
             'attempted_at' => $this->attemptedAt?->format(\DATE_ATOM),
             'next_attempt_at' => $this->nextAttemptAt?->format(\DATE_ATOM),

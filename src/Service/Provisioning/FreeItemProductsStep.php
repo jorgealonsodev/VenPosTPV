@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace VenPosTPV\Service\Provisioning;
 
 use Symfony\Component\DependencyInjection\Attribute\AsTaggedItem;
+use VenPosTPV\Service\Checkout\FreeItemSettingsStore;
 use VenPosTPV\Service\Checkout\FreeItemSetupService;
 
 /**
@@ -12,12 +13,17 @@ use VenPosTPV\Service\Checkout\FreeItemSetupService;
  * (docs/prd/articulo-libre.md, A5.2; the same work as tpv:free-item:setup). It
  * needs the shop and module tpvconnect 0.7.0, so at install time it usually stays
  * pending until the module is installed and configured.
+ *
+ * With the free item disabled (free_item.enabled = 0) there is nothing to
+ * provision: the step counts as done and never calls PrestaShop.
  */
 #[AsTaggedItem(priority: 100)]
 final class FreeItemProductsStep implements ProvisioningStep
 {
-    public function __construct(private readonly FreeItemSetupService $setup)
-    {
+    public function __construct(
+        private readonly FreeItemSetupService $setup,
+        private readonly FreeItemSettingsStore $settings,
+    ) {
     }
 
     public function id(): string
@@ -32,11 +38,14 @@ final class FreeItemProductsStep implements ProvisioningStep
 
     public function isDone(): bool
     {
-        return $this->setup->isComplete();
+        return !$this->settings->load()->enabled || $this->setup->isComplete();
     }
 
     public function run(): void
     {
+        if (!$this->settings->load()->enabled) {
+            return;
+        }
         try {
             $this->setup->run();
         } catch (\Throwable $e) {

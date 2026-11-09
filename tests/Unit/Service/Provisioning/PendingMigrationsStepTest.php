@@ -12,6 +12,8 @@ use VenPosTPV\Service\Backup\HealthReport;
 use VenPosTPV\Service\Install\MigrationRunner;
 use VenPosTPV\Service\Provisioning\DatabaseLock;
 use VenPosTPV\Service\Provisioning\PendingMigrationsStep;
+use VenPosTPV\Service\Provisioning\BlockableProvisioningStep;
+use VenPosTPV\Service\Provisioning\ProvisioningBlockedException;
 use VenPosTPV\Service\Provisioning\ProvisioningBusyException;
 use VenPosTPV\Service\Provisioning\ProvisioningException;
 
@@ -45,13 +47,14 @@ final class PendingMigrationsStepTest extends TestCase
     private function backup(?\Throwable $error = null, array $problems = []): DatabaseBackup
     {
         $backup = $this->createMock(DatabaseBackup::class);
-        $backup->method('run')->willReturnCallback(function () use ($error, $problems): BackupResult {
+        $backup->expects($this->never())->method('run');
+        $backup->method('runPreMigration')->willReturnCallback(function () use ($error, $problems): BackupResult {
             $this->log[] = 'backup';
             if ($error !== null) {
                 throw $error;
             }
 
-            return new BackupResult('/srv/tpv/backups/venpostpv-20261109-100000' . ($problems === [] ? '' : '-REVISAR') . '.sql.gz', 2048, 40, new HealthReport(40, 3, $problems));
+            return new BackupResult('/srv/tpv/backups/venpostpv-premigrate-20261109-100000' . ($problems === [] ? '' : '-REVISAR') . '.sql.gz', 2048, 40, new HealthReport(40, 3, $problems));
         });
 
         return $backup;
@@ -122,17 +125,29 @@ final class PendingMigrationsStepTest extends TestCase
         $this->assertSame('unlock venpostpv_migrations', end($this->log), 'the lock is always released');
     }
 
-    public function testABackupWhoseChecksFoundProblemsBlocksTheMigration(): void
+    public function testAFailedBackupIsNotABlock(): void
+    {
+        try {
+            $this->step($this->migrations(2, 47), $this->backup(new \RuntimeException('Cannot write the backup file (is the disk full?).')))->run();
+            self::fail('No migration without a backup.');
+        } catch (ProvisioningException $e) {
+            $this->assertNotInstanceOf(ProvisioningBlockedException::class, $e, 'nothing was written: the minute task may try again later');
+        }
+    }
+
+    public function testABackupWhoseChecksFoundProblemsBlocksTheMigrationAndTheMinuteTask(): void
     {
         try {
             $this->step($this->migrations(1, 48), $this->backup(problems: ['Table sale: Corrupt']))->run();
             self::fail('No migration on a database with problems.');
-        } catch (ProvisioningException $e) {
+        } catch (ProvisioningBlockedException $e) {
             $this->assertSame(
                 'No se ha aplicado la migración pendiente porque la comprobación de la base de datos ha encontrado problemas: Table sale: Corrupt. '
-                . 'La copia se ha guardado en backups/venpostpv-20261109-100000-REVISAR.sql.gz.',
+                . 'La copia se ha guardado en backups/venpostpv-premigrate-20261109-100000-REVISAR.sql.gz. '
+                . 'La tarea de cada minuto no lo volverá a intentar: revisa la base de datos y ejecuta php bin/console tpv:provision --env=prod.',
                 $e->getMessage()
             );
+            $this->assertSame('executed=48 pending=1', $e->blockKey);
         }
 
         $this->assertNotContains('migrate', $this->log);
@@ -155,13 +170,25 @@ final class PendingMigrationsStepTest extends TestCase
         try {
             $this->step($this->migrations(2, 47, new \RuntimeException('Duplicate column name')))->run();
             self::fail('A failed migration must be reported.');
-        } catch (ProvisioningException $e) {
+        } catch (ProvisioningBlockedException $e) {
             $this->assertSame(
-                'Las migraciones han fallado: Duplicate column name. La copia previa está en backups/venpostpv-20261109-100000.sql.gz.',
+                'Las migraciones han fallado: Duplicate column name. La copia previa está en backups/venpostpv-premigrate-20261109-100000.sql.gz. '
+                . 'La tarea de cada minuto no lo volverá a intentar: revisa la base de datos y ejecuta php bin/console tpv:provision --env=prod.',
                 $e->getMessage()
             );
+            $this->assertSame('executed=47 pending=2', $e->blockKey, 'the pending set the block belongs to');
         }
 
         $this->assertSame('unlock venpostpv_migrations', end($this->log));
+    }
+
+    public function testItsBlockKeyIsThePendingSetOfMigrations(): void
+    {
+        $step = $this->step($this->migrations(2, 47));
+
+        $this->assertInstanceOf(BlockableProvisioningStep::class, $step);
+        $this->assertSame('executed=47 pending=2', $step->blockKey());
+        $this->assertSame([], $this->log, 'cheap: no lock, no backup, no migration');
+        $this->assertSame('executed=47 pending=3', $this->step($this->migrations(3, 47))->blockKey(), 'a new release has a new key');
     }
 }

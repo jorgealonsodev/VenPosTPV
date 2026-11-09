@@ -134,4 +134,28 @@ final class OutboxSyncCommandTest extends TestCase
             $tester->getDisplay()
         );
     }
+
+    public function testABlockedStepIsPrintedOnlyWhenTheRunnerReportsIt(): void
+    {
+        $sync = $this->createMock(OutboxSync::class);
+        $sync->method('run')->willReturn(['uploaded' => 0, 'retried' => 0, 'incidents' => 0, 'recovered' => 0]);
+        $provisioning = $this->createMock(ProvisioningRunner::class);
+        $provisioning->method('run')->willReturnOnConsecutiveCalls(
+            new ProvisioningReport([new StepStatus('migrations', 'Actualizar la base de datos (migraciones)', StepStatus::FAILED, 'Las migraciones han fallado.', new \DateTimeImmutable(), blocked: true, reported: true)]),
+            new ProvisioningReport([new StepStatus('migrations', 'Actualizar la base de datos (migraciones)', StepStatus::FAILED, 'Las migraciones han fallado.', new \DateTimeImmutable(), blocked: true)]),
+        );
+        $command = new OutboxSyncCommand($sync, null, $provisioning);
+
+        $tester = new CommandTester($command);
+        $tester->execute([]);
+        $this->assertSame(
+            "Provisioning: migrations blocked: Las migraciones han fallado.\n"
+            . "Outbox sync: 0 uploaded, 0 to retry, 0 incidents, 0 recovered\n",
+            $tester->getDisplay()
+        );
+
+        $tester = new CommandTester($command);
+        $tester->execute([]);
+        $this->assertSame("Outbox sync: 0 uploaded, 0 to retry, 0 incidents, 0 recovered\n", $tester->getDisplay(), 'between reports it stays quiet');
+    }
 }

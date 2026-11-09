@@ -7,6 +7,8 @@ namespace VenPosTPV\Tests\Unit\Service\Provisioning;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
 use PHPUnit\Framework\TestCase;
+use VenPosTPV\Service\Provisioning\BlockableProvisioningStep;
+use VenPosTPV\Service\Provisioning\ProvisioningBlockedException;
 use VenPosTPV\Service\Provisioning\ProvisioningBusyException;
 use VenPosTPV\Service\Provisioning\ProvisioningException;
 use VenPosTPV\Service\Provisioning\ProvisioningRunner;
@@ -230,7 +232,113 @@ final class ProvisioningRunnerTest extends TestCase
 
         $this->assertSame(['failed', 'done'], array_map(static fn ($s) => $s->status, $report->steps));
     }
+
+    private function blocking(string $key = 'executed=47 pending=1'): FakeBlockableStep
+    {
+        $step = new FakeBlockableStep('migrations', 'Paso migrations', false, static function (): void {
+            throw new ProvisioningBlockedException('Las migraciones han fallado: 1060 Duplicate column name.', 'executed=47 pending=1');
+        }, $this->log);
+        $step->key = $key;
+
+        return $step;
+    }
+
+    public function testABlockedStepIsNeverRetriedByTheMinuteTask(): void
+    {
+        $step = $this->blocking();
+        $runner = $this->runner($step);
+
+        $first = $runner->run(throttled: true, now: self::at('10:00'));
+        $this->assertSame('failed', $first->steps[0]->status);
+        $this->assertTrue($first->steps[0]->blocked);
+        $this->assertTrue($first->steps[0]->attempted);
+        $this->assertNull($first->steps[0]->nextAttemptAt, 'no automatic retry');
+
+        $this->log = [];
+        for ($i = 1; $i <= 10; ++$i) {
+            $report = $runner->run(throttled: true, now: self::at('10:00')->modify(sprintf('+%d minutes', 15 * $i)));
+            $this->assertTrue($report->steps[0]->blocked);
+            $this->assertFalse($report->steps[0]->attempted);
+            $this->assertSame('Las migraciones han fallado: 1060 Duplicate column name.', $report->steps[0]->reason);
+            $this->assertEquals(self::at('10:00'), $report->steps[0]->attemptedAt, 'the last real attempt');
+        }
+        $this->assertNotContains('run migrations', $this->log);
+    }
+
+    public function testTheMinuteTaskReportsABlockedStepOnlyWhenItWouldHaveRetriedIt(): void
+    {
+        $runner = $this->runner($this->blocking());
+        $runner->run(throttled: true, now: self::at('10:00'));
+
+        $this->assertFalse($runner->run(throttled: true, now: self::at('10:01'))->steps[0]->reported);
+        $this->assertFalse($runner->run(throttled: true, now: self::at('10:14'))->steps[0]->reported);
+        $this->assertTrue($runner->run(throttled: true, now: self::at('10:15'))->steps[0]->reported);
+        $this->assertFalse($runner->run(throttled: true, now: self::at('10:16'))->steps[0]->reported);
+        $this->assertTrue($runner->run(throttled: true, now: self::at('10:30'))->steps[0]->reported);
+    }
+
+    public function testAManualRunRetriesABlockedStep(): void
+    {
+        $step = $this->blocking();
+        $runner = $this->runner($step);
+        $runner->run(throttled: true, now: self::at('10:00'));
+        $this->log = [];
+
+        $report = $runner->run(throttled: false, now: self::at('10:05'));
+
+        $this->assertSame(['check migrations', 'run migrations'], $this->log);
+        $this->assertTrue($report->steps[0]->attempted);
+        $this->assertTrue($report->steps[0]->blocked, 'it failed again: still blocked');
+        $this->assertEquals(self::at('10:05'), $report->steps[0]->attemptedAt);
+    }
+
+    public function testAManualRunThatSucceedsClearsTheBlock(): void
+    {
+        $step = $this->blocking();
+        $runner = $this->runner($step);
+        $runner->run(throttled: true, now: self::at('10:00'));
+        $step->fixed = true;
+
+        $report = $runner->run(throttled: false, now: self::at('10:05'));
+
+        $this->assertSame('done', $report->steps[0]->status);
+        $this->assertFalse($this->connection->fetchOne("SELECT value FROM app_setting WHERE name = 'provisioning.migrations'"));
+    }
+
+    public function testANewReleaseWithAnotherPendingSetIsTriedAgainByTheMinuteTask(): void
+    {
+        $step = $this->blocking();
+        $runner = $this->runner($step);
+        $runner->run(throttled: true, now: self::at('10:00'));
+        $step->key = 'executed=47 pending=2';
+        $this->log = [];
+
+        $report = $runner->run(throttled: true, now: self::at('10:01'));
+
+        $this->assertContains('run migrations', $this->log, 'not the set that failed: tried at once');
+        $this->assertTrue($report->steps[0]->attempted);
+    }
+
+    public function testTheStatusShowsTheBlockAndItsReason(): void
+    {
+        $this->runner($this->blocking())->run(throttled: true, now: self::at('10:00'));
+
+        $report = $this->runner($this->blocking())->status(self::at('10:20'));
+
+        $this->assertSame('failed', $report->steps[0]->status);
+        $this->assertTrue($report->steps[0]->blocked);
+        $this->assertSame([
+            'id' => 'migrations',
+            'description' => 'Paso migrations',
+            'status' => 'blocked',
+            'reason' => 'Las migraciones han fallado: 1060 Duplicate column name.',
+            'attempted_at' => self::at('10:00')->format(\DATE_ATOM),
+            'next_attempt_at' => null,
+        ], $report->toArray()['steps'][0]);
+        $this->assertFalse($this->runner($this->blocking('executed=47 pending=2'))->status(self::at('10:20'))->steps[0]->blocked, 'a new release is not blocked');
+    }
 }
+
 
 final class FakeStep implements ProvisioningStep
 {
@@ -278,5 +386,57 @@ final class FakeStep implements ProvisioningStep
             ($this->run)();
         }
         $this->ran = true;
+    }
+}
+
+final class FakeBlockableStep implements BlockableProvisioningStep
+{
+    public string $key = '';
+    public bool $fixed = false;
+
+    /**
+     * @param \Closure(): void $run
+     * @param list<string>      $log
+     */
+    public function __construct(
+        private readonly string $id,
+        private readonly string $description,
+        private bool $done,
+        private readonly \Closure $run,
+        private array &$log,
+    ) {
+    }
+
+    public function id(): string
+    {
+        return $this->id;
+    }
+
+    public function description(): string
+    {
+        return $this->description;
+    }
+
+    public function isDone(): bool
+    {
+        $this->log[] = 'check ' . $this->id;
+
+        return $this->done;
+    }
+
+    public function blockKey(): string
+    {
+        return $this->key;
+    }
+
+    public function run(): void
+    {
+        $this->log[] = 'run ' . $this->id;
+        if ($this->fixed) {
+            $this->done = true;
+
+            return;
+        }
+        ($this->run)();
     }
 }

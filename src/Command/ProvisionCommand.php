@@ -20,7 +20,9 @@ use VenPosTPV\Service\Provisioning\ProvisioningRunner;
  *     php bin/console tpv:provision --status --env=prod   # only report
  *
  * Every step is printed with its state and, when it is not done, its reason. The
- * exit code is 0 when every step is done and 1 when one is still pending.
+ * exit code is 0 when every step is done and 1 when one is still pending. A
+ * blocked step (the minute task no longer retries it) is printed as «blocked»;
+ * running this command without --status tries it again.
  */
 #[AsCommand(name: 'tpv:provision', description: 'Run the pending installation steps (migrations, PrestaShop setup)')]
 final class ProvisionCommand extends Command
@@ -50,7 +52,7 @@ final class ProvisionCommand extends Command
     private static function print(ProvisioningReport $report, OutputInterface $output): void
     {
         foreach ($report->steps as $step) {
-            $output->writeln(sprintf('%-8s %-19s %s', $step->status, $step->id, $step->description), OutputInterface::OUTPUT_RAW);
+            $output->writeln(sprintf('%-8s %-19s %s', $step->blocked ? 'blocked' : $step->status, $step->id, $step->description), OutputInterface::OUTPUT_RAW);
             if (!$step->isDone() && $step->reason !== null) {
                 $output->writeln(str_repeat(' ', 9) . $step->reason, OutputInterface::OUTPUT_RAW);
             }

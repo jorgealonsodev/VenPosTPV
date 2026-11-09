@@ -56,6 +56,8 @@ async function testTheStatusIsLoadedFromTheAdminEndpoint() {
     assert.equal(s.provisioningLabel(STATUS.steps[0]), 'Hecho');
     assert.equal(s.provisioningLabel(STATUS.steps[1]), 'Pendiente');
     assert.equal(s.provisioningLabel({ status: 'pending', reason: null }), 'Pendiente');
+    assert.equal(s.provisioningLabel({ status: 'blocked', reason: 'Las migraciones han fallado.' }), 'Bloqueado');
+    assert.equal(s.provisioningLabel({ status: 'failed', reason: 'Sin conexión con PrestaShop.' }), 'Pendiente');
     assert.equal(s.provisioningLoading.value, false);
 }
 

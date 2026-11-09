@@ -33,7 +33,7 @@ final class FreeItemProductsStepTest extends TestCase
         $store->method('load')->willReturn(new FreeItemSettings(true, 'all', 1000.0, [21.0, 10.0]));
         $store->method('loadPsProducts')->willReturn($stored);
 
-        return new FreeItemProductsStep(new FreeItemSetupService($client ?? $this->createMock(PsOrderClient::class), $store));
+        return new FreeItemProductsStep(new FreeItemSetupService($client ?? $this->createMock(PsOrderClient::class), $store), $store);
     }
 
     public function testItIsDoneWhenEveryConfiguredRateHasItsProductAndAllItsSlots(): void
@@ -60,7 +60,7 @@ final class FreeItemProductsStepTest extends TestCase
         $store->method('load')->willReturn(new FreeItemSettings(true, 'all', 1000.0, [21.0, 10.0]));
         $store->expects($this->once())->method('savePsProducts');
 
-        (new FreeItemProductsStep(new FreeItemSetupService($client, $store)))->run();
+        (new FreeItemProductsStep(new FreeItemSetupService($client, $store), $store))->run();
     }
 
     public function testAShopThatCannotSetItUpGivesTheReasonInSpanish(): void
@@ -76,5 +76,19 @@ final class FreeItemProductsStepTest extends TestCase
             $this->assertStringContainsString('PS module returned HTTP 404: Not Found. Comprueba', $e->getMessage());
             $this->assertStringContainsString('TPV Connect 0.7.0', $e->getMessage());
         }
+    }
+
+    public function testWithTheFreeItemDisabledThereIsNothingToProvisionAndPrestaShopIsNeverCalled(): void
+    {
+        $client = $this->createMock(PsOrderClient::class);
+        $client->expects($this->never())->method($this->anything());
+        $store = $this->createMock(FreeItemSettingsStore::class);
+        $store->method('load')->willReturn(new FreeItemSettings(false, 'all', 1000.0, [21.0, 10.0]));
+        $store->method('loadPsProducts')->willReturn([]);
+        $store->expects($this->never())->method('savePsProducts');
+        $step = new FreeItemProductsStep(new FreeItemSetupService($client, $store), $store);
+
+        $this->assertTrue($step->isDone(), 'free_item.enabled = 0 counts as done');
+        $step->run();
     }
 }

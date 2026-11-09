@@ -71,4 +71,21 @@ final class ProvisionCommandTest extends TestCase
         $this->assertSame(Command::FAILURE, $tester->execute([]));
         $this->assertStringContainsString('Sin conexión con PrestaShop.', $tester->getDisplay());
     }
+
+    public function testABlockedStepIsShownAsBlockedWithItsReason(): void
+    {
+        $runner = $this->createMock(ProvisioningRunner::class);
+        $runner->method('status')->willReturn(new ProvisioningReport([
+            new StepStatus('migrations', 'Actualizar la base de datos (migraciones)', StepStatus::FAILED, 'Las migraciones han fallado: 1060 Duplicate column name. Revisa la base de datos.', new \DateTimeImmutable('2026-11-09 10:00'), blocked: true),
+        ]));
+        $tester = new CommandTester(new ProvisionCommand($runner));
+
+        $this->assertSame(Command::FAILURE, $tester->execute(['--status' => true]));
+        $this->assertSame(
+            "blocked  migrations          Actualizar la base de datos (migraciones)\n"
+            . "         Las migraciones han fallado: 1060 Duplicate column name. Revisa la base de datos.\n"
+            . "1 provisioning step pending.\n",
+            $tester->getDisplay()
+        );
+    }
 }

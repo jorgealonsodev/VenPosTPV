@@ -101,7 +101,7 @@ El paquete `venpostpv-hosting.zip` lleva el TPV con sus dependencias y un instal
 
 ## Copias de seguridad y restauración
 
-La tarea 5 (`tpv:backup:database`) guarda cada día una copia completa de la base de datos del TPV en la carpeta `backups/` del subdominio (junto a `bin/`, `src/`…), con el nombre `venpostpv-AAAAMMDD-HHMMSS.sql.gz` (SQL comprimido con gzip). Al terminar bien deja solo las **7 más recientes**; las demás se borran. Si una copia falla, no se borra ninguna y Plesk envía el error por correo. Para conservar otro número de copias, añade `--keep=N` a los argumentos.
+La tarea 5 (`tpv:backup:database`) guarda cada día una copia completa de la base de datos del TPV en la carpeta `backups/` del subdominio (junto a `bin/`, `src/`…), con el nombre `venpostpv-AAAAMMDD-HHMMSS.sql.gz` (SQL comprimido con gzip). Al terminar bien deja solo las **7 más recientes**; las demás se borran. Si una copia falla, no se borra ninguna y Plesk envía el error por correo. Para conservar otro número de copias, añade `--keep=N` a los argumentos. Las copias que se hacen antes de aplicar migraciones (`venpostpv-premigrate-…sql.gz`, ver «Actualizar el TPV») van aparte: no cuentan en esas 7 y se guardan las 3 últimas.
 
 Antes de cada copia la tarea **comprueba la base de datos**: `CHECK TABLE` en todas las tablas y la verificación de la cadena de registros fiscales (la misma de Ajustes → VERI*FACTU). Si todo está bien, escribe una línea «Database checks passed» y la de la copia. Si encuentra un problema, la copia se guarda igualmente, pero con el nombre `venpostpv-AAAAMMDD-HHMMSS-REVISAR.sql.gz`; ese día **no se borra ninguna copia anterior** (pueden ser las últimas buenas), la tarea muestra cada problema (la tabla y el mensaje, o el motivo y el número del registro fiscal que rompe la cadena) y termina con error, así que Plesk lo envía por correo. Las copias `-REVISAR` cuentan dentro de las 7 cuando la limpieza vuelve a ejecutarse.
 
@@ -126,11 +126,18 @@ Aviso fiscal: restaurar una copia antigua **pierde las ventas y los registros fi
 1. Si puedes, hazlo fuera del horario de venta. Sube el nuevo `venpostpv-hosting.zip` a la carpeta del subdominio y extráelo **encima**, sustituyendo los archivos. No borres `.env`, `var/install.lock` ni la carpeta `backups/`.
 2. Borra la carpeta `var/cache/prod` (o ejecuta `php bin/console cache:clear --env=prod`), para que la aplicación use el código nuevo.
 3. Ya está: la tarea 1 (`tpv:sync:outbox`, cada minuto) aplica en su siguiente ejecución todo lo que la nueva versión necesita, en orden, y solo cuando falta algo:
-   - **las migraciones de la base de datos**, siempre después de una copia de seguridad automática en `backups/` (cuenta dentro de las 7 copias). Si la copia falla o su comprobación encuentra problemas, **no migra**: lo indica en Ajustes y lo reintenta cada 15 minutos. Dos ejecuciones nunca migran a la vez;
+   - **las migraciones de la base de datos**, siempre después de una copia de seguridad automática `backups/venpostpv-premigrate-<fecha>-<hora>.sql.gz` (aparte de las 7 copias diarias, que nunca la borran; se guardan las 3 últimas). Si la copia no se puede escribir, **no migra** y lo reintenta cada 15 minutos. Dos ejecuciones nunca migran a la vez;
    - **lo que haya que preparar en PrestaShop** (por ejemplo, los productos genéricos del artículo libre). Si la tienda no responde, lo reintenta cada 15 minutos.
 
    Para no esperar al minuto siguiente, o para ver el detalle, ejecuta `php bin/console tpv:provision --env=prod` (en Plesk, una tarea «Ejecutar un script PHP» con esos argumentos y **Ejecutar ahora**). Con `--status` solo informa.
 4. Comprueba en el TPV **Ajustes → Acerca de → Estado de la instalación** que todos los pasos dicen «Hecho». Un paso «Pendiente» muestra debajo el motivo y qué hacer.
+
+**Si las migraciones quedan «Bloqueado».** Si una migración falla, o la comprobación de la base de datos de la copia previa encuentra problemas (copia `…-REVISAR.sql.gz`), el paso queda bloqueado: la tarea de cada minuto **deja de intentarlo** (no hace más copias ni vuelve a migrar) y Ajustes y `php bin/console tpv:provision --status --env=prod` muestran «Bloqueado»/`blocked` con el motivo y el nombre de la copia de antes. MySQL no deshace los cambios de estructura, así que una migración que falló a medias deja la base de datos a medio cambiar y repetirla tal cual vuelve a fallar. Para salir:
+
+   1. Restaura la copia que nombra el motivo (`backups/venpostpv-premigrate-….sql.gz`, ver [Copias de seguridad y restauración](#copias-de-seguridad-y-restauración)) o corrige la base de datos a mano. Con un aviso de comprobación (`-REVISAR`), repara antes las tablas que indica.
+   2. Ejecuta `php bin/console tpv:provision --env=prod`: vuelve a intentarlo una vez, con una copia previa nueva. Si vuelve a fallar, queda bloqueado otra vez con el nuevo motivo.
+
+   Subir una versión nueva con otras migraciones pendientes también hace que la tarea de cada minuto lo intente de nuevo.
 
 Las nuevas funcionalidades que necesitan preparar algo añaden su paso a esta misma lista (ver `docs/provisioning.md`), así que una actualización nunca requiere órdenes manuales aparte.
 

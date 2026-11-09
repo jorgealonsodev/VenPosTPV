@@ -16,6 +16,12 @@ namespace VenPosTPV\Service\Backup;
  * writes the backup, named ...-REVISAR.sql.gz, but skips the retention for that run:
  * the older copies may be the last good ones.
  *
+ * runPreMigration() takes the copy the «migrations» provisioning step needs before
+ * migrating (docs/provisioning.md): named venpostpv-premigrate-…, outside the daily
+ * retention, so the copy from before a failed migration is never pushed out by the
+ * daily ones; only the newest PREMIGRATE_KEEP of them (and, apart, of those marked
+ * for review) are kept, so they cannot pile up either.
+ *
  * The folder is kept at 0700 and the files at 0600: on Plesk, Apache and nginx run
  * as other users, so they cannot read them even if the web server configuration
  * served static files from this folder. The .htaccess is defence in depth.
@@ -23,6 +29,7 @@ namespace VenPosTPV\Service\Backup;
 class DatabaseBackup
 {
     public const DEFAULT_KEEP = 7;
+    public const PREMIGRATE_KEEP = 3;
 
     public function __construct(
         private readonly SqlDumper $dumper,
@@ -38,14 +45,38 @@ class DatabaseBackup
             throw new \InvalidArgumentException('The number of backups to keep must be at least 1.');
         }
 
+        return $this->backUp('venpostpv-', $now, function (HealthReport $health) use ($keep): void {
+            if ($health->ok()) {
+                $this->retention->prune($this->directory, $keep);
+            }
+        });
+    }
+
+    public function runPreMigration(?\DateTimeImmutable $now = null): BackupResult
+    {
+        return $this->backUp('venpostpv-premigrate-', $now, function (HealthReport $health): void {
+            // A copy marked for review only ever replaces older ones marked for review.
+            $this->retention->pruneMatching(
+                $this->directory,
+                self::PREMIGRATE_KEEP,
+                $health->ok() ? BackupRetention::PREMIGRATE_PATTERN : BackupRetention::PREMIGRATE_REVIEW_PATTERN
+            );
+        });
+    }
+
+    /** @param \Closure(HealthReport): void $prune removes the old copies once this one is in place */
+    private function backUp(string $prefix, ?\DateTimeImmutable $now, \Closure $prune): BackupResult
+    {
         $this->prepareDirectory();
         $health = $this->check();
-        $name = sprintf(
-            'venpostpv-%s%s.sql.gz',
-            ($now ?? new \DateTimeImmutable())->format('Ymd-His'),
-            $health->ok() ? '' : '-REVISAR'
-        );
-        $final = $this->directory . '/' . $name;
+        $at = $now ?? new \DateTimeImmutable();
+        // Never replace an existing copy (two runs in one second, a manual retry
+        // right after a failure): the next free second keeps the name and its order.
+        do {
+            $name = sprintf('%s%s%s.sql.gz', $prefix, $at->format('Ymd-His'), $health->ok() ? '' : '-REVISAR');
+            $final = $this->directory . '/' . $name;
+            $at = $at->modify('+1 second');
+        } while (file_exists($final));
         $temporary = sprintf('%s/.%s.%s.tmp', $this->directory, $name, bin2hex(random_bytes(4)));
 
         try {
@@ -65,12 +96,10 @@ class DatabaseBackup
         // The copy is already in place: a failure to remove old copies (two runs at
         // once, a permission) must not report the backup itself as failed.
         $retentionError = null;
-        if ($health->ok()) {
-            try {
-                $this->retention->prune($this->directory, $keep);
-            } catch (\Throwable $e) {
-                $retentionError = $e->getMessage();
-            }
+        try {
+            $prune($health);
+        } catch (\Throwable $e) {
+            $retentionError = $e->getMessage();
         }
 
         return new BackupResult($final, (int) filesize($final), $tables, $health, $retentionError);

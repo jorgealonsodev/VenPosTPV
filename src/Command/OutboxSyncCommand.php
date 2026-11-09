@@ -29,7 +29,9 @@ use VenPosTPV\Service\Sync\OutboxSync;
  * migrations, PrestaShop setup; docs/provisioning.md) throttled: a step that
  * failed is tried again at most every 15 minutes. When nothing is pending this
  * costs one check per step and prints nothing; an attempted step prints one
- * «Provisioning: …» line. Provisioning never changes the exit code nor stops the
+ * «Provisioning: …» line, and so does a blocked step every 15 minutes, when it
+ * would have been retried (it is not: see docs/provisioning.md). Provisioning
+ * never changes the exit code nor stops the
  * uploads: its failures are shown in Ajustes → Acerca de.
  */
 #[AsCommand(name: 'tpv:sync:outbox', description: 'Upload pending sales to PrestaShop')]
@@ -97,9 +99,12 @@ final class OutboxSyncCommand extends Command
 
             return;
         }
-        foreach ($report->attempted() as $step) {
+        foreach ($report->steps as $step) {
+            if (!$step->attempted && !$step->reported) {
+                continue;
+            }
             $output->writeln(
-                sprintf('Provisioning: %s %s%s', $step->id, $step->status, $step->reason !== null ? ': ' . $step->reason : ''),
+                sprintf('Provisioning: %s %s%s', $step->id, $step->blocked ? 'blocked' : $step->status, $step->reason !== null ? ': ' . $step->reason : ''),
                 OutputInterface::OUTPUT_RAW
             );
         }
