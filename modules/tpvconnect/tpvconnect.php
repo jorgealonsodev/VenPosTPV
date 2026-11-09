@@ -13,6 +13,7 @@ if (!defined('_PS_VERSION_')) {
 require_once __DIR__ . '/install/install.php';
 require_once __DIR__ . '/classes/SsoToken.php';
 require_once __DIR__ . '/classes/ReferencedOrderCreator.php';
+require_once __DIR__ . '/classes/FreeItemOrderLines.php';
 
 class Tpvconnect extends PaymentModule
 {
@@ -20,7 +21,7 @@ class Tpvconnect extends PaymentModule
     {
         $this->name = 'tpvconnect';
         $this->tab = 'administration';
-        $this->version = '0.6.2';
+        $this->version = '0.7.0';
         $this->author = 'VenPosTPV';
         $this->need_instance = 1;
         $this->bootstrap = true;
@@ -167,6 +168,23 @@ class Tpvconnect extends PaymentModule
         return TpvOrderReference::claim((string) ($params['type'] ?? ''));
     }
 
+    /**
+     * The order confirmation e-mail lists the cart's products before the module
+     * renames a free item's order line: give it the concept too, only for the
+     * free lines of the order this request is creating (articulo-libre.md, A5.4).
+     */
+    public function hookActionPaymentModuleProductVarTplAfter(array $params): void
+    {
+        $product = $params['product'] ?? null;
+        if (!is_array($product) || !isset($params['product_var_tpl']) || !is_array($params['product_var_tpl'])) {
+            return;
+        }
+        $concept = TpvFreeItemNames::nameFor((int) ($product['id_product'] ?? 0), (int) ($product['id_product_attribute'] ?? 0));
+        if ($concept !== null) {
+            $params['product_var_tpl']['name'] = $concept;
+        }
+    }
+
     public function hookActionAdminControllerSetMedia(array $params): void
     {
         $this->context->controller->addCSS(
@@ -275,30 +293,8 @@ class Tpvconnect extends PaymentModule
             return $this->displayError($this->l('No se pudo crear la clave de servicio web.'));
         }
 
-        // Permissions per resource
-        $permissions = [
-            'products'         => ['GET', 'HEAD'],
-            'combinations'     => ['GET', 'HEAD'],
-            'stock_availables'  => ['GET', 'PUT', 'HEAD'],
-            'customers'         => ['GET', 'HEAD'],
-            'categories'        => ['GET', 'HEAD'],
-            'currencies'        => ['GET', 'HEAD'],
-            'order_states'      => ['GET', 'HEAD'],
-            'images'            => ['GET', 'HEAD'],
-            'orders'            => ['GET', 'POST', 'PUT', 'HEAD'],
-            'product_options'   => ['GET', 'HEAD'],
-            'product_option_values' => ['GET', 'HEAD'],
-        ];
-
-        foreach ($permissions as $resource => $methods) {
-            foreach ($methods as $method) {
-                Db::getInstance()->insert('webservice_permission', [
-                    'resource' => pSQL($resource),
-                    'method' => pSQL($method),
-                    'id_webservice_account' => (int) $wsKey->id,
-                ]);
-            }
-        }
+        // A new key gets the current permission list (TpvConnectInstaller::WEBSERVICE_PERMISSIONS).
+        (new TpvConnectInstaller($this))->grantWebservicePermissions((int) $wsKey->id);
 
         Configuration::updateValue('TPVCONNECT_WS_KEY_ID', (int) $wsKey->id);
 

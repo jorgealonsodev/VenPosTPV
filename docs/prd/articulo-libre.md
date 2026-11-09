@@ -71,10 +71,11 @@ Consecuencia: hoy no existe ninguna línea sin producto, y el total del pedido e
 ### A5 — Subida a PrestaShop: productos genéricos ocultos
 PrestaShop calcula el IVA de cada línea con la regla de impuestos del producto y no permite cambiarla por línea del carrito, y el módulo hoy ignora el precio enviado. Por eso:
 
-1. **Un producto genérico por tipo de IVA** («Artículo libre TPV 21 %», «… 10 %», «… 4 %», «… exento»), creado por el módulo en la instalación o en una actualización (`upgrade-0.7.0.php`). Cada uno con:
+1. **Un producto genérico por tipo de IVA** («Artículo libre TPV 21 %», «… 10 %», «… 4 %», «… exento»; referencia `TPV-LIBRE-21`…), creado por el módulo cuando el TPV lo pide (`tpv:free-item:setup` → `POST /module/tpvconnect/freeitem`; ver §10). Cada uno con:
    - su grupo de reglas de impuestos (exento: sin impuestos);
    - `visibility = none`, `available_for_order = 1`, activo (para que `Cart::updateQty` lo admita), sin indexar en la búsqueda;
    - venta sin stock permitida (`out_of_stock = 1`);
+   - precio base 99.999 € (su página se abre con la URL directa, §10);
    - **N combinaciones «hueco»** (por defecto 20, atributo «Línea TPV» 1…20), para que cada artículo libre del mismo tipo sea un `order_detail` distinto con su propio precio y su propia devolución.
 2. El módulo devuelve los ids (producto y combinaciones por tipo) en una respuesta firmada; el TPV los guarda en ajustes. La sincronización del catálogo **excluye** esos productos, para que nunca aparezcan en la búsqueda ni en `catalog_product`.
 3. El outbox de la venta guarda la línea libre con `free_item`, `vat_rate`, `concept`, `price`, `qty` y su número de hueco. `OutboxSync::processSale` (`src/Service/Sync/OutboxSync.php:239`) resuelve en ese momento el producto y la combinación: así una venta hecha antes de configurar los ids se sube después sin rehacerla. Si faltan los ids, la fila se **reintenta** con el error «Falta configurar el artículo libre en PrestaShop» (no es incidencia definitiva).
@@ -151,7 +152,7 @@ Alternativa descartada: subir el pedido sin esas líneas y anotarlas en un mensa
 | Fase | Contenido | Tamaño |
 |---|---|---|
 | 1 — Venta local | A1, A2, A3, A4, A7, A8 (solo 21 % si P2 no se resuelve), A9 salvo subida. Las ventas con libre quedan **retenidas** en el outbox hasta la fase 2. | M (~400 líneas + tests) |
-| 2 — Subida | A5: módulo (genéricos, huecos, precio por carrito, nombre de línea), `OutboxSync`, exclusión del catálogo. Incluye un **spike** previo en PrestaShop 8.1.7 para confirmar A5.4. | M–L |
+| 2 — Subida | A5: módulo (genéricos, huecos, precio por carrito, nombre de línea), `OutboxSync`, exclusión del catálogo. Incluye un **spike** previo en PrestaShop 9.2 (la versión de la tienda) para confirmar A5.4 (hecho, §10). | M–L |
 | 3 — Devoluciones | A6 (con abono exacto cuando F5 esté hecho), listado de auditoría, informes. | S–M |
 
 La fase 1 sola no se debe publicar si el cierre de caja exige todo subido: retener ventas en el outbox genera avisos de pendientes (`venta-local-primero.md`). Recomendado: publicar 1 y 2 juntas.
@@ -170,6 +171,25 @@ La fase 1 sola no se debe publicar si el cierre de caja exige todo subido: reten
 - **P5.** ¿Se espera a F5 (IVA por línea) para habilitar la devolución de artículos libres con tipo distinto del 21 %? **Recomendado:** sí; hacer antes la parte de F5 que guarda tipo, base y cuota por línea, que es compartida con `factura-completa.md` e `informes-ventas.md` (I1).
 - **P6.** ¿Se admite cupón con artículo libre en el futuro? **Recomendado:** no hasta que haya demanda real.
 
-## 10. No verificado
-- Que `Cart::updateQty` acepte un producto con `visibility = none` en PrestaShop 8.1.7 y que el estado de pedido del TPV no envíe correo con el nombre genérico: se confirma en el spike de la fase 2.
+## 10. Spike en PrestaShop 9.2 y lo que queda sin verificar
+
+La tienda usa **PrestaShop 9.2** (no 8.1.7). Spike y prueba de extremo a extremo el 2026-11-09 en la instancia de pruebas docker `tpv-ps92` (PrestaShop 9.2.x, PHP 8.5, MariaDB 10.6, módulo `tpvconnect` 0.7.0). Esa instancia no traía impuestos: se crearon los grupos «21 %» y «10 %» para España como los tiene una tienda real.
+
+**Verificado (en la instancia):**
+- Un producto con `visibility = none`, activo, `available_for_order = 1`, `out_of_stock = 1` y sin filas en `search_index` entra en el carrito con `Cart::updateQty` (también sus combinaciones) y se valida con `PaymentModule::validateOrder`. No sale en la búsqueda ni en el listado de la categoría de la tienda.
+- `SpecificPrice` con `id_cart` + `id_product` + `id_product_attribute`, `price` = neto con 6 decimales y `reduction = 0` da exactamente el precio del ticket: 12,00 € y 7,35 € × 3 al 21 % y 9,99 € × 2 al 10 % salieron en `order_detail` con `unit_price_tax_incl` 12,00 / 7,35 / 9,99, `total_price_tax_incl` 12,00 / 22,05 / 19,98, cuota 2,08 / 3,83 / 1,82 y el tipo de su grupo (con `PS_ROUND_TYPE = 2`, `PS_PRICE_ROUND_MODE = 2`). Total del pedido 77,17 € = total del ticket (con una línea de catálogo de 23,14 €).
+- Dos artículos libres del mismo concepto y tipo con precios distintos quedan en dos `order_detail` (huecos 1 y 2), cada uno con su concepto (criterio 5).
+- Cambiar `order_detail.product_name` después de `validateOrder` funciona; borrar los precios específicos del carrito después no cambia el pedido.
+- Volver a subir la misma fila (misma referencia del ticket) devuelve el mismo pedido (criterio 7); en PrestaShop sigue habiendo un solo pedido con esa referencia.
+- El estado de pedido del TPV (`TPV_OS_PAID`) tiene `send_email = 0` e `invoice = 0`: no genera factura con el nombre genérico.
+- `PaymentModule::validateOrder` de 9.2 **sí** envía el correo `order_conf` al cliente (si su email es válido) con la lista de productos del carrito, sea cual sea el estado. Por eso el módulo registra `actionPaymentModuleProductVarTplAfter` y pone el concepto en esa lista para las líneas libres del pedido que está creando (comprobado con test unitario; la entrega real del correo no se pudo ver: la instancia no tiene servidor de correo).
+- `Cart::getOrderTotal` fuera de una petición web necesita el contenedor de Symfony (`Kernel Container is not available` en CLI); en el endpoint del módulo no aplica.
+
+**Hallazgos que cambian A5:**
+- La página del producto genérico **se puede abrir** con su URL directa (`visibility = none` solo lo quita de listados y búsqueda), y desde ahí se podría añadir al carrito. Por eso su precio base es 99.999 €: el TPV siempre pone el precio por carrito y nadie lo compra en la web por 0 €.
+- La actualización (`upgrade-0.7.0.php`) **no crea** los genéricos: depende de los grupos de impuestos de la tienda y no debe hacer fallar la actualización. Los crea el TPV con `php bin/console tpv:free-item:setup`, que llama a `POST /module/tpvconnect/freeitem` con los tipos de `free_item.vat_rates` y guarda los ids en `app_setting` (`free_item.ps_products`). Un tipo sin grupo de impuestos activo para el país por defecto → 422 sin crear nada.
+
+**Supuestos / sin verificar:**
+- Redondeo con `PS_ROUND_TYPE` 1 (por artículo) o 3 (total): no probado en la instancia; con neto de 6 decimales el error por unidad es < 0,000001 € y no cruza un 0,005, así que se espera el mismo resultado.
+- La tienda de producción tiene grupos de impuestos activos al 21 % y 10 % para España (lo comprueba el propio endpoint).
 - El encaje del motivo de exención en `fiscal_record` (VERI\*FACTU) depende de `factura-completa.md`, F7.

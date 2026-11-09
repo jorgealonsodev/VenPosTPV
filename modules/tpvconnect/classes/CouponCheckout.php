@@ -240,9 +240,11 @@ class CouponCheckout
      * when that country needs an identification number (PrestaShop refuses the
      * address without one: "Address->dni is empty").
      *
+     * @param FreeItemOrderLines|null $freeLines prices the free item lines of an order (articulo-libre.md, A5.4)
+     *
      * @throws TpvOrderBuildException 422: the address or a product is refused
      */
-    public function buildCart(array $data): Cart
+    public function buildCart(array $data, ?FreeItemOrderLines $freeLines = null): Cart
     {
         $idCustomer = (int) $data['id_customer'];
         $customer = new Customer($idCustomer);
@@ -285,6 +287,8 @@ class CouponCheckout
         if (!$cart->save()) {
             throw new RuntimeException('Cart could not be created');
         }
+        // Free item prices exist before their lines enter the cart (no stale price cache).
+        $freeLines?->priceCart((int) $cart->id, $data['products']);
 
         foreach ($data['products'] as $product) {
             if (!$cart->updateQty((int) $product['quantity'], (int) $product['id_product'], (int) ($product['id_product_attribute'] ?? 0))) {

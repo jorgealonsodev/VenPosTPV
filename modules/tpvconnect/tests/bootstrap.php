@@ -145,9 +145,16 @@ if (!class_exists('Db', false)) {
                 CouponTestState::$locksReleased++;
                 return [['released' => '1']];
             }
+            if (str_contains($sql, 'webservice_permission')) {
+                return self::$permissionRows;
+            }
             return [];
         }
-        public function insert(string $table, array $data, bool $nullValues = false, bool $useCache = true, int $type = 1): bool { return true; }
+        /** @var list<array{table: string, data: array<string, mixed>}> rows insert() received, in order */
+        public static array $inserted = [];
+        /** What a SELECT on webservice_permission answers. */
+        public static array $permissionRows = [];
+        public function insert(string $table, array $data, bool $nullValues = false, bool $useCache = true, int $type = 1): bool { self::$inserted[] = ['table' => $table, 'data' => $data]; return true; }
     }
 }
 
@@ -399,5 +406,10 @@ if (is_file(__DIR__ . '/../classes/RestockProcessor.php')) {
 }
 if (is_file(__DIR__ . '/../classes/ReferencedOrderCreator.php')) {
     require_once __DIR__ . '/../classes/ReferencedOrderCreator.php';
+}
+foreach (['FreeItemOrderLines', 'FreeItemProductSetup'] as $class) {
+    if (is_file(__DIR__ . '/../classes/' . $class . '.php')) {
+        require_once __DIR__ . '/../classes/' . $class . '.php';
+    }
 }
 require_once __DIR__ . '/../tpvconnect.php';

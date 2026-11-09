@@ -758,6 +758,7 @@ class CheckoutService
         $priced = [];
         $subtotal = 0.0;
         $freeItemSettings = null;
+        $genericProducts = null;
 
         foreach ($lines as $line) {
             if (!is_array($line)) {
@@ -774,6 +775,11 @@ class CheckoutService
             }
 
             $productId = (int) ($line['product_id'] ?? $line['id'] ?? 0);
+            // Nobody may sell the hidden free item product at its own price (A2.2).
+            $genericProducts ??= ($this->freeItemSettings ?? new FreeItemSettingsStore($this->conn))->genericProductIds();
+            if ($productId > 0 && \in_array($productId, $genericProducts, true)) {
+                throw CheckoutException::freeItemInvalid(sprintf('El producto %d es el artículo libre de PrestaShop y no se puede vender como producto', $productId));
+            }
             $combinationId = (int) ($line['id_product_attribute'] ?? 0);
             $qty = max(1, (int) ($line['qty'] ?? $line['quantity'] ?? 1));
             $submittedPrice = (float) ($line['price'] ?? 0);

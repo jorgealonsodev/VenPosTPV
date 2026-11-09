@@ -18,7 +18,7 @@ class ReleaseMetadataTest extends TestCase
         $php = (string) file_get_contents($moduleRoot . '/tpvconnect.php');
         $xml = (string) file_get_contents($moduleRoot . '/config.xml');
 
-        self::assertSame('0.6.2', $this->declaredPhpVersion($php));
+        self::assertSame('0.7.0', $this->declaredPhpVersion($php));
         self::assertSame($this->declaredPhpVersion($php), $this->declaredXmlVersion($xml));
         self::assertTrue(version_compare($this->declaredPhpVersion($php), '0.1.0', '>'));
     }
@@ -145,10 +145,32 @@ class ReleaseMetadataTest extends TestCase
         self::assertSame($before, \Configuration::$values);
     }
 
+    public function test_0_7_0_upgrade_registers_the_free_item_mail_hook_and_completes_the_webservice_key(): void
+    {
+        $moduleRoot = dirname(__DIR__, 2);
+        \Configuration::$values = ['TPVCONNECT_SSO_SECRET' => 'existing-secret', 'TPVCONNECT_WS_KEY_ID' => '12'];
+        $before = \Configuration::$values;
+        \Db::$inserted = [];
+        \Db::$permissionRows = [['resource' => 'products', 'method' => 'GET']];
+        $module = new \Module();
+
+        require_once $moduleRoot . '/upgrade/upgrade-0.7.0.php';
+
+        self::assertTrue(upgrade_module_0_7_0($module));
+        self::assertContains('actionPaymentModuleProductVarTplAfter', $module->registeredHooks);
+        self::assertContains('actionGenerateDocumentReference', $module->registeredHooks);
+        $granted = array_map(static fn (array $row): string => $row['data']['resource'] . ' ' . $row['data']['method'] . ' ' . $row['data']['id_webservice_account'], \Db::$inserted);
+        self::assertContains('cart_rules POST 12', $granted);
+        self::assertNotContains('products GET 12', $granted);
+        self::assertSame($before, \Configuration::$values);
+        \Db::$permissionRows = [];
+    }
+
     public function test_changelog_documents_the_current_version(): void
     {
         $changelog = (string) file_get_contents(dirname(__DIR__, 2) . '/CHANGELOG.md');
 
+        self::assertStringContainsString("## 0.7.0\n", $changelog);
         self::assertStringContainsString("## 0.6.2\n", $changelog);
         self::assertStringContainsString("## 0.6.1\n", $changelog);
         self::assertStringContainsString("## 0.6.0\n", $changelog);

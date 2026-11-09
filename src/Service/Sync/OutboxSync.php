@@ -9,6 +9,7 @@ use Doctrine\DBAL\ParameterType;
 use Doctrine\DBAL\Exception\RetryableException;
 use Psr\Log\LoggerInterface;
 use VenPosTPV\Service\Checkout\Exception\CheckoutException;
+use VenPosTPV\Service\Checkout\FreeItemSettingsStore;
 use VenPosTPV\Service\Checkout\PsOrderClient;
 use VenPosTPV\Service\PrestaShop\Exception\PsApiException;
 use VenPosTPV\Service\PrestaShop\PrestaShopApiClient;
@@ -77,6 +78,7 @@ class OutboxSync
         private readonly ?PsRefundClient $refundClient = null,
         private readonly ?PsRestockClient $restockClient = null,
         private readonly ?PrestaShopApiClient $customerClient = null,
+        private readonly ?FreeItemSettingsStore $freeItemSettings = null,
     ) {
         $this->clock = $clock ?? static fn (): \DateTimeImmutable => new \DateTimeImmutable();
     }
@@ -256,13 +258,13 @@ class OutboxSync
             $payload['id_customer'] = (int) $psCustomerId;
         }
 
-        foreach ($payload['products'] ?? [] as $product) {
-            if (\is_array($product) && ($product['free_item'] ?? false) === true) {
-                // The generic PrestaShop products of free items are set up in phase 2
-                // (docs/prd/articulo-libre.md, A5.3): wait, this is not an incident.
-                return $this->retry($row, 'Falta configurar el artículo libre en PrestaShop');
-            }
+        $products = $this->resolveFreeItems($payload['products'] ?? []);
+        if ($products === null) {
+            // The generic PrestaShop products of free items are not set up yet
+            // (docs/prd/articulo-libre.md, A5.3): wait, this is not an incident.
+            return $this->retry($row, 'Falta configurar el artículo libre en PrestaShop');
         }
+        $payload['products'] = $products;
 
         try {
             $order = $this->client->createReferencedOrder($payload);
@@ -275,6 +277,39 @@ class OutboxSync
         }
 
         return $this->link($row, $order);
+    }
+
+    /**
+     * Gives each free item line the generic product of its VAT rate and the
+     * combination of its slot, read now from the setup (tpv:free-item:setup), so a
+     * sale made before the setup is uploaded unchanged once it exists. Other lines
+     * are returned as they are.
+     *
+     * @param mixed $products the stored upload's products
+     *
+     * @return mixed null when a free line's rate or slot is not set up
+     */
+    private function resolveFreeItems(mixed $products): mixed
+    {
+        if (!\is_array($products)) {
+            return $products;
+        }
+        $generic = null;
+        foreach ($products as $index => $product) {
+            if (!\is_array($product) || ($product['free_item'] ?? false) !== true) {
+                continue;
+            }
+            $generic ??= ($this->freeItemSettings ?? new FreeItemSettingsStore($this->connection))->loadPsProducts();
+            $entry = is_numeric($product['vat_rate'] ?? null) ? ($generic[FreeItemSettingsStore::rateKey((float) $product['vat_rate'])] ?? null) : null;
+            $combination = $entry['slots'][(int) ($product['slot'] ?? 0)] ?? null;
+            if ($combination === null) {
+                return null;
+            }
+            $products[$index]['id_product'] = $entry['id_product'];
+            $products[$index]['id_product_attribute'] = $combination;
+        }
+
+        return $products;
     }
 
     /**

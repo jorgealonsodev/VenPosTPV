@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.0
+
+- Free items (docs/prd/articulo-libre.md, A5): new signed endpoint `POST /module/tpvconnect/freeitem` `{"vat_rates": [21, 10]}` (HMAC like `orders`). For each rate it creates or checks a hidden generic product «Artículo libre TPV 21 %» (reference `TPV-LIBRE-21`; the shop's active tax rules group with that rate for its default country; `visibility = none`, active, available for order, out-of-stock orders allowed, not in the search index, base price 99 999 € so nobody can buy it online for nothing) with 20 combinations of the attribute «Línea TPV» 1..20, and answers `200 {"products": {"21.00": {"id_product": 21, "slots": {"1": 43, ...}}}}`. Running it again returns the same ids. A rate without a tax rules group in the shop answers 422 and creates nothing. The ids are stored in `TPVCONNECT_FREE_ITEM_PRODUCTS`.
+- `POST /module/tpvconnect/orders` accepts free item lines `{"free_item": true, "id_product", "id_product_attribute", "quantity", "price" (with VAT), "vat_rate", "concept"}` on a slot of the generic product of that rate: the cart gets a specific price for that cart only (net price with 6 decimals, no reduction), so the order line costs exactly the TPV's price with VAT and carries the rate's tax. After `validateOrder` the order line is named after the concept and the cart's specific prices are deleted; the order confirmation e-mail shows the concept too (`actionPaymentModuleProductVarTplAfter`). A free line on a wrong slot, an unknown rate, a repeated slot, a missing price or concept, a coupon with a free line and a catalog line using a generic product answer 422. Orders without free lines are unchanged.
+- The TPV's webservice key also gets `customers` POST (customers created at the till) and `cart_rules` GET, POST, HEAD (coupons created at the till; without them PrestaShop refused `GET /api/cart_rules?schema=blank` and the TPV showed «La creación de cupones no está disponible en este momento.»). A newly generated key gets the full list.
+- Upgrade script `upgrade-0.7.0.php`: registers the e-mail hook and adds the missing permissions to the existing key (`TPVCONNECT_WS_KEY_ID`) without changing it. The generic products are not created by the upgrade: the TPV creates them (`bin/console tpv:free-item:setup`).
+
 ## 0.6.2
 
 - PrestaShop 9 support: the module declares compatibility up to 9.99.99 (it stopped at 8.99.99, so PrestaShop 9.2 refused to install it).

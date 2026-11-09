@@ -210,7 +210,7 @@ class ReferencedOrderCreatorTest extends TestCase
         $module = new \Module();
 
         self::assertTrue((new \TpvConnectInstaller($module))->registerHooks());
-        self::assertSame(['displayBackOfficeHeader', 'actionAdminControllerSetMedia', 'actionGenerateDocumentReference'], $module->registeredHooks);
+        self::assertSame(['displayBackOfficeHeader', 'actionAdminControllerSetMedia', 'actionGenerateDocumentReference', 'actionPaymentModuleProductVarTplAfter'], $module->registeredHooks);
     }
 
     public function testLoadingTheClassFileDeclaresEveryClassThePrestaShopControllerUses(): void

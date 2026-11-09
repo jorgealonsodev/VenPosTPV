@@ -84,6 +84,44 @@ class PsOrderClient
     }
 
     /**
+     * Asks the module (0.7.0, POST /module/tpvconnect/freeitem) to create or check
+     * the hidden generic products of these VAT rates (docs/prd/articulo-libre.md, A5.2).
+     *
+     * @param list<int|float> $vatRates
+     *
+     * @return array<string, mixed> the module's answer: {products: {"21.00": {id_product, slots}}}
+     *
+     * @throws CheckoutException code 422 when the module refuses the rates, 0 for anything else
+     */
+    public function setupFreeItemProducts(array $vatRates): array
+    {
+        $response = $this->send(['vat_rates' => $vatRates], 'freeitem');
+        try {
+            $statusCode = $response->getStatusCode();
+            $content = $response->getContent(false);
+        } catch (TransportExceptionInterface $e) {
+            throw CheckoutException::psUnavailable($e->getMessage(), $e);
+        }
+        if ($statusCode === 200) {
+            $data = json_decode($content, true);
+            if (!is_array($data)) {
+                throw CheckoutException::psUnavailable('Invalid JSON response from PS module');
+            }
+
+            return $data;
+        }
+        if ($statusCode === 404 || $statusCode === 422) {
+            $data = json_decode($content, true);
+
+            $details = is_array($data) && isset($data['details']) ? json_encode($data['details'], JSON_UNESCAPED_UNICODE) : $content;
+
+            throw new CheckoutException(sprintf('PrestaShop refused the free item setup (HTTP %d): %s', $statusCode, (string) $details), 422);
+        }
+
+        throw CheckoutException::psUnavailable(sprintf('PS module returned HTTP %d: %s', $statusCode, mb_substr($content, 0, 500)));
+    }
+
+    /**
      * The preview endpoint is deliberately distinct from the ordinary order
      * client. A response from an older module is never treated as a preview.
      *
@@ -247,7 +285,7 @@ class PsOrderClient
     }
 
     /** @param array<string, mixed> $payload */
-    private function send(array $payload): ResponseInterface
+    private function send(array $payload, string $endpoint = 'orders'): ResponseInterface
     {
         $jsonBody = json_encode($payload);
         if ($jsonBody === false) {
@@ -255,7 +293,7 @@ class PsOrderClient
         }
 
         $signature = hash_hmac('sha256', $jsonBody, $this->sharedSecret);
-        $url = sprintf('%s/module/tpvconnect/orders', $this->shopUrl);
+        $url = sprintf('%s/module/tpvconnect/%s', $this->shopUrl, $endpoint);
 
         try {
             return $this->httpClient->request('POST', $url, [

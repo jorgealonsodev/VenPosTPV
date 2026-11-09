@@ -13,6 +13,7 @@ if (!defined('_PS_VERSION_')) {
 require_once _PS_MODULE_DIR_ . 'tpvconnect/classes/SsoToken.php';
 require_once _PS_MODULE_DIR_ . 'tpvconnect/classes/CouponCheckout.php';
 require_once _PS_MODULE_DIR_ . 'tpvconnect/classes/ReferencedOrderCreator.php';
+require_once _PS_MODULE_DIR_ . 'tpvconnect/classes/FreeItemOrderLines.php';
 
 /**
  * Front controller for order creation endpoint.
@@ -54,7 +55,8 @@ class TpvconnectOrdersModuleFrontController extends ModuleFrontController
         $errors = array_merge(
             $this->validateInput($data),
             CouponCheckout::validateCouponRequest($data),
-            ReferencedOrderCreator::validateRequest($data)
+            ReferencedOrderCreator::validateRequest($data),
+            FreeItemOrderLines::validateRequest($data, FreeItemCatalog::load())
         );
         if (!empty($errors)) {
             $this->jsonResponse(['error' => 'Validation failed', 'details' => $errors], 422);
@@ -161,8 +163,20 @@ class TpvconnectOrdersModuleFrontController extends ModuleFrontController
         }
 
         // Retain the existing non-coupon path, sharing only cart construction.
-        $cart = $checkout->buildCart($data);
-        return $this->validateOrderFromCart($cart, $data, (float) $cart->getOrderTotal(true, Cart::BOTH));
+        // Free item lines (articulo-libre.md, A5.4) get a per-cart price before they
+        // are added and their concept as line name after validateOrder.
+        $freeLines = new FreeItemOrderLines(new PsFreeItemOrderGateway(), FreeItemCatalog::load());
+        TpvFreeItemNames::hold(FreeItemOrderLines::concepts($data['products']));
+        try {
+            $cart = $checkout->buildCart($data, $freeLines);
+            $result = $this->validateOrderFromCart($cart, $data, (float) $cart->getOrderTotal(true, Cart::BOTH));
+            $freeLines->nameOrderLines((int) $result['order_id'], $data['products']);
+
+            return $result;
+        } finally {
+            $freeLines->releaseCart();
+            TpvFreeItemNames::release();
+        }
     }
 
     private function validateOrderFromCart(Cart $cart, array $data, float $totalPaid): array

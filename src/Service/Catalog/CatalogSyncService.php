@@ -6,6 +6,7 @@ namespace VenPosTPV\Service\Catalog;
 
 use Closure;
 use Doctrine\DBAL\Connection;
+use VenPosTPV\Service\Checkout\FreeItemSettingsStore;
 use VenPosTPV\Service\Catalog\Exception\CatalogSyncException;
 use VenPosTPV\Service\PrestaShop\PrestaShopApiClient;
 use VenPosTPV\Service\Stock\PendingUploadStock;
@@ -13,6 +14,9 @@ use VenPosTPV\Service\Sync\SyncLogRepository;
 
 class CatalogSyncService
 {
+    /** Reference of the module's generic free item products (TPV-LIBRE-21, TPV-LIBRE-21-1…). */
+    public const FREE_ITEM_REFERENCE_PREFIX = 'TPV-LIBRE-';
+
     public function __construct(
         private readonly PrestaShopApiClient $apiClient,
         private readonly Connection $connection,
@@ -36,6 +40,7 @@ class CatalogSyncService
             $options = $this->apiClient->getProductOptions();
             $optionValues = $this->apiClient->getProductOptionValues();
             $stockAvailables = $this->apiClient->getStockAvailables();
+            [$products, $combinations, $stockAvailables] = $this->withoutGenericFreeItemProducts($products, $combinations, $stockAvailables);
             $authoritativePrices = $this->fetchAuthoritativePrices($products, $combinations);
         } catch (CatalogSyncException $e) {
             throw $e;
@@ -291,7 +296,7 @@ class CatalogSyncService
         try {
             $this->truncateTable('catalog_stock');
 
-            $stockAvailables = $this->apiClient->getStockAvailables();
+            $stockAvailables = $this->withoutGenericFreeItemProducts([], [], $this->apiClient->getStockAvailables())[2];
             // Read after catalog_stock is locked by the DELETE above, in the same
             // transaction, so a checkout either committed before (its sale is counted
             // here) or waits and decrements the new rows afterwards.
@@ -318,6 +323,38 @@ class CatalogSyncService
             }
             throw CatalogSyncException::fromPrevious($e);
         }
+    }
+
+    /**
+     * Drops the hidden generic products of free items (docs/prd/articulo-libre.md,
+     * A5.2) with their combinations and stock, so they never reach catalog_product
+     * nor the search: the ids the setup stored, and any product whose reference
+     * starts with TPV-LIBRE- (created before this till stored the ids).
+     *
+     * @param array<int, array<string, mixed>> $products
+     * @param array<int, array<string, mixed>> $combinations
+     * @param array<int, array<string, mixed>> $stock
+     *
+     * @return array{0: list<array<string, mixed>>, 1: list<array<string, mixed>>, 2: list<array<string, mixed>>}
+     */
+    private function withoutGenericFreeItemProducts(array $products, array $combinations, array $stock): array
+    {
+        $excluded = array_fill_keys((new FreeItemSettingsStore($this->connection))->genericProductIds(), true);
+        foreach ($products as $product) {
+            if (\is_string($product['reference'] ?? null) && str_starts_with($product['reference'], self::FREE_ITEM_REFERENCE_PREFIX)) {
+                $excluded[(int) $product['id']] = true;
+            }
+        }
+        if ($excluded === []) {
+            return [array_values($products), array_values($combinations), array_values($stock)];
+        }
+        $keep = static fn (string $key): \Closure => static fn (array $row): bool => !isset($excluded[(int) ($row[$key] ?? 0)]);
+
+        return [
+            array_values(array_filter($products, $keep('id'))),
+            array_values(array_filter($combinations, $keep('id_product'))),
+            array_values(array_filter($stock, $keep('id_product'))),
+        ];
     }
 
     /**

@@ -26,6 +26,28 @@ class TpvConnectInstaller
         'actionAdminControllerSetMedia',
         // Gives TPV orders the ticket code as reference (web orders are untouched).
         'actionGenerateDocumentReference',
+        // Shows a free item's concept instead of the generic product in the order e-mail.
+        'actionPaymentModuleProductVarTplAfter',
+    ];
+
+    /**
+     * Webservice resources and methods the TPV's key needs: catalog and stock
+     * reads, stock writes, customers created at the till (POST customers) and
+     * coupons created at the till (GET cart_rules?schema=blank, POST cart_rules).
+     */
+    public const WEBSERVICE_PERMISSIONS = [
+        'products' => ['GET', 'HEAD'],
+        'combinations' => ['GET', 'HEAD'],
+        'stock_availables' => ['GET', 'PUT', 'HEAD'],
+        'customers' => ['GET', 'POST', 'HEAD'],
+        'categories' => ['GET', 'HEAD'],
+        'currencies' => ['GET', 'HEAD'],
+        'order_states' => ['GET', 'HEAD'],
+        'images' => ['GET', 'HEAD'],
+        'orders' => ['GET', 'POST', 'PUT', 'HEAD'],
+        'product_options' => ['GET', 'HEAD'],
+        'product_option_values' => ['GET', 'HEAD'],
+        'cart_rules' => ['GET', 'POST', 'HEAD'],
     ];
 
     private Module $module;
@@ -244,6 +266,43 @@ class TpvConnectInstaller
             $address->dni = 'TPV';
         }
         $address->add();
+    }
+
+    /**
+     * Gives a webservice key every WEBSERVICE_PERMISSIONS entry it lacks. Rows it
+     * already has are kept, so running it again (upgrades) adds nothing twice.
+     */
+    public function grantWebservicePermissions(int $idWebserviceAccount): bool
+    {
+        if ($idWebserviceAccount <= 0) {
+            return true;
+        }
+        $db = Db::getInstance();
+        $existing = [];
+        $rows = $db->executeS(
+            'SELECT `resource`, `method` FROM `' . _DB_PREFIX_ . 'webservice_permission` WHERE `id_webservice_account` = ' . $idWebserviceAccount,
+            true,
+            false
+        );
+        foreach (is_array($rows) ? $rows : [] as $row) {
+            $existing[$row['resource'] . ' ' . $row['method']] = true;
+        }
+        foreach (self::WEBSERVICE_PERMISSIONS as $resource => $methods) {
+            foreach ($methods as $method) {
+                if (isset($existing[$resource . ' ' . $method])) {
+                    continue;
+                }
+                if (!$db->insert('webservice_permission', [
+                    'resource' => pSQL($resource),
+                    'method' => pSQL($method),
+                    'id_webservice_account' => $idWebserviceAccount,
+                ])) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
     }
 
     /**

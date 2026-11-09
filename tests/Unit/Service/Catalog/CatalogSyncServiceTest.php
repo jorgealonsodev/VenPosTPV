@@ -379,4 +379,70 @@ final class CatalogSyncServiceTest extends TestCase
 
         $this->assertSame(['ttc', 'begin', 'commit'], $events, 'no HTTP price request may run inside the write transaction');
     }
+
+    /** A shop where the free item setup created 22 (21 %) and 23 (10 %, reference only). */
+    private function createConnectionWithGenericProducts(): Connection
+    {
+        $conn = $this->createCapturingConnection();
+        $conn->method('fetchOne')->willReturnCallback(static fn (string $sql, array $params = []): mixed => $params === ['free_item.ps_products']
+            ? json_encode(['21.00' => ['id_product' => 22, 'slots' => ['1' => 2201, '2' => 2202]]])
+            : false);
+
+        return $conn;
+    }
+
+    /** docs/prd/articulo-libre.md, A5.2 and criterion 11: never in catalog_product nor the search. */
+    public function testSyncAllLeavesTheGenericFreeItemProductsOut(): void
+    {
+        $conn = $this->createConnectionWithGenericProducts();
+        $apiClient = $this->createMockApiClient();
+        $apiClient->method('getProducts')->willReturn([
+            ['id' => 1, 'name' => 'Camiseta', 'reference' => 'REF001', 'price' => 10.0, 'active' => 1],
+            ['id' => 22, 'name' => 'Artículo libre TPV 21 %', 'reference' => 'renamed by someone', 'price' => 99999.0, 'active' => 1],
+            ['id' => 23, 'name' => 'Artículo libre TPV 10 %', 'reference' => 'TPV-LIBRE-10', 'price' => 99999.0, 'active' => 1],
+        ]);
+        $apiClient->method('getCombinations')->willReturn([
+            ['id' => 10, 'id_product' => 1, 'reference' => 'COMB010', 'price' => 0.0],
+            ['id' => 2201, 'id_product' => 22, 'reference' => 'TPV-LIBRE-21-1', 'price' => 0.0],
+            ['id' => 2301, 'id_product' => 23, 'reference' => 'TPV-LIBRE-10-1', 'price' => 0.0],
+        ]);
+        $apiClient->method('getStockAvailables')->willReturn([
+            ['id' => 1, 'id_product' => 1, 'id_product_attribute' => 10, 'quantity' => 4],
+            ['id' => 2, 'id_product' => 22, 'id_product_attribute' => 2201, 'quantity' => -3],
+            ['id' => 3, 'id_product' => 23, 'id_product_attribute' => 0, 'quantity' => 0],
+        ]);
+        $priced = [];
+        $apiClient->method('getAuthoritativePrices')->willReturnCallback(static function (int $productId, int $combinationId = 0) use (&$priced): array {
+            $priced[] = $productId;
+
+            return ['ttc' => 12.1, 'net' => 10.0];
+        });
+
+        $result = (new CatalogSyncService($apiClient, $conn, $this->createMockSyncLogRepo()))->syncAll();
+
+        $this->assertSame(1, $result['products']);
+        $this->assertSame(1, $result['combinations']);
+        $this->assertSame(1, $result['stock']);
+        $this->assertSame([1, 1], $priced, 'no price is asked for the generic products');
+        foreach (['catalog_product', 'catalog_combination', 'catalog_stock'] as $table) {
+            $params = $this->capturedParamsForTable($table);
+            $this->assertNotContains(22, $params, $table);
+            $this->assertNotContains(23, $params, $table);
+        }
+    }
+
+    public function testSyncStockLeavesTheGenericFreeItemProductsOut(): void
+    {
+        $conn = $this->createConnectionWithGenericProducts();
+        $apiClient = $this->createMockApiClient();
+        $apiClient->method('getStockAvailables')->willReturn([
+            ['id' => 1, 'id_product' => 1, 'id_product_attribute' => 0, 'quantity' => 4],
+            ['id' => 2, 'id_product' => 22, 'id_product_attribute' => 2201, 'quantity' => -3],
+        ]);
+
+        $result = (new CatalogSyncService($apiClient, $conn, $this->createMockSyncLogRepo()))->syncStock();
+
+        $this->assertSame(1, $result['stock']);
+        $this->assertNotContains(22, $this->capturedParamsForTable('catalog_stock'));
+    }
 }

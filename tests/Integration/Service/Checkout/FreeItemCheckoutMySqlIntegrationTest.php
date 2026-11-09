@@ -360,4 +360,74 @@ final class FreeItemCheckoutMySqlIntegrationTest extends TestCase
         $this->assertSame('pending', $row['status'], 'retried, not an incident');
         $this->assertSame('Falta configurar el artículo libre en PrestaShop', $row['last_error']);
     }
+
+    /** The ids the module answered for the test shop (POST /module/tpvconnect/freeitem). */
+    private function setUpGenericProducts(array $rates = ['21.00' => 22, '10.00' => 23]): void
+    {
+        $map = [];
+        foreach ($rates as $rate => $product) {
+            $map[$rate] = ['id_product' => $product, 'slots' => array_combine(range(1, 20), range($product * 100 + 1, $product * 100 + 20))];
+        }
+        (new FreeItemSettingsStore($this->connection))->savePsProducts($map);
+    }
+
+    private function makeDue(int $orderId): void
+    {
+        $this->connection->executeStatement('UPDATE outbox SET next_attempt_at = ? WHERE order_id = ?', ['2000-01-01 00:00:00', $orderId]);
+    }
+
+    public function testTheUploadSendsEachFreeLineOnTheSlotOfTheGenericProductOfItsRate(): void
+    {
+        $this->setUpGenericProducts();
+        $lines = [self::free('Arreglo', 5.0), ['product_id' => self::PRODUCT, 'name' => 'Camiseta', 'price' => self::PRICE, 'qty' => 1], self::free('Arreglo', 7.5), self::free('Cuota', 30.0, 10)];
+        $result = $this->service()->createOrder(1, self::cart($lines, 54.6), 'card', 0.0);
+        $this->makeDue($result['order_id']);
+        $sent = null;
+        $client = $this->createMock(PsOrderClient::class);
+        $client->expects($this->once())->method('createReferencedOrder')->willReturnCallback(static function (array $payload) use (&$sent): array {
+            $sent = $payload;
+
+            return ['order_id' => 9471001, 'reference' => $payload['reference'], 'total_paid' => 54.6, 'replayed' => false];
+        });
+
+        (new OutboxSync($this->connection, $client))->run();
+
+        $this->assertEquals([
+            ['id_product' => 22, 'id_product_attribute' => 2201, 'quantity' => 1, 'price' => 5.0, 'free_item' => true, 'concept' => 'Arreglo', 'vat_rate' => 21.0, 'slot' => 1],
+            ['id_product' => self::PRODUCT, 'id_product_attribute' => 0, 'quantity' => 1, 'price' => self::PRICE],
+            ['id_product' => 22, 'id_product_attribute' => 2202, 'quantity' => 1, 'price' => 7.5, 'free_item' => true, 'concept' => 'Arreglo', 'vat_rate' => 21.0, 'slot' => 2],
+            ['id_product' => 23, 'id_product_attribute' => 2301, 'quantity' => 1, 'price' => 30.0, 'free_item' => true, 'concept' => 'Cuota', 'vat_rate' => 10.0, 'slot' => 1],
+        ], $sent['products']);
+        $this->assertSame('done', $this->connection->fetchOne('SELECT status FROM outbox WHERE order_id = ?', [$result['order_id']]));
+        $stored = json_decode((string) $this->connection->fetchOne('SELECT payload FROM outbox WHERE order_id = ?', [$result['order_id']]), true);
+        $this->assertSame(0, $stored['products'][0]['id_product'], 'the stored upload keeps the slot, not the ids');
+    }
+
+    public function testTheUploadWaitsWhenTheSetupLacksTheRateOfAFreeLine(): void
+    {
+        $this->setUpGenericProducts(['21.00' => 22]);
+        $result = $this->service()->createOrder(1, self::cart([self::free('Arreglo', 5.0), self::free('Cuota', 30.0, 10)], 35.0), 'card', 0.0);
+        $this->makeDue($result['order_id']);
+        $client = $this->createMock(PsOrderClient::class);
+        $client->expects($this->never())->method('createReferencedOrder');
+
+        (new OutboxSync($this->connection, $client))->run();
+
+        $row = $this->connection->fetchAssociative('SELECT status, last_error FROM outbox WHERE order_id = ?', [$result['order_id']]);
+        $this->assertSame(['status' => 'pending', 'last_error' => 'Falta configurar el artículo libre en PrestaShop'], $row);
+    }
+
+    public function testACatalogLineWithTheIdOfAGenericProductIsA422AndStoresNothing(): void
+    {
+        $this->setUpGenericProducts(['21.00' => self::PRODUCT]);
+
+        try {
+            $this->service()->createOrder(1, self::cart([['product_id' => self::PRODUCT, 'name' => 'Camiseta', 'price' => self::PRICE, 'qty' => 1]], self::PRICE), 'card', 0.0);
+            $this->fail('Expected a 422');
+        } catch (CheckoutException $e) {
+            $this->assertSame(422, $e->getCode());
+            $this->assertSame('El producto ' . self::PRODUCT . ' es el artículo libre de PrestaShop y no se puede vender como producto', $e->getMessage());
+        }
+        $this->assertNothingStored();
+    }
 }
