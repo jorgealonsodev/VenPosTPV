@@ -92,6 +92,14 @@ services:
             $secret: '%env(APP_SECRET)%'
             $appUrl: '%env(default:app.public_url:APP_URL)%'
 
+    # Links to a document's PDF sent by WhatsApp: HMAC with a key derived from
+    # APP_SECRET, on the public TPV URL like the ticket verification links.
+    VenPosTPV\Service\Share\ShareLinkSigner:
+        arguments:
+            $secret: '%env(APP_SECRET)%'
+            $appUrl: '%env(default:app.public_url:APP_URL)%'
+            $clock: null
+
     # Ticket Data Resolver
     VenPosTPV\Service\Print\TicketDataResolver:
         arguments:

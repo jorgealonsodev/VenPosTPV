@@ -18,3 +18,12 @@ sso:
     path: /sso
     controller: VenPosTPV\Controller\App\SsoController::index
     methods: [GET]
+
+# The PDF behind a link sent by WhatsApp (DocumentDownloadController): no session,
+# outside /api and /app so no session, device or origin listener applies.
+document_download:
+    path: /d/{token}
+    controller: VenPosTPV\Controller\App\DocumentDownloadController::download
+    methods: [GET]
+    requirements:
+        token: '[A-Za-z0-9_-]{1,200}\.[A-Za-z0-9_-]{43}'
