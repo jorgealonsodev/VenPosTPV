@@ -1,6 +1,6 @@
 # Agente de impresión
 
-El agente es un programa pequeño que se instala en el ordenador de cada caja. Se conecta al TPV por HTTPS, recoge los trabajos de su caja (tickets, apertura del cajón, etiquetas) y los envía a las impresoras de la tienda. Así el TPV puede estar en Plesk y seguir imprimiendo en la tienda. La especificación completa está en `docs/prd/agente-impresion.md` (v2).
+El agente es un programa pequeño que se instala en el ordenador de cada caja. Se conecta al TPV por HTTPS, recoge los trabajos de su caja (tickets, apertura del cajón, etiquetas) y los envía a las impresoras de la tienda. Así el TPV puede estar en un hosting y seguir imprimiendo en la tienda. La especificación completa está en `docs/prd/agente-impresion.md` (v2).
 
 ## Qué es
 
@@ -19,7 +19,7 @@ El agente nunca abre el cajón por su cuenta: solo cuando el TPV lo pide al cobr
 
 ## Instalar en Windows
 
-1. Descarga `VenPosAgent-<versión>-setup.exe` y ábrelo con doble clic.
+1. Descarga `VenPosAgent-<versión>-setup.exe` de la última release de GitHub (ver «Publicar una versión» en `docs/despliegue-hosting.md`) y ábrelo con doble clic.
 2. Windows avisará con **«Windows protegió su PC»** porque el instalador todavía no va firmado. Pulsa **Más información** y luego **Ejecutar de todas formas**. Si Windows pregunta si quieres permitir cambios en el equipo, pulsa **Sí**.
 3. Si el antivirus lo bloquea o lo pone en cuarentena, márcalo como permitido (es un programa nuevo y el antivirus no lo conoce todavía) y vuelve a abrirlo.
 4. **Conectar con el TPV**: escribe la dirección del TPV y el código de 6 cifras (ver «Emparejar» abajo) y pulsa Siguiente. Si sale un error, léelo: casi siempre es el código caducado (dura 10 minutos) o la dirección mal escrita. Si todavía no tienes el código, marca **«Emparejar más tarde»**.
@@ -81,10 +81,10 @@ Ve paso a paso y para en cuanto vuelva a imprimir:
 
 ## Instalar en Linux
 
-Con el paquete `venpos-agent_0.1.0_amd64.deb` (Debian 12 o Ubuntu 22.04 o más nuevos, de 64 bits):
+Con el paquete `venpos-agent_<versión>_amd64.deb` de la última release de GitHub (Debian 12 o Ubuntu 22.04 o más nuevos, de 64 bits):
 
 ```
-sudo apt install ./venpos-agent_0.1.0_amd64.deb
+sudo apt install ./venpos-agent_0.1.1_amd64.deb
 sudo venpos-agent pair <código> --server https://tu-tpv
 sudo venpos-agent list-printers
 sudo venpos-agent set-printer --target ticket --cups Epson_TM-T20II   # o --device /dev/usb/lp0
@@ -101,7 +101,7 @@ Al iniciar sesión aparece además **el icono en la bandeja del sistema** (y tam
 - **GNOME** (Debian) necesita la extensión «AppIndicator and KStatusNotifierItem Support» para ver iconos en la bandeja; Ubuntu ya la trae activada. KDE, XFCE, Cinnamon, MATE y Budgie los muestran sin nada más. Sin bandeja, usa la ventana desde el menú de aplicaciones.
 - El asistente en terminal sigue disponible (pide la contraseña de administrador): botón derecho en **VenPos Agent** → **Asistente en terminal**, o `venpos-agent-setup`.
 
-Sin el paquete, también se puede instalar con el binario `venpos-agent` y el script `agent/packaging/linux/install.sh` en la misma carpeta:
+Sin el paquete, también se puede instalar con el binario `venpos-agent` y el script `agent/packaging/linux/install.sh` en la misma carpeta. Los dos vienen juntos en `venpos-agent-<versión>-linux-x86_64.tar.gz` de la release (`tar -xzf` y entra en la carpeta):
 
 ```
 sudo ./install.sh ./venpos-agent --server https://tu-tpv --code 123456
@@ -126,8 +126,8 @@ El script copia el programa a `/usr/local/bin`, crea el usuario `venpos-agent` (
    - `TPV_AGENT_MIN_VERSION`: versión mínima admitida (por debajo, 426 `agent_update_required`). Vacío: ninguna.
    - `TPV_AGENT_LATEST_VERSION` y `TPV_AGENT_DOWNLOAD_URL`: última versión y su enlace de descarga (admite `{os}`, `{arch}` y `{version}`). Ajustes muestra «Hay una versión nueva».
 4. Apache y PHP deben pasar la cabecera `Authorization` a PHP (con CGI: `CGIPassAuth On`, o `RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]`).
-5. Plesk: `max_execution_time` ≥ 35 s (la escucha larga dura hasta 20 s) y `pm.max_children` ≥ número de cajas + 6.
-6. Plesk pone nginx delante de Apache: sin más, todas las peticiones llegan desde el proxy y los límites de intentos (por IP) y la «última IP» del agente verían la IP del proxy. Pon `TRUSTED_PROXIES=127.0.0.1,::1` en el entorno del servidor (ver `env.example`): Symfony toma entonces la IP real de `X-Forwarded-For` y el esquema de `X-Forwarded-Proto` solo cuando la petición viene de esos proxies. Vacío o sin definir (por defecto) no se confía en ningún proxy. Tras cambiar la configuración, vacía la caché (`php bin/console cache:clear`).
+5. Hosting: `max_execution_time` ≥ 35 s (la escucha larga dura hasta 20 s) y `pm.max_children` ≥ número de cajas + 6.
+6. Muchos paneles de hosting ponen nginx delante de Apache: sin más, todas las peticiones llegan desde el proxy y los límites de intentos (por IP) y la «última IP» del agente verían la IP del proxy. Pon `TRUSTED_PROXIES=127.0.0.1,::1` en el entorno del servidor (ver `env.example`): Symfony toma entonces la IP real de `X-Forwarded-For` y el esquema de `X-Forwarded-Proto` solo cuando la petición viene de esos proxies. Vacío o sin definir (por defecto) no se confía en ningún proxy. Tras cambiar la configuración, vacía la caché (`php bin/console cache:clear`).
 7. La escucha larga envía un espacio por segundo mientras espera (cabecera `X-Accel-Buffering: no` para que nginx no lo retenga) para notar enseguida que el agente se ha parado y no recoger trabajos hacia una conexión muerta. Si el proxy retiene la respuesta igualmente, la reserva de 30 s devuelve el trabajo a la cola y la caja avisa a los 15 s.
 
 La limpieza del historial (contenido a las 24 h, trabajos a los 30 días) la hace la tarea de cada minuto `tpv:sync:outbox`. El registro de aperturas del cajón (`drawer_audit`) no se borra nunca.

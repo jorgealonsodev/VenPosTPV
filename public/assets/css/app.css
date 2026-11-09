@@ -794,3 +794,8 @@ html, body, #app {
 .invoice-vat-table { width: 100%; border-collapse: collapse; font-family: 'IBM Plex Mono', monospace; font-size: 13px; }
 .invoice-vat-table th, .invoice-vat-table td { text-align: right; padding: 4px 6px; border-bottom: 1px solid var(--border); }
 .invoice-vat-table th { color: var(--text3); font-weight: 600; }
+
+/* Brand logo: the dark wordmark is for the dark theme, the light one for the light theme. */
+.brand-logo--light { display: none; }
+[data-theme="light"] .brand-logo--light { display: inline-block; }
+[data-theme="light"] .brand-logo--dark { display: none; }

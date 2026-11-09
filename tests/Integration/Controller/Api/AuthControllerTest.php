@@ -32,10 +32,14 @@ final class AuthControllerTest extends TestCase
     private const ADMIN_USER = 'admin';
     private const ADMIN_PASSWORD = 'admin-secret-123';
     private const SCOPES = ['auth_lookup', 'auth_login', 'auth_admin'];
+    /** Admin password failures from every IP share one key (AuthController). */
+    private const ADMIN_FAILURES_KEY = 'auth_admin_failures:all';
 
     private ?Connection $connection = null;
     private MockClock $clock;
     private string $ip = '';
+    /** @var list<string> every IP a test used, so clean() removes their rate_limit rows */
+    private array $ips = [];
     private string $suffix = '';
 
     protected function setUp(): void
@@ -65,11 +69,16 @@ final class AuthControllerTest extends TestCase
     {
         $this->connection->executeStatement('DELETE FROM user WHERE code LIKE ?', [self::CODE_PREFIX . '%']);
         $this->connection->executeStatement('DELETE FROM role WHERE name = ?', [self::ROLE]);
-        if ($this->ip !== '') {
+        foreach (array_unique([...$this->ips, $this->ip]) as $ip) {
+            if ($ip === '') {
+                continue;
+            }
             foreach (self::SCOPES as $scope) {
-                $this->connection->executeStatement('DELETE FROM rate_limit WHERE rate_key = ?', [$scope . ':' . hash('sha256', $this->ip)]);
+                $this->connection->executeStatement('DELETE FROM rate_limit WHERE rate_key = ?', [$scope . ':' . hash('sha256', $ip)]);
             }
         }
+        [$scope, $subject] = explode(':', self::ADMIN_FAILURES_KEY, 2);
+        $this->connection->executeStatement('DELETE FROM rate_limit WHERE rate_key = ?', [$scope . ':' . hash('sha256', $subject)]);
     }
 
     private function controller(): AuthController
@@ -95,6 +104,7 @@ final class AuthControllerTest extends TestCase
     /** @param array<string, mixed> $body */
     private function request(string $path, array $body): Request
     {
+        $this->ips[] = $this->ip;
         $request = Request::create($path, 'POST', [], [], [], ['REMOTE_ADDR' => $this->ip], json_encode($body, JSON_THROW_ON_ERROR));
         $request->setSession(new Session(new MockArraySessionStorage()));
 
@@ -288,5 +298,53 @@ final class AuthControllerTest extends TestCase
 
         $this->assertSame(429, $response->getStatusCode());
         $this->assertSame('60', $response->headers->get('Retry-After'));
+    }
+
+    public function testAdminLoginLocksForAQuarterHourAfterTenFailuresFromAnyIp(): void
+    {
+        $controller = $this->controller();
+        // One wrong password from each of ten IPs: no IP reaches its own limit.
+        for ($i = 0; $i < 10; ++$i) {
+            $this->ip = sprintf('192.0.2.%d', 10 + $i);
+            $this->assertSame(401, $this->adminLogin($controller, 'wrong-' . $i)->getStatusCode(), "failure $i");
+        }
+        $this->ip = '192.0.2.200';
+
+        $response = $this->adminLogin($controller, self::ADMIN_PASSWORD);
+
+        $this->assertSame(429, $response->getStatusCode());
+        $this->assertSame('900', $response->headers->get('Retry-After'));
+        $this->assertArrayNotHasKey('data', self::json($response));
+        $this->assertArrayNotHasKey('user_id', $_SESSION ?? []);
+
+        // A quarter of an hour later the right password works again.
+        $this->clock->sleep(900);
+        $this->assertSame(200, $this->adminLogin($controller, self::ADMIN_PASSWORD)->getStatusCode());
+    }
+
+    public function testNineAdminFailuresDoNotLockTheRightPassword(): void
+    {
+        $controller = $this->controller();
+        for ($i = 0; $i < 9; ++$i) {
+            $this->ip = sprintf('192.0.2.%d', 30 + $i);
+            $this->assertSame(401, $this->adminLogin($controller, 'wrong-' . $i)->getStatusCode(), "failure $i");
+        }
+        $this->ip = '192.0.2.201';
+
+        $this->assertSame(200, $this->adminLogin($controller, self::ADMIN_PASSWORD)->getStatusCode());
+    }
+
+    public function testEmployeeLoginStillWorksWhileTheAdminLoginIsLocked(): void
+    {
+        $id = $this->employee('Iris');
+        $controller = $this->controller();
+        for ($i = 0; $i < 10; ++$i) {
+            $this->ip = sprintf('192.0.2.%d', 50 + $i);
+            $this->adminLogin($controller, 'wrong-' . $i);
+        }
+        $this->ip = '192.0.2.202';
+        $this->assertSame(429, $this->adminLogin($controller, self::ADMIN_PASSWORD)->getStatusCode());
+
+        $this->assertSame(200, $this->employeeLogin($controller, $id, self::PIN)->getStatusCode());
     }
 }

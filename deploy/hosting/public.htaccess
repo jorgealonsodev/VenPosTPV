@@ -1,5 +1,5 @@
-# public/.htaccess for Plesk (PHP-FPM served by Apache behind nginx).
-# The local XAMPP copy pins a PHP 8.5 CGI wrapper; Plesk picks PHP per domain.
+# public/.htaccess for a hosting panel (PHP-FPM served by Apache, often behind nginx).
+# The local XAMPP copy pins a PHP 8.5 CGI wrapper; the hosting panel picks PHP per domain.
 
 <IfModule mod_rewrite.c>
     RewriteEngine On

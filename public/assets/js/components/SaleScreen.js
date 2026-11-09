@@ -304,6 +304,7 @@ const SaleScreen = {
         });
 
         return {
+            brandBase: (window.TPV_BASE || '') + '/assets/img/brand',
             session, cart, catalog,
             showPayment, showDiscount, showCustomer, showCouponCreation, showCashClose, showRefund, showSettings,
             showLogoutConfirm, showSyncPanel, showTickets, showParkModal, parkNote, showVoidConfirm,
@@ -349,6 +350,7 @@ const SaleScreen = {
         <div v-else style="width:100%; height:100%; display:flex; flex-direction:column; overflow:hidden; background:var(--bg);">
             <!-- Header -->
             <header style="height:60px; min-height:60px; background:var(--surface); border-bottom:1px solid var(--border); display:flex; align-items:center; padding:0 16px; gap:14px; flex-shrink:0;">
+                <img :src="brandBase + '/venpostpv-mark.svg'" alt="" style="width:30px; height:30px; flex-shrink:0;">
                 <div style="font-weight:700; font-size:15px; letter-spacing:-0.01em; color:var(--text); white-space:nowrap;">{{ storeName || 'VenPosTPV' }}</div>
                 <div style="width:1px; height:22px; background:var(--border);"></div>
                 <div style="display:flex; align-items:center; gap:7px; color:var(--text2); font-size:13px;">

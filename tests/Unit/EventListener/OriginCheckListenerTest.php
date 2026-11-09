@@ -107,7 +107,7 @@ final class OriginCheckListenerTest extends TestCase
 
     public function testTheTpvUrlOriginPassesWhenTheProxySpeaksHttp(): void
     {
-        // Plesk's nginx terminates TLS: PHP sees http while the browser sends https.
+        // A hosting nginx terminates TLS: PHP sees http while the browser sends https.
         $this->assertFalse($this->dispatch('POST', 'http://tpv.example.com/api/checkout', ['Origin' => 'https://tpv.example.com'], 'https://tpv.example.com/tpv')->hasResponse());
         $this->assertBlocked($this->dispatch('POST', 'http://tpv.example.com/api/checkout', ['Origin' => 'https://tpv.example.com'], ''));
     }

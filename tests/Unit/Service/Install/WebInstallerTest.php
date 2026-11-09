@@ -161,7 +161,7 @@ final class WebInstallerTest extends TestCase
         file_put_contents($this->dir . '/.htaccess', "# something else\nOptions -Indexes\n");
         self::assertFalse($installer->isSafeDocumentRoot($this->dir));
 
-        copy(\dirname(__DIR__, 4) . '/deploy/plesk/root.htaccess', $this->dir . '/.htaccess');
+        copy(\dirname(__DIR__, 4) . '/deploy/hosting/root.htaccess', $this->dir . '/.htaccess');
         self::assertTrue($installer->isSafeDocumentRoot($this->dir));
     }
 

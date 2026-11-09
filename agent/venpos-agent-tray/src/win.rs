@@ -171,7 +171,7 @@ fn handle(paths: &Paths, action: &Action, refresh: &mpsc::Sender<()>) -> bool {
         }
         Action::About => message(
             &format!(
-                "VenPos Agent {}\nImprime tickets y etiquetas y abre el cajón de esta caja.",
+                "VenPos Agent {}\nImprime tickets y etiquetas y abre el cajón de esta caja.\n\nCreado por Jorge Alonso\ngithub.com/jorgealonsodev",
                 agent_core::VERSION
             ),
             false,

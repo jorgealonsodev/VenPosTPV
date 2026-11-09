@@ -29,7 +29,7 @@ Hallazgo nuevo, que no está en el informe: **el login por SSO probablemente no 
 
 ## 3. Requisitos
 
-Prioridades: **P0** antes de desplegar en Plesk; **P1** en la misma entrega si es posible; **P2** endurecimiento posterior.
+Prioridades: **P0** antes de desplegar en el hosting; **P1** en la misma entrega si es posible; **P2** endurecimiento posterior.
 
 ### R1 · P0 · Venta mixta: el efectivo debe estar acotado (vuln-0006, real)
 
@@ -117,7 +117,8 @@ Además, cualquiera puede bloquear a cualquier empleado con 3 PIN erróneos, por
 - Limitar los intentos por IP reutilizando `src/Service/PrintAgent/RateLimiter.php` (tabla `rate_limit`) y devolver 429 con `Retry-After`, igual que `AgentApiController`:
   - búsqueda: unos 20 por minuto;
   - login de empleado: unos 10 por minuto y 30 cada 15 minutos;
-  - login de admin: unos 5 por minuto.
+  - login de admin: unos 5 por minuto;
+  - login de admin, además, en total desde todas las IP (añadido el 2026-11-06): con 10 contraseñas erróneas en 15 minutos responde 429 (`Retry-After: 900`) a todos, también con la contraseña correcta, hasta que esos fallos pasan de 15 minutos. Frena un ataque repartido entre muchas IP. El login con PIN de los empleados no se ve afectado. Para desbloquearlo a mano: `DELETE FROM rate_limit WHERE rate_key = CONCAT('auth_admin_failures:', SHA2('all', 256));`.
   Si la tabla no existe, se deja pasar (como hace el agente).
 - Admin: `hash_equals`.
 - **No** exigir la cookie de dispositivo en la búsqueda: rompería el primer login en un ordenador nuevo (`adoptOnlyTill`).
@@ -211,7 +212,7 @@ X-Frame-Options: DENY · X-Content-Type-Options: nosniff · Referrer-Policy: sam
 
 **Aceptación.** `composer audit` sin avisos.
 
-### R13 · P2 · Instalador de Plesk (no estaba en el alcance de Strix)
+### R13 · P2 · Instalador web del hosting (no estaba en el alcance de Strix)
 
 1. Si `realpath(DOCUMENT_ROOT)` falla, tratarlo como error, no saltarse la comprobación.
 2. Crear `.env` con `fopen($env, 'x')`, que no sobrescribe un fichero que ya exista, en lugar de `rename`.
@@ -253,7 +254,7 @@ Cada bloque se entrega en su propio commit, con sus tests:
 | 9 | `chore(deps): firebase/php-jwt 7` | R12 | 5 |
 | 10 | `fix(install): installer hardening` | R13 | 5 |
 
-Los commits 0 a 4 (P0) tienen que estar hechos **antes de desplegar en Plesk**. Después hay que volver a generar `dist/venpostpv-plesk.zip`.
+Los commits 0 a 4 (P0) tienen que estar hechos **antes de desplegar en el hosting**. Después hay que volver a generar `dist/venpostpv-hosting.zip`.
 
 ## 7. Verificación
 

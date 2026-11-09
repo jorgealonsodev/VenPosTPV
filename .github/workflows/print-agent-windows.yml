@@ -6,6 +6,8 @@ name: print-agent
 
 on:
   push:
+    # Branches only: a release tag runs this workflow through release.yml.
+    branches: ["**"]
     paths:
       - "agent/**"
       - ".github/workflows/print-agent-windows.yml"
@@ -14,6 +16,7 @@ on:
       - "agent/**"
       - ".github/workflows/print-agent-windows.yml"
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -28,14 +31,28 @@ env:
 jobs:
   linux:
     name: Linux tests and cross-build (build.sh)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: agent
     steps:
       - uses: actions/checkout@v4
+      # The Azure apt mirror is sometimes very slow (a 35 MB package took over
+      # 7 minutes): keep the downloaded .deb files and retry stalled downloads.
+      - uses: actions/cache@v4
+        with:
+          path: ~/apt-archives
+          key: apt-mingw-${{ runner.os }}-ubuntu-24.04-v1
       - name: Install mingw-w64 (Windows gnu cross-build)
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64
+        timeout-minutes: 12
+        run: |
+          mkdir -p ~/apt-archives/partial
+          apt_opts=(-o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o "Dir::Cache::Archives=$HOME/apt-archives")
+          sudo apt-get "${apt_opts[@]}" update
+          sudo apt-get "${apt_opts[@]}" install -y --no-install-recommends gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64
+          sudo chown -R "$USER" ~/apt-archives
+          rm -f ~/apt-archives/lock
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-unknown-linux-gnu,x86_64-pc-windows-gnu
@@ -56,6 +73,7 @@ jobs:
   windows:
     name: Windows installer (silent install, service, exact RAW bytes)
     runs-on: windows-latest
+    timeout-minutes: 30
     defaults:
       run:
         shell: pwsh
@@ -94,7 +112,9 @@ jobs:
       - name: Build the installer
         run: |
           $makensis = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'
-          & $makensis /V3 "/DVERSION=$env:AGENT_VERSION" installer\venpos-agent.nsi
+          # The script is UTF-8 without BOM: without /INPUTCHARSET makensis
+          # reads it as the ANSI code page and the installer shows mojibake.
+          & $makensis /V3 /INPUTCHARSET UTF8 "/DVERSION=$env:AGENT_VERSION" installer\venpos-agent.nsi
           if ($LASTEXITCODE -ne 0) { throw "makensis exit $LASTEXITCODE" }
           $setup = Resolve-Path "dist\VenPosAgent-$env:AGENT_VERSION-setup.exe"
           "SETUP=$setup" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8

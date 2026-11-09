@@ -1,0 +1,135 @@
+# Release: pushing a tag vX.Y.Z (vX.Y.Z-rc.N for a prerelease) builds the
+# downloadable packages and publishes them as a GitHub Release:
+#   VenPosAgent-<agent version>-setup.exe  Windows print agent installer
+#   venpos-agent_<ver>_amd64.deb           Linux print agent (Debian 12 / Ubuntu 22.04+)
+#   venpos-agent-<ver>-linux-x86_64.tar.gz static Linux agent + install.sh
+#   venpostpv-hosting.zip                  TPV app for the web hosting
+#   tpvconnect.zip                         PrestaShop module
+# Run it by hand (workflow_dispatch) to build the packages as artifacts
+# without publishing anything.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  agent:
+    name: Print agent (tests and Windows installer)
+    uses: ./.github/workflows/print-agent-windows.yml
+
+  hosting:
+    name: Hosting and PrestaShop module packages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          tools: composer
+          coverage: none
+      - name: Build the packages (bin/build-hosting.sh)
+        run: PHP_BIN="$(command -v php)" COMPOSER_PHAR="$(command -v composer)" bin/build-hosting.sh
+      - name: Check the packages
+        run: |
+          unzip -l dist/venpostpv-hosting.zip | grep -q ' vendor/autoload.php$'
+          unzip -l dist/venpostpv-hosting.zip | grep -q ' install.php$'
+          unzip -l dist/tpvconnect.zip | grep -q ' tpvconnect/tpvconnect.php$'
+          if unzip -l dist/tpvconnect.zip | grep -q ' tpvconnect/tests/'; then
+            echo "tpvconnect.zip must not ship tests" >&2; exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: venpostpv-hosting
+          path: |
+            dist/venpostpv-hosting.zip
+            dist/tpvconnect.zip
+          if-no-files-found: error
+
+  agent-linux:
+    name: Print agent Linux packages (.deb and static binary)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v4
+      - name: Static service (musl, rust:alpine container)
+        run: packaging/linux/build-musl.sh
+      - name: Desktop tray and window (glibc, Debian 12 container)
+        run: packaging/linux/build-gui.sh
+      - name: Debian package (packaging/linux/build-deb.sh)
+        run: packaging/linux/build-deb.sh
+      - name: Static binary archive (any x86_64 Linux, with install.sh)
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          name="venpos-agent-${version}-linux-x86_64"
+          mkdir -p "dist/$name"
+          cp dist/linux-x86_64-musl/venpos-agent packaging/linux/install.sh "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+      - name: Check the packages
+        run: |
+          file dist/linux-x86_64-musl/venpos-agent | grep -Eq 'statically linked|static-pie linked'
+          dist/linux-x86_64-musl/venpos-agent version
+          dpkg-deb --contents dist/venpos-agent_*_amd64.deb | grep -q '/usr/bin/venpos-agent$'
+          dpkg-deb --contents dist/venpos-agent_*_amd64.deb | grep -q '/usr/bin/venpos-agent-tray$'
+          tar -tzf dist/venpos-agent-*-linux-x86_64.tar.gz | grep -q '/install.sh$'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: venpos-agent-linux
+          path: |
+            agent/dist/venpos-agent_*_amd64.deb
+            agent/dist/venpos-agent-*-linux-x86_64.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: Publish the GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [agent, agent-linux, hosting]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Collect the release files
+        run: |
+          mkdir -p release
+          cp artifacts/venpos-agent-windows/VenPosAgent-*-setup.exe release/
+          cp artifacts/venpos-agent-linux/venpos-agent_*_amd64.deb artifacts/venpos-agent-linux/venpos-agent-*-linux-x86_64.tar.gz release/
+          cp artifacts/venpostpv-hosting/venpostpv-hosting.zip artifacts/venpostpv-hosting/tpvconnect.zip release/
+          (cd release && sha256sum * > SHA256SUMS.txt)
+          ls -l release
+      - name: Write the release notes
+        run: |
+          agent="$(basename release/VenPosAgent-*-setup.exe | sed 's/^VenPosAgent-\(.*\)-setup\.exe$/\1/')"
+          module="$(sed -n "s/.*this->version = '\(.*\)'.*/\1/p" modules/tpvconnect/tpvconnect.php)"
+          docs="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/docs"
+          # Template: .github/release-notes.md (@TAG@, @AGENT@, @MODULE@, @DOCS@).
+          sed -e "s|@TAG@|${GITHUB_REF_NAME}|g" -e "s|@AGENT@|${agent}|g" \
+              -e "s|@MODULE@|${module}|g" -e "s|@DOCS@|${docs}|g" \
+              .github/release-notes.md > notes.md
+          if grep -q '@[A-Z]*@' notes.md; then echo "unfilled placeholder in notes.md" >&2; exit 1; fi
+          cat notes.md
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=()
+          case "$GITHUB_REF_NAME" in *-*) prerelease=(--prerelease) ;; esac
+          gh release create "$GITHUB_REF_NAME" release/* \
+            --title "VenPosTPV $GITHUB_REF_NAME" \
+            --notes-file notes.md --generate-notes --verify-tag "${prerelease[@]}"

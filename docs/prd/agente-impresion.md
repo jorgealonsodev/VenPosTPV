@@ -2,19 +2,19 @@
 
 - **Estado:** revisado (v2), pendiente de visto bueno
 - **Fecha:** 2026-11-03
-- **Relación:** necesario para desplegar el TPV en un subdominio de Plesk (ver `docs/prd/venta-local-primero.md`)
-- **Revisión:** v1 analizada por cinco revisiones independientes (seguridad, programa en Rust, servidor y Plesk, etiquetas, uso en tienda); sus propuestas aceptadas están incorporadas.
+- **Relación:** necesario para desplegar el TPV en un subdominio de un hosting (ver `docs/prd/venta-local-primero.md`)
+- **Revisión:** v1 analizada por cinco revisiones independientes (seguridad, programa en Rust, servidor y hosting, etiquetas, uso en tienda); sus propuestas aceptadas están incorporadas.
 
 ## 1. Objetivo
 
-Que el TPV alojado en Plesk imprima tickets y etiquetas, y abra el cajón, en las impresoras de la tienda, igual que hoy con el servidor local: el ticket sale solo al cobrar y el cajón se abre con efectivo.
+Que el TPV alojado en un hosting imprima tickets y etiquetas, y abra el cajón, en las impresoras de la tienda, igual que hoy con el servidor local: el ticket sale solo al cobrar y el cajón se abre con efectivo.
 
 Para ello, un programa pequeño (el **agente**) se instala en el ordenador de cada caja. Se conecta al TPV por HTTPS hacia fuera, sin abrir puertos en la tienda, recoge los trabajos de su caja y los envía a sus impresoras.
 
 ## 2. Situación actual
 
 - El servidor del TPV imprime él mismo: por CUPS (impresora USB enchufada al servidor) o por IP. El cajón se abre enviando `ESC p` a la impresora de tickets.
-- El ticket de venta se encola en Messenger (`CheckoutService.php:246`); en Plesk esa cola solo se vacía con un cron cada minuto, así que no sirve para el agente.
+- El ticket de venta se encola en Messenger (`CheckoutService.php:246`); en el hosting esa cola solo se vacía con un cron cada minuto, así que no sirve para el agente.
 - Algunas rutas toman la caja 1 si la sesión no tiene caja (`TicketController.php:98`, `RefundController.php:255`).
 - El catálogo local ya tiene `ean13` y `reference` por producto y combinación, los valores de talla/color y `price_ttc` (precio con IVA y oferta vigente). No hay nombre corto ni precio anterior a la oferta.
 - No existe impresión de etiquetas ni limitador de intentos en el servidor.
@@ -53,7 +53,7 @@ Para ello, un programa pequeño (el **agente**) se instala en el ordenador de ca
 
 ## 4. Alcance
 
-**Fase 1 (impresión funcionando en Plesk con la TM-T20):**
+**Fase 1 (impresión funcionando en el hosting con la TM-T20):**
 - emparejar, desconectar y vigilar la clave;
 - tickets, cajón, reimpresión, abonos, prueba;
 - avisos en caja y PDF de reserva;
@@ -86,7 +86,7 @@ Para ello, un programa pequeño (el **agente**) se instala en el ordenador de ca
 - **E4.** Cada clave vale para una sola caja: solo ve y confirma trabajos de su caja.
 - **E5.** Desconectar el agente en Ajustes invalida la clave al momento. Volver a emparejar revoca la anterior.
 - **E6.** La clave no caduca. Ajustes muestra la última fecha e IP de uso para detectar copias.
-- **E7.** Límites: emparejar admite 5 intentos por minuto y por IP (después, 429). Los fallos de todas las IP se cuentan juntos: 20 fallos en 10 minutos anulan todos los códigos vivos de todas las cajas. Una clave inválida recibe 429 tras 10 fallos por minuto y por IP. Detrás del nginx de Plesk la IP es la real del cliente (`TRUSTED_PROXIES`).
+- **E7.** Límites: emparejar admite 5 intentos por minuto y por IP (después, 429). Los fallos de todas las IP se cuentan juntos: 20 fallos en 10 minutos anulan todos los códigos vivos de todas las cajas. Una clave inválida recibe 429 tras 10 fallos por minuto y por IP. Detrás del nginx del hosting la IP es la real del cliente (`TRUSTED_PROXIES`).
 - **E7b.** Desde el icono (canal local) solo se empareja por HTTPS, sin excepción para localhost, y solo con el TPV al que ya está conectado el agente; otro TPV: «Para cambiar de TPV, vuelve a ejecutar el instalador como administrador».
 - **E8.** La clave, el código y la cabecera `Authorization` nunca aparecen en direcciones, registros ni pantallas. El texto de error de un trabajo se recorta a 500 caracteres.
 - **E9.** `/api/agent/v1/*` no usa sesión ni cookies (fuera del vínculo de equipo); solo acepta `Authorization: Bearer`.
@@ -156,7 +156,7 @@ Para ello, un programa pequeño (el **agente**) se instala en el ordenador de ca
 ### 5.8 Actualizaciones
 - **U1 (fase 1).** Ajustes → Cajas muestra «Hay una versión nueva» y el enlace de descarga.
 - **U2 (fase 2).** El TPV publica un manifiesto firmado (sistema, versión, sha256, tamaño) con Ed25519. Los binarios se guardan en el subdominio, fuera de git.
-- **U3.** La clave privada nunca está en Plesk ni en el repositorio: se guarda fuera de línea en el equipo del desarrollador y se firma al publicar. Si se pierde o compromete, se publica a mano un agente con otra clave pública.
+- **U3.** La clave privada nunca está en el hosting ni en el repositorio: se guarda fuera de línea en el equipo del desarrollador y se firma al publicar. Si se pierde o compromete, se publica a mano un agente con otra clave pública.
 - **U4.** El agente comprueba la firma y rechaza versiones iguales o anteriores a la instalada. El servidor responde 426 si el agente está por debajo de la mínima admitida.
 - **U5.** Solo se actualiza con la caja cerrada y sin trabajos pendientes. Windows: un actualizador aparte sustituye los programas y, si en 60 s no hay conexión correcta, restaura la versión anterior. Linux: el agente descarga y verifica; una unidad systemd de root aplica el cambio.
 
@@ -200,7 +200,7 @@ Para ello, un programa pequeño (el **agente**) se instala en el ordenador de ca
 
 1. Instalar el agente en el ordenador de la caja A con el TPV todavía en local y probarlo.
 2. Cambiar el tipo de impresora de la caja A a «Agente de impresión», manteniendo CUPS como alternativa una semana.
-3. Desplegar en Plesk (requiere acceso y permiso) con `pm.max_children` ≥ número de cajas + 6 y `max_execution_time` ≥ 35 s.
+3. Desplegar en el hosting (requiere acceso y permiso) con `pm.max_children` ≥ número de cajas + 6 y `max_execution_time` ≥ 35 s.
 4. Guía para la dueña: instalación (aviso de Windows y antivirus) y una hoja «No imprime: qué hago».
 
 ## 8. Criterios de aceptación
@@ -227,10 +227,10 @@ Para ello, un programa pequeño (el **agente**) se instala en el ordenador de ca
 - **Seguridad (alto):** clave del agente, emparejamiento, límites de intentos y, en fase 2, actualizaciones firmadas. Requiere verificación independiente.
 - **Windows sin máquina propia:** se cubre con GitHub Actions; servicio en sesión 0 e icono por usuario se prueban por separado; el icono lo revisa el usuario.
 - **Estado de la impresora:** a través de la cola de Windows o CUPS no se puede leer «sin papel»; solo en modo directo (fase 2).
-- **Plesk:** cada agente conectado ocupa un proceso PHP mientras espera; revisar `pm.max_children` y los tiempos del proxy al desplegar.
+- **Hosting:** cada agente conectado ocupa un proceso PHP mientras espera; revisar `pm.max_children` y los tiempos del proxy al desplegar.
 - **Papel adhesivo en la TM-T20:** Epson no lo lista para este modelo; comprobar el grosor admitido y que el pegamento no ensucie la cuchilla.
 
 ## 10. Puntos abiertos
 
-- Dirección final del subdominio y despliegue en Plesk (requiere acceso y permiso).
+- Dirección final del subdominio y despliegue en el hosting (requiere acceso y permiso).
 - Comprar papel térmico adhesivo continuo de 80 mm compatible con la TM-T20, o una impresora de etiquetas de 203 ppp con ZPL o TSPL y detección de separación.

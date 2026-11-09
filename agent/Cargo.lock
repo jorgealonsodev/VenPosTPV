@@ -26,7 +26,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "agent-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.22.1",
  "gethostname",
@@ -3321,7 +3321,7 @@ dependencies = [
 
 [[package]]
 name = "venpos-agent"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "agent-core",
  "clap",
@@ -3332,7 +3332,7 @@ dependencies = [
 
 [[package]]
 name = "venpos-agent-tray"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "agent-core",
  "eframe",

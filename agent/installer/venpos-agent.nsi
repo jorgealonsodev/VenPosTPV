@@ -1,7 +1,9 @@
-; VenPos Agent installer (PRD I1, I2, AC9). Unsigned on purpose (I2).
+﻿; VenPos Agent installer (PRD I1, I2, AC9). Unsigned on purpose (I2).
 ;
 ; Build (from agent/, after ./build.sh or cargo build --release):
-;   makensis -DVERSION=0.1.0 installer/venpos-agent.nsi
+;   makensis -INPUTCHARSET UTF8 -DVERSION=0.1.1 installer/venpos-agent.nsi
+;   (the script is UTF-8 with BOM; -INPUTCHARSET UTF8 keeps it right even if an
+;   editor drops the BOM: makensis would read the ANSI code page and garble text)
 ; Optional defines: BINDIR (folder with both .exe), OUTFILE.
 ;
 ; Silent install (CI, mass deployment):
@@ -29,7 +31,7 @@ SetCompressor /SOLID lzma
 !include "WinMessages.nsh"
 
 !ifndef VERSION
-  !define VERSION "0.1.0"
+  !define VERSION "0.1.1"
 !endif
 !ifndef BINDIR
   !define BINDIR "..\dist\windows-x86_64"
@@ -79,6 +81,10 @@ Var hLabel
 Var hTest
 
 !define MUI_ABORTWARNING
+; Brand mark (docs/brand/venpostpv-mark.svg, same file as public/favicon.ico);
+; makensis runs from this folder, so the path is relative to it.
+!define MUI_ICON "venpos.ico"
+!define MUI_UNICON "venpos.ico"
 !define MUI_WELCOMEPAGE_TITLE "Instalar ${PRODUCT} ${VERSION}"
 !define MUI_WELCOMEPAGE_TEXT "Este asistente instala el agente de impresión en este ordenador de caja.$\r$\n$\r$\nEl agente recoge del TPV los tickets, la apertura del cajón y las etiquetas de esta caja y los envía a sus impresoras.$\r$\n$\r$\nTen a mano la dirección del TPV y el código de 6 cifras de Ajustes → Cajas (también puedes emparejar más tarde)."
 !insertmacro MUI_PAGE_WELCOME

@@ -17,7 +17,7 @@ use Symfony\Component\HttpKernel\KernelEvents;
  * does not stop a sibling subdomain (the shop on tienda.example.com, the TPV on
  * tpv.example.com). A request that changes data is therefore accepted only when
  * its Origin (or, without one, its Referer) is the TPV itself: the host the
- * request reached or the public TPV_URL (behind Plesk's proxy PHP may see http
+ * request reached or the public TPV_URL (behind a hosting proxy PHP may see http
  * while the browser uses https). A request with neither header is not a browser
  * and passes. The print agent API uses its Bearer key, not a cookie, and is not
  * checked.
