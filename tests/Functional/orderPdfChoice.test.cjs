@@ -10,13 +10,15 @@ function ref(value) { return { value }; }
 function computed(fn) { return { get value() { return fn(); } }; }
 
 /** The order detail with a fake API: email sending on or off, and a failing send. */
-function mount(order, { emailEnabled = true, sendError = null, customers = [] } = {}) {
+function mount(order, { emailEnabled = true, sendError = null, customers = [], reprintData = { printed: true }, startWithChoice = false } = {}) {
     const calls = { pdf: [], salePdf: [], post: [], get: [], search: [] };
     const context = {
         Vue: { ref, computed },
         ApiClient: {
             ticketSalePdf: (id) => calls.salePdf.push(id),
             ticketPdf: (id) => calls.pdf.push(id),
+            ticketReprintSale: async () => ({ data: reprintData }),
+            ticketReprint: async () => ({ data: reprintData }),
             customerSearch: async (q) => { calls.search.push(q); return { data: customers }; },
             get: async (url) => { calls.get.push(url); return { data: { enabled: emailEnabled } }; },
             post: async (url, body) => {
@@ -31,7 +33,7 @@ function mount(order, { emailEnabled = true, sendError = null, customers = [] } 
     context.globalThis = context;
     vm.runInNewContext(`${source}\nglobalThis.__view = OrderDetailView;`, context, { filename: 'OrderDetailView.js' });
     const emitted = [];
-    const state = context.__view.setup({ order }, { emit: (...args) => emitted.push(args) });
+    const state = context.__view.setup({ order, startWithChoice }, { emit: (...args) => emitted.push(args) });
     return { state, calls, emitted };
 }
 
@@ -92,9 +94,9 @@ test('without an outgoing mail account, or for an online order, only download is
     assert.deepEqual(online.calls.pdf, [900]);
 });
 
-test('the PDF button opens the window; the reprint fallback still downloads directly', () => {
+test('the PDF button opens the window, and so does the reprint without a printer', () => {
     assert.match(source, /@click="openPdfChoice"[^>]*>\s*<icon name="receipt" :size="16" \/> PDF/);
-    assert.match(source, /fallback === 'pdf'\) \{\s*pdf\(\);/);
+    assert.match(source, /fallback === 'pdf'\) \{[\s\S]*?openPdfChoice\('ticket'\);/);
 });
 
 const ANA = { local_id: 1, id: 5, name: 'Ana Martínez', email: 'ana@example.com', phone: '600111222' };
@@ -151,4 +153,19 @@ test('WhatsApp opens the window with the WhatsApp panel already open', async () 
     await state.openPdfChoice('ticket', 'email');
     assert.equal(state.pdfWhatsapp.value, false, 'email opens with WhatsApp closed');
     assert.equal(state.pdfEmailEnabled.value, true);
+});
+
+test('Reimprimir without a printer opens the choice instead of downloading the PDF', async () => {
+    const { state, calls, emitted } = mount(SALE, { reprintData: { fallback: 'pdf' } });
+    await state.reprint();
+    assert.equal(state.pdfChoice.value, true);
+    assert.equal(state.pdfDoc.value, 'ticket');
+    assert.deepEqual(calls.salePdf, []);
+    assert.deepEqual(emitted.at(-1), ['notify', 'No hay impresora: elige cómo entregar el ticket', 'var(--blue)']);
+});
+
+test('opened with start-with-choice, the detail shows the choice at once', async () => {
+    const { state } = mount(SALE, { startWithChoice: true });
+    await Promise.resolve();
+    assert.equal(state.pdfChoice.value, true);
 });

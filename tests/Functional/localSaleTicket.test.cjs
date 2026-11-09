@@ -102,7 +102,7 @@ function loadSaleScreen(api) {
     assert.ok(match, 'SaleScreen.handleReprint is present');
     const notes = [];
     const context = {
-        ApiClient: api, lastCompletedOrder: ref(null), notify: (msg) => notes.push(msg), Promise,
+        ApiClient: api, lastCompletedOrder: ref(null), shareOrder: ref(null), notify: (msg) => notes.push(msg), Promise,
     };
     vm.runInNewContext(`${match[0]}\nglobalThis.__reprint = handleReprint;`, Object.assign(context, { globalThis: context }), { filename: 'SaleScreen.js' });
     return { context, notes };
@@ -128,6 +128,23 @@ async function testSaleScreenReprintsTheLastSaleByLocalIdOrPrestaShopId() {
     await empty.context.__reprint();
     assert.deepEqual(none.calls, []);
     assert.deepEqual(empty.notes, ['No hay ticket para reimprimir']);
+}
+
+// Without a printer, «Reimprimir» opens the choice (PDF, email, WhatsApp) instead of downloading.
+async function testSaleScreenReprintWithoutAPrinterOpensTheChoice() {
+    const calls = [];
+    const api = {
+        ticketReprintSale: async (id) => { calls.push(['ticketReprintSale', id]); return { data: { fallback: 'pdf' } }; },
+        ticketSalePdf: (id) => calls.push(['ticketSalePdf', id]),
+        ticketPdf: (id) => calls.push(['ticketPdf', id]),
+    };
+    const screen = loadSaleScreen(api);
+    const order = { order_id: 15, ps_order_id: null, reference: 'A26000001' };
+    screen.context.lastCompletedOrder.value = order;
+    await screen.context.__reprint();
+    assert.deepEqual(calls, [['ticketReprintSale', 15]], 'no automatic download');
+    assert.equal(screen.context.shareOrder.value, order);
+    assert.deepEqual(screen.notes, ['No hay impresora: elige cómo entregar el ticket']);
 }
 
 // Verifier advisory L7: one request_id per payment attempt, the same on every retry
@@ -168,5 +185,6 @@ async function testEveryRetryOfOnePaymentAttemptCarriesTheSameRequestId() {
     await testWithoutAPrinterTheDoneScreenWaitsForTheChoice();
     await testResponseWithOnlyAPrestaShopIdKeepsThePreviousCalls();
     await testSaleScreenReprintsTheLastSaleByLocalIdOrPrestaShopId();
+    await testSaleScreenReprintWithoutAPrinterOpensTheChoice();
     console.log('localSaleTicket: OK');
 })().catch((err) => { console.error(err); process.exit(1); });

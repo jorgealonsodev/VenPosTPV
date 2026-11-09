@@ -62,6 +62,8 @@ const SaleScreen = {
         const lastAdded = Vue.ref(null);
         const ticketCount = Vue.ref(127);
         const lastCompletedOrder = Vue.ref(null);
+        // The last sale shown with its delivery choice when «Reimprimir» finds no printer.
+        const shareOrder = Vue.ref(null);
 
         const parkedCount = Vue.computed(() => (parkedState.tickets ? parkedState.tickets.length : 0));
 
@@ -149,12 +151,9 @@ const SaleScreen = {
                 } else if (result && result.data && result.data.printed) {
                     notify('Ticket reimpreso', 'var(--green)');
                 } else if (result && result.data && result.data.fallback === 'pdf') {
-                    if (saleId) {
-                        ApiClient.ticketSalePdf(saleId);
-                    } else {
-                        ApiClient.ticketPdf(psOrderId);
-                    }
-                    notify('Descargando ticket PDF', 'var(--blue)');
+                    // No printer: open the sale with the choice (PDF, email, WhatsApp).
+                    shareOrder.value = order;
+                    notify('No hay impresora: elige cómo entregar el ticket', 'var(--blue)');
                 } else {
                     notify('Reimpresion completada', 'var(--green)');
                 }
@@ -335,7 +334,7 @@ const SaleScreen = {
             toggleTheme,
             setSearch, setCategory, loadMore, setOnlyInStock, setSearchInCategory,
             addProduct, remove, updateQty,
-            handlePaymentComplete, handlePark, confirmParkTicket, handleVoid, confirmVoid, cancelVoid, handleReprint,
+            shareOrder, handlePaymentComplete, handlePark, confirmParkTicket, handleVoid, confirmVoid, cancelVoid, handleReprint,
             handleDiscount, handleCustomer,
             showFreeItem, freeItemSettings, freeItemAllowed,
             handleCashClose, handleCashCloseDone, handleCashCloseBack, handleDiscardParkedOnClose,
@@ -478,7 +477,10 @@ const SaleScreen = {
 
                 <!-- Ticket -->
                 <div style="width:38%; display:flex; flex-direction:column; overflow:hidden; background:var(--surface);">
-                    <ticket-list-panel v-if="showTickets"
+                    <div v-if="shareOrder" style="flex:1; overflow:hidden;">
+                        <order-detail-view :order="shareOrder" :start-with-choice="true" @back="shareOrder = null" @notify="notify" />
+                    </div>
+                    <ticket-list-panel v-else-if="showTickets"
                         :active-cart-count="cart.lines.length"
                         @back="showTickets = false"
                         @notify="notify"

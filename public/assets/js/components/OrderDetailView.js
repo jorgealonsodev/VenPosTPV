@@ -10,7 +10,7 @@
  * WhatsApp (WhatsAppShare: a link to the PDF), with the same consent for the invoice.
  */
 const OrderDetailView = {
-    props: ['order'],
+    props: ['order', 'startWithChoice'],
     emits: ['back', 'notify'],
     components: typeof WhatsAppShare !== 'undefined' ? { 'whatsapp-share': WhatsAppShare } : {},
     setup(props, { emit }) {
@@ -32,8 +32,9 @@ const OrderDetailView = {
                     usePrintJobs.trackResponse(result.data, { kind: 'reprint', saleId, orderId: psOrderId });
                     emit('notify', 'Imprimiendo ticket…', 'var(--blue)');
                 } else if (result && result.data && result.data.fallback === 'pdf') {
-                    pdf();
-                    emit('notify', 'Descargando ticket PDF', 'var(--blue)');
+                    // No printer: the cashier chooses PDF, email or WhatsApp.
+                    openPdfChoice('ticket');
+                    emit('notify', 'No hay impresora: elige cómo entregar el ticket', 'var(--blue)');
                 } else {
                     emit('notify', 'Ticket reimpreso', 'var(--green)');
                 }
@@ -204,6 +205,9 @@ const OrderDetailView = {
         });
 
         loadInvoice();
+
+        // Opened from «Reimprimir» on the sale screen without a printer: show the choice at once.
+        if (props.startWithChoice) openPdfChoice('ticket');
 
         return { invoice, showInvoice, canInvoice, loadInvoice, onInvoiceIssued, pdfDoc, pdfConsent, totalQty, title, canPrint, reprint, pdf, pdfChoice, pdfEmailEnabled, pdfEmail, pdfEmailStatus, pdfEmailSending, openPdfChoice, downloadPdf, sendPdfEmail, pdfCustomers, searchPdfCustomers, pickPdfCustomer, pdfWhatsappEnabled, pdfWhatsapp, pdfPhone, onWhatsappShared };
     },

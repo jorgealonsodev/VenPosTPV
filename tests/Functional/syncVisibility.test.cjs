@@ -276,8 +276,8 @@ async function testOrderDetailReprintsByTheLocalId() {
     assert.equal(online.title.value, '#42');
     await online.reprint();
     online.pdf();
-    assert.deepEqual(calls, [['ticketReprintSale', 15], ['ticketSalePdf', 15], ['ticketReprint', 42], ['ticketPdf', 42], ['ticketPdf', 42]]);
-    assert.deepEqual(emitted.map((e) => e[1]), ['Ticket reimpreso', 'Descargando ticket PDF']);
+    assert.deepEqual(calls, [['ticketReprintSale', 15], ['ticketSalePdf', 15], ['ticketReprint', 42], ['ticketPdf', 42]]);
+    assert.deepEqual(emitted.map((e) => e[1]), ['Ticket reimpreso', 'No hay impresora: elige cómo entregar el ticket']);
     assert.match(component.template, /Reimprimir/);
 }
 

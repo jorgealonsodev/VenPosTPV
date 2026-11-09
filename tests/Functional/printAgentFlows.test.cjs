@@ -66,8 +66,9 @@ async function testReprintOnOtherPrintersKeepsItsMessages() {
 
     context.ApiClient.ticketReprintSale = async () => ({ data: { printed: false, fallback: 'pdf' } });
     await printed.state.reprint();
-    assert.deepEqual(printed.emitted.at(-1), ['notify', 'Descargando ticket PDF', 'var(--blue)']);
-    assert.deepEqual(pdfs, [12]);
+    assert.deepEqual(printed.emitted.at(-1), ['notify', 'No hay impresora: elige cómo entregar el ticket', 'var(--blue)']);
+    assert.deepEqual(pdfs, [], 'no printer: the choice opens, nothing is downloaded on its own');
+    assert.equal(printed.state.pdfChoice.value, true);
     assert.equal(tracked.length, 0, 'nothing is followed');
 }
 
