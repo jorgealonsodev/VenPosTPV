@@ -122,7 +122,7 @@ class EscPosTicketBuilder
                 $printer->text('Pedido web: ' . $this->sanitize($ticketData->webOrderReference) . "\n");
             }
         }
-        $printer->text('Cajero: ' . $this->sanitize($ticketData->cashierName) . "\n");
+        $printer->text('Le ha atendido ' . $this->sanitize($ticketData->cashierName) . "\n");
         $printer->text($separator);
 
         // Items

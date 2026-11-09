@@ -70,6 +70,14 @@ final class EscPosTicketBuilderTest extends TestCase
         self::assertStringContainsString('Juan', $bytes);
     }
 
+    public function testTheTicketSaysWhoServedTheCustomer(): void
+    {
+        $bytes = $this->createBuilder()->build($this->createTicketData());
+
+        self::assertStringContainsString('Le ha atendido Juan', $bytes);
+        self::assertStringNotContainsString('Cajero:', $bytes);
+    }
+
     public function testBuildContainsSpanishCharacters(): void
     {
         $builder = $this->createBuilder();
@@ -372,7 +380,7 @@ final class EscPosTicketBuilderTest extends TestCase
         $out = $this->createBuilder()->build($this->documentTicket(null));
 
         // sha1 of the bytes printed before the exchange credit was added (HEAD 8f64b2a).
-        $this->assertSame('538ac0deb92143ce0c89ef764a17be8b94e52ee8', sha1(self::withoutPrintArea($out)));
+        $this->assertSame('538ac0deb92143ce0c89ef764a17be8b94e52ee8', sha1(self::withOldCashierLine(self::withoutPrintArea($out))));
         $this->assertStringNotContainsString('Abono', $out);
     }
 
@@ -381,7 +389,7 @@ final class EscPosTicketBuilderTest extends TestCase
         $note = new CreditNoteInfo('R2026-000007', 'REF42', new \DateTimeImmutable('2026-10-30 10:00'), 'Defectuoso', 10.08, 14.1);
         $out = $this->createBuilder()->build($this->documentTicket($note, 'mixed', 0.0, 0.0));
 
-        $this->assertSame('7869077be0a458105af52ff1160d4c65f6dbd1be', sha1(self::withoutPrintArea($out)));
+        $this->assertSame('7869077be0a458105af52ff1160d4c65f6dbd1be', sha1(self::withOldCashierLine(self::withoutPrintArea($out))));
         $this->assertStringNotContainsString('cambio', $out);
     }
 
@@ -503,8 +511,14 @@ final class EscPosTicketBuilderTest extends TestCase
     public function testATicketWithoutAWebReferencePrintsTheSameBytesAsBefore(): void
     {
         // sha1 of the bytes built before "Pedido web" existed (HEAD e868074).
-        self::assertSame('fa4af74b27a71be4d891fd22ccca15fdf83c07a5', sha1(self::withoutPrintArea($this->createBuilder()->build($this->localSale()))));
-        self::assertSame('0e1c9ffe288876ade23487e4f07824b11ab5e3e1', sha1(self::withoutPrintArea($this->createBuilder()->build($this->localSale(), true))));
+        self::assertSame('fa4af74b27a71be4d891fd22ccca15fdf83c07a5', sha1(self::withOldCashierLine(self::withoutPrintArea($this->createBuilder()->build($this->localSale())))));
+        self::assertSame('0e1c9ffe288876ade23487e4f07824b11ab5e3e1', sha1(self::withOldCashierLine(self::withoutPrintArea($this->createBuilder()->build($this->localSale(), true)))));
         self::assertStringNotContainsString('Pedido web', $this->createBuilder()->build($this->localSale('')));
+    }
+
+    /** The output as it was before the cashier line read «Le ha atendido» (it was «Cajero: »). */
+    private static function withOldCashierLine(string $output): string
+    {
+        return str_replace('Le ha atendido ', 'Cajero: ', $output);
     }
 }

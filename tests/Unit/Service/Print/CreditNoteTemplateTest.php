@@ -32,6 +32,14 @@ final class CreditNoteTemplateTest extends TestCase
         ]);
     }
 
+    public function testTheTicketSaysWhoServedTheCustomer(): void
+    {
+        $html = $this->render(null);
+
+        $this->assertStringContainsString('Le ha atendido Ana', $html);
+        $this->assertStringNotContainsString('Cajero:', $html);
+    }
+
     public function testCreditNoteTemplateShowsDocumentDataInsteadOfTenderedCash(): void
     {
         $html = $this->render(new CreditNoteInfo('R2026-000007', 'REF42', new \DateTimeImmutable('2026-10-30 10:00'), 'Defectuoso', 24.18, 0.0));
@@ -97,14 +105,14 @@ final class CreditNoteTemplateTest extends TestCase
     {
         // sha1 of the HTML rendered before the exchange credit was added (HEAD 8f64b2a),
         // without its <style>: the page layout (width, margins) may change, the content not.
-        $this->assertSame('136b50789f0d70203e152aba426f1eba01c07d8c', sha1(self::withoutStyle($this->render(null))));
+        $this->assertSame('136b50789f0d70203e152aba426f1eba01c07d8c', sha1(self::withOldCashierLine(self::withoutStyle($this->render(null)))));
     }
 
     public function testOrdinaryCreditNoteRendersTheSameHtmlAsBeforeExchanges(): void
     {
         $note = new CreditNoteInfo('R2026-000007', 'REF42', new \DateTimeImmutable('2026-10-30 10:00'), 'Defectuoso', 10.08, 14.1);
 
-        $this->assertSame('f20d5da92e0d3a5ef19a8e96da32cdcfc5150735', sha1(self::withoutStyle($this->render($note, method: 'mixed', tendered: 0.0, change: 0.0))));
+        $this->assertSame('f20d5da92e0d3a5ef19a8e96da32cdcfc5150735', sha1(self::withOldCashierLine(self::withoutStyle($this->render($note, method: 'mixed', tendered: 0.0, change: 0.0)))));
     }
 
     private static function withoutStyle(string $html): string
@@ -175,5 +183,11 @@ final class CreditNoteTemplateTest extends TestCase
         $this->assertMatchesRegularExpression('#<div class="center">Ref: REF42</div>\s*<div class="center">Pedido web: XKQWERTYU</div>#', $html);
         $this->assertSame(sha1($this->render(null)), sha1($this->render(null, webOrderReference: '')), 'an empty web reference renders nothing');
         $this->assertStringNotContainsString('Pedido web', $this->render(null));
+    }
+
+    /** The output as it was before the cashier line read «Le ha atendido» (it was «Cajero: »). */
+    private static function withOldCashierLine(string $output): string
+    {
+        return str_replace('Le ha atendido ', 'Cajero: ', $output);
     }
 }
