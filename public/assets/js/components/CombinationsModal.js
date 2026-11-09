@@ -5,9 +5,12 @@ const CombinationsModal = {
     name: 'CombinationsModal',
     props: {
         product: { type: Object, default: null },
-        visible: { type: Boolean, default: false }
+        visible: { type: Boolean, default: false },
+        // «Modo edición»: every size/colour can be chosen, also those without stock,
+        // and «Editar producto» edits the product itself.
+        editMode: { type: Boolean, default: false }
     },
-    emits: ['close', 'select', 'printLabels'],
+    emits: ['close', 'select', 'printLabels', 'editProduct'],
     methods: {
         visual(combo) {
             return CombinationsModal.visual(this.product, combo);
@@ -25,7 +28,10 @@ const CombinationsModal = {
             <div class="combinations-modal">
                 <div class="combinations-modal-header">
                     <h3 style="margin:0; font-size:16px; color:var(--text); font-weight:600;">{{ product.name }}</h3>
-                    <button class="tpv-btn" style="margin-left:auto; margin-right:8px;" @click="$emit('printLabels', product)" title="Imprimir etiquetas de este producto">
+                    <button v-if="editMode" class="tpv-btn tpv-btn-warn" style="margin-left:auto;" @click="$emit('editProduct')" title="Cambiar el EAN o la referencia del producto">
+                        <icon name="note" :size="16" /> Editar producto
+                    </button>
+                    <button class="tpv-btn" :style="{ marginLeft: editMode ? '8px' : 'auto', marginRight: '8px' }" @click="$emit('printLabels', product)" title="Imprimir etiquetas de este producto">
                         <icon name="tag" :size="16" /> Imprimir etiquetas
                     </button>
                     <button @click="$emit('close')" style="background:none; border:none; color:var(--text); font-size:20px; cursor:pointer; line-height:1; padding:4px 8px;">✕</button>
@@ -35,7 +41,7 @@ const CombinationsModal = {
                         v-for="combo in product.combinations"
                         :key="combo.id"
                         class="combination-btn"
-                        :disabled="combo.stock <= 0"
+                        :disabled="!editMode && combo.stock <= 0"
                         @click="$emit('select', combo)"
                     >
                         <span class="combo-visual" v-if="visual(combo)">

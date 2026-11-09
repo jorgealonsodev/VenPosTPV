@@ -1,13 +1,17 @@
 /**
  * CatalogPanel — category tabs + search bar + product grid/list.
+ *
+ * «Modo edición» (administrators only, props.isAdmin; the server checks the role
+ * again): the same products, but a tap (or a size/colour in the variants window,
+ * or a scan) opens ProductEditModal instead of adding to the ticket.
  */
 // Scan mode: a scanned code goes straight to the ticket. Remembered per device.
 const SCAN_TO_CART_KEY = 'tpv.catalog.scanToCart';
 
 const CatalogPanel = {
-    props: ['catalog', 'listView', 'lastAdded'],
+    props: ['catalog', 'listView', 'lastAdded', 'isAdmin'],
     emits: ['setSearch', 'setCategory', 'addProduct', 'toggleView', 'notify', 'loadMore', 'setOnlyInStock', 'setSearchInCategory'],
-    components: { CombinationsModal, LabelPrintModal },
+    components: { CombinationsModal, LabelPrintModal, ProductEditModal },
     data() {
         return {
             combinationsProduct: null,
@@ -15,6 +19,8 @@ const CatalogPanel = {
             labelProduct: null,
             drag: null,
             dragged: false,
+            editMode: false,
+            editItem: null,
             scanToCart: (() => { try { return localStorage.getItem(SCAN_TO_CART_KEY) === '1'; } catch (e) { return false; } })(),
         };
     },
@@ -28,6 +34,13 @@ const CatalogPanel = {
         return { stockTag };
     },
     watch: {
+        // Only an administrator edits: a session that is not one leaves the mode.
+        isAdmin(admin) {
+            if (!admin) {
+                this.editMode = false;
+                this.editItem = null;
+            }
+        },
         'catalog.activeCategory'() {
             this.$nextTick(() => {
                 const active = this.$refs.catBar?.querySelector('[data-active]');
@@ -43,6 +56,10 @@ const CatalogPanel = {
     },
     methods: {
         async handleProductTap(p) {
+            if (this.editMode && !p.has_combinations) {
+                this.editItem = { productId: p.id, attributeId: 0, title: p.name };
+                return;
+            }
             if (p.has_combinations) {
                 try {
                     const result = await ApiClient.get('/api/catalog/product/' + p.id);
@@ -50,13 +67,25 @@ const CatalogPanel = {
                     this.showCombinationsModal = true;
                 } catch (err) {
                     console.error('Failed to load combinations', err);
-                    this.$emit('addProduct', p);
+                    if (this.editMode) {
+                        this.$emit('notify', 'No se han podido cargar las tallas y colores', 'var(--red)');
+                    } else {
+                        this.$emit('addProduct', p);
+                    }
                 }
             } else {
                 this.$emit('addProduct', p);
             }
         },
         onCombinationSelect(combo) {
+            if (this.editMode) {
+                const label = this.formatAttributes(combo.attributes);
+                const product = this.combinationsProduct;
+                this.editItem = { productId: product.id, attributeId: combo.id, title: product.name + (label ? ' · ' + label : '') };
+                this.showCombinationsModal = false;
+                this.combinationsProduct = null;
+                return;
+            }
             this.$emit('addProduct', {
                 ...this.combinationsProduct,
                 selected_combination_id: combo.id,
@@ -72,6 +101,40 @@ const CatalogPanel = {
             this.labelProduct = product;
             this.showCombinationsModal = false;
             this.combinationsProduct = null;
+        },
+        // «Editar producto» in the variants window: the product's own EAN and reference.
+        onEditProduct() {
+            const product = this.combinationsProduct;
+            if (!this.editMode || !product) return;
+            this.editItem = { productId: product.id, attributeId: 0, title: product.name };
+            this.showCombinationsModal = false;
+            this.combinationsProduct = null;
+        },
+        toggleEditMode() {
+            if (!this.isAdmin) {
+                this.editMode = false;
+                return;
+            }
+            this.editMode = !this.editMode;
+            if (!this.editMode) this.editItem = null;
+        },
+        // After a save the grid shows the product as the till now sells it (stock,
+        // local EAN and reference), without reloading the list.
+        async onEditSaved(item) {
+            const id = item && item.id_product;
+            if (!id) return;
+            try {
+                const res = await ApiClient.get('/api/catalog/product/' + id);
+                const fresh = res.data || {};
+                const shown = (this.catalog.products || []).find((p) => p.id === id);
+                if (shown) {
+                    shown.stock = fresh.stock;
+                    shown.ean13 = fresh.ean13;
+                    shown.reference = fresh.reference;
+                }
+            } catch (e) {
+                // The next search or sync shows it.
+            }
         },
         toggleScanToCart() {
             this.scanToCart = !this.scanToCart;
@@ -197,15 +260,27 @@ const CatalogPanel = {
         },
     },
     template: `
-        <div style="display:flex; flex-direction:column; height:100%; overflow:hidden;">
+        <div style="display:flex; flex-direction:column; height:100%; overflow:hidden;" :class="{ 'catalog-edit-mode': editMode }">
             <!-- Combinations Modal -->
             <combinations-modal
                 v-if="showCombinationsModal && combinationsProduct"
                 :product="combinationsProduct"
                 :visible="showCombinationsModal"
+                :edit-mode="editMode"
                 @close="showCombinationsModal = false; combinationsProduct = null;"
                 @select="onCombinationSelect"
+                @edit-product="onEditProduct"
                 @print-labels="onPrintLabels"
+            />
+            <product-edit-modal
+                v-if="editItem"
+                :key="editItem.productId + ':' + editItem.attributeId"
+                :product-id="editItem.productId"
+                :attribute-id="editItem.attributeId"
+                :title="editItem.title"
+                @close="editItem = null"
+                @saved="onEditSaved"
+                @notify="onLabelNotify"
             />
             <label-print-modal
                 v-if="labelProduct"
@@ -234,6 +309,12 @@ const CatalogPanel = {
                         <icon name="close" :size="18" />
                     </button>
                 </div>
+                <button v-if="isAdmin" @click="toggleEditMode" :aria-pressed="editMode ? 'true' : 'false'"
+                    class="catalog-edit-toggle" :class="{ 'is-on': editMode }"
+                    :title="editMode ? 'Modo edición activo: pulsa para volver a vender' : 'Modo edición: cambiar stock, EAN o referencia'"
+                    aria-label="Modo edición">
+                    <icon name="note" :size="17" />
+                </button>
                 <button @click="toggleScanToCart" :aria-pressed="scanToCart ? 'true' : 'false'"
                     :title="scanToCart ? 'Escanear y añadir: lo escaneado entra directo en el ticket (pulsa para solo buscar)' : 'Escanear y añadir al ticket'"
                     aria-label="Escanear y añadir al ticket"
@@ -258,6 +339,11 @@ const CatalogPanel = {
                 <button @click="$emit('toggleView')" style="width:40px; height:40px; border-radius:10px; border:1px solid var(--border); background:var(--surface2); cursor:pointer; color:var(--text2); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
                     <icon :name="listView ? 'grid' : 'list'" :size="16" />
                 </button>
+            </div>
+
+            <div v-if="editMode" class="catalog-edit-banner" role="status">
+                <span><strong>Modo edición</strong> · pulsa un artículo para cambiar su stock, EAN o referencia. No se añade nada al ticket.</span>
+                <button type="button" class="tpv-btn" @click="toggleEditMode">Salir</button>
             </div>
 
             <!-- Category tabs: scrollbar, mouse drag, wheel and arrows -->

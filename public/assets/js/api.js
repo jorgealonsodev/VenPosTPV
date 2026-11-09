@@ -94,6 +94,11 @@ const ApiClient = (function () {
         freeItemSettings: () => request('/api/checkout/free-item-settings', { method: 'GET' }),
         couponPreview: (payload) => request('/api/checkout/coupon-preview', { method: 'POST', body: JSON.stringify(payload), queueOnNetworkFailure: false }),
         couponCheckout: (payload) => request('/api/checkout', { method: 'POST', body: JSON.stringify(payload), queueOnNetworkFailure: false }),
+        // «Modo edición» (administrators): never queued offline; a replay could set an
+        // old stock over a newer one, and the editor must see the refusal.
+        catalogSaveOverride: (productId, attributeId, values) => request('/api/catalog/edit/' + encodeURIComponent(productId) + '/' + encodeURIComponent(attributeId) + '/override', { method: 'PUT', body: JSON.stringify(values), queueOnNetworkFailure: false }),
+        catalogResetOverride: (productId, attributeId) => request('/api/catalog/edit/' + encodeURIComponent(productId) + '/' + encodeURIComponent(attributeId) + '/override', { method: 'DELETE', queueOnNetworkFailure: false }),
+        catalogSetStock: (productId, attributeId, quantity) => request('/api/catalog/edit/' + encodeURIComponent(productId) + '/' + encodeURIComponent(attributeId) + '/stock', { method: 'PUT', body: JSON.stringify({ quantity }), queueOnNetworkFailure: false }),
         createCoupon: (payload) => request('/api/coupons', { method: 'POST', body: JSON.stringify(payload), queueOnNetworkFailure: false }),
         // The slip of a created coupon (its local id): printing and email are never
         // queued offline, a replay would print or send it again; the PDF opens like the ticket PDFs.
