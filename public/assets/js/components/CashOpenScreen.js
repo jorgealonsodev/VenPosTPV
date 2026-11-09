@@ -68,7 +68,9 @@ const CashOpenScreen = {
             }
         }
 
-        return { session, amount, quick, setAmount, confirm, showSettings, handleLogout, handleThemeToggle, openDrawer, drawerStatus, drawerWarn };
+        const brandBase = ((typeof window !== 'undefined' && window.TPV_BASE) || '') + '/assets/img/brand';
+
+        return { brandBase, session, amount, quick, setAmount, confirm, showSettings, handleLogout, handleThemeToggle, openDrawer, drawerStatus, drawerWarn };
     },
     template: `
         <div style="width:100%; height:100%; background:var(--bg); display:flex; align-items:center; justify-content:center;">
@@ -91,6 +93,7 @@ const CashOpenScreen = {
             <!-- Settings Modal -->
             <settings-modal v-if="showSettings" @close="showSettings = false" />
             <div style="background:var(--surface); border:1px solid var(--border); border-radius:20px; padding:48px; width:420px; display:flex; flex-direction:column; gap:24px;">
+                <div style="line-height:0;"><img class="brand-logo--dark" :src="brandBase + '/venpostpv-logo-dark.svg'" alt="VenPosTPV" style="height:36px; width:auto;"><img class="brand-logo--light" :src="brandBase + '/venpostpv-logo.svg'" alt="VenPosTPV" style="height:36px; width:auto;"></div>
                 <div>
                     <div style="font-size:11px; color:var(--text3); letter-spacing:0.12em; text-transform:uppercase; margin-bottom:6px;">Apertura de caja</div>
                     <div style="font-size:22px; font-weight:600;">Buenos días, {{ (cashierName || 'Cajero').split(' ')[0] }}</div>

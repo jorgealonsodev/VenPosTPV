@@ -26,10 +26,7 @@ function h(string $s): string
 
 function page(string $title, string $body): never
 {
-    // Same palette and type as the POS (assets/css/app.css); the mark is docs/brand/venpostpv-mark.svg.
-    $mark = '<svg viewBox="0 0 64 64" width="40" height="40" aria-hidden="true">'
-        . '<path d="M2 15a13 13 0 0 1 13-13h34a13 13 0 0 1 13 13v41l-5 5-5-5-5 5-5-5-5 5-5-5-5 5-5-5-5 5-5-5-5 5-5-5z" fill="var(--brand)"/>'
-        . '<path d="M14 13h10.5l7.5 23 7.5-23H50L37.5 48h-11z" fill="#fff"/></svg>';
+    // Same palette and type as the POS (assets/css/app.css); the logo is public/assets/img/brand.
     echo '<!doctype html><html lang="es"><head><meta charset="utf-8">'
         . '<meta name="viewport" content="width=device-width, initial-scale=1">'
         . '<meta name="color-scheme" content="light dark">'
@@ -51,7 +48,7 @@ function page(string $title, string $body): never
         . 'body{margin:0;padding:40px 16px 64px;font:400 15px/1.55 "IBM Plex Sans",system-ui,sans-serif}'
         . '::selection{background:oklch(60% 0.17 145 / .3)}'
         . '.brand{max-width:720px;margin:0 auto 20px;display:flex;align-items:center;gap:12px;font-weight:700;font-size:19px;letter-spacing:-.01em}'
-        . '.brand svg{flex:none;display:block}.brand b{color:var(--brand-text);font-weight:700}'
+        . '.brand svg,.brand img{flex:none;display:block;height:40px;width:auto}.brand b{color:var(--brand-text);font-weight:700}'
         . 'main{max-width:720px;margin:0 auto;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:32px 36px 36px;box-shadow:var(--shadow)}'
         . 'h1{font-size:24px;line-height:1.25;letter-spacing:-.015em;margin:0 0 20px;text-wrap:balance}'
         . 'h2{font-size:16px;font-weight:600;margin:36px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--border)}'
@@ -76,7 +73,8 @@ function page(string $title, string $body): never
         . 'pre{padding:10px;overflow-x:auto;white-space:pre-wrap;word-break:break-all}'
         . '@media (max-width:600px){body{padding:20px 12px 40px}main{padding:22px 18px 26px;border-radius:12px}h1{font-size:21px}.row{flex-direction:column;gap:0}.row>.narrow{flex:auto}button{width:100%}}'
         . '@media (prefers-reduced-motion:reduce){*{transition:none!important}}'
-        . '</style></head><body><header class="brand">' . $mark . '<span>VenPos<b>TPV</b></span></header>'
+        . '</style></head><body><header class="brand"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/img/brand/venpostpv-logo-dark.svg">'
+        . '<img src="assets/img/brand/venpostpv-logo.svg" alt="VenPosTPV" height="40"></picture></header>'
         . '<main><h1>' . h($title) . '</h1>' . $body . '</main></body></html>';
     exit;
 }
