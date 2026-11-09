@@ -25,12 +25,24 @@ if (!class_exists('Tools', false)) {
 if (!class_exists('Configuration', false)) {
     class Configuration
     {
+        /** This request's static cache: what get() answers. */
         public static array $values = [];
-        public static function updateValue(string $key, mixed $value, bool $html = false, int $idShopGroup = 0, int $idShop = 0): bool { self::$values[$key] = $value; return true; }
+        /**
+         * The configuration table every request shares. A test can model another
+         * request by giving $values a snapshot taken earlier: that stale cache
+         * keeps keys this store has since lost, as in a real shop.
+         */
+        public static array $db = [];
+        public static function updateValue(string $key, mixed $value, bool $html = false, int $idShopGroup = 0, int $idShop = 0): bool { self::$values[$key] = $value; self::$db[$key] = $value; return true; }
         public static function get(string $key, int $idLang = 0, int $idShopGroup = 0, int $idShop = 0, mixed $default = false): mixed { return self::$values[$key] ?? $default; }
-        public static function deleteByName(string $key): bool { unset(self::$values[$key]); return true; }
-        /** Native: reloads every value from the database (a no-op here). */
-        public static function loadConfiguration(): void {}
+        public static function deleteByName(string $key): bool { unset(self::$values[$key], self::$db[$key]); return true; }
+        /**
+         * Native (PrestaShop 9.2): merges the table rows into the static cache and
+         * never drops a cached key whose row another request deleted.
+         */
+        public static function loadConfiguration(): void { self::$values = array_replace(self::$values, self::$db); }
+        /** The id_configuration the fake table gives a key. */
+        public static function idOf(string $key): int { return crc32($key) & 0x7FFFFFFF; }
     }
 }
 
@@ -157,11 +169,44 @@ if (!class_exists('Db', false)) {
         /** What a SELECT on webservice_permission answers. */
         public static array $permissionRows = [];
         public function insert(string $table, array $data, bool $nullValues = false, bool $useCache = true, int $type = 1): bool { self::$inserted[] = ['table' => $table, 'data' => $data]; return true; }
+        /** @var list<array{sql: string, use_cache: bool}> getRow() calls on the configuration table */
+        public static array $configurationReads = [];
+        /** A configuration row comes from Configuration::$db, never from the static cache. */
+        public function getRow(string $sql, bool $useCache = true): array|false
+        {
+            if (preg_match("/FROM `?" . _DB_PREFIX_ . "configuration`? .*`?name`? = '([^']+)'/s", $sql, $matches)) {
+                self::$configurationReads[] = ['sql' => $sql, 'use_cache' => $useCache];
+                $key = stripslashes($matches[1]);
+                return array_key_exists($key, Configuration::$db)
+                    ? ['id_configuration' => (string) Configuration::idOf($key), 'value' => Configuration::$db[$key]]
+                    : false;
+            }
+            return false;
+        }
+        /** An update by id_configuration changes the table row only, like a real UPDATE. */
+        public function update(string $table, array $data, string $where = '', int $limit = 0, bool $nullValues = false, bool $useCache = true, bool $addPrefix = true): bool
+        {
+            if ($table === 'configuration' && preg_match('/`?id_configuration`? = (\d+)/', $where, $matches)) {
+                foreach (array_keys(Configuration::$db) as $key) {
+                    if (Configuration::idOf((string) $key) === (int) $matches[1]) {
+                        Configuration::$db[$key] = $data['value'];
+                    }
+                }
+            }
+            return true;
+        }
     }
 }
 
 if (!class_exists('Shop', false)) {
-    class Shop { public int $id; public function __construct(int $id = 0) { $this->id = $id; } }
+    class Shop
+    {
+        public int $id;
+        public function __construct(int $id = 0) { $this->id = $id; }
+        /** Native: null without multistore when asked for the null value. */
+        public static function getContextShopID(bool $nullValueWithoutMultishop = false): ?int { return null; }
+        public static function getContextShopGroupID(bool $nullValueWithoutMultishop = false): ?int { return null; }
+    }
 }
 if (!class_exists('Customer', false)) {
     class Customer

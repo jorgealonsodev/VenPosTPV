@@ -12,7 +12,7 @@ El TPV y la tienda se intercambian solos las claves y las direcciones. El códig
 
 ### Qué hace el emparejamiento
 
-`POST /module/tpvconnect/pair` `{"code": "123456", "tpv_url": "https://tpv.tutienda.com"}`, solo por HTTPS (salvo `localhost`):
+`POST /module/tpvconnect/pair` `{"code": "123456", "tpv_url": "https://tpv.tutienda.com"}`, solo por HTTPS (salvo desde la propia máquina de la tienda, o en una tienda de pruebas cuyo dominio es `localhost` desde su red privada; la cabecera `Host` y el `X-Forwarded-Proto` de un cliente remoto no cuentan):
 
 - activa el webservice de PrestaShop si estaba apagado;
 - usa la clave del webservice del TPV (`TPVCONNECT_WS_KEY_ID`) si existe, sin cambiar su valor, la activa y le añade los permisos que le falten; si no hay, crea una;
@@ -20,7 +20,7 @@ El TPV y la tienda se intercambian solos las claves y las direcciones. El códig
 - guarda la dirección del TPV (`TPVCONNECT_URL`);
 - responde la clave, el secreto SSO (que también firma las llamadas del TPV a `orders`, `refunds`, `restock`, `orderlookup` y `freeitem`), el id de la tienda, su moneda, su zona horaria y la versión del módulo.
 
-Un código equivocado, caducado, ya usado o inexistente recibe siempre la misma respuesta (`403 {"error": "invalid_code"}`). El código solo se guarda como hash, con su caducidad y el número de intentos. Las respuestas no se guardan en ninguna caché (`Cache-Control: no-store`). **Parámetros avanzados → Registros** anota cada código generado, cada emparejamiento (dirección del TPV, IP, clave creada o reutilizada) y cada código anulado, nunca el código ni las claves.
+Un código equivocado, caducado, ya usado o inexistente recibe siempre la misma respuesta (`403 {"error": "invalid_code"}`). El código solo se guarda como hash, con su caducidad y el número de intentos. Las respuestas no se guardan en ninguna caché (`Cache-Control: no-store`). **Parámetros avanzados → Registros** anota cada código generado, cada emparejamiento (dirección del TPV y la que tenía antes, IP, clave creada o reutilizada) y cada código anulado, nunca el código ni las claves.
 
 ## Configuración manual
 

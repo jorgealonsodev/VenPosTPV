@@ -244,7 +244,11 @@ class Tpvconnect extends PaymentModule
     private function showPairingCode(): string
     {
         $employee = $this->context->employee;
-        $issued = $this->issuePairingCode($employee instanceof Employee ? (int) $employee->id : 0);
+        try {
+            $issued = $this->issuePairingCode($employee instanceof Employee ? (int) $employee->id : 0);
+        } catch (TpvPairingException $e) {
+            return $this->displayError($this->l('Se está emparejando un TPV en este momento. Vuelve a pulsar el botón en unos segundos.'));
+        }
         $code = $issued['code'];
 
         return $this->displayConfirmation(sprintf(

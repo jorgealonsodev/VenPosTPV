@@ -85,6 +85,12 @@ class PsTpvPairingShop implements TpvPairingShop
  * invalidate it, so guessing 1 in 1 000 000 five times is all an attacker gets
  * per code an administrator issues. Every refusal answers the same error, so
  * nobody learns whether a code exists.
+ *
+ * Every read and write of the code, its expiry and its attempt counter happens
+ * under one MySQL lock, and redeem() reads them straight from the configuration
+ * table: Configuration::get() answers this request's static cache, and in
+ * PrestaShop 9.2 Configuration::loadConfiguration() only merges rows into it, so
+ * a code another request used or cancelled would still be there.
  */
 final class TpvPairing
 {
@@ -115,6 +121,8 @@ final class TpvPairing
      * A fresh code (CSPRNG) that replaces any previous one.
      *
      * @return array{code: string, expires_at: int}
+     *
+     * @throws TpvPairingException busy (503) when a redeem holds the lock too long
      */
     public function issueCode(int $employeeId = 0): array
     {
@@ -122,9 +130,19 @@ final class TpvPairing
         $salt = bin2hex(random_bytes(16));
         $expiresAt = ($this->clock)() + self::CODE_TTL_SECONDS;
 
-        Configuration::updateValue(self::CONFIG_CODE, $salt . ':' . self::hash($salt, $code));
-        Configuration::updateValue(self::CONFIG_EXPIRES, (string) $expiresAt);
-        Configuration::updateValue(self::CONFIG_ATTEMPTS, '0');
+        if (!$this->acquireLock()) {
+            throw new TpvPairingException('busy', 503);
+        }
+        try {
+            // updateValue() decides between UPDATE and INSERT from the static
+            // cache; deleting first resets that cache, so the rows are inserted.
+            $this->clearCode();
+            Configuration::updateValue(self::CONFIG_CODE, $salt . ':' . self::hash($salt, $code));
+            Configuration::updateValue(self::CONFIG_EXPIRES, (string) $expiresAt);
+            Configuration::updateValue(self::CONFIG_ATTEMPTS, '0');
+        } finally {
+            $this->releaseLock();
+        }
         self::log(sprintf('TPV Connect: pairing code issued by employee %d, valid until %s.', $employeeId, gmdate('Y-m-d H:i:s', $expiresAt) . ' UTC'), 1);
 
         return ['code' => $code, 'expires_at' => $expiresAt];
@@ -153,26 +171,24 @@ final class TpvPairing
             throw new TpvPairingException('busy', 503);
         }
         try {
-            // Another request may have used or counted the code since this one
-            // loaded the configuration: read it again under the lock.
-            if (method_exists('Configuration', 'loadConfiguration')) {
-                Configuration::loadConfiguration();
-            }
             $this->consume((string) $given, $clientIp);
 
             $key = $this->ensureWebserviceKey();
             $secret = $this->ensureSsoSecret();
+            $previousRow = self::readConfigurationRow('TPVCONNECT_URL');
+            $previousUrl = $previousRow === null ? '' : $previousRow['value'];
             Configuration::updateValue('TPVCONNECT_URL', $tpvUrl);
         } finally {
             $this->releaseLock();
         }
 
         self::log(sprintf(
-            'TPV Connect: TPV %s paired from IP %s (webservice key id %d %s).',
+            'TPV Connect: TPV %s paired from IP %s (webservice key id %d %s; previous TPV address %s).',
             $tpvUrl,
             $clientIp,
             $key['id'],
-            $key['created'] ? 'created' : 'reused'
+            $key['created'] ? 'created' : 'reused',
+            $previousUrl === '' ? 'none' : $previousUrl
         ), 1);
 
         return [
@@ -193,7 +209,9 @@ final class TpvPairing
     public static function normalizeTpvUrl(string $url): ?string
     {
         $url = rtrim(trim($url), '/');
-        if ($url === '' || strlen($url) > 255 || preg_match('/[\x00-\x20\x7F]/', $url) === 1
+        // No whitespace, control, non-ASCII, quote, angle bracket or backtick
+        // anywhere: the address ends up in .env files, HTML and logs.
+        if ($url === '' || strlen($url) > 255 || preg_match('/[^\x21-\x7E]|[\'"<>`]/', $url) === 1
             || filter_var($url, FILTER_VALIDATE_URL) === false) {
             return null;
         }
@@ -210,15 +228,46 @@ final class TpvPairing
         return null;
     }
 
-    /** The code and the keys only travel over HTTPS, except on a local test shop. */
-    public static function isRequestAllowed(bool $https, string $hostHeader): bool
+    /**
+     * The code and the keys only travel over HTTPS. The decision uses what the
+     * web server knows, never the client's Host header:
+     * - TLS this web server terminated (HTTPS, SSL or REDIRECT_HTTPS on);
+     * - a client on this machine (REMOTE_ADDR 127.0.0.1 or ::1); when it is a
+     *   reverse proxy (X-Forwarded-* or Forwarded present), only if it says the
+     *   client used HTTPS. X-Forwarded-Proto and HTTP_SSL are trusted from it only;
+     * - a local test shop (its own configured domain is localhost) reached from a
+     *   private network, such as a Docker shop seen from its host.
+     *
+     * @param array<string, mixed> $server $_SERVER
+     */
+    public static function isRequestAllowed(array $server, string $shopDomain): bool
     {
-        if ($https) {
-            return true;
+        foreach (['HTTPS', 'SSL', 'REDIRECT_HTTPS'] as $variable) {
+            if (self::isOn($server[$variable] ?? null)) {
+                return true;
+            }
         }
-        $host = strtolower((string) parse_url('http://' . $hostHeader, PHP_URL_HOST));
 
-        return self::isLocalHost($host);
+        $remoteAddr = (string) ($server['REMOTE_ADDR'] ?? '');
+        if (in_array($remoteAddr, ['127.0.0.1', '::1'], true)) {
+            $proxied = isset($server['HTTP_X_FORWARDED_FOR']) || isset($server['HTTP_X_FORWARDED_PROTO'])
+                || isset($server['HTTP_FORWARDED']) || isset($server['HTTP_SSL']);
+
+            return !$proxied
+                || strtolower(trim((string) ($server['HTTP_X_FORWARDED_PROTO'] ?? ''))) === 'https'
+                || self::isOn($server['HTTP_SSL'] ?? null);
+        }
+
+        $shopHost = strtolower((string) parse_url('http://' . $shopDomain, PHP_URL_HOST));
+
+        return self::isLocalHost($shopHost)
+            && filter_var($remoteAddr, FILTER_VALIDATE_IP) !== false
+            && filter_var($remoteAddr, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE) === false;
+    }
+
+    private static function isOn(mixed $value): bool
+    {
+        return is_scalar($value) && in_array(strtolower((string) $value), ['1', 'on'], true);
     }
 
     private static function isLocalHost(string $host): bool
@@ -226,13 +275,20 @@ final class TpvPairing
         return in_array($host, ['localhost', '127.0.0.1', '[::1]'], true);
     }
 
-    /** @throws TpvPairingException when there is no valid code or it does not match */
+    /**
+     * Checks the code against the configuration table (never the static cache)
+     * and, under the caller's lock, either consumes it or counts the attempt.
+     *
+     * @throws TpvPairingException when there is no valid code or it does not match
+     */
     private function consume(string $given, string $clientIp): void
     {
-        $stored = (string) Configuration::get(self::CONFIG_CODE);
-        $expiresAt = (int) Configuration::get(self::CONFIG_EXPIRES);
-        $parts = explode(':', $stored);
-        if (count($parts) !== 2 || $expiresAt <= ($this->clock)()) {
+        $codeRow = self::readConfigurationRow(self::CONFIG_CODE);
+        $expiresRow = self::readConfigurationRow(self::CONFIG_EXPIRES);
+        $attemptsRow = self::readConfigurationRow(self::CONFIG_ATTEMPTS);
+        $parts = explode(':', $codeRow === null ? '' : $codeRow['value']);
+        if (count($parts) !== 2 || $expiresRow === null || $attemptsRow === null
+            || (int) $expiresRow['value'] <= ($this->clock)()) {
             $this->clearCode();
             throw new TpvPairingException('invalid_code', 403);
         }
@@ -245,14 +301,55 @@ final class TpvPairing
             return;
         }
 
-        $attempts = (int) Configuration::get(self::CONFIG_ATTEMPTS) + 1;
-        if ($attempts >= self::MAX_ATTEMPTS) {
+        $attempts = (int) $attemptsRow['value'] + 1;
+        if ($attempts >= self::MAX_ATTEMPTS || !self::writeConfigurationRow($attemptsRow['id'], (string) $attempts)) {
             $this->clearCode();
             self::log(sprintf('TPV Connect: pairing code invalidated after %d wrong attempts (last from IP %s).', $attempts, $clientIp), 2);
-        } else {
-            Configuration::updateValue(self::CONFIG_ATTEMPTS, (string) $attempts);
         }
         throw new TpvPairingException('invalid_code', 403);
+    }
+
+    /**
+     * The configuration row Configuration::get() would answer in this shop
+     * context (shop, then group, then global; the context updateValue() writes
+     * in), read from the table past the SQL cache.
+     *
+     * @return array{id: int, value: string}|null
+     */
+    private static function readConfigurationRow(string $key): ?array
+    {
+        $idShop = (int) Shop::getContextShopID(true);
+        $idShopGroup = (int) Shop::getContextShopGroupID(true);
+        $scopes = ['((`id_shop_group` IS NULL OR `id_shop_group` = 0) AND (`id_shop` IS NULL OR `id_shop` = 0))'];
+        if ($idShopGroup > 0) {
+            $scopes[] = '(`id_shop_group` = ' . $idShopGroup . ' AND (`id_shop` IS NULL OR `id_shop` = 0))';
+        }
+        if ($idShop > 0) {
+            $scopes[] = '`id_shop` = ' . $idShop;
+        }
+
+        $row = Db::getInstance()->getRow(
+            'SELECT `id_configuration`, `value` FROM `' . _DB_PREFIX_ . 'configuration`'
+            . " WHERE `name` = '" . pSQL($key) . "' AND (" . implode(' OR ', $scopes) . ')'
+            . ' ORDER BY `id_shop` DESC, `id_shop_group` DESC',
+            false
+        );
+        if (!is_array($row) || !isset($row['id_configuration'])) {
+            return null;
+        }
+
+        return ['id' => (int) $row['id_configuration'], 'value' => (string) ($row['value'] ?? '')];
+    }
+
+    /** Writes the row read under the lock by its id; updateValue() would trust the cache. */
+    private static function writeConfigurationRow(int $id, string $value): bool
+    {
+        return (bool) Db::getInstance()->update(
+            'configuration',
+            ['value' => pSQL($value), 'date_upd' => date('Y-m-d H:i:s')],
+            '`id_configuration` = ' . $id,
+            1
+        );
     }
 
     private function clearCode(): void

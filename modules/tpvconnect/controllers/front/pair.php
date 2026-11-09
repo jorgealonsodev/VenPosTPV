@@ -33,7 +33,9 @@ class TpvconnectPairModuleFrontController extends ModuleFrontController
             $this->jsonResponse(['error' => 'method_not_allowed'], 405);
         }
 
-        if (!TpvPairing::isRequestAllowed(Tools::usingSecureMode(), (string) ($_SERVER['HTTP_HOST'] ?? ''))) {
+        // Decided from REMOTE_ADDR and the shop's own domain: the Host header and
+        // X-Forwarded-Proto of a remote client are whatever it wants them to be.
+        if (!TpvPairing::isRequestAllowed($_SERVER, (string) (Context::getContext()->shop->domain ?? ''))) {
             $this->jsonResponse(['error' => 'https_required'], 403);
         }
 

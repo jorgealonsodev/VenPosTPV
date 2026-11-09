@@ -21,6 +21,8 @@ final class PairingTest extends TestCase
     protected function setUp(): void
     {
         \Configuration::$values = ['TPVCONNECT_SSO_SECRET' => str_repeat('s', 64), 'TPVCONNECT_WS_KEY_ID' => '0', 'TPVCONNECT_URL' => '', 'PS_WEBSERVICE' => '1'];
+        \Configuration::$db = \Configuration::$values;
+        \Db::$configurationReads = [];
         \WebserviceKey::$keys = [];
         \PrestaShopLogger::$logs = [];
         \Db::$inserted = [];
@@ -146,7 +148,7 @@ final class PairingTest extends TestCase
 
         for ($i = 1; $i <= 4; ++$i) {
             self::assertSame([403, 'invalid_code'], $this->errorOf(fn () => $this->redeem($wrong)));
-            self::assertSame($i, (int) \Configuration::$values[\TpvPairing::CONFIG_ATTEMPTS]);
+            self::assertSame($i, (int) \Configuration::$db[\TpvPairing::CONFIG_ATTEMPTS]);
         }
         // A malformed code is a wrong attempt too.
         self::assertSame([403, 'invalid_code'], $this->errorOf(fn () => $this->redeem('abc')));
@@ -168,7 +170,7 @@ final class PairingTest extends TestCase
     public function test_an_existing_key_is_reused_not_rotated_and_gets_the_full_permissions(): void
     {
         \WebserviceKey::$keys = [12 => ['key' => 'EXISTINGKEY0000000000000000000AB', 'active' => false, 'description' => 'TPV Connect API Key']];
-        \Configuration::$values['TPVCONNECT_WS_KEY_ID'] = '12';
+        \Configuration::$values['TPVCONNECT_WS_KEY_ID'] = \Configuration::$db['TPVCONNECT_WS_KEY_ID'] = '12';
         \Db::$permissionRows = [['resource' => 'products', 'method' => 'GET']];
         $code = $this->pairing()->issueCode()['code'];
 
@@ -186,7 +188,7 @@ final class PairingTest extends TestCase
 
     public function test_a_stale_key_id_gets_a_new_key_with_every_permission(): void
     {
-        \Configuration::$values['TPVCONNECT_WS_KEY_ID'] = '99';
+        \Configuration::$values['TPVCONNECT_WS_KEY_ID'] = \Configuration::$db['TPVCONNECT_WS_KEY_ID'] = '99';
         $code = $this->pairing()->issueCode()['code'];
 
         $response = $this->redeem($code);
@@ -199,7 +201,7 @@ final class PairingTest extends TestCase
 
     public function test_the_webservice_is_enabled_when_it_was_off(): void
     {
-        \Configuration::$values['PS_WEBSERVICE'] = '0';
+        \Configuration::$values['PS_WEBSERVICE'] = \Configuration::$db['PS_WEBSERVICE'] = '0';
         $code = $this->pairing()->issueCode()['code'];
 
         $this->redeem($code);
@@ -209,7 +211,7 @@ final class PairingTest extends TestCase
 
     public function test_the_sso_secret_is_created_when_missing_and_never_rotated(): void
     {
-        \Configuration::$values['TPVCONNECT_SSO_SECRET'] = '';
+        \Configuration::$values['TPVCONNECT_SSO_SECRET'] = \Configuration::$db['TPVCONNECT_SSO_SECRET'] = '';
         $code = $this->pairing()->issueCode()['code'];
         $secret = $this->redeem($code)['sso_secret'];
         self::assertMatchesRegularExpression('/^[0-9a-f]{64}$/', $secret);
@@ -221,7 +223,9 @@ final class PairingTest extends TestCase
 
     public function test_the_tpv_url_must_be_https_except_localhost(): void
     {
-        foreach (['http://tpv.example.com', 'ftp://tpv.example.com', 'tpv.example.com', '', 'https://user:pw@tpv.example.com', 'https://tpv.example.com/?a=1', 'https://tpv.example.com/#x', "https://tpv.example.com/\nX"] as $bad) {
+        foreach (['http://tpv.example.com', 'ftp://tpv.example.com', 'tpv.example.com', '', 'https://user:pw@tpv.example.com', 'https://tpv.example.com/?a=1', 'https://tpv.example.com/#x', "https://tpv.example.com/\nX",
+            "https://tpv.example.com/a'b", 'https://tpv.example.com/a"b', 'https://tpv.example.com/<b>', 'https://tpv.example.com/a>b', 'https://tpv.example.com/a`b',
+            "https://tpv.example.com/a\tb", 'https://tpv.example.com/a b', "https://tpv.exam\x01ple.com", "https://tpv.example.com/\x7F", "https://tpv.example.com/a\u{00A0}b", "https://tpv.example.com:443'/"] as $bad) {
             self::assertNull(\TpvPairing::normalizeTpvUrl($bad), $bad);
         }
         self::assertSame('https://tpv.example.com/tpv', \TpvPairing::normalizeTpvUrl('https://tpv.example.com/tpv/'));
@@ -238,13 +242,116 @@ final class PairingTest extends TestCase
         self::assertSame('0.8.0', $this->redeem($code)['module_version']);
     }
 
-    public function test_only_https_requests_are_accepted_except_on_localhost(): void
+    public function test_only_https_requests_are_accepted_except_from_this_machine(): void
     {
-        self::assertTrue(\TpvPairing::isRequestAllowed(true, 'shop.example.com'));
-        self::assertFalse(\TpvPairing::isRequestAllowed(false, 'shop.example.com'));
-        self::assertTrue(\TpvPairing::isRequestAllowed(false, 'localhost:8092'));
-        self::assertTrue(\TpvPairing::isRequestAllowed(false, '127.0.0.1'));
-        self::assertFalse(\TpvPairing::isRequestAllowed(false, 'localhost.evil.test'));
+        $public = 'shop.example.com';
+        self::assertTrue(\TpvPairing::isRequestAllowed(['HTTPS' => 'on', 'REMOTE_ADDR' => '203.0.113.7'], $public));
+        self::assertTrue(\TpvPairing::isRequestAllowed(['HTTPS' => '1', 'REMOTE_ADDR' => '203.0.113.7'], $public));
+        self::assertFalse(\TpvPairing::isRequestAllowed(['HTTPS' => 'off', 'REMOTE_ADDR' => '203.0.113.7'], $public));
+        self::assertFalse(\TpvPairing::isRequestAllowed(['REMOTE_ADDR' => '203.0.113.7'], $public));
+        // A client on this machine, without a proxy in between.
+        self::assertTrue(\TpvPairing::isRequestAllowed(['REMOTE_ADDR' => '127.0.0.1'], $public));
+        self::assertTrue(\TpvPairing::isRequestAllowed(['REMOTE_ADDR' => '::1'], $public));
+    }
+
+    public function test_the_host_header_and_forwarded_headers_of_a_remote_client_are_not_trusted(): void
+    {
+        $public = 'shop.example.com';
+        foreach ([
+            ['REMOTE_ADDR' => '203.0.113.7', 'HTTP_HOST' => 'localhost'],
+            ['REMOTE_ADDR' => '203.0.113.7', 'HTTP_HOST' => '127.0.0.1:8092'],
+            ['REMOTE_ADDR' => '203.0.113.7', 'HTTP_X_FORWARDED_PROTO' => 'https'],
+            ['REMOTE_ADDR' => '203.0.113.7', 'HTTP_SSL' => 'on'],
+            ['REMOTE_ADDR' => '10.0.0.5', 'HTTP_X_FORWARDED_PROTO' => 'https'],
+            ['HTTP_HOST' => 'localhost'],
+        ] as $server) {
+            self::assertFalse(\TpvPairing::isRequestAllowed($server, $public), json_encode($server));
+        }
+    }
+
+    public function test_a_reverse_proxy_on_this_machine_must_say_the_client_used_https(): void
+    {
+        $public = 'shop.example.com';
+        self::assertTrue(\TpvPairing::isRequestAllowed(['REMOTE_ADDR' => '127.0.0.1', 'HTTP_X_FORWARDED_FOR' => '203.0.113.7', 'HTTP_X_FORWARDED_PROTO' => 'https'], $public));
+        self::assertFalse(\TpvPairing::isRequestAllowed(['REMOTE_ADDR' => '127.0.0.1', 'HTTP_X_FORWARDED_FOR' => '203.0.113.7', 'HTTP_X_FORWARDED_PROTO' => 'http'], $public));
+        self::assertFalse(\TpvPairing::isRequestAllowed(['REMOTE_ADDR' => '127.0.0.1', 'HTTP_X_FORWARDED_FOR' => '203.0.113.7'], $public));
+    }
+
+    public function test_a_local_test_shop_accepts_http_from_its_private_network_only(): void
+    {
+        // A Docker shop configured as localhost:8092 sees the host as 172.x.0.1.
+        self::assertTrue(\TpvPairing::isRequestAllowed(['REMOTE_ADDR' => '172.26.0.1', 'HTTP_HOST' => 'localhost:8092'], 'localhost:8092'));
+        self::assertTrue(\TpvPairing::isRequestAllowed(['REMOTE_ADDR' => '192.168.1.20'], '127.0.0.1'));
+        self::assertFalse(\TpvPairing::isRequestAllowed(['REMOTE_ADDR' => '203.0.113.7'], 'localhost:8092'));
+        self::assertFalse(\TpvPairing::isRequestAllowed(['REMOTE_ADDR' => '172.26.0.1', 'HTTP_HOST' => 'localhost:8092'], 'shop.example.com'));
+        self::assertFalse(\TpvPairing::isRequestAllowed(['REMOTE_ADDR' => '172.26.0.1'], 'localhost.evil.test'));
+    }
+
+    public function test_a_code_another_request_used_is_refused_even_from_a_stale_cache(): void
+    {
+        $code = $this->pairing()->issueCode()['code'];
+        // A second request loaded the configuration before the first one used the code.
+        $staleCache = \Configuration::$values;
+
+        $this->redeem($code);
+        \Configuration::$values = $staleCache;
+
+        self::assertSame([403, 'invalid_code'], $this->errorOf(fn () => $this->redeem($code)));
+        self::assertSame(1, \count(\PrestaShopLogger::$logs) - 1, 'only one pairing is logged');
+        foreach (\Db::$configurationReads as $read) {
+            self::assertFalse($read['use_cache'], 'the code is read past the SQL cache');
+        }
+    }
+
+    public function test_wrong_codes_from_stale_caches_are_checked_five_times_at_most(): void
+    {
+        $code = $this->pairing()->issueCode()['code'];
+        $wrong = $code === '000000' ? '000001' : '000000';
+        // Every request loaded the configuration before any of them counted an attempt.
+        $staleCache = \Configuration::$values;
+
+        for ($i = 1; $i <= 12; ++$i) {
+            \Configuration::$values = $staleCache;
+            self::assertSame([403, 'invalid_code'], $this->errorOf(fn () => $this->redeem($wrong)));
+            if ($i < 5) {
+                self::assertSame($i, (int) \Configuration::$db[\TpvPairing::CONFIG_ATTEMPTS]);
+            }
+        }
+        \Configuration::$values = $staleCache;
+
+        self::assertSame([403, 'invalid_code'], $this->errorOf(fn () => $this->redeem($code)), 'the right code no longer works');
+        self::assertSame([], \WebserviceKey::$keys);
+        $invalidated = array_filter(\PrestaShopLogger::$logs, static fn (array $log): bool => str_contains($log['message'], 'invalidated'));
+        self::assertCount(1, $invalidated);
+        self::assertStringContainsString('after 5 wrong attempts', (string) reset($invalidated)['message']);
+    }
+
+    public function test_issuing_a_code_waits_for_the_pairing_lock(): void
+    {
+        \CouponTestState::$heldLocks['tpvconnect_pair'] = true;
+
+        self::assertSame([503, 'busy'], $this->errorOf(fn () => $this->pairing()->issueCode()));
+        self::assertArrayNotHasKey(\TpvPairing::CONFIG_CODE, \Configuration::$db);
+    }
+
+    public function test_re_pairing_logs_the_previous_tpv_address(): void
+    {
+        \Configuration::$values['TPVCONNECT_URL'] = 'https://old-tpv.example.com';
+        \Configuration::$db['TPVCONNECT_URL'] = 'https://old-tpv.example.com';
+        $code = $this->pairing()->issueCode()['code'];
+
+        $this->redeem($code, 'https://new-tpv.example.com');
+
+        $last = end(\PrestaShopLogger::$logs);
+        self::assertStringContainsString('https://new-tpv.example.com', $last['message']);
+        self::assertStringContainsString('previous TPV address https://old-tpv.example.com', $last['message']);
+    }
+
+    public function test_a_first_pairing_says_there_was_no_previous_tpv_address(): void
+    {
+        $this->redeem($this->pairing()->issueCode()['code']);
+
+        self::assertStringContainsString('previous TPV address none', end(\PrestaShopLogger::$logs)['message']);
     }
 
     public function test_a_busy_lock_refuses_without_touching_the_code(): void
@@ -300,6 +407,9 @@ final class PairingTest extends TestCase
         self::assertStringContainsString("'Cache-Control: no-store'", $source);
         self::assertStringContainsString('TpvPairing::isRequestAllowed', $source);
         self::assertStringContainsString("REMOTE_ADDR", $source);
+        self::assertStringContainsString('TpvPairing::isRequestAllowed($_SERVER', $source);
+        self::assertStringNotContainsString('HTTP_HOST', $source, 'the Host header is the client\'s to choose');
+        self::assertStringNotContainsString('usingSecureMode', $source, 'it trusts X-Forwarded-Proto from anyone');
         self::assertStringNotContainsString('HTTP_X_FORWARDED_FOR', $source, 'throttling must not trust a spoofable header');
     }
 
