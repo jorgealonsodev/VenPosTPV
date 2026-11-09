@@ -14,6 +14,7 @@ require_once __DIR__ . '/install/install.php';
 require_once __DIR__ . '/classes/SsoToken.php';
 require_once __DIR__ . '/classes/ReferencedOrderCreator.php';
 require_once __DIR__ . '/classes/FreeItemOrderLines.php';
+require_once __DIR__ . '/classes/TpvPairing.php';
 
 class Tpvconnect extends PaymentModule
 {
@@ -21,7 +22,7 @@ class Tpvconnect extends PaymentModule
     {
         $this->name = 'tpvconnect';
         $this->tab = 'administration';
-        $this->version = '0.7.1';
+        $this->version = '0.8.0';
         $this->author = 'VenPosTPV';
         $this->need_instance = 1;
         $this->bootstrap = true;
@@ -90,16 +91,17 @@ class Tpvconnect extends PaymentModule
             $output .= $this->generateWebserviceKey();
         }
 
-        // Show SSO secret after first install
+        if (Tools::isSubmit('submit_tpvconnect_pair')) {
+            $output .= $this->showPairingCode();
+        }
+
+        // After the first install: pairing exchanges every key, nothing to copy.
         if (Configuration::get('TPVCONNECT_FIRST_INSTALL')) {
-            $secret = Configuration::get('TPVCONNECT_SSO_SECRET');
             $output .= $this->displayConfirmation(
                 sprintf(
-                    '%s<br><br><strong>%s</strong><br><code style="font-size:14px;word-break:break-all">%s</code><br><br>%s',
+                    '%s<br><br>%s',
                     $this->l('¡Módulo instalado correctamente!'),
-                    $this->l('Secreto SSO generado (cópialo ahora — solo se muestra una vez):'),
-                    $secret,
-                    $this->l('Pégalo en el .env de tu TPV como SSO_SHARED_SECRET.')
+                    $this->l('Para conectar el TPV, pulsa «Emparejar con un TPV» y escribe el código y la dirección de la tienda en el instalador del TPV. El TPV y la tienda se intercambian solos las claves.')
                 )
             );
             Configuration::deleteByName('TPVCONNECT_FIRST_INSTALL');
@@ -216,6 +218,48 @@ class Tpvconnect extends PaymentModule
         $token = TpvConnect\SsoToken::generate((int) $employee->id, $shopId, $secret);
 
         return $tpvUrl . '/sso?token=' . urlencode($token);
+    }
+
+    /**
+     * A fresh pairing code (TpvPairing): the configuration page and the CLI use
+     * this same method. The code is returned once and stored only as a hash.
+     *
+     * @return array{code: string, expires_at: int}
+     */
+    public function issuePairingCode(int $employeeId = 0): array
+    {
+        return (new TpvPairing(new TpvConnectInstaller($this), new PsTpvPairingShop(), $this->version))->issueCode($employeeId);
+    }
+
+    /** The shop address to type in the TPV installer next to the code. */
+    public function getPairingShopUrl(): string
+    {
+        return rtrim((new PsTpvPairingShop())->shopUrl(), '/');
+    }
+
+    /**
+     * «Emparejar con un TPV»: shows a new code and the shop address to type in
+     * the TPV installer (or in Ajustes → Acerca de of an installed TPV).
+     */
+    private function showPairingCode(): string
+    {
+        $employee = $this->context->employee;
+        $issued = $this->issuePairingCode($employee instanceof Employee ? (int) $employee->id : 0);
+        $code = $issued['code'];
+
+        return $this->displayConfirmation(sprintf(
+            '<strong>%s</strong><br><br>%s<br><code style="font-size:28px;letter-spacing:6px">%s %s</code><br><br>%s<br><code style="font-size:15px">%s</code><br><br>%s',
+            $this->l('Código de emparejamiento'),
+            $this->l('Escríbelo en el instalador del TPV (o en Ajustes → Acerca de → «Volver a emparejar con la tienda»):'),
+            Tools::htmlentitiesUTF8(substr($code, 0, 3)),
+            Tools::htmlentitiesUTF8(substr($code, 3)),
+            $this->l('Dirección de la tienda:'),
+            Tools::htmlentitiesUTF8($this->getPairingShopUrl()),
+            sprintf(
+                $this->l('Vale 10 minutos (hasta las %s) y una sola vez. Si pulsas otra vez el botón, este código deja de valer.'),
+                date('H:i', $issued['expires_at'])
+            )
+        ));
     }
 
     /**

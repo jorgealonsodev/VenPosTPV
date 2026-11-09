@@ -29,6 +29,8 @@ if (!class_exists('Configuration', false)) {
         public static function updateValue(string $key, mixed $value, bool $html = false, int $idShopGroup = 0, int $idShop = 0): bool { self::$values[$key] = $value; return true; }
         public static function get(string $key, int $idLang = 0, int $idShopGroup = 0, int $idShop = 0, mixed $default = false): mixed { return self::$values[$key] ?? $default; }
         public static function deleteByName(string $key): bool { unset(self::$values[$key]); return true; }
+        /** Native: reloads every value from the database (a no-op here). */
+        public static function loadConfiguration(): void {}
     }
 }
 
@@ -392,6 +394,60 @@ if (!class_exists('Language', false)) {
     class Language { public static function getIdByIso(string $iso): int|false { return $iso === 'es' ? 1 : false; } }
 }
 
+if (!class_exists('WebserviceKey', false)) {
+    /** Webservice keys by id: key value, active flag and description. */
+    class WebserviceKey
+    {
+        /** @var array<int, array{key: string, active: bool, description: string}> */
+        public static array $keys = [];
+        public int $id = 0;
+        public string $key = '';
+        public bool $active = true;
+        public string $description = '';
+        public bool $loaded = false;
+        public function __construct(int $id = 0)
+        {
+            if ($id > 0 && isset(self::$keys[$id])) {
+                $this->id = $id;
+                $this->key = self::$keys[$id]['key'];
+                $this->active = self::$keys[$id]['active'];
+                $this->description = self::$keys[$id]['description'];
+                $this->loaded = true;
+            }
+        }
+        public static function keyExists(string $key): bool
+        {
+            foreach (self::$keys as $row) { if ($row['key'] === $key) { return true; } }
+            return false;
+        }
+        public function add(): bool
+        {
+            if (self::keyExists($this->key)) { return false; }
+            $this->id = (self::$keys === [] ? 100 : max(array_keys(self::$keys))) + 1;
+            self::$keys[$this->id] = ['key' => $this->key, 'active' => (bool) $this->active, 'description' => $this->description];
+            $this->loaded = true;
+            return true;
+        }
+        public function update(): bool
+        {
+            self::$keys[$this->id] = ['key' => $this->key, 'active' => (bool) $this->active, 'description' => $this->description];
+            return true;
+        }
+    }
+}
+if (!class_exists('PrestaShopLogger', false)) {
+    class PrestaShopLogger
+    {
+        /** @var list<array{message: string, severity: int}> */
+        public static array $logs = [];
+        public static function addLog($message, $severity = 1, $errorCode = null, $objectType = null, $objectId = null, $allowDuplicate = false, $idEmployee = null): bool
+        {
+            self::$logs[] = ['message' => (string) $message, 'severity' => (int) $severity];
+            return true;
+        }
+    }
+}
+
 require_once __DIR__ . '/../classes/SsoToken.php';
 require_once __DIR__ . '/../install/install.php';
 require_once __DIR__ . '/../classes/CouponCheckout.php';
@@ -407,7 +463,7 @@ if (is_file(__DIR__ . '/../classes/RestockProcessor.php')) {
 if (is_file(__DIR__ . '/../classes/ReferencedOrderCreator.php')) {
     require_once __DIR__ . '/../classes/ReferencedOrderCreator.php';
 }
-foreach (['FreeItemOrderLines', 'FreeItemProductSetup', 'LeftoverVoucher'] as $class) {
+foreach (['FreeItemOrderLines', 'FreeItemProductSetup', 'LeftoverVoucher', 'TpvPairing'] as $class) {
     if (is_file(__DIR__ . '/../classes/' . $class . '.php')) {
         require_once __DIR__ . '/../classes/' . $class . '.php';
     }

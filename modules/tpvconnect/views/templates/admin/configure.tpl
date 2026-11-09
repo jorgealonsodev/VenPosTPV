@@ -17,6 +17,20 @@
         </div>
     {/if}
 
+    <form class="defaultForm form-horizontal" action="{$current|escape:'html':'UTF-8'}&amp;configure={$module_name|escape:'html':'UTF-8'}&amp;token={$token|escape:'html':'UTF-8'}" method="post">
+        <div class="form-group">
+            <label class="control-label col-lg-3">{l s='Conectar un TPV' mod='tpvconnect'}</label>
+            <div class="col-lg-6">
+                <button type="submit" name="submit_tpvconnect_pair" class="btn btn-primary">
+                    <i class="icon icon-link"></i> {l s='Emparejar con un TPV' mod='tpvconnect'}
+                </button>
+                <p class="help-block">{l s='Muestra un código de 6 cifras y la dirección de la tienda. Escríbelos en el instalador del TPV (o en Ajustes → Acerca de del TPV) y los dos se intercambian solos las claves y las direcciones. El código vale 10 minutos y una sola vez.' mod='tpvconnect'}</p>
+            </div>
+        </div>
+    </form>
+
+    <h4>{l s='Configuración manual' mod='tpvconnect'}</h4>
+    <p class="help-block">{l s='Solo si no puedes emparejar: copia las claves a mano.' mod='tpvconnect'}</p>
     <form class="defaultForm form-horizontal" action="{$current|escape:'html':'UTF-8'}&amp;configure={$module_name|escape:'html':'UTF-8'}&amp;token={$token|escape:'html':'UTF-8'}" method="post" enctype="multipart/form-data">
         <div class="form-wrapper">
             <div class="form-group">
