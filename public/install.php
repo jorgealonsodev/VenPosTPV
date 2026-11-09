@@ -25,6 +25,8 @@ function h(string $s): string
     return htmlspecialchars($s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
+require_once __DIR__ . '/install-logo.php';
+
 function page(string $title, string $body): never
 {
     // Same palette and type as the POS (assets/css/app.css); the logo is public/assets/img/brand.
@@ -49,7 +51,7 @@ function page(string $title, string $body): never
         . 'body{margin:0;padding:40px 16px 64px;font:400 15px/1.55 "IBM Plex Sans",system-ui,sans-serif}'
         . '::selection{background:oklch(60% 0.17 145 / .3)}'
         . '.brand{max-width:720px;margin:0 auto 20px;display:flex;align-items:center;gap:12px;font-weight:700;font-size:19px;letter-spacing:-.01em}'
-        . '.brand svg,.brand img{flex:none;display:block;height:40px;width:auto}.brand b{color:var(--brand-text);font-weight:700}'
+        . '.brand svg{flex:none;display:block;height:40px;width:auto}.logo-dark{display:none}@media (prefers-color-scheme:dark){.logo-light{display:none}.logo-dark{display:block}}.brand b{color:var(--brand-text);font-weight:700}'
         . 'main{max-width:720px;margin:0 auto;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:32px 36px 36px;box-shadow:var(--shadow)}'
         . 'h1{font-size:24px;line-height:1.25;letter-spacing:-.015em;margin:0 0 20px;text-wrap:balance}'
         . 'h2{font-size:16px;font-weight:600;margin:36px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--border)}'
@@ -74,8 +76,7 @@ function page(string $title, string $body): never
         . 'pre{padding:10px;overflow-x:auto;white-space:pre-wrap;word-break:break-all}'
         . '@media (max-width:600px){body{padding:20px 12px 40px}main{padding:22px 18px 26px;border-radius:12px}h1{font-size:21px}.row{flex-direction:column;gap:0}.row>.narrow{flex:auto}button{width:100%}}'
         . '@media (prefers-reduced-motion:reduce){*{transition:none!important}}'
-        . '</style></head><body><header class="brand"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/img/brand/venpostpv-logo-dark.svg">'
-        . '<img src="assets/img/brand/venpostpv-logo.svg" alt="VenPosTPV" height="40"></picture></header>'
+        . '</style></head><body><header class="brand">' . venpostpv_installer_logo(__DIR__) . '</header>'
         . '<main><h1>' . h($title) . '</h1>' . $body . '</main></body></html>';
     exit;
 }
