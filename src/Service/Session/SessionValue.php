@@ -18,4 +18,11 @@ final class SessionValue
 
         return is_numeric($value) ? (int) $value : null;
     }
+
+    public static function string(string $key): ?string
+    {
+        $value = $_SESSION['_sf2_attributes'][$key] ?? $_SESSION[$key] ?? null;
+
+        return \is_string($value) ? $value : null;
+    }
 }

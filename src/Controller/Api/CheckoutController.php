@@ -12,6 +12,8 @@ use Symfony\Component\Routing\Attribute\Route;
 use VenPosTPV\Service\Cash\CashSessionService;
 use VenPosTPV\Service\Cash\Exception\NoOpenCashSessionException;
 use VenPosTPV\Service\Checkout\CheckoutService;
+use VenPosTPV\Service\Checkout\FreeItemSettings;
+use VenPosTPV\Service\Checkout\FreeItemSettingsStore;
 use VenPosTPV\Service\Checkout\Exception\CheckoutException;
 
 #[AsController]
@@ -20,7 +22,21 @@ class CheckoutController
     public function __construct(
         private readonly CheckoutService $checkoutService,
         private readonly CashSessionService $cashSessionService,
+        private readonly ?FreeItemSettingsStore $freeItemSettings = null,
     ) {
+    }
+
+    /** What the sale screen needs to offer a free item (docs/prd/articulo-libre.md, A7, A8). */
+    #[Route('/checkout/free-item-settings', methods: ['GET'])]
+    public function freeItemSettings(Request $request): JsonResponse
+    {
+        $session = $request->getSession();
+        if ($session->get('user_id') === null) {
+            return new JsonResponse(['error' => 'Unauthorized'], Response::HTTP_UNAUTHORIZED);
+        }
+        $settings = $this->freeItemSettings?->load() ?? FreeItemSettings::defaults();
+
+        return new JsonResponse(['data' => $settings->toArray() + ['allowed' => $settings->enabled && $settings->allows(\is_string($session->get('role')) ? $session->get('role') : null)]]);
     }
 
     #[Route('/checkout/coupon-preview', methods: ['POST'])]
@@ -141,6 +157,9 @@ class CheckoutController
                     ['error' => $e->getMessage(), 'code' => 'coupon_unavailable', 'retry' => false],
                     Response::HTTP_SERVICE_UNAVAILABLE
                 );
+            }
+            if ($e->getCode() === 403) {
+                return new JsonResponse(['error' => $e->getMessage(), 'retry' => false], Response::HTTP_FORBIDDEN);
             }
             if ($e->getCode() === 422) {
                 return new JsonResponse(

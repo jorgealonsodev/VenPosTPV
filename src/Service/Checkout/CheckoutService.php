@@ -66,12 +66,29 @@ class CheckoutService
         private readonly ?CustomerDirectory $customers = null,
         private readonly ?FiscalRecorder $fiscalRecorder = null,
         private readonly ?SaleLineWriter $saleLineWriter = null,
+        private readonly ?FreeItemSettingsStore $freeItemSettings = null,
     ) {
     }
 
     private function customerDirectory(): CustomerDirectory
     {
         return $this->customers ?? new CustomerDirectory($this->conn);
+    }
+
+    /**
+     * articulo-libre.md, A9: PrestaShop cart rules could apply to or exclude the
+     * generic product in ways the ticket cannot match.
+     *
+     * @param array<string, mixed> $cartData
+     */
+    private function assertNoFreeItemWithCoupon(array $cartData): void
+    {
+        $lines = $cartData['lines'] ?? $cartData['items'] ?? [];
+        foreach (is_array($lines) ? $lines : [] as $line) {
+            if (is_array($line) && array_key_exists('free_item', $line) && $line['free_item'] !== false) {
+                throw CheckoutException::freeItemInvalid('No se puede usar un cupón con un artículo libre');
+            }
+        }
     }
 
     /**
@@ -128,6 +145,7 @@ class CheckoutService
             }
         }
         if (array_key_exists('coupon', $cartData)) {
+            $this->assertNoFreeItemWithCoupon($cartData);
             if ($exchangeCredit > 0) {
                 throw CheckoutException::psValidationFailed('Coupons cannot be used in an exchange');
             }
@@ -296,12 +314,18 @@ class CheckoutService
     {
         $products = [];
         foreach ($lines as $line) {
-            $products[] = [
+            $product = [
                 'id_product' => (int) ($line['product_id'] ?? $line['id'] ?? 0),
                 'id_product_attribute' => (int) ($line['id_product_attribute'] ?? 0),
                 'quantity' => (int) ($line['qty'] ?? $line['quantity'] ?? 1),
                 'price' => (float) ($line['price'] ?? 0),
             ];
+            if (FreeItemLine::isFree($line)) {
+                // The PrestaShop product and combination are resolved at upload time
+                // (articulo-libre.md, A5.3), so a sale made before the setup still uploads.
+                $product += ['free_item' => true, 'concept' => $line['concept'], 'vat_rate' => (float) $line['vat_rate'], 'slot' => (int) $line['slot']];
+            }
+            $products[] = $product;
         }
 
         return [
@@ -328,6 +352,7 @@ class CheckoutService
         $this->assertCouponCheckoutEnabled();
         $this->cashSessionService->requireOpenSession($userId);
         $this->assertNoManualDiscountWithCoupon($cartData);
+        $this->assertNoFreeItemWithCoupon($cartData);
 
         $code = trim($couponCode);
         if ($code === '') {
@@ -732,9 +757,19 @@ class CheckoutService
     {
         $priced = [];
         $subtotal = 0.0;
+        $freeItemSettings = null;
 
         foreach ($lines as $line) {
             if (!is_array($line)) {
+                continue;
+            }
+
+            if (array_key_exists('free_item', $line) && $line['free_item'] !== false) {
+                // Typed at the till: its price is the one validated here, never the catalog's.
+                $freeItemSettings ??= ($this->freeItemSettings ?? new FreeItemSettingsStore($this->conn))->load();
+                $line = FreeItemLine::normalize(['free_item' => true] + $line, $freeItemSettings, SessionValue::string('role'));
+                $priced[] = $line;
+                $subtotal += $line['price'] * $line['qty'] * (1 - $line['discount'] / 100);
                 continue;
             }
 
@@ -771,6 +806,7 @@ class CheckoutService
         if ($priced === []) {
             throw CheckoutException::psValidationFailed('Cart is empty');
         }
+        $priced = FreeItemLine::assignSlots($priced);
 
         $subtotal = round($subtotal, 2);
         $total = round(max(0.0, $subtotal - $this->resolveDiscountAmount($discount, $subtotal)), 2);
@@ -874,6 +910,10 @@ class CheckoutService
     {
         $warnings = [];
         foreach (array_values($lines) as $index => $line) {
+            if (FreeItemLine::isFree($line)) {
+                // No stock: nothing to check or warn about.
+                continue;
+            }
             $productId = (int) ($line['product_id'] ?? $line['id'] ?? 0);
             $combinationId = (int) ($line['id_product_attribute'] ?? 0);
             $qty = (int) ($line['qty'] ?? $line['quantity'] ?? 1);
@@ -941,7 +981,7 @@ class CheckoutService
                 $price = (float) ($line['price'] ?? 0);
                 $lineDiscount = max(0.0, min(100.0, (float) ($line['discount'] ?? 0)));
                 $netTotals[] = $qty * $price * (1 - $lineDiscount / 100);
-                $breakdownLines[] = [
+                $breakdownLines[] = (FreeItemLine::isFree($line) ? ['free_item' => true] : []) + [
                     'name' => (string) ($line['name'] ?? 'Producto'),
                     'product_id' => (int) ($line['product_id'] ?? $line['id'] ?? 0),
                     'id_product_attribute' => (int) ($line['id_product_attribute'] ?? 0),
@@ -955,6 +995,15 @@ class CheckoutService
             // discount or coupon spread proportionally. Refunds return exactly this.
             foreach (Prorate::shares($netTotals, $total) as $index => $paid) {
                 $breakdownLines[$index]['paid_total'] = $paid;
+                if (FreeItemLine::isFree($lines[$index])) {
+                    // A free item keeps the rate typed at the till and its VAT on what was paid.
+                    $rate = (float) $lines[$index]['vat_rate'];
+                    $breakdownLines[$index] += [
+                        'price_net' => $lines[$index]['price_net'],
+                        'vat_rate' => $rate,
+                        'vat_amount' => VatRate::split((float) $paid, $rate)['vat'],
+                    ];
+                }
             }
 
             $subtotal = 0.0;
@@ -972,7 +1021,9 @@ class CheckoutService
                     'price_net' => $lines[$index]['price_net'] ?? null,
                     'discount' => max(0.0, min(100.0, (float) ($lines[$index]['discount'] ?? 0))),
                 ];
-                $rate = VatRate::fromPrices((float) $breakdownLine['price'], isset($lines[$index]['price_net']) && is_numeric($lines[$index]['price_net']) ? (float) $lines[$index]['price_net'] : null)['rate'];
+                $rate = FreeItemLine::isFree($lines[$index])
+                    ? (float) $lines[$index]['vat_rate']
+                    : VatRate::fromPrices((float) $breakdownLine['price'], isset($lines[$index]['price_net']) && is_numeric($lines[$index]['price_net']) ? (float) $lines[$index]['price_net'] : null)['rate'];
                 $key = number_format($rate, 2, '.', '');
                 $paidByRate[$key] = ($paidByRate[$key] ?? 0.0) + (float) $breakdownLine['paid_total'];
             }

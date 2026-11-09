@@ -49,6 +49,18 @@ final class CheckoutException extends RuntimeException
         );
     }
 
+    /** A free item line the till cannot sell as typed (docs/prd/articulo-libre.md); the message is shown to the cashier. */
+    public static function freeItemInvalid(string $message): self
+    {
+        return new self($message, 422);
+    }
+
+    /** The settings allow free items to administrators only. */
+    public static function freeItemForbidden(): self
+    {
+        return new self('Solo un administrador puede añadir un artículo libre', 403);
+    }
+
     /** PrestaShop refused the order for good (HTTP 404 or 422): retrying cannot help. */
     public static function psRejected(int $status, string $details): self
     {

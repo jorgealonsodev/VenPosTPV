@@ -256,6 +256,14 @@ class OutboxSync
             $payload['id_customer'] = (int) $psCustomerId;
         }
 
+        foreach ($payload['products'] ?? [] as $product) {
+            if (\is_array($product) && ($product['free_item'] ?? false) === true) {
+                // The generic PrestaShop products of free items are set up in phase 2
+                // (docs/prd/articulo-libre.md, A5.3): wait, this is not an incident.
+                return $this->retry($row, 'Falta configurar el artículo libre en PrestaShop');
+            }
+        }
+
         try {
             $order = $this->client->createReferencedOrder($payload);
         } catch (CheckoutException $e) {

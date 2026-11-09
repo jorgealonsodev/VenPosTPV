@@ -14,6 +14,9 @@ use Doctrine\DBAL\Connection;
  */
 class SaleLineWriter
 {
+    /** The category a free item is reported under (articulo-libre.md, A10). */
+    public const FREE_ITEM_CATEGORY = 'Artículo libre';
+
     public function __construct(private readonly Connection $connection)
     {
     }
@@ -22,7 +25,7 @@ class SaleLineWriter
      * @param list<array<string, mixed>> $lines one per ticket line, in ticket order:
      *        product_id, id_product_attribute, name, qty, price (unit, with VAT),
      *        price_net (unit, null when unknown), discount (line %, null when unknown),
-     *        line_total and paid_total
+     *        line_total and paid_total; a free item also free_item and vat_rate
      * @param bool $approximate the data comes from the current catalog, not the sale
      *
      * @return int the number of lines marked approximate
@@ -64,9 +67,13 @@ class SaleLineWriter
             ? null
             : round(max(0.0, min(100.0, (float) ($line['discount'] ?? 0))), 2);
 
-        $vat = VatRate::fromPrices($price, $net);
+        $free = ($line['free_item'] ?? false) === true && isset($line['vat_rate']) && is_numeric($line['vat_rate']);
+        // A free item (docs/prd/articulo-libre.md) has the rate typed at the till and no catalog row.
+        $vat = $free ? ['rate' => (float) $line['vat_rate'], 'approximate' => false] : VatRate::fromPrices($price, $net);
         $split = VatRate::split($paid, $vat['rate']);
-        $catalog = $this->catalog($productId, $combinationId);
+        $catalog = $free
+            ? ['reference' => null, 'category_id' => null, 'category_name' => self::FREE_ITEM_CATEGORY]
+            : $this->catalog($productId, $combinationId);
 
         return [
             'order_id' => $orderId,
