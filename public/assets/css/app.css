@@ -841,3 +841,11 @@ html, body, #app {
 .product-edit-field { display: flex; flex-direction: column; gap: 6px; }
 .product-edit-input { width: 100%; min-height: 48px; font-size: 17px; }
 .product-edit-note { font-size: 12px; color: var(--text3); }
+
+/* «Cerrar caja»: count per coin and note, or type the total (CashCloseScreen) */
+.cash-count-modes { display: flex; gap: 4px; padding: 4px; margin-bottom: 14px; background: var(--surface2); border-radius: 10px; }
+.cash-count-modes button {
+    flex: 1; min-height: 40px; border: none; border-radius: 8px; background: transparent; color: var(--text2);
+    font: inherit; font-size: 13px; cursor: pointer;
+}
+.cash-count-modes button.active { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 0 0 1px var(--border); }

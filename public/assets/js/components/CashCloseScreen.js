@@ -17,9 +17,39 @@ const CashCloseScreen = {
             { v: 0.05, label: '5¢' }, { v: 0.02, label: '2¢' }, { v: 0.01, label: '1¢' },
         ];
 
+        // The counted cash: per coin and note, or typed as one total amount.
+        const countMode = Vue.ref('denoms');
+        const amountInput = Vue.ref('');
+        const triedClose = Vue.ref(false);
+
+        function setCountMode(mode) {
+            countMode.value = mode === 'amount' ? 'amount' : 'denoms';
+            triedClose.value = false;
+        }
+
+        /** The typed amount (comma or dot, at most 2 decimals), or null when unusable. */
+        const typedAmount = Vue.computed(() => {
+            const text = String(amountInput.value || '').trim().replace(',', '.');
+            if (!/^\d+(\.\d{1,2})?$/.test(text)) return null;
+            return Math.round(Number(text) * 100) / 100;
+        });
+
+        const amountError = Vue.computed(() => (countMode.value === 'amount' && typedAmount.value === null)
+            ? 'Escribe un importe válido, por ejemplo 245,50.'
+            : '');
+
         const total = Vue.computed(() => {
+            if (countMode.value === 'amount') {
+                return typedAmount.value === null ? 0 : typedAmount.value;
+            }
             return denoms.reduce((s, d) => s + d.v * (parseInt(counted[d.v]) || 0), 0);
         });
+
+        function confirmClose() {
+            triedClose.value = true;
+            if (amountError.value) return;
+            emit('close', Number(total.value).toFixed(2));
+        }
 
         const expected = Vue.computed(() => {
             if (props.session.expected !== undefined && props.session.expected !== null) {
@@ -89,7 +119,7 @@ const CashCloseScreen = {
             }
         }
 
-        return { counted, denoms, total, expected, diff, handleDiscardParked, pendingUploadsText, blockedUploadsText, uploadsOnTheirOwn, incidentsText, printingX, xStatus, xFailed, printX };
+        return { counted, denoms, total, countMode, amountInput, amountError, triedClose, setCountMode, confirmClose, expected, diff, handleDiscardParked, pendingUploadsText, blockedUploadsText, uploadsOnTheirOwn, incidentsText, printingX, xStatus, xFailed, printX };
     },
     template: `
         <div style="width:100%; height:100%; background:var(--bg); overflow:auto; padding:32px; display:flex; flex-direction:column; gap:24px;">
@@ -135,8 +165,18 @@ const CashCloseScreen = {
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; max-width:900px;">
                 <!-- Conteo -->
                 <div style="background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:24px;">
-                    <div style="font-size:13px; font-weight:600; margin-bottom:16px;">Conteo de caja</div>
-                    <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:8px;">
+                    <div style="font-size:13px; font-weight:600; margin-bottom:12px;">Conteo de caja</div>
+                    <div class="cash-count-modes" role="tablist">
+                        <button type="button" role="tab" :aria-selected="countMode === 'denoms'" :class="{ active: countMode === 'denoms' }" @click="setCountMode('denoms')">Por monedas y billetes</button>
+                        <button type="button" role="tab" :aria-selected="countMode === 'amount'" :class="{ active: countMode === 'amount' }" @click="setCountMode('amount')">Importe total</button>
+                    </div>
+                    <div v-if="countMode === 'amount'" style="display:flex; flex-direction:column; gap:8px;">
+                        <label for="cash-count-amount" style="font-size:12px; color:var(--text3);">Efectivo contado en la caja (€)</label>
+                        <input id="cash-count-amount" class="tpv-input" type="text" inputmode="decimal" autocomplete="off" v-model="amountInput" placeholder="0,00"
+                            style="font-family:'IBM Plex Mono'; font-size:22px;" />
+                        <div v-if="amountError && (amountInput !== '' || triedClose)" role="alert" style="font-size:12px; color:var(--red);">{{ amountError }}</div>
+                    </div>
+                    <div v-else style="display:grid; grid-template-columns:repeat(3, 1fr); gap:8px;">
                         <div v-for="d in denoms" :key="d.v" style="background:var(--surface2); border-radius:10px; padding:10px 12px; display:flex; flex-direction:column; gap:4px;">
                             <div style="font-size:11px; color:var(--text3); font-family:'IBM Plex Mono';">{{ d.label }}</div>
                             <input type="number" min="0" v-model="counted[d.v]" placeholder="0"
@@ -201,7 +241,7 @@ const CashCloseScreen = {
                             <icon name="print" :size="16" /> {{ printingX ? 'Imprimiendo…' : 'Imprimir informe X' }}
                         </button>
                         <div v-if="xStatus" :role="xFailed ? 'alert' : 'status'" style="font-size:13px; text-align:center;" :style="{ color: xFailed ? 'var(--red)' : 'var(--text2)' }">{{ xStatus }}</div>
-                        <button @click="$emit('close', Number(total).toFixed(2))" style="padding:14px; border-radius:12px; border:none; background:var(--green); color:#000; cursor:pointer; font-family:inherit; font-size:15px; font-weight:700;">
+                        <button @click="confirmClose" style="padding:14px; border-radius:12px; border:none; background:var(--green); color:#000; cursor:pointer; font-family:inherit; font-size:15px; font-weight:700;">
                             Cerrar caja y generar informe Z →
                         </button>
                     </div>

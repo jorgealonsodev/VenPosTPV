@@ -108,7 +108,7 @@ function testCashCloseWarnsAboutPendingUploadsWithoutBlocking() {
     assert.equal(setup(component, { session: {}, outbox: { pending: 0, incidents: 1 } }).pendingUploadsText.value, '');
     assert.equal(setup(component, { session: {} }).pendingUploadsText.value, '', 'no outbox data, no warning');
 
-    const closeButton = component.template.match(/<button[^>]*@click="\$emit\('close'[^>]*>/);
+    const closeButton = component.template.match(/<button[^>]*@click="confirmClose"[^>]*>/);
     assert.ok(closeButton, 'the close button exists');
     assert.doesNotMatch(closeButton[0], /disabled/, 'pending uploads never disable the close');
     assert.match(component.template, /v-if="pendingUploadsText \|\| incidentsText"/);
