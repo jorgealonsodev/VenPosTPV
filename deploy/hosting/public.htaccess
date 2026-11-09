@@ -4,6 +4,11 @@
 <IfModule mod_rewrite.c>
     RewriteEngine On
 
+    # The TPV is private: known search and AI crawlers get 403 (robots.txt stays
+    # readable so polite crawlers see "Disallow: /"). WhatsApp's link preview passes.
+    RewriteCond %{HTTP_USER_AGENT} (googlebot|google-inspectiontool|bingbot|bingpreview|yandex|baiduspider|duckduckbot|applebot|ahrefsbot|semrushbot|mj12bot|petalbot|dotbot|seznambot|sogou|exabot|gptbot|chatgpt-user|oai-searchbot|claudebot|claude-web|anthropic-ai|ccbot|perplexitybot|bytespider|amazonbot|facebookbot|meta-externalagent) [NC]
+    RewriteRule !^robots\.txt$ - [F,L]
+
     # The print agent authenticates with "Authorization: Bearer"; pass it to PHP.
     RewriteCond %{HTTP:Authorization} .
     RewriteRule ^ - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
@@ -18,4 +23,9 @@
 
 <IfModule mod_setenvif.c>
     SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1
+</IfModule>
+
+# Never indexed, also for static files (the app sets the same header on its pages).
+<IfModule mod_headers.c>
+    Header always set X-Robots-Tag "noindex, nofollow, noarchive"
 </IfModule>

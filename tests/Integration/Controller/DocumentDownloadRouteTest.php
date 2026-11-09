@@ -103,7 +103,7 @@ final class DocumentDownloadRouteTest extends TestCase
 
         $this->assertSame(404, $response->getStatusCode());
         $this->assertSame('', (string) $response->getContent());
-        $this->assertSame('noindex, nofollow', $response->headers->get('X-Robots-Tag'));
+        $this->assertSame('noindex, nofollow, noarchive', $response->headers->get('X-Robots-Tag'));
         $this->assertStringContainsString('no-store', (string) $response->headers->get('Cache-Control'));
         $this->assertSame([], $response->headers->getCookies(), 'no session cookie is handed out');
     }
