@@ -702,7 +702,7 @@ const SettingsModal = {
 
         return {
             modalBox, modalStyle, startResize,
-            brandBase: (window.TPV_BASE || '') + '/assets/img/brand',
+            brandBase: ((typeof window !== 'undefined' && window.TPV_BASE) || '') + '/assets/img/brand',
             labelTestStatus, printTestLabel,
             systemPrinters,
             employees, loading, error, success,
