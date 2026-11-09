@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.1
+
+- Vouchers worth more than the sale (`POST /module/tpvconnect/orders` with `coupon`): when PrestaShop's `validateOrder` keeps the rest of a partial-use amount voucher as a new cart rule (code `<code>-2`, then `-3`…, the remaining amount, quantity 1, quantity per user 1, bound to the order's customer), the module finds exactly that rule (its code, created for this order after the original, for the order's customer, with the remaining amount; with free shipping, the rest minus the shipping), sets `id_customer = 0` so anyone can use it at the till or on the web, keeps the original's `date_to`, and answers it as `"leftover_voucher": {"id": 41, "code": "ABCD1234-2", "amount": 14.0, "expires_at": "2027-06-30 23:59:59"}`. Without a rest (fully spent, percentage or single-use voucher) it is `"leftover_voucher": null`. A replayed request returns the same voucher and changes nothing. A failure while publishing it never fails the order (`null`). The e-mail PrestaShop sends the customer with the new code is unchanged.
+- Orders without `coupon` are unchanged.
+- No upgrade script: nothing to migrate; PrestaShop records the new version.
+
 ## 0.7.0
 
 - Free items (docs/prd/articulo-libre.md, A5): new signed endpoint `POST /module/tpvconnect/freeitem` `{"vat_rates": [21, 10]}` (HMAC like `orders`). For each rate it creates or checks a hidden generic product «Artículo libre TPV 21 %» (reference `TPV-LIBRE-21`; the shop's active tax rules group with that rate for its default country; `visibility = none`, active, available for order, out-of-stock orders allowed, not in the search index, base price 99 999 € so nobody can buy it online for nothing) with 20 combinations of the attribute «Línea TPV» 1..20, and answers `200 {"products": {"21.00": {"id_product": 21, "slots": {"1": 43, ...}}}}`. Running it again returns the same ids. A rate without a tax rules group in the shop answers 422 and creates nothing. The ids are stored in `TPVCONNECT_FREE_ITEM_PRODUCTS`.
