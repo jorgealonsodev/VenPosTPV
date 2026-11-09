@@ -5,11 +5,16 @@ declare(strict_types=1);
 namespace VenPosTPV\Service\Catalog;
 
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Exception\TableNotFoundException;
+use Doctrine\DBAL\Query\QueryBuilder;
 
 class ProductSearchService
 {
     public const PRICE_BASIS_TTC = 'ttc';
     public const PRICE_BASIS_BASE = 'base';
+
+    /** True once a read found no catalog_override table (before Version00000050). */
+    private bool $overridesMissing = false;
 
     public function __construct(private readonly Connection $connection)
     {
@@ -26,12 +31,37 @@ class ProductSearchService
      */
     public function search(?string $query, ?int $categoryId, int $limit = 50, int $offset = 0, bool $onlyInStock = false): array
     {
+        $results = $this->withOverrides(
+            fn (bool $overrides): array => $this->searchQuery($overrides, $query, $categoryId, $limit, $offset, $onlyInStock)
+                ->executeQuery()
+                ->fetchAllAssociative()
+        );
+
+        return array_map(function (array $row): array {
+            $row = $this->applyPriceBasis($row);
+            $row['id'] = (int) $row['id'];
+            $row['category_id'] = $row['category_id'] !== null ? (int) $row['category_id'] : null;
+            $row['stock'] = (int) $row['stock'];
+            $row['has_combinations'] = (bool) ($row['has_combinations'] ?? false);
+
+            return $row;
+        }, $results);
+    }
+
+    /**
+     * With $overrides, the EAN and reference edited at the till (catalog_override,
+     * «Modo edición») replace the synced ones in the result, and a search matches
+     * both the local and the synced codes: a label already printed with the synced
+     * EAN still finds its product.
+     */
+    private function searchQuery(bool $overrides, ?string $query, ?int $categoryId, int $limit, int $offset, bool $onlyInStock): QueryBuilder
+    {
         $qb = $this->connection->createQueryBuilder()
             ->select([
                 'p.id',
                 'p.name',
-                'p.reference',
-                'p.ean13',
+                $overrides ? 'COALESCE(po.reference, p.reference) AS reference' : 'p.reference',
+                $overrides ? 'COALESCE(po.ean13, p.ean13) AS ean13' : 'p.ean13',
                 'p.price',
                 'p.price_ttc',
                 'p.price_net',
@@ -44,18 +74,28 @@ class ProductSearchService
             ->leftJoin('p', 'catalog_stock', 's', 's.id_product = p.id AND s.id_product_attribute = 0')
             ->where('p.active = 1')
             ->setMaxResults($limit);
+        if ($overrides) {
+            $qb->leftJoin('p', 'catalog_override', 'po', 'po.id_product = p.id AND po.id_product_attribute = 0');
+        }
         $qb->setFirstResult(max(0, $offset));
 
         if ($query !== null && $query !== '') {
-            $qb->andWhere(
-                $qb->expr()->orX(
-                    $qb->expr()->like('p.name', ':q'),
-                    $qb->expr()->like('p.reference', ':q'),
-                    $qb->expr()->like('p.ean13', ':q'),
-                    // Barcodes and references usually belong to each size or colour.
-                    'EXISTS (SELECT 1 FROM catalog_combination qc WHERE qc.id_product = p.id AND (qc.reference LIKE :q OR qc.ean13 LIKE :q))',
-                )
-            )->setParameter('q', '%' . $query . '%');
+            $matches = [
+                $qb->expr()->like('p.name', ':q'),
+                $qb->expr()->like('p.reference', ':q'),
+                $qb->expr()->like('p.ean13', ':q'),
+            ];
+            if ($overrides) {
+                $matches[] = $qb->expr()->like('po.reference', ':q');
+                $matches[] = $qb->expr()->like('po.ean13', ':q');
+                // Barcodes and references usually belong to each size or colour.
+                $matches[] = 'EXISTS (SELECT 1 FROM catalog_combination qc
+                    LEFT JOIN catalog_override qo ON qo.id_product = qc.id_product AND qo.id_product_attribute = qc.id
+                    WHERE qc.id_product = p.id AND (qc.reference LIKE :q OR qc.ean13 LIKE :q OR qo.reference LIKE :q OR qo.ean13 LIKE :q))';
+            } else {
+                $matches[] = 'EXISTS (SELECT 1 FROM catalog_combination qc WHERE qc.id_product = p.id AND (qc.reference LIKE :q OR qc.ean13 LIKE :q))';
+            }
+            $qb->andWhere($qb->expr()->orX(...$matches))->setParameter('q', '%' . $query . '%');
         }
 
         if ($categoryId !== null && $categoryId > 0) {
@@ -73,17 +113,7 @@ class ProductSearchService
         $qb->orderBy('p.name', 'ASC');
         $qb->addOrderBy('p.id', 'ASC');
 
-        $results = $qb->executeQuery()->fetchAllAssociative();
-
-        return array_map(function (array $row): array {
-            $row = $this->applyPriceBasis($row);
-            $row['id'] = (int) $row['id'];
-            $row['category_id'] = $row['category_id'] !== null ? (int) $row['category_id'] : null;
-            $row['stock'] = (int) $row['stock'];
-            $row['has_combinations'] = (bool) ($row['has_combinations'] ?? false);
-
-            return $row;
-        }, $results);
+        return $qb;
     }
 
     /**
@@ -91,25 +121,30 @@ class ProductSearchService
      */
     public function findById(int $id): ?array
     {
-        $qb = $this->connection->createQueryBuilder()
-            ->select([
-                'p.id',
-                'p.name',
-                'p.reference',
-                'p.ean13',
-                'p.price',
-                'p.price_ttc',
-                'p.price_net',
-                'p.id_category_default AS category_id',
-                'p.image_url',
-                'COALESCE(s.quantity, 0) AS stock',
-            ])
-            ->from('catalog_product', 'p')
-            ->leftJoin('p', 'catalog_stock', 's', 's.id_product = p.id AND s.id_product_attribute = 0')
-            ->where('p.id = :id')
-            ->setParameter('id', $id);
+        $row = $this->withOverrides(function (bool $overrides) use ($id): array|false {
+            $qb = $this->connection->createQueryBuilder()
+                ->select([
+                    'p.id',
+                    'p.name',
+                    $overrides ? 'COALESCE(po.reference, p.reference) AS reference' : 'p.reference',
+                    $overrides ? 'COALESCE(po.ean13, p.ean13) AS ean13' : 'p.ean13',
+                    'p.price',
+                    'p.price_ttc',
+                    'p.price_net',
+                    'p.id_category_default AS category_id',
+                    'p.image_url',
+                    'COALESCE(s.quantity, 0) AS stock',
+                ])
+                ->from('catalog_product', 'p')
+                ->leftJoin('p', 'catalog_stock', 's', 's.id_product = p.id AND s.id_product_attribute = 0')
+                ->where('p.id = :id')
+                ->setParameter('id', $id);
+            if ($overrides) {
+                $qb->leftJoin('p', 'catalog_override', 'po', 'po.id_product = p.id AND po.id_product_attribute = 0');
+            }
 
-        $row = $qb->executeQuery()->fetchAssociative();
+            return $qb->executeQuery()->fetchAssociative();
+        });
 
         if ($row === false) {
             return null;
@@ -125,23 +160,28 @@ class ProductSearchService
         $productBasePrice = (float) $row['base_price'];
 
         // Load combinations
-        $combinations = $this->connection->createQueryBuilder()
-            ->select([
-                'c.id',
-                'c.reference',
-                'c.ean13',
-                'c.price_impact',
-                'c.price_ttc',
-                'c.price_net',
-                'c.image_url',
-                'COALESCE(cs.quantity, 0) AS stock',
-            ])
-            ->from('catalog_combination', 'c')
-            ->leftJoin('c', 'catalog_stock', 'cs', 'cs.id_product = c.id_product AND cs.id_product_attribute = c.id')
-            ->where('c.id_product = :id')
-            ->setParameter('id', $id)
-            ->executeQuery()
-            ->fetchAllAssociative();
+        $combinations = $this->withOverrides(function (bool $overrides) use ($id): array {
+            $qb = $this->connection->createQueryBuilder()
+                ->select([
+                    'c.id',
+                    $overrides ? 'COALESCE(co.reference, c.reference) AS reference' : 'c.reference',
+                    $overrides ? 'COALESCE(co.ean13, c.ean13) AS ean13' : 'c.ean13',
+                    'c.price_impact',
+                    'c.price_ttc',
+                    'c.price_net',
+                    'c.image_url',
+                    'COALESCE(cs.quantity, 0) AS stock',
+                ])
+                ->from('catalog_combination', 'c')
+                ->leftJoin('c', 'catalog_stock', 'cs', 'cs.id_product = c.id_product AND cs.id_product_attribute = c.id')
+                ->where('c.id_product = :id')
+                ->setParameter('id', $id);
+            if ($overrides) {
+                $qb->leftJoin('c', 'catalog_override', 'co', 'co.id_product = c.id_product AND co.id_product_attribute = c.id');
+            }
+
+            return $qb->executeQuery()->fetchAllAssociative();
+        });
 
         $row['combinations'] = array_map(function (array $c) use ($productPrice, $productTtcPrice, $productBasePrice): array {
             $c['id'] = (int) $c['id'];
@@ -165,6 +205,29 @@ class ProductSearchService
         }, $combinations);
 
         return $row;
+    }
+
+    /**
+     * Runs a read with the local overrides applied and, while the catalog_override
+     * table does not exist yet (Version00000050 not run), without them.
+     *
+     * @template T
+     *
+     * @param \Closure(bool): T $read
+     *
+     * @return T
+     */
+    private function withOverrides(\Closure $read): mixed
+    {
+        if (!$this->overridesMissing) {
+            try {
+                return $read(true);
+            } catch (TableNotFoundException) {
+                $this->overridesMissing = true;
+            }
+        }
+
+        return $read(false);
     }
 
     /**

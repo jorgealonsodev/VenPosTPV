@@ -173,6 +173,7 @@ final class TestDatabase
         self::runMigration($connection, 'Version00000047FullInvoice');
         self::runMigration($connection, 'Version00000048IssuedCoupon');
         self::runMigration($connection, 'Version00000049UserFullName');
+        self::runMigration($connection, 'Version00000050CatalogOverride');
     }
 
     private static function applyInstallSchema(Connection $connection): void

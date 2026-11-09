@@ -678,3 +678,19 @@ CREATE TABLE IF NOT EXISTS issued_coupon (
     UNIQUE KEY uk_issued_coupon_code (code),
     KEY idx_issued_coupon_created (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- catalog_override (Version00000050): EAN and reference edited at the till
+-- («Modo edición»), per product (id_product_attribute 0) or combination. They never
+-- reach PrestaShop; the sync empties and refills the catalog tables but never this
+-- one, and the synced values are read through it (NULL = the synced value).
+CREATE TABLE IF NOT EXISTS catalog_override (
+    id_product INT UNSIGNED NOT NULL,
+    id_product_attribute INT UNSIGNED NOT NULL DEFAULT 0,
+    ean13 VARCHAR(13) NULL,
+    reference VARCHAR(64) NULL,
+    updated_by_user_id INT UNSIGNED NULL,
+    updated_at DATETIME NOT NULL,
+    PRIMARY KEY (id_product, id_product_attribute),
+    KEY idx_catalog_override_ean13 (ean13),
+    KEY idx_catalog_override_reference (reference)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

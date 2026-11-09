@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace VenPosTPV\Service\Label;
 
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Exception\TableNotFoundException;
 use VenPosTPV\Service\Catalog\ProductSearchService;
 
 /**
@@ -29,6 +30,11 @@ class LabelCatalog
      * A scanned or typed code on the Etiquetas screen (L2): the exact EAN or reference
      * of a combination, else of a product.
      *
+     * The EAN and reference edited at the till («Modo edición», catalog_override) are
+     * looked up first, so an item whose local code equals another item's synced code
+     * wins the scan. The synced codes keep finding their item after that (labels
+     * already stuck on the goods). Before Version00000050 only the synced codes exist.
+     *
      * @return array{product_id: int, id_product_attribute: int}|null
      */
     public function findByCode(string $code): ?array
@@ -37,6 +43,42 @@ class LabelCatalog
         if ($code === '' || $this->connection === null) {
             return null;
         }
+        try {
+            $found = $this->findByLocalCode($code);
+        } catch (TableNotFoundException) {
+            $found = null;
+        }
+
+        return $found ?? $this->findBySyncedCode($code);
+    }
+
+    /**
+     * The item whose local EAN (else local reference) is the code; a combination
+     * counts only while it is still in the catalog.
+     *
+     * @return array{product_id: int, id_product_attribute: int}|null
+     *
+     * @throws TableNotFoundException before Version00000050
+     */
+    private function findByLocalCode(string $code): ?array
+    {
+        \assert($this->connection !== null);
+        $row = $this->connection->fetchAssociative(
+            'SELECT o.id_product, o.id_product_attribute FROM catalog_override o
+             JOIN catalog_product p ON p.id = o.id_product AND p.active = 1
+             LEFT JOIN catalog_combination c ON c.id = o.id_product_attribute AND c.id_product = o.id_product
+             WHERE (o.id_product_attribute = 0 OR c.id IS NOT NULL) AND (o.ean13 = ? OR o.reference = ?)
+             ORDER BY o.ean13 = ? DESC, o.id_product_attribute > 0 DESC, o.id_product, o.id_product_attribute LIMIT 1',
+            [$code, $code, $code]
+        );
+
+        return $row !== false ? ['product_id' => (int) $row['id_product'], 'id_product_attribute' => (int) $row['id_product_attribute']] : null;
+    }
+
+    /** @return array{product_id: int, id_product_attribute: int}|null */
+    private function findBySyncedCode(string $code): ?array
+    {
+        \assert($this->connection !== null);
         $row = $this->connection->fetchAssociative(
             'SELECT c.id_product, c.id FROM catalog_combination c JOIN catalog_product p ON p.id = c.id_product
              WHERE p.active = 1 AND (c.ean13 = ? OR c.reference = ?) ORDER BY c.ean13 = ? DESC, c.id LIMIT 1',

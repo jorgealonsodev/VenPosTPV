@@ -463,6 +463,7 @@ const SaleScreen = {
                     <catalog-panel
                         :catalog="catalog"
                         :list-view="listView"
+                        :is-admin="session.role === 'admin'"
                         @set-search="setSearch"
                         @set-category="setCategory"
                         @load-more="loadMore"

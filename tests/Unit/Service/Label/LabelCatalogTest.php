@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace VenPosTPV\Tests\Unit\Service\Label;
 
+use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Driver\Exception as DriverException;
+use Doctrine\DBAL\Exception\TableNotFoundException;
 use PHPUnit\Framework\TestCase;
 use VenPosTPV\Service\Catalog\ProductSearchService;
 use VenPosTPV\Service\Label\LabelBarcode;
@@ -76,5 +79,23 @@ final class LabelCatalogTest extends TestCase
 
         $this->expectExceptionMessage('Combinación no encontrada');
         $this->catalog()->label(7, 999);
+    }
+
+    /** Before Version00000050 (no catalog_override table) a code finds its item by the synced codes. */
+    public function testWithoutTheOverrideTableACodeIsFoundByTheSyncedCodes(): void
+    {
+        $missing = new TableNotFoundException($this->createMock(DriverException::class), null);
+        $conn = $this->createMock(Connection::class);
+        $conn->method('fetchAssociative')->willReturnCallback(static function (string $sql) use ($missing): array|false {
+            if (str_contains($sql, 'catalog_override')) {
+                throw $missing;
+            }
+
+            return ['id_product' => 7, 'id' => 71];
+        });
+
+        $catalog = new LabelCatalog($this->createMock(ProductSearchService::class), $conn);
+
+        self::assertSame(['product_id' => 7, 'id_product_attribute' => 71], $catalog->findByCode('8412345678905'));
     }
 }
