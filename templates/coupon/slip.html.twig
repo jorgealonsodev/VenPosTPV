@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Cupón {{ slip.code }}</title>
+    <style>
+        @page { margin: 0; }
+        body {
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 12px;
+{# Same layout as ticket/print.html.twig: 302 px = 80 mm minus the till's margins. #}
+            width: {{ 302 - marginLeftPx - marginRightPx }}px;
+            margin: 0;
+            padding: 8px {{ marginRightPx }}px 8px {{ marginLeftPx }}px;
+            overflow-wrap: break-word;
+            word-wrap: break-word;
+            color: #000;
+            text-align: center;
+        }
+        img { max-width: 100%; }
+        .bold { font-weight: bold; }
+        .large { font-size: 16px; }
+        .title { font-size: 15px; font-weight: bold; margin: 4px 0 8px; }
+        .value { font-family: 'DejaVu Sans', sans-serif; font-size: 22px; font-weight: bold; }
+        .code { font-size: 22px; font-weight: bold; letter-spacing: 2px; margin: 4px 0; }
+        .line { border-top: 1px dashed #000; margin: 6px 0; }
+        .small { font-size: 11px; }
+    </style>
+</head>
+<body>
+    {% if logoPath %}
+    <div style="margin-bottom:8px;">
+        <img src="{{ logoPath }}" style="{{ slip.logoWidthPct is not null ? 'width:' ~ slip.logoWidthPct ~ '%' : 'max-width:100%' }}; height:auto;" alt="Logo">
+    </div>
+    {% endif %}
+    <div class="bold large">{{ slip.storeName }}</div>
+{% if slip.legalNameLine %}
+    <div>{{ slip.legalNameLine }}</div>
+{% endif %}
+{% if slip.taxId %}
+    <div>NIF: {{ slip.taxId }}</div>
+{% endif %}
+{% if slip.storeAddress %}
+    <div>{{ slip.storeAddress }}</div>
+{% endif %}
+    <div class="line"></div>
+    <div class="title">{{ constant('VenPosTPV\\Service\\Print\\CouponSlip::TITLE') }}</div>
+    <div class="value">{{ slip.valueLabel }}</div>
+    <div class="code">{{ slip.code }}</div>
+    {% if barcodePath %}
+    <div style="margin:8px 0 6px;"><img src="{{ barcodePath }}" alt="{{ slip.code }}" style="width:90%; height:48px;"></div>
+    {% endif %}
+    <div class="bold">{{ slip.expiryLabel }}</div>
+    <div>{{ slip.usesLabel }} - {{ slip.perUserLabel }}</div>
+    <div class="small">{{ slip.createdLabel }}</div>
+    <div class="line"></div>
+    <div>{{ constant('VenPosTPV\\Service\\Print\\CouponSlip::REDEEM_LINE') }}</div>
+</body>
+</html>

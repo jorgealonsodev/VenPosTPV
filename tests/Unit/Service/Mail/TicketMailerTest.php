@@ -124,6 +124,41 @@ final class TicketMailerTest extends TestCase
         $this->mailer(ticket: $this->ticket(), failSend: true)->sendSale(42, 'cliente@example.com');
     }
 
+    public function testACouponIsSentAsItsPdfFromTheShopAccount(): void
+    {
+        $this->mailer()->sendCoupon('cliente@example.com', 'ABCD2345', 'Nada Más', '%PDF-1.7 cupon');
+
+        $this->assertCount(1, $this->sent);
+        $email = $this->sent[0];
+        $this->assertSame('cliente@example.com', $email->getTo()[0]->getAddress());
+        $this->assertSame('tienda@example.com', $email->getFrom()[0]->getAddress());
+        $this->assertSame('Tu cupón de descuento ABCD2345 - Nada Más', $email->getSubject());
+        $attachments = $email->getAttachments();
+        $this->assertCount(1, $attachments);
+        $this->assertSame('cupon-ABCD2345.pdf', $attachments[0]->getFilename());
+        $this->assertSame('%PDF-1.7 cupon', $attachments[0]->getBody());
+    }
+
+    /** @return iterable<string, array{0: bool, 1: string, 2: int}> */
+    public static function couponFailures(): iterable
+    {
+        yield 'not configured' => [false, 'cliente@example.com', 409];
+        yield 'bad address' => [true, 'no-es-email', 422];
+        yield 'header injection' => [true, "a@b.es\r\nBcc: x@y.z", 422];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('couponFailures')]
+    public function testRefusedCouponSendsSayWhy(bool $configured, string $to, int $status): void
+    {
+        try {
+            $this->mailer($configured)->sendCoupon($to, 'ABCD2345', 'Nada Más', '%PDF');
+            $this->fail('expected a refusal');
+        } catch (TicketMailException $e) {
+            $this->assertSame($status, $e->status);
+        }
+        $this->assertSame([], $this->sent);
+    }
+
     public function testTheTestEmailUsesTheAccountAndHasNoAttachment(): void
     {
         $this->mailer()->sendTest('admin@example.com');

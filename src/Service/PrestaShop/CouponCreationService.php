@@ -7,6 +7,7 @@ namespace VenPosTPV\Service\PrestaShop;
 use DateTimeImmutable;
 use DateTimeZone;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
+use VenPosTPV\Service\Coupon\IssuedCouponStore;
 use VenPosTPV\Service\PrestaShop\Exception\CouponCreationException;
 
 /** Creates native PrestaShop cart rules; creation responses are never retried. */
@@ -21,6 +22,7 @@ class CouponCreationService
         private readonly HttpClientInterface $httpClient,
         private readonly int $defaultCurrencyId,
         string $shopTimezone = 'Europe/Madrid',
+        private readonly ?IssuedCouponStore $issuedCoupons = null,
     ) {
         $shopUrl = rtrim($shopUrl, '/');
         $this->baseUrl = str_ends_with($shopUrl, '/api') ? substr($shopUrl, 0, -4) : $shopUrl;
@@ -72,6 +74,34 @@ class CouponCreationService
         }
 
         return ['id' => $created['id'], 'code' => $code] + $coupon;
+    }
+
+    /**
+     * create() for «Crear cupón»: the coupon is also stored in the till right after
+     * PrestaShop confirms it, so its slip is printed from the server's own data.
+     * A failed local copy never turns a created coupon into an error: the code is
+     * returned with `printable` false (no slip can be printed for it).
+     *
+     * @param array<string, mixed> $input
+     *
+     * @return array{id:int,code:string,type:string,value:float,expires_at:string,quantity:int,quantity_per_user:int,local_id:?int,printable:bool}
+     */
+    public function createIssued(array $input, int $shopId, ?int $terminalId, ?int $userId): array
+    {
+        $coupon = $this->create($input, $shopId);
+        $localId = $this->issuedCoupons?->record(
+            $coupon['id'],
+            $coupon['code'],
+            $coupon['type'],
+            $coupon['value'],
+            $coupon['expires_at'],
+            $coupon['quantity'],
+            $coupon['quantity_per_user'],
+            $terminalId,
+            $userId,
+        );
+
+        return $coupon + ['local_id' => $localId, 'printable' => $localId !== null];
     }
 
     /** @param array<string, mixed> $input @return array{type:string,value:float,expires_at:string,quantity:int,quantity_per_user:int} */

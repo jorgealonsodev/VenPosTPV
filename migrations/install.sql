@@ -657,3 +657,22 @@ CREATE TABLE IF NOT EXISTS invoice (
     UNIQUE KEY uk_invoice_request (request_id),
     KEY idx_invoice_issue_date (issue_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- issued_coupon (Version00000048): coupons created from the till («Crear cupón»),
+-- stored after PrestaShop confirms the cart rule; their slip (ticket, PDF, email)
+-- is built from this row, never from values sent by the browser.
+CREATE TABLE IF NOT EXISTS issued_coupon (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    ps_cart_rule_id INT UNSIGNED NOT NULL,
+    code VARCHAR(32) NOT NULL,
+    discount_type VARCHAR(16) NOT NULL,
+    value DECIMAL(10,2) NOT NULL,
+    expires_at DATE NOT NULL,
+    quantity INT UNSIGNED NOT NULL,
+    quantity_per_user INT UNSIGNED NOT NULL,
+    terminal_id INT UNSIGNED NULL,
+    user_id INT UNSIGNED NULL,
+    created_at DATETIME NOT NULL,
+    UNIQUE KEY uk_issued_coupon_code (code),
+    KEY idx_issued_coupon_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -1,5 +1,6 @@
 /**
- * CouponCreationModal — creates a server-generated TPV coupon.
+ * CouponCreationModal — creates a server-generated TPV coupon, then hands its slip
+ * over: printed on the till's ticket printer, as a PDF, or by email.
  */
 
 // Page-session ambiguity guard. After a 409 or a lost response the coupon may
@@ -30,6 +31,16 @@ const CouponCreationModal = {
         const createdCode = Vue.ref('');
         const reconciliationRequired = Vue.ref(couponReconciliationGuard.value.required);
         const copied = Vue.ref(false);
+        // The slip of the created coupon goes by its local id (issued_coupon); without
+        // one (the till could not keep its copy) only the code is shown.
+        const couponId = Vue.ref(null);
+        const printable = Vue.ref(false);
+        const emailEnabled = Vue.ref(false);
+        const emailOpen = Vue.ref(false);
+        const emailAddress = Vue.ref('');
+        const slipBusy = Vue.ref(false);
+        const slipMessage = Vue.ref('');
+        const slipError = Vue.ref('');
 
         function validationError() {
             const discountValue = Number(String(value.value).replace(',', '.'));
@@ -92,7 +103,10 @@ const CouponCreationModal = {
                 const data = response && response.data;
                 if (!data || !data.code) throw new Error('La respuesta no incluye el código creado.');
                 createdCode.value = data.code;
+                couponId.value = Number.isInteger(data.local_id) && data.local_id > 0 ? data.local_id : null;
+                printable.value = couponId.value !== null && data.printable !== false;
                 error.value = '';
+                if (printable.value) emailEnabled.value = await mailEnabled();
             } catch (err) {
                 const message = (err && err.message) || 'No se pudo crear el cupón.';
                 if (requiresReconciliation(message)) {
@@ -103,6 +117,62 @@ const CouponCreationModal = {
             } finally {
                 pending.value = false;
             }
+        }
+
+        // Same check as the payment screen: no email button without a mail account.
+        async function mailEnabled() {
+            if (typeof ApiClient.ticketEmailEnabled !== 'function') return false;
+            try {
+                const response = await ApiClient.ticketEmailEnabled();
+                return !!(response && response.data && response.data.enabled);
+            } catch (e) {
+                return false;
+            }
+        }
+
+        async function slipAction(action) {
+            if (!printable.value || slipBusy.value) return;
+            slipBusy.value = true;
+            slipMessage.value = '';
+            slipError.value = '';
+            try {
+                slipMessage.value = await action();
+            } catch (err) {
+                slipError.value = cleanErrorMessage((err && err.message) || 'No se pudo completar la acción.');
+            } finally {
+                slipBusy.value = false;
+            }
+        }
+
+        function openPdf() {
+            if (!printable.value) return;
+            ApiClient.couponPdf(couponId.value);
+        }
+
+        function printSlip() {
+            return slipAction(async () => {
+                const response = await ApiClient.couponPrint(couponId.value);
+                const data = (response && response.data) || {};
+                if (data.fallback === 'pdf') {
+                    ApiClient.couponPdf(couponId.value);
+                    return 'Esta caja no tiene impresora: se abre el PDF.';
+                }
+                return data.print_status === 'queued' ? 'Enviado a la impresora de la caja.' : 'Cupón impreso.';
+            });
+        }
+
+        function sendEmail() {
+            const address = String(emailAddress.value || '').trim();
+            if (!address) {
+                slipError.value = 'Introduce el email del cliente.';
+                slipMessage.value = '';
+                return Promise.resolve();
+            }
+            return slipAction(async () => {
+                await ApiClient.couponEmail(couponId.value, address);
+                emailOpen.value = false;
+                return 'Cupón enviado a ' + address;
+            });
         }
 
         async function copyCode() {
@@ -129,9 +199,17 @@ const CouponCreationModal = {
             reconciliationRequired.value = couponReconciliationGuard.value.required;
             if (reconciliationRequired.value) error.value = couponReconciliationGuard.value.message;
             copied.value = false;
+            couponId.value = null;
+            printable.value = false;
+            emailEnabled.value = false;
+            emailOpen.value = false;
+            emailAddress.value = '';
+            slipBusy.value = false;
+            slipMessage.value = '';
+            slipError.value = '';
         }
 
-        return { discountType, value, expiresAt, quantity, quantityPerUser, pending, error, createdCode, reconciliationRequired, copied, submit, copyCode, reset, validationError, close: () => emit('close') };
+        return { discountType, value, expiresAt, quantity, quantityPerUser, pending, error, createdCode, reconciliationRequired, copied, couponId, printable, emailEnabled, emailOpen, emailAddress, slipBusy, slipMessage, slipError, printSlip, openPdf, sendEmail, submit, copyCode, reset, validationError, close: () => emit('close') };
     },
     template: `
         <div class="modal-backdrop" style="backdrop-filter:blur(3px); -webkit-backdrop-filter:blur(3px);" @click.self="!pending && $emit('close')">
@@ -160,6 +238,22 @@ const CouponCreationModal = {
                     <input :value="createdCode" readonly @focus="$event.target.select()" style="width:100%; box-sizing:border-box; background:transparent; border:0; color:var(--green); font-family:'IBM Plex Mono'; font-weight:700; font-size:17px; outline:none;" />
                     <button @click="copyCode" style="margin-top:8px; border:0; background:transparent; color:var(--green); cursor:pointer; font-family:inherit; font-size:12px; padding:0;">{{ copied ? 'Copiado' : 'Copiar código' }}</button>
                 </div>
+                <template v-if="createdCode">
+                    <div v-if="printable" style="display:flex; flex-direction:column; gap:8px;">
+                        <div style="display:flex; gap:8px;">
+                            <button @click="printSlip" :disabled="slipBusy" style="flex:1; padding:9px 6px; border-radius:8px; border:1px solid var(--border2); background:var(--surface2); color:var(--text); cursor:pointer; font-family:inherit; font-size:13px;">Imprimir ticket</button>
+                            <button @click="openPdf" :disabled="slipBusy" style="flex:1; padding:9px 6px; border-radius:8px; border:1px solid var(--border2); background:var(--surface2); color:var(--text); cursor:pointer; font-family:inherit; font-size:13px;">PDF</button>
+                            <button v-if="emailEnabled" @click="emailOpen = !emailOpen" :disabled="slipBusy" style="flex:1; padding:9px 6px; border-radius:8px; border:1px solid var(--border2); background:var(--surface2); color:var(--text); cursor:pointer; font-family:inherit; font-size:13px;">Enviar por email</button>
+                        </div>
+                        <div v-if="emailEnabled && emailOpen" style="display:flex; gap:8px;">
+                            <input v-model="emailAddress" type="email" placeholder="email@cliente.com" :disabled="slipBusy" @keyup.enter="sendEmail" style="flex:1; min-width:0; box-sizing:border-box; background:var(--surface2); border:1px solid var(--border2); border-radius:8px; padding:9px 12px; color:var(--text); font-family:inherit; font-size:13px; outline:none;" />
+                            <button @click="sendEmail" :disabled="slipBusy" style="padding:9px 14px; border-radius:8px; border:0; background:var(--amber); color:#000; cursor:pointer; font-family:inherit; font-size:13px; font-weight:700;">{{ slipBusy ? 'Enviando…' : 'Enviar' }}</button>
+                        </div>
+                        <div v-if="slipMessage" style="color:var(--green); font-size:12px; line-height:1.4;">{{ slipMessage }}</div>
+                        <div v-if="slipError" style="color:var(--red); font-size:12px; line-height:1.4;">{{ slipError }}</div>
+                    </div>
+                    <div v-else style="color:var(--text2); font-size:12px; line-height:1.45;">El cupón está creado, pero este TPV no ha podido guardarlo para imprimirlo: anota o copia el código.</div>
+                </template>
                 <div v-if="reconciliationRequired" style="padding:11px 13px; border-radius:10px; background:var(--red-bg); border:1px solid var(--red); color:var(--red); font-size:12px; line-height:1.45;">
                     Creación sin confirmar: no se puede volver a enviar desde este TPV.
                 </div>

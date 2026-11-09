@@ -74,6 +74,23 @@ class TicketMailer
         $this->send($settings, $email);
     }
 
+    /**
+     * Sends a coupon created from the till as its PDF slip (CouponSlipPdf).
+     *
+     * @throws TicketMailException
+     */
+    public function sendCoupon(string $to, string $code, string $shop, string $pdf): void
+    {
+        $settings = $this->configuredSettings();
+        $shop = trim($shop) !== '' ? trim($shop) : $settings->fromName;
+        $email = $this->message($settings, $this->recipient($to))
+            ->subject(sprintf('Tu cupón de descuento %s%s', $code, $shop !== '' ? ' - ' . $shop : ''))
+            ->text(sprintf("Te enviamos tu cupón de descuento %s%s en PDF.\n\nCanjéalo en la tienda o en la web con ese código.\n", $code, $shop !== '' ? ' de ' . $shop : ''))
+            ->attach($pdf, sprintf('cupon-%s.pdf', $code), 'application/pdf');
+
+        $this->send($settings, $email);
+    }
+
     /** @throws TicketMailException */
     public function sendTest(string $to): void
     {

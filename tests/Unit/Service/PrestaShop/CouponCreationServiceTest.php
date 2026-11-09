@@ -7,6 +7,7 @@ namespace VenPosTPV\Tests\Unit\Service\PrestaShop;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\HttpClient\MockHttpClient;
 use Symfony\Component\HttpClient\Response\MockResponse;
+use VenPosTPV\Service\Coupon\IssuedCouponStore;
 use VenPosTPV\Service\PrestaShop\CouponCreationService;
 use VenPosTPV\Service\PrestaShop\Exception\CouponCreationException;
 
@@ -175,6 +176,57 @@ final class CouponCreationServiceTest extends TestCase
             self::assertSame(422, $e->getCode());
         }
         self::assertCount(0, $bodies);
+    }
+
+    private function creatingClient(): MockHttpClient
+    {
+        return new MockHttpClient(function (string $method, string $url, array $options): MockResponse {
+            if ($method === 'GET') {
+                return new MockResponse(self::BLANK_SCHEMA);
+            }
+            return new MockResponse('<?xml version="1.0"?><prestashop><cart_rule><id>45</id><code>' . $this->codeFromBody($options['body']) . '</code></cart_rule></prestashop>', ['http_code' => 201]);
+        });
+    }
+
+    public function testAnIssuedCouponIsRecordedLocallyWithItsTillAndCashier(): void
+    {
+        $store = $this->createMock(IssuedCouponStore::class);
+        $store->expects(self::once())->method('record')
+            ->with(45, self::matchesRegularExpression('/^[A-HJ-NP-Z2-9]{8}$/'), 'amount', 12.5, '2030-06-30', 10, 2, 4, 9)
+            ->willReturn(31);
+        $service = new CouponCreationService('https://shop.test', 'key', $this->creatingClient(), 2, 'Europe/Madrid', $store);
+
+        $result = $service->createIssued($this->validInput(), 3, 4, 9);
+
+        self::assertSame(45, $result['id']);
+        self::assertSame(31, $result['local_id']);
+        self::assertTrue($result['printable']);
+    }
+
+    public function testACouponCreatedInPrestaShopIsStillReturnedWhenTheLocalCopyFails(): void
+    {
+        $store = $this->createMock(IssuedCouponStore::class);
+        $store->method('record')->willReturn(null);
+        $service = new CouponCreationService('https://shop.test', 'key', $this->creatingClient(), 2, 'Europe/Madrid', $store);
+
+        $result = $service->createIssued($this->validInput(), 3, 4, 9);
+
+        self::assertSame(45, $result['id']);
+        self::assertMatchesRegularExpression('/^[A-HJ-NP-Z2-9]{8}$/', $result['code']);
+        self::assertNull($result['local_id']);
+        self::assertFalse($result['printable']);
+    }
+
+    public function testPlainCreateDoesNotRecordTheCoupon(): void
+    {
+        $store = $this->createMock(IssuedCouponStore::class);
+        $store->expects(self::never())->method('record');
+        $service = new CouponCreationService('https://shop.test', 'key', $this->creatingClient(), 2, 'Europe/Madrid', $store);
+
+        $result = $service->create($this->validInput(), 3);
+
+        self::assertSame(45, $result['id']);
+        self::assertArrayNotHasKey('local_id', $result);
     }
 
     private function codeFromBody(string $body): string

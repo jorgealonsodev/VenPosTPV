@@ -171,6 +171,7 @@ final class TestDatabase
         self::runMigration($connection, 'Version00000045TicketMarginsAndLogo');
         self::runMigration($connection, 'Version00000046SaleLine');
         self::runMigration($connection, 'Version00000047FullInvoice');
+        self::runMigration($connection, 'Version00000048IssuedCoupon');
     }
 
     private static function applyInstallSchema(Connection $connection): void

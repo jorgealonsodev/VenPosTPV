@@ -95,6 +95,14 @@ const ApiClient = (function () {
         couponPreview: (payload) => request('/api/checkout/coupon-preview', { method: 'POST', body: JSON.stringify(payload), queueOnNetworkFailure: false }),
         couponCheckout: (payload) => request('/api/checkout', { method: 'POST', body: JSON.stringify(payload), queueOnNetworkFailure: false }),
         createCoupon: (payload) => request('/api/coupons', { method: 'POST', body: JSON.stringify(payload), queueOnNetworkFailure: false }),
+        // The slip of a created coupon (its local id): printing and email are never
+        // queued offline, a replay would print or send it again; the PDF opens like the ticket PDFs.
+        couponPrint: (couponId) => request('/api/coupons/' + encodeURIComponent(couponId) + '/print', { method: 'POST', body: JSON.stringify({}), queueOnNetworkFailure: false }),
+        couponPdf: (couponId) => {
+            window.open(BASE_URL + '/api/coupons/' + encodeURIComponent(couponId) + '/pdf', '_blank');
+        },
+        couponEmail: (couponId, email) => request('/api/coupons/' + encodeURIComponent(couponId) + '/email', { method: 'POST', body: JSON.stringify({ email }), queueOnNetworkFailure: false }),
+        ticketEmailEnabled: () => request('/api/ticket/email-enabled', { method: 'GET' }),
         // PRD C1, C2: the till's local customer copy; a new customer is stored locally and
         // uploaded before its sale. Never queued offline: the server itself stores it.
         customerSearch: (query) => request('/api/customers?q=' + encodeURIComponent(query || ''), { method: 'GET' }),
