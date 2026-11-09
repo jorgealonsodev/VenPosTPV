@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace VenPosTPV\Tests\Unit\Service\Catalog;
 
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Driver\Exception as DriverException;
+use Doctrine\DBAL\Exception\TableNotFoundException;
 use Doctrine\DBAL\Query\Expression\ExpressionBuilder;
 use Doctrine\DBAL\Query\QueryBuilder;
 use Doctrine\DBAL\Result;
@@ -378,6 +380,30 @@ public function testSearchExposesTheTaxExcludedReducedPrice(): void
         $qb->expects($this->once())->method('executeQuery')->willReturn($result);
 
         return $qb;
+    }
+
+    /**
+     * Before Version00000050 there is no catalog_override table: the search runs
+     * again without the local overrides, and later reads skip them at once.
+     */
+    public function testWithoutTheOverrideTableTheSyncedCatalogIsStillSearched(): void
+    {
+        $missing = $this->createMock(QueryBuilder::class);
+        foreach (['select', 'from', 'leftJoin', 'where', 'andWhere', 'setParameter', 'setMaxResults', 'orderBy'] as $method) {
+            $missing->method($method)->willReturnSelf();
+        }
+        $missing->method('expr')->willReturn($this->createMock(ExpressionBuilder::class));
+        $missing->method('executeQuery')->willThrowException(new TableNotFoundException($this->createMock(DriverException::class), null));
+        $rows = [['id' => '1', 'name' => 'Camiseta', 'reference' => 'CAM', 'ean13' => '4006381333931', 'price' => '10', 'category_id' => null, 'stock' => '2']];
+
+        $service = new ProductSearchService($this->createConnectionWithQueryBuilders([
+            $missing,
+            $this->createQueryBuilderForRows($rows),
+            $this->createQueryBuilderForRows($rows),
+        ]));
+
+        $this->assertSame('4006381333931', $service->search('4006381333931', null, 50)[0]['ean13']);
+        $this->assertSame(1, $service->search(null, null, 50)[0]['id']);
     }
 
     private function createQueryBuilderWithResult(Result $result): QueryBuilder

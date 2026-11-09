@@ -445,4 +445,32 @@ final class CatalogSyncServiceTest extends TestCase
         $this->assertSame(1, $result['stock']);
         $this->assertNotContains(22, $this->capturedParamsForTable('catalog_stock'));
     }
+
+    /**
+     * «Modo edición»: the EAN and reference edited at the till live in
+     * catalog_override, which neither the full sync nor the stock sync may empty
+     * or rewrite (they replace only the synced catalog tables).
+     */
+    public function testNeitherSyncTouchesTheLocalOverrides(): void
+    {
+        $conn = $this->createCapturingConnection();
+        $apiClient = $this->createMockApiClient();
+        $apiClient->method('getCategories')->willReturn([['id' => 2, 'name' => 'Cat', 'id_parent' => 0, 'active' => 1]]);
+        $apiClient->method('getProducts')->willReturn([['id' => 2, 'name' => 'P', 'reference' => 'R', 'ean13' => '4006381333931', 'price' => 10, 'id_category_default' => 2, 'active' => 1]]);
+        $apiClient->method('getCombinations')->willReturn([]);
+        $apiClient->method('getStockAvailables')->willReturn([['id' => 9, 'id_product' => 2, 'id_product_attribute' => 0, 'quantity' => 4]]);
+
+        $service = new CatalogSyncService($apiClient, $conn, $this->createMockSyncLogRepo());
+        $service->syncAll();
+        $service->syncStock();
+
+        $deleted = [];
+        foreach ($this->capturedStatements as $statement) {
+            $this->assertStringNotContainsString('catalog_override', $statement['sql']);
+            if (preg_match('/^DELETE FROM `(\w+)`/', $statement['sql'], $m) === 1) {
+                $deleted[] = $m[1];
+            }
+        }
+        $this->assertSame(['catalog_stock', 'catalog_combination_attribute', 'catalog_combination', 'catalog_product', 'catalog_category', 'catalog_stock'], $deleted);
+    }
 }
