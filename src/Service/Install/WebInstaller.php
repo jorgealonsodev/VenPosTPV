@@ -6,15 +6,14 @@ namespace VenPosTPV\Service\Install;
 
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
-use Doctrine\Migrations\Configuration\Configuration;
-use Doctrine\Migrations\Configuration\Connection\ExistingConnection;
-use Doctrine\Migrations\Configuration\Migration\ExistingConfiguration;
-use Doctrine\Migrations\DependencyFactory;
-use Doctrine\Migrations\MigratorConfiguration;
+use Symfony\Component\Dotenv\Dotenv;
+use VenPosTPV\Kernel;
+use VenPosTPV\Service\Provisioning\ProvisioningReport;
+use VenPosTPV\Service\Provisioning\ProvisioningRunner;
 
 /**
  * First-run web installer: validates the form, checks the database, runs the
- * migrations and writes .env. It refuses to run once .env or the lock exists,
+ * migrations, writes .env and then runs the provisioning steps. It refuses to run once .env or the lock exists,
  * and only accepts a one-time key stored outside the web root.
  */
 final class WebInstaller
@@ -216,26 +215,40 @@ final class WebInstaller
      */
     public function migrate(Connection $conn): int
     {
-        $configuration = new Configuration();
-        $configuration->addMigrationsDirectory('VenPosTPV\\Migrations', $this->projectDir . '/migrations');
-        $configuration->setAllOrNothing(true);
-        $configuration->setCheckDatabasePlatform(false);
+        return (new MigrationRunner($this->projectDir . '/migrations'))->migrate($conn);
+    }
 
-        $factory = DependencyFactory::fromConnection(
-            new ExistingConfiguration($configuration),
-            new ExistingConnection($conn)
-        );
-        $factory->getMetadataStorage()->ensureInitialized();
+    /**
+     * Runs the provisioning steps (docs/provisioning.md) once the install is
+     * written. Nothing here may fail the install: a step that needs the shop
+     * (the module is not installed yet) stays pending with its reason and the
+     * minute task completes it later; a runner that cannot even start returns null.
+     *
+     * @param (\Closure(): ProvisioningRunner)|null $runnerFactory the default boots the installed app
+     */
+    public function provision(?\Closure $runnerFactory = null): ?ProvisioningReport
+    {
+        try {
+            return ($runnerFactory ?? $this->installedRunner(...))()->run();
+        } catch (\Throwable $e) {
+            error_log('TPV installer provisioning: ' . $e::class . ': ' . $e->getMessage());
 
-        $plan = $factory->getMigrationPlanCalculator()->getPlanUntilVersion(
-            $factory->getVersionAliasResolver()->resolveVersionAlias('latest')
-        );
-        if (\count($plan) === 0) {
-            return 0;
+            return null;
         }
-        $factory->getMigrator()->migrate($plan, (new MigratorConfiguration())->setAllOrNothing(true));
+    }
 
-        return \count($plan);
+    /** The runner of the app as installed: the .env just written, production kernel. */
+    private function installedRunner(): ProvisioningRunner
+    {
+        (new Dotenv())->bootEnv($this->projectDir . '/.env');
+        $kernel = new Kernel((string) ($_SERVER['APP_ENV'] ?? 'prod'), false);
+        $kernel->boot();
+        $runner = $kernel->getContainer()->get(ProvisioningRunner::class);
+        if (!$runner instanceof ProvisioningRunner) {
+            throw new \LogicException('The provisioning runner is not available.');
+        }
+
+        return $runner;
     }
 
     /**

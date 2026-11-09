@@ -11,6 +11,8 @@ namespace VenPosTPV\Service\Checkout;
  * in app_setting (free_item.ps_products). OutboxSync reads them when it uploads a
  * sale, so sales waiting for the setup go up on the next run. Running it again
  * returns the same ids; after adding a VAT rate to free_item.vat_rates run it again.
+ * The «free-item-products» provisioning step (docs/provisioning.md) runs it on its
+ * own while isComplete() is false.
  */
 class FreeItemSetupService
 {
@@ -18,6 +20,28 @@ class FreeItemSetupService
         private readonly PsOrderClient $client,
         private readonly FreeItemSettingsStore $store,
     ) {
+    }
+
+    /**
+     * True when free_item.ps_products has the generic product of every configured
+     * VAT rate with all its slots: nothing for run() to do.
+     */
+    public function isComplete(): bool
+    {
+        $stored = $this->store->loadPsProducts();
+        foreach ($this->store->load()->vatRates as $rate) {
+            $entry = $stored[FreeItemSettingsStore::rateKey($rate)] ?? null;
+            if ($entry === null || $entry['id_product'] < 1) {
+                return false;
+            }
+            for ($slot = 1; $slot <= FreeItemLine::MAX_SLOTS_PER_RATE; ++$slot) {
+                if (($entry['slots'][$slot] ?? 0) < 1) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
     }
 
     /**

@@ -10,6 +10,7 @@ use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use VenPosTPV\Service\PrintAgent\PrintRetention;
+use VenPosTPV\Service\Provisioning\ProvisioningRunner;
 use VenPosTPV\Service\Sync\OutboxSync;
 
 /**
@@ -23,11 +24,22 @@ use VenPosTPV\Service\Sync\OutboxSync;
  * The same minute task cleans the print agent history (docs/prd/agente-impresion.md
  * S4) through PrintRetention; that cleanup never changes this command's output or
  * exit code.
+ *
+ * Before the uploads it also runs the pending installation steps (database
+ * migrations, PrestaShop setup; docs/provisioning.md) throttled: a step that
+ * failed is tried again at most every 15 minutes. When nothing is pending this
+ * costs one check per step and prints nothing; an attempted step prints one
+ * «Provisioning: …» line. Provisioning never changes the exit code nor stops the
+ * uploads: its failures are shown in Ajustes → Acerca de.
  */
 #[AsCommand(name: 'tpv:sync:outbox', description: 'Upload pending sales to PrestaShop')]
 final class OutboxSyncCommand extends Command
 {
-    public function __construct(private readonly OutboxSync $sync, private readonly ?PrintRetention $printRetention = null)
+    public function __construct(
+        private readonly OutboxSync $sync,
+        private readonly ?PrintRetention $printRetention = null,
+        private readonly ?ProvisioningRunner $provisioning = null,
+    )
     {
         parent::__construct();
     }
@@ -45,6 +57,8 @@ final class OutboxSyncCommand extends Command
 
             return Command::INVALID;
         }
+
+        $this->provision($output);
 
         try {
             $this->printRetention?->run();
@@ -69,5 +83,25 @@ final class OutboxSyncCommand extends Command
         ));
 
         return Command::SUCCESS;
+    }
+
+    private function provision(OutputInterface $output): void
+    {
+        if ($this->provisioning === null) {
+            return;
+        }
+        try {
+            $report = $this->provisioning->run(true);
+        } catch (\Throwable $e) {
+            $output->writeln('Provisioning failed: ' . $e->getMessage(), OutputInterface::OUTPUT_RAW);
+
+            return;
+        }
+        foreach ($report->attempted() as $step) {
+            $output->writeln(
+                sprintf('Provisioning: %s %s%s', $step->id, $step->status, $step->reason !== null ? ': ' . $step->reason : ''),
+                OutputInterface::OUTPUT_RAW
+            );
+        }
     }
 }

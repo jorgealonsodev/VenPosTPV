@@ -5,8 +5,9 @@ declare(strict_types=1);
 /*
  * VenPosTPV first-run installer.
  *
- * Asks for the database and shop settings, runs the migrations and writes
- * ../.env. It only runs while ../.env does not exist, needs the one-time key
+ * Asks for the database and shop settings, runs the migrations, writes ../.env
+ * and runs the provisioning steps (docs/provisioning.md); a step that needs the
+ * shop may stay pending there and is listed on the last page. It only runs while ../.env does not exist, needs the one-time key
  * from ../INSTALL_KEY and, when it finishes, locks itself and tries to
  * delete this file.
  */
@@ -167,6 +168,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             }
 
             if ($errors === []) {
+                // Never fails the install: pending steps are listed with their reason.
+                $provisioning = $installer->provision();
                 $deleted = @unlink(__FILE__);
                 @unlink($projectDir . '/install.php'); // stub of a root-folder install
                 $root = $projectDir;
@@ -178,6 +181,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 $task = static fn (string $when, string $args): string => '<tr><td>' . $when . '</td><td><code>' . h($args) . '</code></td></tr>';
                 $tpvUrl = $result['values']['TPV_URL'];
                 page('TPV instalado', '<p class="ok">Base de datos preparada (' . (int) $executed . ' migraciones aplicadas) y configuración guardada en <code>.env</code>.</p>'
+                    . \VenPosTPV\Service\Install\ProvisioningSummary::html($provisioning)
                     . ($deleted ? '' : '<p class="err">No se pudo borrar <code>public/install.php</code>. Bórralo a mano; de todas formas ya está bloqueado.</p>')
                     . '<h2>1. Tareas programadas</h2><p>Crea cinco tareas programadas (cron) en el panel del hosting y notifica solo los errores. '
                     . 'Si el panel ejecuta un script PHP: ruta <code>' . h($script) . '</code>, PHP <strong>' . h($phpVersion) . '</strong> y como argumentos lo de la tabla. '
