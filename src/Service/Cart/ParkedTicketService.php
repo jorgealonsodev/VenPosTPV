@@ -75,6 +75,11 @@ class ParkedTicketService
                 'qty' => $qty,
                 'discount' => $lineDiscount,
             ];
+            // The line's thumbnail, so the restored ticket shows it again (display only).
+            $image = $line['image_url'] ?? null;
+            if (\is_string($image) && \strlen($image) <= 500 && preg_match('#^https?://#i', $image) === 1) {
+                $normalized['image_url'] = $image;
+            }
             // docs/prd/articulo-libre.md A9: a free item keeps its concept and VAT rate;
             // the checkout validates them again when the ticket is charged.
             if (FreeItemLine::isFree($line)) {

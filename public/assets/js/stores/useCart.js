@@ -267,6 +267,14 @@ const useCart = (function () {
                 continue;
             }
 
+            if (!line.image_url) {
+                const image = catalogImage(product, Number(line.id_product_attribute) || 0);
+                if (image) {
+                    line.image_url = image;
+                    changed = true;
+                }
+            }
+
             const price = catalogUnitPrice(product, Number(line.id_product_attribute) || 0);
             if (price === null) {
                 continue;
@@ -296,6 +304,14 @@ const useCart = (function () {
      * Mirrors CatalogPanel.onCombinationSelect: the line price is the catalog
      * product price plus the impact of the selected combination.
      */
+    /** The line's thumbnail: the combination's image, else the product's. */
+    function catalogImage(product, combinationId) {
+        const combinations = Array.isArray(product.combinations) ? product.combinations : [];
+        const combination = combinationId > 0 ? combinations.find((c) => Number(c.id) === combinationId) : null;
+        const image = (combination && combination.image_url) || product.image_url;
+        return typeof image === 'string' && image !== '' ? image : null;
+    }
+
     function catalogUnitPrice(product, combinationId) {
         const basePrice = Number(product.price);
         if (!Number.isFinite(basePrice)) {
