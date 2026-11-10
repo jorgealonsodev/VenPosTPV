@@ -351,7 +351,7 @@ const CatalogPanel = {
             </div>
 
             <div v-if="editMode" class="catalog-edit-banner" role="status">
-                <span><strong>Modo edición</strong> · pulsa un artículo para cambiar su stock, EAN o referencia. No se añade nada al ticket.</span>
+                <span><strong>Modo edición</strong> · pulsa un artículo para cambiar su stock, precio, IVA, EAN o referencia. No se añade nada al ticket.</span>
                 <button type="button" class="tpv-btn" @click="toggleEditMode">Salir</button>
             </div>
 

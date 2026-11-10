@@ -101,6 +101,9 @@ const ApiClient = (function () {
         catalogSetStock: (productId, attributeId, quantity) => request('/api/catalog/edit/' + encodeURIComponent(productId) + '/' + encodeURIComponent(attributeId) + '/stock', { method: 'PUT', body: JSON.stringify({ quantity }), queueOnNetworkFailure: false }),
         // Price with VAT and the product's VAT rate, in PrestaShop then the till: never queued offline.
         catalogSetPrice: (productId, attributeId, price, vatRate) => request('/api/catalog/edit/' + encodeURIComponent(productId) + '/' + encodeURIComponent(attributeId) + '/price', { method: 'PUT', body: JSON.stringify({ price, vat_rate: vatRate }), queueOnNetworkFailure: false }),
+        // Ajustes → Tienda → «Métodos de pago»: {enabled, available}; saving is admin-only and never queued offline.
+        paymentMethods: () => request('/api/settings/payment-methods', { method: 'GET', queueOnNetworkFailure: false }),
+        savePaymentMethods: (enabled) => request('/api/settings/payment-methods', { method: 'PUT', body: JSON.stringify({ enabled }), queueOnNetworkFailure: false }),
         // «Cupones»: the till's coupons, newest first ({data, has_more, status_checked}).
         // «Tickets → Pendientes de pago»: sales paid by transfer not received yet; marking
         // one received is never queued offline (an admin does it looking at the bank).

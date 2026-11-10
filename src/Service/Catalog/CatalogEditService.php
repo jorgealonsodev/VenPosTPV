@@ -23,9 +23,12 @@ use VenPosTPV\Service\Stock\PendingUploadStock;
  *   plus what the operations still in the outbox will take off it (a pending sale
  *   not uploaded yet), exactly like StockPushService, so that sale is not counted
  *   twice when it is uploaded.
- * - EAN and reference stay at the till: they are stored in catalog_override, never
- *   sent to PrestaShop, and the sync (which empties and refills the catalog tables)
- *   never touches them. Readers apply them over the synced values.
+ * - Price with VAT and the product's VAT rate (setPrice), EAN and reference
+ *   (saveOverride) go to PrestaShop through the TPV Connect module (0.8.3, 0.8.4)
+ *   and then to the local catalog. Values kept only at the till from before
+ *   (catalog_override) are still read over the synced ones until they are saved
+ *   to the web or dropped with «Restablecer»; without the module client
+ *   (PsPriceClient) saveOverride keeps storing them there.
  *
  * Every change writes an audit_log entry.
  */

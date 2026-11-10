@@ -1,6 +1,6 @@
 # TPV Connect
 
-Módulo de PrestaShop (1.7.7 a 9) que une la tienda con el TPV VenPosTPV: clave del webservice, inicio de sesión único (SSO) desde el back office, pedidos, devoluciones y cupones del TPV. Historial de cambios: [CHANGELOG.md](CHANGELOG.md).
+Módulo de PrestaShop (1.7.7 a 9) que une la tienda con el TPV VenPosTPV: clave del webservice, inicio de sesión único (SSO) desde el back office, pedidos, devoluciones, cupones, artículos libres y el modo edición del catálogo del TPV. Versión actual: **0.8.4**. Historial de cambios: [CHANGELOG.md](CHANGELOG.md). En la lista de módulos sale con el logo de VenPosTPV.
 
 ## Instalar y emparejar con el TPV
 
@@ -25,3 +25,24 @@ Un código equivocado, caducado, ya usado o inexistente recibe siempre la misma 
 ## Configuración manual
 
 Si no se puede emparejar, el apartado **Configuración manual** de la configuración del módulo sigue permitiendo poner la URL del TPV, ver o regenerar el secreto SSO y generar la clave del webservice («Generar clave API», que sustituye la anterior), para copiarlos en el instalador del TPV («Introducir las claves a mano»).
+
+## Qué usa el TPV
+
+| Endpoint (firmado con HMAC) | Para qué | Desde |
+|---|---|---|
+| `POST /module/tpvconnect/orders` | Pedidos de la caja, con o sin cupón (vista previa y pedido) | — |
+| `POST /module/tpvconnect/refunds`, `restock`, `orderlookup`, `freeitem` | Devoluciones, reposición de stock, búsqueda de pedidos y artículo libre | — |
+| `POST /module/tpvconnect/price` | Precio con IVA y tipo de IVA del [modo edición](../../docs/modo-edicion.md) | 0.8.3 |
+| `POST /module/tpvconnect/codes` | EAN y referencia del modo edición; vacío los borra | 0.8.4 |
+
+`price` y `codes` escriben solo esas columnas del producto o de la combinación, no el `Product` entero (PrestaShop validaría todos sus campos y un producto con algún campo fuera de límite no se podría guardar), y después lanzan `actionProductUpdate`. No tocan los precios específicos (reducciones).
+
+La clave del webservice del TPV recibe los permisos que necesita al emparejar o al actualizar el módulo; desde 0.8.2 incluye `GET` en `addresses`, de donde el TPV saca el teléfono de los clientes.
+
+### Los pedidos del TPV no mandan los e-mails de PrestaShop (0.8.1)
+
+Mientras se crea un pedido de la caja, el hook `actionEmailSendBefore` impide los e-mails propios de PrestaShop (confirmación del pedido, vale con el saldo que sobra): el TPV entrega el ticket y el vale. Así un hosting que desactiva `proc_open` ya no rompe el pedido a medias. Los pedidos de la web siguen mandando sus e-mails; en un hosting así necesitan SMTP (**Parámetros avanzados → E-mail**).
+
+### Actualizar
+
+Sube el `tpvconnect.zip` nuevo en **Módulos → Gestor de módulos → Subir un módulo**. Los scripts de `upgrade/` hacen lo necesario (por ejemplo, registrar el hook de 0.8.1 o dar el permiso de direcciones de 0.8.2); 0.8.3 y 0.8.4 no cambian nada en la tienda.

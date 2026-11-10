@@ -310,6 +310,7 @@ html, body, #app {
 .tpv-label { color: var(--text2); font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
 
 .tpv-chip-grid { display: grid; gap: 8px; }
+.tpv-chip-grid.cols-1 { grid-template-columns: minmax(0, 1fr); }
 .tpv-chip-grid.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .tpv-chip-grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .tpv-chip {
@@ -510,7 +511,7 @@ html, body, #app {
 }
 
 /* Method selector: neutral tiles; the selected one gets a green border, green icon and a check. */
-.pay-methods { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; padding: 16px 24px 0; }
+.pay-methods { display: grid; grid-template-columns: repeat(var(--pay-cols, 5), minmax(0, 1fr)); gap: 8px; padding: 16px 24px 0; }
 .pay-method {
     position: relative;
     min-height: 56px;

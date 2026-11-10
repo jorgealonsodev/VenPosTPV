@@ -13,9 +13,9 @@ use VenPosTPV\Service\Catalog\CatalogEditService;
 use VenPosTPV\Service\Catalog\Exception\CatalogEditException;
 
 /**
- * «Modo edición» of the sale screen, for administrators only: the stock (written
- * to PrestaShop, then locally) and the local EAN and reference (never sent to
- * PrestaShop) of a product (attribute 0) or of one of its combinations.
+ * «Modo edición» of the sale screen, for administrators only: the stock, the price
+ * with VAT and VAT rate, the EAN and the reference of a product (attribute 0) or of
+ * one of its combinations, written to PrestaShop first and then locally.
  */
 #[AsController]
 class CatalogEditController
