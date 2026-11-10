@@ -64,13 +64,22 @@ class TicketDataResolver
             $breakdown = [];
         }
 
+        // Each line's own discount comes from its sale_line row (Version00000046).
+        $discountPcts = $this->lineDiscounts((int) $row['id']);
         $lines = [];
-        foreach ($breakdown['lines'] ?? [] as $line) {
+        $netSum = 0.0;
+        foreach (array_values($breakdown['lines'] ?? []) as $index => $line) {
+            $lineTotal = isset($line['line_total']) ? (float) $line['line_total'] : 0.0;
+            $pct = $discountPcts[$index] ?? 0.0;
+            $lineDiscount = $pct > 0 ? round($lineTotal * $pct / 100, 2) : 0.0;
+            $netSum += $lineTotal - $lineDiscount;
             $lines[] = new TicketLine(
                 name: isset($line['name']) && \is_string($line['name']) ? $line['name'] : 'Producto',
                 quantity: isset($line['qty']) && \is_int($line['qty']) ? $line['qty'] : (isset($line['quantity']) ? (int) $line['quantity'] : 1),
                 unitPrice: isset($line['price']) ? (float) $line['price'] : 0.0,
-                lineTotal: isset($line['line_total']) ? (float) $line['line_total'] : 0.0,
+                lineTotal: $lineTotal,
+                discountPct: $pct,
+                discountAmount: $lineDiscount,
             );
         }
 
@@ -80,6 +89,10 @@ class TicketDataResolver
         $changeDue = isset($breakdown['change_due']) ? (float) $breakdown['change_due'] : 0.0;
         $subtotal = isset($breakdown['subtotal']) ? (float) $breakdown['subtotal'] : $total;
         $tax = isset($breakdown['tax']) ? (float) $breakdown['tax'] : 0.0;
+        // The ticket-wide discount (manual or coupon): what the lines, after their own
+        // discounts, add up to above the total. The exchange credit is a tender, not a discount.
+        $ticketDiscount = $lines !== [] ? round($netSum - $total, 2) : 0.0;
+        $ticketDiscount = $ticketDiscount >= 0.01 ? $ticketDiscount : 0.0;
         // The VAT box only when it tells exactly the VAT the sale stored (and chained in
         // its fiscal record): a reprint never changes the amounts of the original ticket.
         $vatBreakdown = $this->vatBreakdown($orderId);
@@ -135,7 +148,32 @@ class TicketDataResolver
             replacedByInvoice: $this->replacingInvoice($orderId),
             leftoverVoucher: self::leftoverVoucher($breakdown),
             transfer: ($breakdown['payment_method'] ?? null) === 'transfer' ? $this->transferInfo((int) $row['id'], (int) $row['terminal_id']) : null,
+            ticketDiscount: $ticketDiscount,
+            ticketDiscountLabel: \is_array($breakdown['coupon'] ?? null) ? 'Cupón' : 'Dto. ticket',
         );
+    }
+
+    /**
+     * The discount % of each line of a sale, by line index; empty before
+     * Version00000046 or for a sale without stored lines.
+     *
+     * @return array<int, float>
+     */
+    private function lineDiscounts(int $localOrderId): array
+    {
+        try {
+            $rows = $this->connection->fetchAllAssociative('SELECT line_index, line_discount_pct FROM sale_line WHERE order_id = ?', [$localOrderId]);
+        } catch (\Throwable) {
+            return [];
+        }
+        $pcts = [];
+        foreach ($rows as $r) {
+            if (is_numeric($r['line_index'] ?? null) && is_numeric($r['line_discount_pct'] ?? null) && (float) $r['line_discount_pct'] > 0) {
+                $pcts[(int) $r['line_index']] = (float) $r['line_discount_pct'];
+            }
+        }
+
+        return $pcts;
     }
 
     /**

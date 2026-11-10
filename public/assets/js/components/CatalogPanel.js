@@ -31,7 +31,16 @@ const CatalogPanel = {
             return null;
         }
 
-        return { stockTag };
+        // PrestaShop sells it without VAT: its price with and without VAT are the same
+        // (a product without tax rule in the shop). The ticket would say «IVA 0 %».
+        function noVat(p) {
+            if (!p || p.net_price === null || p.net_price === undefined) return false;
+            const price = Number(p.price);
+            const net = Number(p.net_price);
+            return price > 0 && Math.abs(price - net) < 0.005;
+        }
+
+        return { stockTag, noVat };
     },
     watch: {
         // Only an administrator edits: a session that is not one leaves the mode.
@@ -395,6 +404,7 @@ const CatalogPanel = {
                         <div v-if="p.reference" style="font-size:10px; color:var(--text3); font-family:'IBM Plex Mono';">{{ p.reference }}</div>
                         <div style="display:flex; align-items:center; justify-content:space-between; margin-top:auto;">
                             <span style="font-family:'IBM Plex Mono'; font-size:13px; font-weight:600; color:var(--text);">€{{ Number(p.price).toFixed(2) }}</span>
+                            <span v-if="noVat(p)" title="Este producto no tiene IVA en PrestaShop" style="font-size:9px; background:var(--red-bg); color:var(--red); padding:2px 6px; border-radius:4px; font-weight:700;">SIN IVA</span>
                             <span v-if="p.has_combinations" style="font-size:9px; background:var(--surface3); color:var(--text3); padding:2px 6px; border-radius:4px; font-weight:600;">VARS</span>
                             <span v-else-if="stockTag(p.stock) === 'stock-low'" style="font-size:9px; background:var(--amber-bg); color:var(--amber); padding:2px 6px; border-radius:4px; font-weight:600;">BAJO</span>
                             <span v-else-if="stockTag(p.stock) === 'no-stock'" style="font-size:9px; background:var(--red-bg); color:var(--red); padding:2px 6px; border-radius:4px; font-weight:600;">AGOTADO</span>
@@ -419,6 +429,7 @@ const CatalogPanel = {
                             <div style="font-size:13px; font-weight:500; color:var(--text);">{{ p.name }}</div>
                             <div v-if="p.reference" style="font-size:11px; color:var(--text3); font-family:'IBM Plex Mono'; margin-top:2px;">{{ p.reference }}</div>
                         </div>
+                        <span v-if="noVat(p)" title="Este producto no tiene IVA en PrestaShop" style="font-size:10px; background:var(--red-bg); color:var(--red); padding:2px 7px; border-radius:4px; font-weight:700; flex-shrink:0;">SIN IVA</span>
                         <span v-if="p.has_combinations" style="font-size:10px; background:var(--surface3); color:var(--text3); padding:2px 7px; border-radius:4px; font-weight:600; flex-shrink:0;">VARS</span>
                         <span v-else-if="stockTag(p.stock) === 'stock-low'" style="font-size:10px; background:var(--amber-bg); color:var(--amber); padding:2px 7px; border-radius:4px; font-weight:600; flex-shrink:0;">BAJO</span>
                         <span v-else-if="stockTag(p.stock) === 'no-stock'" style="font-size:10px; background:var(--red-bg); color:var(--red); padding:2px 7px; border-radius:4px; font-weight:600; flex-shrink:0;">AGOTADO</span>
