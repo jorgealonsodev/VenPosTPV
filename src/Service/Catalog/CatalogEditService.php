@@ -35,6 +35,7 @@ class CatalogEditService
     public const ACTION_OVERRIDE_SAVE = 'catalog_override_save';
     public const ACTION_OVERRIDE_RESET = 'catalog_override_reset';
     public const ACTION_PRICE = 'catalog_price_set';
+    public const ACTION_CODES = 'catalog_codes_set';
     /** The VAT rates «Modo edición» offers (PrestaShop keeps the rate per product). */
     public const VAT_RATES = [21.0, 10.0, 4.0, 0.0];
 
@@ -200,9 +201,16 @@ class CatalogEditService
      */
     public function saveOverride(int $productId, int $attributeId, mixed $ean13, mixed $reference, ?int $userId, ?int $terminalId = null, ?string $ip = null): array
     {
-        $ean13 = self::normalizeEan($ean13);
+        $synced = $this->synced($productId, $attributeId);
+        // The shop's own EAN is kept as it is, even with a wrong check digit, so a
+        // change of the reference never fails on an EAN nobody touched.
+        $keepsShopEan = $this->priceClient !== null && $synced['ean13'] !== null && \is_string($ean13) && trim($ean13) === $synced['ean13'];
+        $ean13 = $keepsShopEan ? $synced['ean13'] : self::normalizeEan($ean13);
         $reference = self::normalizeReference($reference);
-        $this->synced($productId, $attributeId);
+
+        if ($this->priceClient !== null) {
+            return $this->saveCodesInShop($productId, $attributeId, $synced, $ean13, $reference, $userId, $terminalId, $ip);
+        }
 
         try {
             $before = $this->override($productId, $attributeId);
@@ -223,6 +231,41 @@ class CatalogEditService
 
         $this->audit(self::ACTION_OVERRIDE_SAVE, $productId, $attributeId, [
             'before' => $before === null ? null : ['ean13' => $before['ean13'], 'reference' => $before['reference']],
+            'after' => ['ean13' => $ean13, 'reference' => $reference],
+        ], $userId, $terminalId, $ip);
+
+        return $this->item($productId, $attributeId);
+    }
+
+    /**
+     * The EAN and reference go to PrestaShop (module 0.8.4), then to the local
+     * catalog; a local value kept from before is dropped, the shop's is the one now.
+     * Empty clears the value in the shop too.
+     *
+     * @param array{ean13: ?string, reference: ?string} $synced
+     *
+     * @return array<string, mixed>
+     *
+     * @throws CatalogEditException
+     */
+    private function saveCodesInShop(int $productId, int $attributeId, array $synced, ?string $ean13, ?string $reference, ?int $userId, ?int $terminalId, ?string $ip): array
+    {
+        \assert($this->priceClient !== null);
+        $this->priceClient->setCodes($productId, $attributeId, $ean13, $reference);
+
+        $this->connection->executeStatement(
+            $attributeId === 0
+                ? 'UPDATE catalog_product SET ean13 = ?, reference = ? WHERE id = ?'
+                : 'UPDATE catalog_combination SET ean13 = ?, reference = ? WHERE id = ? AND id_product = ?',
+            $attributeId === 0 ? [$ean13 ?? '', $reference ?? '', $productId] : [$ean13 ?? '', $reference ?? '', $attributeId, $productId]
+        );
+        try {
+            $this->deleteOverride($productId, $attributeId);
+        } catch (TableNotFoundException) {
+            // Before Version00000050 there are no local values to drop.
+        }
+        $this->audit(self::ACTION_CODES, $productId, $attributeId, [
+            'before' => ['ean13' => $synced['ean13'], 'reference' => $synced['reference']],
             'after' => ['ean13' => $ean13, 'reference' => $reference],
         ], $userId, $terminalId, $ip);
 

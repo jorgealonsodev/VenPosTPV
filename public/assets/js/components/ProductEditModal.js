@@ -4,9 +4,10 @@
  *
  * - Stock is shared with the web shop: the new quantity is written to PrestaShop
  *   first and then to the till (PUT /api/catalog/edit/{id}/{attr}/stock).
- * - EAN and reference stay at the till only (PUT …/override); the sync never
- *   overwrites them. «Restablecer» removes them (DELETE …/override).
- * The values the web has (synced) are shown next to the local ones. The checks
+ * - Price with VAT and the product's VAT rate, EAN and reference are written to
+ *   PrestaShop too (PUT …/price, PUT …/override with module 0.8.4); emptying the
+ *   EAN or reference clears it in the web. A value kept only at the till from
+ *   before moves to the web on «Guardar»; «Restablecer» drops it (DELETE …/override). The checks
  * mirror src/Service/Catalog/CatalogEditService.php with the same messages; the
  * server validates again.
  *
@@ -26,7 +27,8 @@ const ProductEditModal = (function () {
      */
     function validate(input) {
         const ean = String(input.ean13 == null ? '' : input.ean13).trim();
-        if (ean !== '') {
+        // The EAN the item already has is kept as it is, even if its check digit is wrong.
+        if (ean !== '' && ean !== String(input.currentEan == null ? '' : input.currentEan)) {
             if (!/^(\d{8}|\d{13})$/.test(ean)) return { error: 'El EAN debe tener 8 o 13 cifras' };
             if (!validEanCheckDigit(ean)) return { error: 'El EAN «' + ean + '» no es válido: el dígito de control no cuadra' };
         }
@@ -83,8 +85,9 @@ const ProductEditModal = (function () {
             fill(item) {
                 this.item = item;
                 this.quantity = String(item.stock.quantity);
-                this.ean13 = (item.local && item.local.ean13) || '';
-                this.reference = (item.local && item.local.reference) || '';
+                // What the till uses now (a value kept only in the TPV before, else the web's).
+                this.ean13 = (item.effective && item.effective.ean13) || '';
+                this.reference = (item.effective && item.effective.reference) || '';
                 const price = item.price || {};
                 this.price = price.price == null ? '' : Number(price.price).toFixed(2).replace('.', ',');
                 this.vatRate = price.vat_rate == null ? 21 : Number(price.vat_rate);
@@ -103,7 +106,7 @@ const ProductEditModal = (function () {
             },
             async save() {
                 if (!this.item || this.saving) return;
-                const checked = validate({ ean13: this.ean13, reference: this.reference, quantity: this.quantity, stockEditable: this.item.stock.editable,
+                const checked = validate({ ean13: this.ean13, currentEan: (this.item.effective && this.item.effective.ean13) || '', reference: this.reference, quantity: this.quantity, stockEditable: this.item.stock.editable,
                     price: this.price, vatRate: this.vatRate, priceEditable: !!this.item.price });
                 if (checked.error) {
                     this.error = checked.error;
@@ -113,8 +116,9 @@ const ProductEditModal = (function () {
                 this.saving = true;
                 let item = this.item;
                 try {
-                    const local = item.local || {};
-                    if (checked.ean13 !== (local.ean13 || null) || checked.reference !== (local.reference || null)) {
+                    // Saved in the web when it differs from the web, or to move a TPV-only value there.
+                    const synced = item.synced || {};
+                    if (item.local || checked.ean13 !== (synced.ean13 || null) || checked.reference !== (synced.reference || null)) {
                         item = (await ApiClient.catalogSaveOverride(this.productId, this.attributeId, { ean13: checked.ean13, reference: checked.reference })).data;
                     }
                     if (checked.quantity !== null && checked.quantity !== item.stock.quantity) {
@@ -188,23 +192,23 @@ const ProductEditModal = (function () {
                     </div>
 
                     <div class="product-edit-field">
-                        <label class="tpv-label" for="product-edit-ean">EAN (solo en el TPV)</label>
+                        <label class="tpv-label" for="product-edit-ean">EAN (tienda y web)</label>
                         <input id="product-edit-ean" v-model="ean13" type="text" inputmode="numeric" autocomplete="off" maxlength="13"
-                            class="tpv-input product-edit-input pay-num" :placeholder="item.synced.ean13 || 'Sin EAN'" />
-                        <div class="product-edit-note">En la web: <span class="pay-num">{{ item.synced.ean13 || '—' }}</span></div>
+                            class="tpv-input product-edit-input pay-num" placeholder="Sin EAN" />
+                        <div v-if="item.local && item.local.ean13" class="product-edit-note">Ahora solo en el TPV; en la web: <span class="pay-num">{{ item.synced.ean13 || '—' }}</span>. Al guardar pasa a la web.</div>
                     </div>
 
                     <div class="product-edit-field">
-                        <label class="tpv-label" for="product-edit-reference">Referencia (solo en el TPV)</label>
+                        <label class="tpv-label" for="product-edit-reference">Referencia (tienda y web)</label>
                         <input id="product-edit-reference" v-model="reference" type="text" autocomplete="off" maxlength="64"
-                            class="tpv-input product-edit-input" :placeholder="item.synced.reference || 'Sin referencia'" />
-                        <div class="product-edit-note">En la web: <span class="pay-num">{{ item.synced.reference || '—' }}</span></div>
+                            class="tpv-input product-edit-input" placeholder="Sin referencia" />
+                        <div v-if="item.local && item.local.reference" class="product-edit-note">Ahora solo en el TPV; en la web: <span class="pay-num">{{ item.synced.reference || '—' }}</span>. Al guardar pasa a la web.</div>
                     </div>
 
                     <div v-if="!item.overrides_available" class="product-edit-note" role="status">
                         El EAN y la referencia locales necesitan actualizar la base de datos del TPV.
                     </div>
-                    <div class="product-edit-note">EAN y referencia vacíos = se usa el valor de la web.</div>
+                    <div class="product-edit-note">Todo se guarda también en la web. Vaciar el EAN o la referencia los borra también allí.</div>
                 </template>
 
                 <div v-if="error" role="alert" style="color:var(--red); font-size:14px;">{{ error }}</div>
