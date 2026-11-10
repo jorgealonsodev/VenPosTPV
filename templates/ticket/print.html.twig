@@ -88,7 +88,8 @@
         <div class="item">
             <div class="item-name">{{ line.name }}</div>
             {% if not giftMode %}
-                <div>{{ line.quantity }} x {{ line.unitPrice|number_format(2, ',', '.') }} € = {{ line.lineTotal|number_format(2, ',', '.') }} €</div>
+                <div>{{ line.quantity }} x {{ line.unitPrice|number_format(2, ',', '.') }} € = {{ line.lineTotal|number_format(2, ',', '.') }} €</div>{% if line.discountAmount > 0 %}<div>Dto. {{ ticket.formatRate(line.discountPct) }}: -{{ line.discountAmount|number_format(2, ',', '.') }} €</div>{% endif %}
+
             {% else %}
                 <div>Cant: {{ line.quantity }}</div>
             {% endif %}
@@ -108,7 +109,8 @@
         {% if ticket.creditNote.webRefundAmount > 0 %}<div class="bold">Reembolso pendiente en la web: {{ ticket.creditNote.webRefundAmount|number_format(2, ',', '.') }} €</div>
         {% endif %}{% if ticket.creditNote.voucherCode %}<div class="bold">Vale: {{ ticket.creditNote.voucherCode }}  {{ ticket.creditNote.voucherAmount|number_format(2, ',', '.') }} €</div>{% endif %}
     {% elseif not giftMode %}
-        <div class="right">Subtotal: {{ ticket.subtotal|number_format(2, ',', '.') }} €</div>
+        <div class="right">Subtotal: {{ ticket.subtotal|number_format(2, ',', '.') }} €</div>{% if ticket.itemsDiscount() > 0 %}<div class="right">Dto. artículos: -{{ ticket.itemsDiscount()|number_format(2, ',', '.') }} €</div>{% endif %}{% if ticket.ticketDiscount > 0 %}<div class="right">{{ ticket.ticketDiscountLabel }}: -{{ ticket.ticketDiscount|number_format(2, ',', '.') }} €</div>{% endif %}
+
         {% for vat in ticket.vatBreakdown %}<div class="right">IVA {{ ticket.formatRate(vat.rate) }}: {{ vat.vat|number_format(2, ',', '.') }} € (base {{ vat.base|number_format(2, ',', '.') }} €)</div>{# one line per VAT rate, art. 7.1.f RD 1619/2012 #}{% if not loop.last %}
 
         {% endif %}{% else %}<div class="right">IVA: {{ ticket.tax|number_format(2, ',', '.') }} €</div>{% endfor %}

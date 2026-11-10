@@ -135,6 +135,9 @@ class EscPosTicketBuilder
                 $unit = number_format($line->unitPrice, 2);
                 $total = number_format($line->lineTotal, 2);
                 $printer->text($this->wrap("  {$qty} x {$unit} € = {$total} €", $columns) . "\n");
+                if ($line->discountAmount > 0) {
+                    $printer->text($this->wrap('  Dto. ' . TicketData::formatRate($line->discountPct) . ': -' . number_format($line->discountAmount, 2) . ' €', $columns) . "\n");
+                }
             } else {
                 $printer->text("  Cant: {$qty}\n");
             }
@@ -175,6 +178,12 @@ class EscPosTicketBuilder
             // Totals
             $printer->setJustification(Printer::JUSTIFY_RIGHT);
             $printer->text('Subtotal: ' . number_format($ticketData->subtotal, 2) . " €\n");
+            if ($ticketData->itemsDiscount() > 0) {
+                $printer->text('Dto. articulos: -' . number_format($ticketData->itemsDiscount(), 2) . " €\n");
+            }
+            if ($ticketData->ticketDiscount > 0) {
+                $printer->text($this->sanitize($ticketData->ticketDiscountLabel) . ': -' . number_format($ticketData->ticketDiscount, 2) . " €\n");
+            }
             if ($ticketData->vatBreakdown === []) {
                 $printer->text('IVA: ' . number_format($ticketData->tax, 2) . " €\n");
             }

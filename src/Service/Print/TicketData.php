@@ -63,7 +63,17 @@ final class TicketData
         // Ajustes → Tienda has none) and whether the money is still to be received.
         /** @var array{account: ?string, pending: bool}|null */
         public readonly ?array $transfer = null,
+        // The discount on the whole ticket (manual discount, or the coupon when
+        // ticketDiscountLabel is «Cupón»), after the lines' own discounts; 0 without one.
+        public readonly float $ticketDiscount = 0.0,
+        public readonly string $ticketDiscountLabel = 'Dto. ticket',
     ) {
+    }
+
+    /** What the lines' own discounts take off the subtotal. */
+    public function itemsDiscount(): float
+    {
+        return round(array_sum(array_map(static fn (TicketLine $line): float => $line->discountAmount, $this->lines)), 2);
     }
 
     /** Rate as printed: «21 %», «5,5 %». */

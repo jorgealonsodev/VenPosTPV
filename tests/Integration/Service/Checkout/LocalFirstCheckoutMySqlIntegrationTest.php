@@ -388,6 +388,42 @@ final class LocalFirstCheckoutMySqlIntegrationTest extends TestCase
         $this->assertNull($ticket->transfer);
     }
 
+    public function testTheTicketShowsEachDiscountAndTheVatWhateverThePaymentMethod(): void
+    {
+        $twig = new \Twig\Environment(new \Twig\Loader\FilesystemLoader(\dirname(__DIR__, 4) . '/templates'));
+        $resolver = new TicketDataResolver($this->connection, new TicketVerificationService('test-secret', 'http://tpv'), 'Tienda', '');
+        foreach (['cash' => 20.69, 'card' => 0.0, 'transfer' => 20.69] as $method => $tendered) {
+            // 2 x 12,10 = 24,20; 10 % off the line (-2,42) and 5 % off the ticket (-1,09): 20,69.
+            $cart = ['lines' => [['product_id' => self::PRODUCT, 'id_product_attribute' => 0, 'qty' => 2, 'price' => self::PRICE, 'name' => 'Camiseta', 'discount' => 10]],
+                'discount' => ['type' => 'pct', 'value' => 5], 'total' => 20.69];
+            $sale = $this->service()->createOrder(1, $cart, $method, $tendered);
+            $ticket = $resolver->resolve(TicketDataResolver::saleKey($sale['order_id']));
+
+            $this->assertSame([10.0, 2.42], [$ticket->lines[0]->discountPct, $ticket->lines[0]->discountAmount], $method);
+            $this->assertSame([2.42, 1.09, 'Dto. ticket'], [$ticket->itemsDiscount(), $ticket->ticketDiscount, $ticket->ticketDiscountLabel], $method);
+
+            $paper = (new \VenPosTPV\Service\Print\EscPosTicketBuilder(['type' => 'network', 'host' => '127.0.0.1', 'port' => 9100, 'paperWidth' => 80, 'enabled' => true]))->build($ticket);
+            foreach (['Dto. 10 %: -2.42', 'Subtotal: 24.20', 'Dto. articulos: -2.42', 'Dto. ticket: -1.09', 'IVA 21 %: 3.59', 'TOTAL: 20.69'] as $text) {
+                $this->assertStringContainsString($text, $paper, $method . ' paper');
+            }
+            $pdf = $twig->render('ticket/print.html.twig', ['ticket' => $ticket, 'giftMode' => false, 'barcodePath' => '', 'qrPath' => '', 'logoPath' => '']);
+            foreach (['Dto. 10 %: -2,42 €', 'Dto. artículos: -2,42 €', 'Dto. ticket: -1,09 €', 'IVA 21 %: 3,59 €', 'TOTAL: 20,69 €'] as $text) {
+                $this->assertStringContainsString($text, $pdf, $method . ' pdf');
+            }
+        }
+    }
+
+    public function testATicketWithoutDiscountsPrintsNoDiscountLine(): void
+    {
+        $sale = $this->service()->createOrder(1, $this->cart(2), 'transfer', 24.2);
+        $ticket = (new TicketDataResolver($this->connection, new TicketVerificationService('test-secret', 'http://tpv'), 'Tienda', ''))->resolve(TicketDataResolver::saleKey($sale['order_id']));
+
+        $this->assertSame([0.0, 0.0], [$ticket->itemsDiscount(), $ticket->ticketDiscount]);
+        $paper = (new \VenPosTPV\Service\Print\EscPosTicketBuilder(['type' => 'network', 'host' => '127.0.0.1', 'port' => 9100, 'paperWidth' => 80, 'enabled' => true]))->build($ticket);
+        $this->assertStringNotContainsString('Dto.', $paper);
+        $this->assertStringContainsString('IVA 21 %: 4.20', $paper);
+    }
+
     public function testUnknownPaymentMethodIsA422AndStoresNothing(): void
     {
         try {
