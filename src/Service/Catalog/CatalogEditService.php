@@ -9,6 +9,7 @@ use Doctrine\DBAL\Exception\TableNotFoundException;
 use VenPosTPV\Service\Catalog\Exception\CatalogEditException;
 use VenPosTPV\Service\Label\BarcodeSelector;
 use VenPosTPV\Service\PrestaShop\PrestaShopApiClient;
+use VenPosTPV\Service\Sale\VatRate;
 use VenPosTPV\Service\Stock\PendingUploadStock;
 
 /**
@@ -33,10 +34,14 @@ class CatalogEditService
     public const ACTION_STOCK = 'catalog_stock_set';
     public const ACTION_OVERRIDE_SAVE = 'catalog_override_save';
     public const ACTION_OVERRIDE_RESET = 'catalog_override_reset';
+    public const ACTION_PRICE = 'catalog_price_set';
+    /** The VAT rates «Modo edición» offers (PrestaShop keeps the rate per product). */
+    public const VAT_RATES = [21.0, 10.0, 4.0, 0.0];
 
     public function __construct(
         private readonly Connection $connection,
         private readonly PrestaShopApiClient $psApiClient,
+        private readonly ?PsPriceClient $priceClient = null,
     ) {
     }
 
@@ -85,7 +90,104 @@ class CatalogEditService
                 },
             ],
             'overrides_available' => $overridesAvailable,
+            'price' => $this->price($productId, $attributeId),
         ];
+    }
+
+    /**
+     * The item's price with VAT and its product's VAT rate, as the till charges them.
+     *
+     * @return array{price: float, vat_rate: ?float}
+     */
+    private function price(int $productId, int $attributeId): array
+    {
+        $row = $attributeId > 0
+            ? $this->connection->fetchAssociative('SELECT price_ttc, price_net FROM catalog_combination WHERE id = ? AND id_product = ?', [$attributeId, $productId])
+            : $this->connection->fetchAssociative('SELECT price_ttc, price_net FROM catalog_product WHERE id = ?', [$productId]);
+        $ttc = \is_array($row) && is_numeric($row['price_ttc'] ?? null) ? (float) $row['price_ttc'] : null;
+        $net = \is_array($row) && is_numeric($row['price_net'] ?? null) ? (float) $row['price_net'] : null;
+        $resolved = (new CatalogPriceResolver($this->connection))->unitPrice($productId, $attributeId);
+        $vat = $ttc !== null && $net !== null ? VatRate::fromPrices($ttc, $net) : null;
+
+        return [
+            'price' => round($ttc ?? (float) $resolved, 2),
+            'vat_rate' => $vat === null || ($vat['approximate'] ?? false) ? null : (float) $vat['rate'],
+        ];
+    }
+
+    /**
+     * Sets the price WITH VAT of a product or a combination, and the product's VAT
+     * rate, in PrestaShop (module 0.8.3), then in the local catalog: the product's
+     * own prices and every combination's, since the rate is the product's.
+     *
+     * @return array<string, mixed> the item after the change
+     *
+     * @throws CatalogEditException
+     */
+    public function setPrice(int $productId, int $attributeId, mixed $price, mixed $vatRate, ?int $userId, ?int $terminalId = null, ?string $ip = null): array
+    {
+        $price = self::normalizePrice($price);
+        $rate = self::normalizeVatRate($vatRate);
+        $this->synced($productId, $attributeId);
+        if ($this->priceClient === null) {
+            throw new CatalogEditException('Cambiar precios no está disponible en esta instalación', 503, 'price_unavailable');
+        }
+        $before = $this->price($productId, $attributeId);
+
+        $net = $this->priceClient->setPrice($productId, $attributeId, $price, $rate)['price_net'];
+
+        // PrestaShop has the new price: the local catalog follows at once (the next
+        // sync brings the shop's own figures, reductions included).
+        $this->connection->transactional(function () use ($productId, $attributeId, $net, $rate): void {
+            $factor = 1 + $rate / 100;
+            if ($attributeId === 0) {
+                $this->connection->executeStatement('UPDATE catalog_product SET price = ? WHERE id = ?', [$net, $productId]);
+            } else {
+                $base = (float) $this->connection->fetchOne('SELECT price FROM catalog_product WHERE id = ?', [$productId]);
+                $this->connection->executeStatement(
+                    'UPDATE catalog_combination SET price_impact = ? WHERE id = ? AND id_product = ?',
+                    [round($net - $base, 6), $attributeId, $productId]
+                );
+            }
+            $base = (float) $this->connection->fetchOne('SELECT price FROM catalog_product WHERE id = ?', [$productId]);
+            $this->connection->executeStatement(
+                'UPDATE catalog_product SET price_net = ?, price_ttc = ? WHERE id = ?',
+                [$base, round($base * $factor, 2), $productId]
+            );
+            $this->connection->executeStatement(
+                'UPDATE catalog_combination SET price_net = ? + price_impact, price_ttc = ROUND((? + price_impact) * ?, 2) WHERE id_product = ?',
+                [$base, $base, $factor, $productId]
+            );
+        });
+
+        $this->audit(self::ACTION_PRICE, $productId, $attributeId, [
+            'before' => $before,
+            'after' => ['price' => $price, 'vat_rate' => $rate],
+            'price_net_sent' => $net,
+        ], $userId, $terminalId, $ip);
+
+        return $this->item($productId, $attributeId);
+    }
+
+    /** @throws CatalogEditException */
+    public static function normalizePrice(mixed $value): float
+    {
+        $text = \is_string($value) ? str_replace(',', '.', trim($value)) : $value;
+        if (!is_numeric($text) || (float) $text < 0 || (float) $text > 99999.99 || !preg_match('/^\d+(\.\d{1,2})?$/', (string) (\is_string($text) ? $text : round((float) $text, 2)))) {
+            throw CatalogEditException::invalid('El precio debe ser un importe entre 0 y 99.999,99 € con hasta 2 decimales', 'invalid_price');
+        }
+
+        return round((float) $text, 2);
+    }
+
+    /** @throws CatalogEditException */
+    public static function normalizeVatRate(mixed $value): float
+    {
+        if (!is_numeric($value) || !\in_array((float) $value, self::VAT_RATES, true)) {
+            throw CatalogEditException::invalid('El IVA debe ser 21, 10, 4 o 0 %', 'invalid_vat_rate');
+        }
+
+        return (float) $value;
     }
 
     /**

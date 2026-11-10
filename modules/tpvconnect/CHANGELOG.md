@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.3
+
+- New endpoint `POST /module/tpvconnect/price` (HMAC like the others) `{"id_product", "id_product_attribute", "price", "vat_rate"}` for the TPV's «Modo edición». `price` is the price **with VAT** (0 to 99999.99) and `vat_rate` one of 21, 10, 4 or 0. For a product it stores `Product->price` = price / (1 + rate) and the tax rules group of that rate in the shop's default country (none for 0 %). For a combination it sets the product's tax rules group and the combination impact so that the combination's price with VAT is the one sent. Answers `200 {"id_product", "id_product_attribute", "price", "price_net", "vat_rate"}`, `404` for an unknown product or combination, `422` for an invalid body or a rate the shop has no tax rule for. Prices are absolute, so repeating a request is harmless. Specific prices (reductions) are not touched.
+- Upgrade script `upgrade-0.8.3.php`: nothing to change in the shop.
+
 ## 0.8.0
 
 - Pairing with a code: nobody copies keys by hand any more. The configuration page has a button «Emparejar con un TPV» that shows a new 6-digit code (CSPRNG) and the shop address to type in the TPV installer (or in Ajustes → Acerca de → «Volver a emparejar con la tienda» of an installed TPV). The code lasts 10 minutes, works once and is stored only as a salted SHA-256 (`TPVCONNECT_PAIR_CODE`) with its expiry (`TPVCONNECT_PAIR_EXPIRES`) and an attempt counter (`TPVCONNECT_PAIR_ATTEMPTS`); 5 wrong codes invalidate it. Pressing the button again replaces the previous code.

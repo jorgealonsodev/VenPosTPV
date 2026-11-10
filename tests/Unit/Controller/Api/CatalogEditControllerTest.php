@@ -27,7 +27,7 @@ final class CatalogEditControllerTest extends TestCase
     private function controller(?\Throwable $failure = null): CatalogEditController
     {
         $service = $this->createMock(CatalogEditService::class);
-        foreach (['item', 'saveOverride', 'resetOverride', 'setStock'] as $method) {
+        foreach (['item', 'saveOverride', 'resetOverride', 'setStock', 'setPrice'] as $method) {
             $service->method($method)->willReturnCallback(function (...$args) use ($method, $failure): array {
                 $this->calls[] = [$method, ...$args];
                 if ($failure !== null) {
@@ -115,6 +115,22 @@ final class CatalogEditControllerTest extends TestCase
 
         self::assertSame(['resetOverride', 7, 0, 1, 3, null], $this->calls[0]);
         self::assertSame(['setStock', 7, 71, 12, 1, 3, null], $this->calls[1]);
+    }
+
+    public function testAPriceChangeReachesTheServiceWithItsRateAndAuthor(): void
+    {
+        $response = $this->controller()->setPrice(self::jsonRequest(['price' => '270,00', 'vat_rate' => 21], self::ADMIN), 7, 71);
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame(['setPrice', 7, 71, '270,00', 21, 1, 3, null], $this->calls[0]);
+    }
+
+    public function testACashierCannotChangeAPrice(): void
+    {
+        $response = $this->controller()->setPrice(self::jsonRequest(['price' => 10, 'vat_rate' => 21], self::CASHIER), 7, 0);
+
+        self::assertSame(403, $response->getStatusCode());
+        self::assertSame([], $this->calls);
     }
 
     public function testARefusedEditAnswersItsStatusAndReason(): void

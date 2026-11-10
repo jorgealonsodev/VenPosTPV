@@ -58,6 +58,15 @@ class CatalogEditController
         });
     }
 
+    /** Body {price (with VAT), vat_rate}: saved in PrestaShop, then in the local catalog. */
+    #[Route(self::ITEM . '/price', methods: ['PUT'], requirements: self::IDS)]
+    public function setPrice(Request $request, int $productId, int $attributeId): JsonResponse
+    {
+        return $this->run($request, true, function (array $body, ?int $userId, ?int $terminalId) use ($request, $productId, $attributeId): array {
+            return $this->edits->setPrice($productId, $attributeId, $body['price'] ?? null, $body['vat_rate'] ?? null, $userId, $terminalId, $request->getClientIp());
+        });
+    }
+
     /** @param \Closure(array<mixed>, ?int, ?int): array<string, mixed> $action */
     private function run(Request $request, bool $jsonBody, \Closure $action): JsonResponse
     {

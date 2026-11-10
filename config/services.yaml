@@ -237,6 +237,11 @@ services:
             $shopUrl: '%ps.api.url%'
             $sharedSecret: '%sso.shared_secret%'
 
+    VenPosTPV\Service\Catalog\PsPriceClient:
+        arguments:
+            $shopUrl: '%ps.api.url%'
+            $sharedSecret: '%sso.shared_secret%'
+
     # Online orders (not TPV sales) read through the module for refunds/exchanges
     VenPosTPV\Service\Refund\PsOrderLookupClient:
         arguments:
