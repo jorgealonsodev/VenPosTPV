@@ -55,6 +55,31 @@ class PrestaShopApiClient
     }
 
     /**
+     * Each customer's phone, from their addresses (a PrestaShop customer has none of
+     * its own): the mobile first, else the landline; the newest address wins.
+     * Needs GET on addresses (tpvconnect 0.8.2 grants it).
+     *
+     * @return array<int, string> keyed by PrestaShop customer id
+     *
+     * @throws PsApiException
+     */
+    public function getCustomerPhones(): array
+    {
+        $phones = [];
+        $rows = $this->paginate('/addresses?display=[id,id_customer,phone,phone_mobile]&filter[deleted]=0&sort=[id_ASC]&output_format=JSON');
+        foreach ($rows as $address) {
+            $customer = (int) ($address['id_customer'] ?? 0);
+            $phone = trim((string) ($address['phone_mobile'] ?? '')) ?: trim((string) ($address['phone'] ?? ''));
+            if ($customer > 0 && $phone !== '') {
+                // In id order: a newer address replaces an older one.
+                $phones[$customer] = mb_substr($phone, 0, 32);
+            }
+        }
+
+        return $phones;
+    }
+
+    /**
      * The PrestaShop customer with this email, if any (the first one when there are several).
      *
      * @throws PsApiException
@@ -430,6 +455,10 @@ class PrestaShopApiClient
 
         if (str_contains($endpoint, '/customers')) {
             return 'customers';
+        }
+
+        if (str_contains($endpoint, '/addresses')) {
+            return 'addresses';
         }
 
         if (str_contains($endpoint, '/categories')) {

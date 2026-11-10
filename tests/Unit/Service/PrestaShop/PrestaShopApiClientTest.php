@@ -27,6 +27,26 @@ final class PrestaShopApiClientTest extends TestCase
         ]);
     }
 
+    public function testCustomerPhonesComeFromTheAddressesMobileFirstAndNewestAddressWins(): void
+    {
+        $urls = [];
+        $http = new MockHttpClient(function (string $method, string $url) use (&$urls): MockResponse {
+            $urls[] = urldecode($url);
+
+            return $this->createJsonResponse(['addresses' => [
+                ['id' => 10, 'id_customer' => 5, 'phone' => '910 000 000', 'phone_mobile' => ''],
+                ['id' => 11, 'id_customer' => 5, 'phone' => '910 111 111', 'phone_mobile' => '600 555 555'],
+                ['id' => 12, 'id_customer' => 7, 'phone' => '', 'phone_mobile' => ''],
+                ['id' => 13, 'id_customer' => 0, 'phone' => '600 999 999', 'phone_mobile' => ''],
+                ['id' => 14, 'id_customer' => 8, 'phone' => '944 222 333', 'phone_mobile' => ''],
+            ]]);
+        });
+        $client = new PrestaShopApiClient('http://localhost/prestashop/api', 'TEST_API_KEY', $http);
+
+        $this->assertSame([5 => '600 555 555', 8 => '944 222 333'], $client->getCustomerPhones());
+        $this->assertStringContainsString('/api/addresses?display=[id,id_customer,phone,phone_mobile]&filter[deleted]=0', $urls[0]);
+    }
+
     public function testGetProductsReturnsDecodedProducts(): void
     {
         $responseData = [

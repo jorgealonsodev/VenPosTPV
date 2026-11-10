@@ -48,6 +48,9 @@ final class WebservicePermissionsTest extends TestCase
         self::assertContains('cart_rules HEAD', $granted);
         self::assertContains('customers POST', $granted);
         self::assertContains('stock_availables PUT', $granted);
+        // The customers' phones for «Elegir cliente» (WhatsApp) come from their addresses.
+        self::assertContains('addresses GET', $granted);
+        self::assertNotContains('addresses POST', $granted);
         self::assertCount(array_sum(array_map('count', \TpvConnectInstaller::WEBSERVICE_PERMISSIONS)), $granted);
     }
 

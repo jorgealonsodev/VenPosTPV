@@ -125,7 +125,7 @@ test('the sale customer phone prefills the field', () => {
 const ANA = { local_id: 1, id: 5, name: 'Ana Martínez', email: 'ana@example.com', phone: '600 111 222' };
 const SIN_TELEFONO = { local_id: 2, id: 6, name: 'Luis', email: 'luis@example.com', phone: '' };
 
-test('«Elegir cliente» searches customers, lists those with a phone, and a tap fills it', async () => {
+test('«Elegir cliente» lists every customer found; one without a phone says so and cannot be picked', async () => {
     const { state, calls } = mount({ kind: 'ticket', docId: 42 }, { customers: [ANA, SIN_TELEFONO] });
 
     state.togglePicker();
@@ -134,7 +134,14 @@ test('«Elegir cliente» searches customers, lists those with a phone, and a tap
     await state.searchCustomers();
 
     assert.deepEqual(calls.search, ['an']);
-    assert.deepEqual(JSON.parse(JSON.stringify(state.customers.value)), [ANA]);
+    assert.deepEqual(JSON.parse(JSON.stringify(state.customers.value.map((c) => c.name))), ['Ana Martínez', 'Luis']);
+    assert.equal(state.hasPhone(ANA), true);
+    assert.equal(state.hasPhone(SIN_TELEFONO), false);
+    state.pickCustomer(SIN_TELEFONO);
+    assert.equal(state.phone.value, '', 'nothing to fill');
+    assert.equal(state.pickerOpen.value, true);
+    assert.match(source, /:disabled="!hasPhone\(c\)"/);
+    assert.match(source, /sin teléfono/);
 
     state.pickCustomer(ANA);
     assert.equal(state.phone.value, '600 111 222');
@@ -142,6 +149,17 @@ test('«Elegir cliente» searches customers, lists those with a phone, and a tap
     assert.deepEqual(JSON.parse(JSON.stringify(state.customers.value)), []);
     assert.match(source, /v-for="c in customers"[^>]*@click="pickCustomer\(c\)"/);
     assert.match(source, /v-model="customerQuery"[^>]*@input="searchCustomers"/);
+});
+
+test('a search that finds nobody says so', async () => {
+    const { state } = mount({ kind: 'ticket', docId: 42 }, { customers: [] });
+    state.togglePicker();
+    assert.equal(state.searched.value, false, 'nothing said before searching');
+    state.customerQuery.value = 'zzz';
+    await state.searchCustomers();
+    assert.equal(state.searched.value, true);
+    assert.equal(state.customers.value.length, 0);
+    assert.match(source, /v-if="searched && !customers\.length"[^>]*>Ningún cliente con ese nombre o teléfono/);
 });
 
 test('ApiClient asks the link of each document without queueing it offline', () => {
