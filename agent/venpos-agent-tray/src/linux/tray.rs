@@ -2,9 +2,10 @@
 //! Cinnamon, MATE, Budgie; GNOME with the AppIndicator extension, which
 //! Ubuntu ships). Menu clicks are sent to the main thread, which talks to
 //! the service, so the D-Bus thread never blocks.
-use crate::linux::logic::{self, Snapshot, TrayAction, TrayEntry};
-use crate::linux::{Options, client, desktop, instance};
+use crate::linux::{Options, desktop, instance};
 use crate::model;
+use crate::ui::client;
+use crate::ui::logic::{self, Snapshot, TrayAction, TrayEntry};
 use agent_core::config::Target;
 use agent_core::printer::{InstalledPrinter, PrinterBackend, SystemPrinter};
 use agent_core::state::Light;

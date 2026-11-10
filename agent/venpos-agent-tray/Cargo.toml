@@ -12,10 +12,14 @@ serde_json.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 tray-icon = { version = "0.26.1", default-features = false }
+# The "VenPos Agent" window (`--panel`), the same egui window as on Linux.
+eframe = { version = "0.33.3", default-features = false, features = ["glow", "default_fonts"] }
 windows = { version = "0.62.2", features = [
   "Win32_Foundation",
   "Win32_Graphics_Gdi",
   "Win32_System_LibraryLoader",
+  "Win32_System_Registry",
+  "Win32_System_Threading",
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",

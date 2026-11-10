@@ -403,6 +403,7 @@ Section "Instalar" SecMain
   SetOutPath "$INSTDIR"
   File "${BINDIR}\${AGENT}"
   File "${BINDIR}\${TRAY}"
+  File "venpos.ico"
   WriteUninstaller "$INSTDIR\uninstall.exe"
 
   WriteRegStr HKLM "${UNINST_KEY}" "DisplayName" "${PRODUCT}"
@@ -460,6 +461,10 @@ Section "Instalar" SecMain
   ; Tray for every user at logon (A1).
   WriteRegStr HKLM "${RUN_KEY}" "${RUN_VALUE}" '"$INSTDIR\${TRAY}"'
 
+  ; The "VenPos Agent" window (printers, test prints, pairing, service) in the
+  ; Start menu of every user; the tray menu and a double click open it too.
+  CreateShortcut "$SMPROGRAMS\${PRODUCT}.lnk" "$INSTDIR\${TRAY}" "--panel" "$INSTDIR\venpos.ico" 0
+
   ${If} $TestPrint == ${BST_CHECKED}
   ${AndIf} $TicketPrinter != ""
     !insertmacro RunAgent "$INSTDIR\${AGENT}" "test-print --target ticket"
@@ -497,8 +502,10 @@ Section "Uninstall"
   DetailPrint "$1"
   !insertmacro DeleteRetry "$INSTDIR\${AGENT}"
   !insertmacro DeleteRetry "$INSTDIR\${TRAY}"
+  Delete "$INSTDIR\venpos.ico"
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR"
+  Delete "$SMPROGRAMS\${PRODUCT}.lnk"
   DeleteRegValue HKLM "${RUN_KEY}" "${RUN_VALUE}"
   DeleteRegKey HKLM "${UNINST_KEY}"
 

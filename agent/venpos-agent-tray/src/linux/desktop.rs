@@ -1,6 +1,7 @@
 //! Small desktop helpers run as commands: `xdg-open`, `notify-send` and the
 //! terminal assistant fallback. Command construction (pure, tested) is
-//! separated from execution.
+//! separated from execution. This is also the window's `ui::os` on Linux.
+use crate::linux::instance;
 use std::ffi::OsStr;
 use std::process::{Command, Stdio};
 
@@ -12,6 +13,50 @@ pub const TERMINALS: [&str; 4] = ["x-terminal-emulator", "gnome-terminal", "kons
 
 fn argv<const N: usize>(parts: [&str; N]) -> Vec<String> {
     parts.into_iter().map(str::to_owned).collect()
+}
+
+pub const MSG_NO_BROWSER: &str = "No se pudo abrir el navegador (falta xdg-open).";
+pub const MSG_NO_DISPLAY: &str = "no hay pantalla: abre VenPos Agent desde el escritorio \
+     (o usa el asistente en terminal: sudo venpos-agent-setup)";
+
+pub fn has_display() -> bool {
+    ["WAYLAND_DISPLAY", "DISPLAY"]
+        .iter()
+        .any(|v| std::env::var_os(v).is_some_and(|x| !x.is_empty()))
+}
+
+/// The window needs a desktop session.
+pub fn check_display() -> Result<(), String> {
+    if has_display() {
+        Ok(())
+    } else {
+        Err(MSG_NO_DISPLAY.to_owned())
+    }
+}
+
+/// A message for whoever started the window (a terminal or the session log).
+pub fn report(text: &str) {
+    eprintln!("venpos-agent-tray: {text}");
+}
+
+/// Asks an open window (over its socket in `$XDG_RUNTIME_DIR`) to come to the front.
+pub fn raise_existing_window() -> bool {
+    instance::runtime_dir().is_some_and(|d| instance::raise_existing_window(&instance::window_socket_path(&d)))
+}
+
+/// Lets later launches raise this window; `on_show` runs on a helper thread.
+pub fn listen_for_raise(on_show: impl Fn() + Send + 'static) {
+    if let Some(d) = instance::runtime_dir() {
+        let _ = instance::listen_for_raise(&instance::window_socket_path(&d), on_show);
+    }
+}
+
+/// The window could not open (no OpenGL…): the terminal assistant instead.
+pub fn window_failed(error: &str) {
+    report(&format!("no se pudo abrir la ventana: {error}"));
+    if !open_assistant() {
+        report("usa el asistente en terminal: sudo venpos-agent-setup");
+    }
 }
 
 /// Restarting the service needs root: `pkexec` asks for the administrator password

@@ -1,9 +1,9 @@
-//! The "VenPos Agent" window (egui): status, printers, test prints and
-//! pairing. A thin layer over `logic` and `client`; every request runs on a
+//! The "VenPos Agent" window (egui) on Linux and Windows: status, printers,
+//! test prints and pairing. A thin layer over `logic` and `client`; every request runs on a
 //! helper thread so the window never freezes while the service answers.
-use crate::linux::logic::{self, Choice, Notice, PrinterOption, Snapshot};
-use crate::linux::{Options, client, desktop, instance};
 use crate::model;
+use crate::ui::logic::{self, Choice, Notice, PrinterOption, Snapshot};
+use crate::ui::{client, os};
 use agent_core::config::{Destination, Target};
 use agent_core::printer::{PrinterBackend, SystemPrinter};
 use agent_core::state::Light;
@@ -169,7 +169,10 @@ impl Panel {
                     ui.label("(no hay impresoras instaladas)");
                 }
                 ui.separator();
-                ui.selectable_value(&mut f.choice, Some(Choice::Device), logic::DEVICE_LABEL);
+                // A /dev/ character device only exists on Linux.
+                if cfg!(not(windows)) {
+                    ui.selectable_value(&mut f.choice, Some(Choice::Device), logic::DEVICE_LABEL);
+                }
                 ui.selectable_value(&mut f.choice, Some(Choice::Network), logic::NETWORK_LABEL);
             });
         if f.choice != before {
@@ -246,8 +249,8 @@ impl Panel {
         ui.horizontal(|ui| {
             if ui.button("Abrir ajustes del TPV").clicked() {
                 self.notice = match logic::settings_target(server.as_deref()) {
-                    Ok(url) if desktop::open(&url) => None,
-                    Ok(_) => Some(Notice::warn("No se pudo abrir el navegador (falta xdg-open).")),
+                    Ok(url) if os::open(&url) => None,
+                    Ok(_) => Some(Notice::warn(os::MSG_NO_BROWSER)),
                     Err(msg) => Some(Notice::warn(msg)),
                 };
             }
@@ -258,7 +261,7 @@ impl Panel {
                     let readable = std::fs::File::open(&path).map(|_| ());
                     if let Some(problem) = logic::log_open_problem(&path, readable) {
                         Notice::warn(problem)
-                    } else if desktop::open(&path) {
+                    } else if os::open(&path) {
                         Notice::ok(format!("Registro: {path}"))
                     } else {
                         Notice::warn(format!("No se pudo abrir {path}"))
@@ -267,13 +270,13 @@ impl Panel {
             }
             // Restart also starts a stopped service.
             if ui.button("Iniciar / reiniciar servicio").clicked() {
-                self.run(ctx, Slot::General, |_| match desktop::restart_service() {
+                self.run(ctx, Slot::General, |_| match os::restart_service() {
                     Ok(()) => Notice::ok("Servicio en marcha".to_owned()),
                     Err(msg) => Notice::warn(msg),
                 });
             }
             if ui.button("Detener servicio").clicked() {
-                self.run(ctx, Slot::General, |_| match desktop::stop_service() {
+                self.run(ctx, Slot::General, |_| match os::stop_service() {
                     Ok(()) => Notice::warn(
                         "Servicio detenido: no se imprimirá hasta que lo inicies (o reinicies el equipo)".to_owned(),
                     ),
@@ -338,27 +341,16 @@ fn poller(ipc_name: String, tx: mpsc::Sender<Msg>, wake: mpsc::Receiver<()>, ctx
     });
 }
 
-pub const MSG_NO_DISPLAY: &str = "no hay pantalla: abre VenPos Agent desde el escritorio \
-     (o usa el asistente en terminal: sudo venpos-agent-setup)";
-
-pub fn has_display() -> bool {
-    ["WAYLAND_DISPLAY", "DISPLAY"]
-        .iter()
-        .any(|v| std::env::var_os(v).is_some_and(|x| !x.is_empty()))
-}
-
-pub fn run(opts: &Options) -> i32 {
-    if !has_display() {
-        eprintln!("venpos-agent-tray: {MSG_NO_DISPLAY}");
+/// Opens the window, or brings an already open one to the front.
+pub fn run(ipc_name: String, log_default: PathBuf) -> i32 {
+    if let Err(msg) = os::check_display() {
+        os::report(&msg);
         return 1;
     }
-    let raise = Arc::new(AtomicBool::new(false));
-    let socket = instance::runtime_dir().map(|d| instance::window_socket_path(&d));
-    if let Some(s) = &socket
-        && instance::raise_existing_window(s)
-    {
+    if os::raise_existing_window() {
         return 0;
     }
+    let raise = Arc::new(AtomicBool::new(false));
     let icon = egui::IconData {
         rgba: model::icon_rgba(Light::Green, 64),
         width: 64,
@@ -366,7 +358,7 @@ pub fn run(opts: &Options) -> i32 {
     };
     let native = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("VenPos Agent")
+            .with_title(model::WINDOW_TITLE)
             .with_app_id("venpos-agent")
             .with_icon(icon)
             .with_inner_size([520.0, 640.0])
@@ -374,8 +366,6 @@ pub fn run(opts: &Options) -> i32 {
         renderer: eframe::Renderer::Glow,
         ..Default::default()
     };
-    let ipc_name = opts.paths.ipc_name.clone();
-    let log_default = opts.paths.log_file();
     let raise_flag = Arc::clone(&raise);
     let result = eframe::run_native(
         "VenPos Agent",
@@ -384,14 +374,12 @@ pub fn run(opts: &Options) -> i32 {
             let (tx, rx) = mpsc::channel();
             let (wake, wake_rx) = mpsc::channel();
             poller(ipc_name.clone(), tx.clone(), wake_rx, cc.egui_ctx.clone());
-            if let Some(s) = &socket {
-                let ctx = cc.egui_ctx.clone();
-                let flag = Arc::clone(&raise_flag);
-                let _ = instance::listen_for_raise(s, move || {
-                    flag.store(true, Ordering::SeqCst);
-                    ctx.request_repaint();
-                });
-            }
+            let ctx = cc.egui_ctx.clone();
+            let flag = Arc::clone(&raise_flag);
+            os::listen_for_raise(move || {
+                flag.store(true, Ordering::SeqCst);
+                ctx.request_repaint();
+            });
             Ok(Box::new(Panel {
                 ipc_name,
                 log_default,
@@ -413,10 +401,7 @@ pub fn run(opts: &Options) -> i32 {
     match result {
         Ok(()) => 0,
         Err(e) => {
-            eprintln!("venpos-agent-tray: no se pudo abrir la ventana: {e}");
-            if !desktop::open_assistant() {
-                eprintln!("venpos-agent-tray: usa el asistente en terminal: sudo venpos-agent-setup");
-            }
+            os::window_failed(&e.to_string());
             1
         }
     }

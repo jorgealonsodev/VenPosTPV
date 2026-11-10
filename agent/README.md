@@ -1,7 +1,7 @@
 # VenPos print agent (`agent/`)
 
 Rust workspace: `agent-core` (library), `venpos-agent` (service + CLI),
-`venpos-agent-tray` (tray icon on Windows; tray icon + window on Linux). Specification: `docs/prd/agente-impresion.md`;
+`venpos-agent-tray` (tray icon + window on Windows and Linux; the window is `src/ui/`, shared). Specification: `docs/prd/agente-impresion.md`;
 shop-owner guide: `docs/print-agent.md`.
 
 ## Build and test
@@ -26,6 +26,15 @@ from the machine-wide printers, optional test page, service install, tray in
 [/LABELPRINTER=name] [/TESTPRINT]`; uninstall with `uninstall.exe /S [/PURGE]`.
 Exit codes are the agent CLI codes (3 code rejected, 5 unreachable, 7 needs admin…).
 Not signed yet (PRD I2).
+
+The installer also creates the Start-menu shortcut "VenPos Agent"
+(`venpos-agent-tray.exe --panel`, icon `venpos.ico`): the same egui window as on
+Linux (glow/OpenGL; `opengl32.dll` and `imm32.dll` are system DLLs). The tray menu
+item "Abrir VenPos Agent" and a double click on the icon open it too; a second
+launch raises the open window (found by its title and executable). "Iniciar /
+reiniciar servicio" and "Detener servicio" run `Restart-Service` / `Stop-Service
+VenPosAgent` in PowerShell elevated with the UAC prompt. Without OpenGL 2 (some
+remote sessions) the window says to use the tray menu.
 
 `.github/workflows/print-agent-windows.yml` builds it on `windows-latest`, installs
 it silently, checks `sc query VenPosAgent` is RUNNING, prints through the spooler to

@@ -1,8 +1,8 @@
 //! Requests the tray and the window send over the local socket (A3). The
 //! tray never reads the key nor the configuration: everything it shows
 //! comes from `status`, everything it changes goes through the service.
-use crate::linux::logic::{self, Notice, Snapshot};
 use crate::model;
+use crate::ui::logic::{self, Notice, Snapshot};
 use agent_core::config::{Destination, Target};
 use agent_core::ipc::{self, Request};
 use std::path::Path;
@@ -31,10 +31,10 @@ pub fn log_path(ipc_name: &str, default: &Path) -> String {
     logic::log_target(ipc::request(ipc_name, &Request::OpenLog), default)
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
-    use crate::linux::logic::{MSG_NO_PERMISSION, MSG_SERVICE_STOPPED};
+    use crate::ui::logic::{MSG_NO_PERMISSION, MSG_SERVICE_STOPPED};
     use agent_core::config::{Config, Destinations};
     use agent_core::ipc::Handler;
     use agent_core::printer::{InstalledPrinter, PrintError, PrinterBackend, PrinterState, QueueStatus, SpoolRef};

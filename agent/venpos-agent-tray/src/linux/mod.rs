@@ -3,11 +3,8 @@
 //! applications menu, which also starts the icon if it is not running).
 //! Both run as the desktop user, talk to the service over its socket and
 //! never read the key (E10).
-mod client;
-mod desktop;
+pub mod desktop;
 mod instance;
-mod logic;
-mod panel;
 mod tray;
 
 use agent_core::paths::Paths;
@@ -110,7 +107,7 @@ pub fn run() -> i32 {
     };
     if mode == Mode::Panel {
         ensure_tray(&opts);
-        return panel::run(&opts);
+        return crate::ui::panel::run(opts.paths.ipc_name.clone(), opts.paths.log_file());
     }
     tray::run(&opts)
 }

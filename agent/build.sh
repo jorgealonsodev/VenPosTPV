@@ -8,7 +8,7 @@ cd "$(dirname "$0")"
 LINUX=x86_64-unknown-linux-gnu
 WIN=x86_64-pc-windows-gnu
 # System DLLs that every Windows 10/11 has. Anything else fails the build.
-ALLOWED_DLLS='^(kernel32|advapi32|bcrypt|bcryptprimitives|crypt32|gdi32|ntdll|ole32|oleaut32|shell32|user32|userenv|winspool\.drv|ws2_32|msvcrt|comctl32|uxtheme|dwmapi|shlwapi|secur32|ncrypt|api-ms-win-[a-z0-9-]+)(\.dll)?$'
+ALLOWED_DLLS='^(kernel32|advapi32|bcrypt|bcryptprimitives|crypt32|gdi32|ntdll|ole32|oleaut32|shell32|user32|userenv|winspool\.drv|ws2_32|msvcrt|comctl32|uxtheme|dwmapi|shlwapi|secur32|ncrypt|imm32|opengl32|api-ms-win-[a-z0-9-]+)(\.dll)?$'
 
 cargo build --release --locked --target "$LINUX" -p venpos-agent
 cargo build --release --locked --target "$WIN" -p venpos-agent -p venpos-agent-tray
