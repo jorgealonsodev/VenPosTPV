@@ -192,7 +192,7 @@ const InvoiceModal = {
         };
     },
     template: `
-        <div class="combinations-modal-backdrop" @click.self="$emit('close')">
+        <div class="combinations-modal-backdrop">
             <div class="combinations-modal invoice-modal" role="dialog" aria-label="Factura completa">
                 <div class="combinations-modal-header">
                     <h3 style="margin:0; font-size:16px; color:var(--text); font-weight:600;">Factura completa · {{ order.reference }}</h3>

@@ -5,6 +5,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { hasCacheVersionSince } = require('./support/cacheVersion.cjs');
 const vm = require('node:vm');
 
 const ROOT = path.resolve(__dirname, '../..');
@@ -157,7 +158,7 @@ function testApiClientPostsTheDiscardAsJsonAndNeverQueuesIt() {
     assert.match(source, /incidentDiscard: \(id, reason\) => request\('\/api\/incidents\/' \+ encodeURIComponent\(id\) \+ '\/discard', \{ method: 'POST', body: JSON\.stringify\(\{ reason: reason \|\| null \}\), queueOnNetworkFailure: false \}\)/);
     assert.match(source, /incidentsDiscarded: \(\) => request\('\/api\/incidents\/discarded', \{ method: 'GET' \}\)/);
     const page = fs.readFileSync(path.join(ROOT, 'templates/pos.html.twig'), 'utf8');
-    assert.match(page, /IncidentsScreen\.js\?v=20261103-incident-discard-v1/);
+    assert.ok(hasCacheVersionSince(page, 'components/IncidentsScreen.js', '20261103'), 'IncidentsScreen.js');
 }
 
 (async () => {

@@ -154,7 +154,7 @@ const FreeItemModal = (function () {
             return { rates, concept, price, vatRate, qty, active, error, maxLabel, focus, setRate, stepQty, onKey, add };
         },
         template: `
-        <div class="modal-backdrop" style="backdrop-filter:blur(3px); -webkit-backdrop-filter:blur(3px);" @click.self="$emit('close')">
+        <div class="modal-backdrop" style="backdrop-filter:blur(3px); -webkit-backdrop-filter:blur(3px);">
             <div class="free-item-modal" role="dialog" aria-modal="true" aria-labelledby="free-item-title" @click.stop>
                 <div id="free-item-title" style="font-size:18px; font-weight:700;">Artículo libre</div>
                 <div class="free-item-body">

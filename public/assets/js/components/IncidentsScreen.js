@@ -266,7 +266,7 @@ const IncidentsScreen = {
             </div>
 
             <div v-if="confirming" style="position:fixed; inset:0; background:rgba(0,0,0,0.55); display:flex; align-items:center; justify-content:center; padding:16px; z-index:1000;"
-                @click.self="cancelDiscard" @keydown.esc="cancelDiscard">
+               >
                 <div role="dialog" aria-modal="true" aria-labelledby="incident-discard-title"
                     style="background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:14px; padding:20px; width:100%; max-width:480px; display:flex; flex-direction:column; gap:14px;">
                     <div id="incident-discard-title" style="font-weight:700; font-size:17px;">Descartar incidencia</div>

@@ -124,7 +124,7 @@ const CouponListModal = {
         };
     },
     template: `
-        <div class="modal-backdrop" style="backdrop-filter:blur(3px); -webkit-backdrop-filter:blur(3px);" @click.self="$emit('close')">
+        <div class="modal-backdrop" style="backdrop-filter:blur(3px); -webkit-backdrop-filter:blur(3px);">
             <div style="background:var(--surface); border:1px solid var(--border); border-radius:20px; padding:24px; width:760px; max-width:94vw; max-height:88vh; display:flex; flex-direction:column; gap:14px;" @click.stop>
                 <div style="display:flex; align-items:center; gap:12px;">
                     <div style="font-size:17px; font-weight:600; color:var(--text); flex:1;">Cupones</div>

@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { hasCacheVersionSince } = require('./support/cacheVersion.cjs');
 const vm = require('node:vm');
 
 function ref(value) { return { value }; }
@@ -100,7 +101,7 @@ function testSaleScreenShowsCouponEntryToBothAuthorizedRolesOnly() {
     assert.doesNotMatch(source, /<icon name="tag"[^>]*\/> Crear cupón/);
     assert.doesNotMatch(source, /showSettings = true[\s\S]{0,160}Crear cupón/);
     assert.match(appSource, /app\.component\('coupon-creation-modal', CouponCreationModal\)/);
-    assert.match(pageSource, /components\/CouponCreationModal\.js\?v=20261109-[a-z0-9-]+/);
+    assert.ok(hasCacheVersionSince(pageSource, 'components/CouponCreationModal.js', '20261109'), 'CouponCreationModal.js');
     assert.match(pageSource, /SaleScreen\.js\?v=[^"']+/);
 }
 

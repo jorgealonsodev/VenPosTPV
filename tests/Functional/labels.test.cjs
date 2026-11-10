@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { hasCacheVersionSince } = require('./support/cacheVersion.cjs');
 const vm = require('node:vm');
 
 const plain = (v) => JSON.parse(JSON.stringify(v));
@@ -144,7 +145,7 @@ function testScreensAreWired() {
     const app = fs.readFileSync(path.resolve(ROOT, '../app.js'), 'utf8');
     ['label-print-modal', 'labels-screen', 'label-pending-prompt'].forEach(c => assert.ok(app.includes("'" + c + "'"), c));
     const twig = fs.readFileSync(path.resolve(__dirname, '../../templates/pos.html.twig'), 'utf8');
-    assert.ok(twig.includes('LabelPrintModal.js?v=20261103-') && twig.includes('LabelsScreen.js?v=20261103-'));
+    assert.ok(hasCacheVersionSince(twig, 'components/LabelPrintModal.js', '20261103') && hasCacheVersionSince(twig, 'components/LabelsScreen.js', '20261103'));
     const api = fs.readFileSync(path.resolve(ROOT, '../api.js'), 'utf8');
     ['/api/labels/preview', '/api/labels/print', '/api/labels/lookup', '/api/labels/pending'].forEach(p => assert.ok(api.includes(p), p));
 }

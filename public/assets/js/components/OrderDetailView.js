@@ -282,7 +282,7 @@ const OrderDetailView = {
             </div>
 
             <!-- PDF: download, send by email or by WhatsApp -->
-            <div v-if="pdfChoice" class="combinations-modal-backdrop" @click.self="pdfChoice = false">
+            <div v-if="pdfChoice" class="combinations-modal-backdrop">
                 <div class="combinations-modal" role="dialog" :aria-label="pdfDoc === 'invoice' ? 'Factura en PDF' : 'Ticket en PDF'" style="max-width:420px;">
                     <div class="combinations-modal-header">
                         <h3 style="margin:0; font-size:16px; color:var(--text); font-weight:600;">{{ pdfDoc === 'invoice' ? 'Factura ' + invoice.number : 'Ticket ' + title }}</h3>
