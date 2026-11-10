@@ -10,6 +10,7 @@ use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Session\Session;
 use Symfony\Component\HttpFoundation\Session\Storage\MockArraySessionStorage;
 use VenPosTPV\Controller\Api\CouponController;
+use VenPosTPV\Service\Coupon\CouponListService;
 use VenPosTPV\Service\Coupon\CouponSlipService;
 use VenPosTPV\Service\Coupon\IssuedCoupon;
 use VenPosTPV\Service\Coupon\IssuedCouponStore;
@@ -58,6 +59,31 @@ final class CouponControllerTest extends TestCase
 
         self::assertSame(201, $response->getStatusCode());
         self::assertFalse(json_decode((string) $response->getContent(), true)['data']['printable']);
+    }
+
+    public function testTheCouponListGoesToTheListServiceWithTheSearchAndPage(): void
+    {
+        $list = $this->createMock(CouponListService::class);
+        $list->expects(self::once())->method('list')->with('abc', 2)->willReturn(['data' => [['code' => 'TPV-ABC']], 'has_more' => false, 'status_checked' => true]);
+        $controller = new CouponController($this->createMock(CouponCreationService::class), $this->createMock(CouponSlipService::class), $list);
+        $request = $this->request(self::CASHIER);
+        $request->query->replace(['q' => ' abc ', 'page' => '2']);
+
+        $response = $controller->list($request);
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame('TPV-ABC', json_decode((string) $response->getContent(), true)['data'][0]['code']);
+        self::assertStringContainsString('no-store', (string) $response->headers->get('Cache-Control'));
+    }
+
+    public function testTheCouponListNeedsASessionAndAnAllowedRole(): void
+    {
+        $list = $this->createMock(CouponListService::class);
+        $list->expects(self::never())->method('list');
+        $controller = new CouponController($this->createMock(CouponCreationService::class), $this->createMock(CouponSlipService::class), $list);
+
+        self::assertSame(401, $controller->list($this->request([]))->getStatusCode());
+        self::assertSame(403, $controller->list($this->request(['user_id' => 9, 'role' => 'manager']))->getStatusCode());
     }
 
     public function testMissingAuthenticationAndDisallowedRoleDoNotCallService(): void

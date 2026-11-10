@@ -64,6 +64,12 @@ services:
             $defaultCurrencyId: '%env(int:PS_DEFAULT_CURRENCY)%'
             $shopTimezone: '%env(PS_SHOP_TIMEZONE)%'
 
+    # «Cupones»: live state of the till's coupons in PrestaShop
+    VenPosTPV\Service\PrestaShop\CouponStatusLookup:
+        arguments:
+            $shopUrl: '%env(PS_SHOP_URL)%'
+            $apiKey: '%env(PS_API_KEY)%'
+
     # Checkout Service
     VenPosTPV\Service\Checkout\PsOrderClient:
         arguments:

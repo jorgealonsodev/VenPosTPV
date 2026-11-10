@@ -9,6 +9,7 @@ use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Attribute\AsController;
 use Symfony\Component\Routing\Attribute\Route;
+use VenPosTPV\Service\Coupon\CouponListService;
 use VenPosTPV\Service\Coupon\CouponSlipService;
 use VenPosTPV\Service\Mail\TicketMailException;
 use VenPosTPV\Service\PrestaShop\CouponCreationService;
@@ -17,7 +18,7 @@ use VenPosTPV\Service\PrintAgent\TerminalNotResolvedException;
 
 /**
  * «Crear cupón»: creates a PrestaShop cart rule, keeps it in the till, and hands
- * its slip over on the ticket printer, as a PDF, or by email.
+ * its slip over on the ticket printer, as a PDF, or by email. «Cupones» lists them.
  */
 #[AsController]
 final class CouponController
@@ -27,7 +28,30 @@ final class CouponController
     public function __construct(
         private readonly CouponCreationService $couponCreationService,
         private readonly CouponSlipService $slips,
+        private readonly ?CouponListService $list = null,
     ) {
+    }
+
+    /**
+     * «Cupones»: the coupons created from the till, newest first, 25 per page.
+     * Query: q (part of the code), page (from 1).
+     * {data: [{id, code, type, value, expires_at, created_at, cashier, terminal, status, uses_left}], has_more, status_checked}
+     */
+    #[Route('/coupons', methods: ['GET'])]
+    public function list(Request $request): JsonResponse
+    {
+        if (($denied = $this->denied($request)) !== null) {
+            return $denied;
+        }
+        if ($this->list === null) {
+            return new JsonResponse(['error' => 'Not available'], Response::HTTP_SERVICE_UNAVAILABLE);
+        }
+        $query = trim((string) $request->query->get('q', ''));
+        $page = max(1, $request->query->getInt('page', 1));
+        $response = new JsonResponse($this->list->list($query !== '' ? mb_substr($query, 0, 32) : null, $page));
+        $response->headers->set('Cache-Control', 'no-store');
+
+        return $response;
     }
 
     /** {data: {id, code, type, value, expires_at, quantity, quantity_per_user, local_id, printable}} */

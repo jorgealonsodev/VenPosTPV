@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { hasCacheVersionSince } = require('./support/cacheVersion.cjs');
 
 const ROOT = path.resolve(__dirname, '../..');
 
@@ -56,10 +57,10 @@ function testOnlyTheHeaderButtonIsManual() {
 function testThePageLoadsTheNewVersions() {
     const page = fs.readFileSync(path.join(ROOT, 'templates/pos.html.twig'), 'utf8');
     // api.js also changed in a concurrent task, which may own its version; it only has to be new.
-    assert.match(page, /js\/api\.js\?v=2026110[3-9]-/);
+    assert.ok(hasCacheVersionSince(page, 'api.js', '20261103'), 'api.js');
     assert.doesNotMatch(page, /js\/api\.js\?v=20261103-sync-visibility-v1"/);
     // Later tasks bump SaleScreen again; it only has to be newer than before the manual flag.
-    assert.match(page, /SaleScreen\.js\?v=2026110[3-9]-/);
+    assert.ok(hasCacheVersionSince(page, 'components/SaleScreen.js', '20261103'), 'SaleScreen.js');
     assert.doesNotMatch(page, /SaleScreen\.js\?v=20261103-sync-manual-v2"/);
 }
 

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace VenPosTPV\Service\Coupon;
 
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Exception\InvalidFieldNameException;
 
 /** The till's copy of the coupons it created (issued_coupon, Version00000048). */
 class IssuedCouponStore
@@ -65,5 +66,44 @@ class IssuedCouponStore
             userId: $row['user_id'] !== null ? (int) $row['user_id'] : null,
             createdAt: new \DateTimeImmutable((string) $row['created_at']),
         );
+    }
+
+    /**
+     * The coupons newest first, optionally those whose code contains $query, with
+     * the cashier (full name, else user name) and the till that created them.
+     *
+     * @return list<array{id: int, ps_cart_rule_id: int, code: string, type: string, value: float, expires_at: string, created_at: string, cashier: ?string, terminal: ?string}>
+     */
+    public function listRecent(?string $query, int $limit, int $offset): array
+    {
+        $where = '';
+        $params = [];
+        $query = trim((string) $query);
+        if ($query !== '') {
+            $where = "WHERE LOWER(c.code) LIKE ? ESCAPE '!'";
+            $params[] = '%' . strtolower(strtr($query, ['!' => '!!', '%' => '!%', '_' => '!_'])) . '%';
+        }
+        $sql = static fn (string $cashier): string => 'SELECT c.id, c.ps_cart_rule_id, c.code, c.discount_type, c.value, c.expires_at, c.created_at, '
+            . $cashier . ' AS cashier, t.name AS terminal FROM issued_coupon c '
+            . 'LEFT JOIN user u ON u.id = c.user_id LEFT JOIN terminal t ON t.id = c.terminal_id '
+            . $where . ' ORDER BY c.created_at DESC, c.id DESC LIMIT ' . max(1, $limit) . ' OFFSET ' . max(0, $offset);
+        try {
+            $rows = $this->connection->fetchAllAssociative($sql("COALESCE(NULLIF(TRIM(u.full_name), ''), u.name)"), $params);
+        } catch (InvalidFieldNameException) {
+            // Code deployed before Version00000049: no full_name column yet.
+            $rows = $this->connection->fetchAllAssociative($sql('u.name'), $params);
+        }
+
+        return array_map(static fn (array $r): array => [
+            'id' => (int) $r['id'],
+            'ps_cart_rule_id' => (int) $r['ps_cart_rule_id'],
+            'code' => (string) $r['code'],
+            'type' => (string) $r['discount_type'],
+            'value' => (float) $r['value'],
+            'expires_at' => substr((string) $r['expires_at'], 0, 10),
+            'created_at' => (string) $r['created_at'],
+            'cashier' => isset($r['cashier']) && $r['cashier'] !== '' ? (string) $r['cashier'] : null,
+            'terminal' => isset($r['terminal']) && $r['terminal'] !== '' ? (string) $r['terminal'] : null,
+        ], $rows);
     }
 }
