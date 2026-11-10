@@ -94,6 +94,45 @@ final class TestDatabase
     }
 
     /**
+     * Connects to an empty throwaway database, dropped and recreated on every call.
+     *
+     * Migration tests that create and drop whole tables run here: on the shared
+     * test database they would remove columns later migrations added (and their
+     * rows), breaking every test that runs after them. Returns null when MySQL is
+     * not reachable.
+     */
+    public static function scratchConnection(): ?Connection
+    {
+        $settings = self::settings();
+        $name = substr($settings['name'], 0, -\strlen(self::DEFAULT_SUFFIX)) . '_scratch' . self::DEFAULT_SUFFIX;
+        self::assertSafeTestDatabaseName($settings['name'], $name);
+
+        try {
+            $server = self::makeConnection([
+                'host' => $settings['host'],
+                'port' => $settings['port'],
+                'user' => $settings['user'],
+                'password' => $settings['password'],
+            ]);
+            $server->executeQuery('SELECT 1');
+        } catch (\Throwable) {
+            return null;
+        }
+
+        try {
+            $server->executeStatement(sprintf('DROP DATABASE IF EXISTS `%s`', $name));
+            $server->executeStatement(sprintf(
+                'CREATE DATABASE `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+                $name
+            ));
+        } finally {
+            $server->close();
+        }
+
+        return self::makeConnection(['name' => $name] + $settings);
+    }
+
+    /**
      * @param array{host: string, port: int, name?: string, user: string, password: string} $settings
      */
     private static function makeConnection(array $settings): Connection

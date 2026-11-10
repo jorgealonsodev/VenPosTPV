@@ -4,34 +4,23 @@ declare(strict_types=1);
 
 namespace VenPosTPV\Tests\Integration\Migrations;
 
-use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Platforms\MySQLPlatform;
 use Doctrine\DBAL\Schema\Schema;
 use PHPUnit\Framework\TestCase;
+use Psr\Log\NullLogger;
 use VenPosTPV\Migrations\Version00000003CreateCatalogTables;
+use VenPosTPV\Tests\Support\TestDatabase;
+
+// Doctrine Migrations loads migration files with require_once; they are not in
+// the composer PSR-4 map.
+require_once \dirname(__DIR__, 3) . '/migrations/Version00000003CreateCatalogTables.php';
 
 class Version00000003CreateCatalogTablesTest extends TestCase
 {
     private function getConnection(): \Doctrine\DBAL\Connection|null
     {
-        $config = [
-            'driver' => 'pdo_mysql',
-            'host' => $_ENV['TPV_DB_HOST'] ?? '127.0.0.1',
-            'port' => (int) ($_ENV['TPV_DB_PORT'] ?? 3306),
-            'dbname' => $_ENV['TPV_DB_NAME'] ?? 'tpv',
-            'user' => $_ENV['TPV_DB_USER'] ?? 'tpv_user',
-            'password' => $_ENV['TPV_DB_PASSWORD'] ?? '',
-            'charset' => 'utf8mb4',
-        ];
-
-        try {
-            $conn = DriverManager::getConnection($config);
-            $conn->executeQuery('SELECT 1');
-
-            return $conn;
-        } catch (\Throwable) {
-            return null;
-        }
+        // An empty throwaway database: this test creates and drops whole tables.
+        return TestDatabase::scratchConnection();
     }
 
     private function dropCatalogTables(\Doctrine\DBAL\Connection $conn): void
@@ -45,6 +34,19 @@ class Version00000003CreateCatalogTablesTest extends TestCase
         }
     }
 
+    /**
+     * Plans the migration in one direction and executes its SQL, which is what the
+     * Doctrine executor does after up()/down() (addSql only plans).
+     */
+    private function runMigration(\Doctrine\DBAL\Connection $conn, string $direction): void
+    {
+        $migration = new Version00000003CreateCatalogTables($conn, new NullLogger());
+        $direction === 'up' ? $migration->up(new Schema()) : $migration->down(new Schema());
+        foreach ($migration->getSql() as $query) {
+            $conn->executeStatement((string) $query);
+        }
+    }
+
     public function testMigrationCreatesAndDropsCatalogTables(): void
     {
         $conn = $this->getConnection();
@@ -53,13 +55,10 @@ class Version00000003CreateCatalogTablesTest extends TestCase
             $this->markTestSkipped('MySQL database not available for integration testing');
         }
 
-        $migration = new Version00000003CreateCatalogTables($conn);
-        $schema = new Schema();
-
         $this->dropCatalogTables($conn);
 
         // Run up()
-        $migration->up($schema);
+        $this->runMigration($conn, 'up');
 
         // Assert all 4 tables exist
         $tables = $conn->createSchemaManager()->listTableNames();
@@ -92,7 +91,7 @@ class Version00000003CreateCatalogTablesTest extends TestCase
         $this->assertTrue($productTable->hasIndex('idx_active'));
 
         // Run down()
-        $migration->down($schema);
+        $this->runMigration($conn, 'down');
 
         // Assert tables dropped
         $tables = $conn->createSchemaManager()->listTableNames();
