@@ -47,6 +47,21 @@ Order metadata records gross, native coupon reduction, payable, and cash/card te
 
 TPV Connect serializes module coupon redemption and native PrestaShop revalidates the rule at creation. This does not prove cross-channel atomicity with unrelated web checkout; native PrestaShop remains the authority for consumption.
 
+## Why a coupon is rejected
+
+The module answers a rejected preview with 422 and no reason the TPV can show. `CheckoutService::previewCoupon()` then asks PrestaShop for the coupon by its code (`CouponRejectionReason`, `CouponStatusLookup::findByCode()`: `GET /api/cart_rules?filter[code]=[…]`) and the cashier reads, under the code:
+
+| PrestaShop | Message |
+|---|---|
+| no cart rule with that code | «Este código no existe en la tienda. Revisa que esté bien escrito.» |
+| inactive | «Este cupón está desactivado en la tienda.» |
+| no uses left | «Este cupón ya se ha usado.» |
+| past its end date | «Este cupón caducó el DD/MM/AAAA.» |
+| before its start date | «Este cupón todavía no es válido: empieza el DD/MM/AAAA.» |
+| valid in itself, or the shop did not answer | «La tienda no acepta este cupón para esta venta: puede estar reservado a un cliente o necesitar un importe mínimo o unos productos concretos.» |
+
+Only codes of letters, digits, `-` and `_` are looked up. The payment modal shows the server's sentence, never the raw `HTTP 422: {…}`.
+
 ## «Cupones»: the till's coupons and their state
 
 The sale screen header has **Cupones** next to **Crear cupón** (administrators and cashiers). It lists the coupons created from the till (`issued_coupon`: «Crear cupón» and the leftover vouchers), newest first, 25 per page with **Ver más**, and searches by part of the code. Each coupon shows its code (**Copiar**), value (`20,00 €` / `10 %`), expiry date, when, by whom (the employee's full name, else the user name) and on which till it was created, and its state with **Imprimir** and **PDF** for its slip.

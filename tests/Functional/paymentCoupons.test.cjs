@@ -233,6 +233,18 @@ async function testVoucherDoneShowsServerNetAndCashChange() {
     assert.equal(state.doneChange.value, 7);
 }
 
+async function testARejectedCouponShowsTheServerSentenceNotTheRawResponse() {
+    const { state } = loadPayment({
+        preview: async () => { throw new Error('HTTP 422: {"error":"Este cupón ya se ha usado.","retry":false}'); },
+        checkout: async () => ({}),
+    });
+    state.method.value = 'voucher';
+    state.voucherCode.value = 'R24GCYH4';
+    await state.applyVoucher();
+    assert.equal(state.voucherError.value, 'Este cupón ya se ha usado.');
+    assert.equal(state.canConfirm(), false);
+}
+
 async function main() {
     await testBlankOrUnverifiedCouponCannotConfirm();
     await testAppliedCouponUsesAuthoritativePayableAndNetCash();
@@ -243,7 +255,8 @@ async function main() {
     await testStaleOrOutOfOrderPreviewCannotRestoreConfirmation();
     await testOrdinaryCashCardAndMixedRemainUnchanged();
     await testVoucherDoneShowsServerNetAndCashChange();
-    console.log('paymentCoupons functional harness: 9 passed');
+    await testARejectedCouponShowsTheServerSentenceNotTheRawResponse();
+    console.log('paymentCoupons functional harness: 10 passed');
 }
 
 main().catch((error) => { console.error(error); process.exitCode = 1; });

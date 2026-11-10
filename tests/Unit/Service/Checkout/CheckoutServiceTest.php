@@ -17,6 +17,7 @@ use VenPosTPV\Service\Checkout\CheckoutService;
 use VenPosTPV\Service\Fiscal\FiscalRecorder;
 use VenPosTPV\Service\Sale\SaleLineWriter;
 use VenPosTPV\Service\Checkout\Exception\CheckoutException;
+use VenPosTPV\Service\Coupon\CouponRejectionReason;
 use VenPosTPV\Service\Checkout\PsOrderClient;
 use VenPosTPV\Service\Print\PrinterService;
 use VenPosTPV\Service\Print\TicketDataResolver;
@@ -37,6 +38,7 @@ final class CheckoutServiceTest extends TestCase
         ?Outbox $outbox = null,
         ?OutboxSyncTrigger $syncTrigger = null,
         ?FiscalRecorder $fiscalRecorder = null,
+        ?CouponRejectionReason $couponRejection = null,
     ): CheckoutService {
         $numberer = $this->createMock(TicketNumberer::class);
         $numberer->method('next')->willReturn('A26000001');
@@ -56,6 +58,7 @@ final class CheckoutServiceTest extends TestCase
             null,
             $fiscalRecorder ?? $this->createMock(FiscalRecorder::class),
             $this->createMock(SaleLineWriter::class),
+            couponRejection: $couponRejection,
         );
     }
 
@@ -119,6 +122,26 @@ final class CheckoutServiceTest extends TestCase
         ], 'SAVE10');
 
         $this->assertSame(13.14, $preview['total_paid']);
+    }
+
+    public function testACouponTheModuleRejectsIsExplainedToTheCashier(): void
+    {
+        $client = $this->createMock(PsOrderClient::class);
+        $client->method('previewCoupon')->willThrowException(CheckoutException::couponRejected());
+        $reason = $this->createMock(CouponRejectionReason::class);
+        $reason->expects($this->once())->method('explain')->with('R24GCYH4')->willReturn('Este cupón ya se ha usado.');
+        $cashSession = $this->createMock(CashSessionService::class);
+        $cashSession->method('requireOpenSession')->willReturn(['session_id' => 1, 'terminal_id' => 1]);
+        $conn = $this->catalogConnection(['1' => ['price' => 23.90, 'price_ttc' => 23.14]], 10);
+        $service = $this->createService(client: $client, conn: $conn, cashSessionService: $cashSession, couponCheckoutEnabled: true, couponRejection: $reason);
+
+        try {
+            $service->previewCoupon(1, ['lines' => [['product_id' => 1, 'qty' => 1, 'price' => 23.14]], 'total' => 23.14, 'customer' => ['id' => 2]], ' R24GCYH4 ');
+            $this->fail('A CheckoutException was expected.');
+        } catch (CheckoutException $e) {
+            $this->assertSame('Este cupón ya se ha usado.', $e->getMessage());
+            $this->assertSame(422, $e->getCode());
+        }
     }
 
     public function testCouponPreviewRejectsManualDiscountBeforePrestaShopCall(): void
