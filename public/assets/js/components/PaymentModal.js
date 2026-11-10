@@ -239,7 +239,8 @@ const PaymentModal = {
                 if (voucherPreviewRevision.value === previewRevision) {
                     const msg = err.message || 'No se pudo validar el cupón.';
                     couponOffline.value = msg.includes('coupon_offline');
-                    voucherError.value = couponOffline.value ? serverMessage(msg) : msg;
+                    // The server's sentence («Este cupón ya se ha usado.»), never "HTTP 422: {...}".
+                    voucherError.value = serverMessage(msg);
                 }
             } finally {
                 if (voucherPreviewRevision.value === previewRevision) {

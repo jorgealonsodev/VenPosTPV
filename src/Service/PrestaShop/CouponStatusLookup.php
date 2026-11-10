@@ -27,7 +27,7 @@ class CouponStatusLookup
     /**
      * @param list<int> $ids cart rule ids
      *
-     * @return array<int, array{quantity: int, active: bool, date_to: string}>|null keyed by id
+     * @return array<int, array{quantity: int, active: bool, date_from: string, date_to: string}>|null keyed by id
      *         (a rule PrestaShop no longer has is missing); null when the shop did not answer
      */
     public function find(array $ids): ?array
@@ -36,6 +36,29 @@ class CouponStatusLookup
         if ($ids === []) {
             return [];
         }
+
+        return $this->fetch('filter[id]', '[' . implode('|', $ids) . ']');
+    }
+
+    /**
+     * The cart rules with exactly this code (PrestaShop keeps codes unique, so at most one).
+     * Only letters, digits, "-" and "_": anything else could change the filter, so it is not sent.
+     *
+     * @return array<int, array{quantity: int, active: bool, date_from: string, date_to: string}>|null keyed by id;
+     *         null when the shop did not answer or the code cannot be looked up
+     */
+    public function findByCode(string $code): ?array
+    {
+        if (preg_match('/^[A-Za-z0-9_-]{1,254}$/', $code) !== 1) {
+            return null;
+        }
+
+        return $this->fetch('filter[code]', '[' . $code . ']');
+    }
+
+    /** @return array<int, array{quantity: int, active: bool, date_from: string, date_to: string}>|null */
+    private function fetch(string $filter, string $value): ?array
+    {
         if ($this->baseUrl === '' || $this->apiKey === '') {
             return null;
         }
@@ -44,8 +67,8 @@ class CouponStatusLookup
                 'auth_basic' => [$this->apiKey, ''],
                 'query' => [
                     'output_format' => 'JSON',
-                    'display' => '[id,quantity,active,date_to]',
-                    'filter[id]' => '[' . implode('|', $ids) . ']',
+                    'display' => '[id,quantity,active,date_from,date_to]',
+                    $filter => $value,
                 ],
                 'headers' => ['Accept' => 'application/json'],
                 'timeout' => 5,
@@ -73,6 +96,7 @@ class CouponStatusLookup
             $found[(int) $rule['id']] = [
                 'quantity' => (int) ($rule['quantity'] ?? 0),
                 'active' => (string) ($rule['active'] ?? '0') === '1',
+                'date_from' => (string) ($rule['date_from'] ?? ''),
                 'date_to' => (string) ($rule['date_to'] ?? ''),
             ];
         }

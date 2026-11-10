@@ -151,7 +151,7 @@ class PsOrderClient
                 throw CheckoutException::couponOffline();
             }
             if ($statusCode === 422) {
-                throw CheckoutException::psValidationFailed('Coupon preview rejected by PS module');
+                throw CheckoutException::couponRejected();
             }
             throw CheckoutException::couponUnavailable('Coupon preview is unavailable; deploy the compatible TPV Connect module before enabling coupon checkout');
         }

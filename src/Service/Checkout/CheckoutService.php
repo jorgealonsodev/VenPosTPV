@@ -14,6 +14,7 @@ use VenPosTPV\Service\Cash\Exception\NoOpenCashSessionException;
 use VenPosTPV\Service\Catalog\CatalogPriceResolver;
 use VenPosTPV\Service\Catalog\Exception\ProductNotInCatalogException;
 use VenPosTPV\Service\Checkout\Exception\CheckoutException;
+use VenPosTPV\Service\Coupon\CouponRejectionReason;
 use VenPosTPV\Service\Coupon\IssuedCouponStore;
 use VenPosTPV\Service\Customer\CustomerDirectory;
 use VenPosTPV\Service\Print\PrinterService;
@@ -69,6 +70,7 @@ class CheckoutService
         private readonly ?SaleLineWriter $saleLineWriter = null,
         private readonly ?FreeItemSettingsStore $freeItemSettings = null,
         private readonly ?IssuedCouponStore $issuedCoupons = null,
+        private readonly ?CouponRejectionReason $couponRejection = null,
     ) {
     }
 
@@ -395,7 +397,15 @@ class CheckoutService
         $payload['operation'] = 'coupon_preview';
         $payload['coupon_code'] = $code;
 
-        $preview = $this->client->previewCoupon($payload);
+        try {
+            $preview = $this->client->previewCoupon($payload);
+        } catch (CheckoutException $e) {
+            // The module only says "rejected": tell the cashier why (used, expired…).
+            if ($e->isCouponRejected() && $this->couponRejection !== null) {
+                throw CheckoutException::couponRejectedBecause($this->couponRejection->explain($code), $e);
+            }
+            throw $e;
+        }
         if (!$this->sameTotal($pricing['total'], (float) $preview['before_discount_total'])
             || !$this->sameTotal((float) $preview['before_discount_total'] - (float) $preview['discount_amount'], (float) $preview['total_paid'])) {
             throw CheckoutException::psValidationFailed('Coupon preview total does not match the local catalog');

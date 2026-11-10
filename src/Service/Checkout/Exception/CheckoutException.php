@@ -13,6 +13,27 @@ final class CheckoutException extends RuntimeException
     public const COUPON_OFFLINE_MESSAGE = 'Sin conexión con PrestaShop: no se puede aplicar el cupón. Puedes cobrar sin él.';
 
     private bool $couponOffline = false;
+    private bool $couponRejected = false;
+
+    /** The module refused the coupon at preview (used, expired, restricted…); nothing is booked. */
+    public static function couponRejected(): self
+    {
+        $e = self::psValidationFailed('Coupon preview rejected by PS module');
+        $e->couponRejected = true;
+
+        return $e;
+    }
+
+    public function isCouponRejected(): bool
+    {
+        return $this->couponRejected;
+    }
+
+    /** The cashier's sentence for a rejected coupon (CouponRejectionReason). */
+    public static function couponRejectedBecause(string $reason, ?Throwable $previous = null): self
+    {
+        return new self($reason, 422, $previous);
+    }
 
     /**
      * PrestaShop could not be reached for a coupon preview or a coupon order that
