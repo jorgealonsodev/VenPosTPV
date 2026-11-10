@@ -24,7 +24,7 @@
                 <button type="submit" name="submit_tpvconnect_pair" class="btn btn-primary">
                     <i class="icon icon-link"></i> {l s='Emparejar con un TPV' mod='tpvconnect'}
                 </button>
-                <p class="help-block">{l s='Muestra un código de 6 cifras y la dirección de la tienda. Escríbelos en el instalador del TPV (o en Ajustes → Acerca de del TPV) y los dos se intercambian solos las claves y las direcciones. El código vale 10 minutos y una sola vez.' mod='tpvconnect'}</p>
+                <p class="help-block">{l s='Genera un código de 6 cifras y muestra la dirección de la tienda. Escríbelos en el instalador del TPV o, si el TPV ya está instalado, en Ajustes → Acerca de → «Volver a emparejar con la tienda». El TPV y la tienda se intercambian las claves automáticamente. El código caduca a los 10 minutos y solo se puede usar una vez.' mod='tpvconnect'}</p>
             </div>
         </div>
     </form>
