@@ -140,15 +140,9 @@ const PaymentModal = {
             setTimeout(closeWhenPrinted, 250);
         }
 
-        function onBackdrop() {
-            // Only while choosing how to pay. Once «Cobrar» is pressed (charging, charged,
-            // or its error screen) a click outside does nothing: the window closes with
-            // «Terminar» / «Nueva venta» or from the error screen.
-            if (step.value !== 'select' || isSubmitting.value) {
-                return;
-            }
-            emit('close');
-        }
+        // A click outside never closes the payment window: it closes with the ✕ before
+        // charging, with «Terminar» / «Nueva venta» once charged, or from the error screen.
+        function onBackdrop() {}
 
         function voucherSnapshot(code = voucherCode.value.trim()) {
             return JSON.stringify({
