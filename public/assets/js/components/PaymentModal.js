@@ -388,8 +388,9 @@ const PaymentModal = {
                 // Safe to retry: the request_id makes a repeated attempt return the same sale.
                 const retry = !isVoucher && (msg.includes('502') || msg.includes('Unavailable') || msg.includes('network')
                     || msg.includes('Failed to fetch') || msg.includes('NetworkError'));
+                // What to do first; the server's short detail after it, never the raw response.
                 errorMsg.value = couponResultUnknown
-                    ? msg + ' No reintentes automáticamente; reconcilia el resultado antes de volver a cobrar.'
+                    ? 'No se ha podido confirmar el cobro con cupón en la tienda: el pedido puede haberse creado. No vuelvas a cobrar esta venta; revisa el pedido en PrestaShop. (' + serverMessage(msg) + ')'
                     : (offline ? serverMessage(msg) : msg);
                 errorRetry.value = retry;
                 step.value = 'error';

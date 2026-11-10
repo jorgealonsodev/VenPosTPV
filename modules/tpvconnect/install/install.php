@@ -28,6 +28,8 @@ class TpvConnectInstaller
         'actionGenerateDocumentReference',
         // Shows a free item's concept instead of the generic product in the order e-mail.
         'actionPaymentModuleProductVarTplAfter',
+        // Till orders do not send PrestaShop's own e-mails (TpvOrderMail).
+        'actionEmailSendBefore',
     ];
 
     /**

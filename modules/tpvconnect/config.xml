@@ -2,7 +2,7 @@
 <module>
     <name>tpvconnect</name>
     <displayName><![CDATA[TPV Connect]]></displayName>
-    <version><![CDATA[0.8.0]]></version>
+    <version><![CDATA[0.8.1]]></version>
     <description><![CDATA[Conecta PrestaShop con la aplicaci&oacute;n TPV independiente v&iacute;a SSO y API.]]></description>
     <author><![CDATA[VenPosTPV]]></author>
     <tab><![CDATA[administration]]></tab>

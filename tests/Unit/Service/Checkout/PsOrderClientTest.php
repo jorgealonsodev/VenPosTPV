@@ -283,6 +283,36 @@ final class PsOrderClientTest extends TestCase
         $this->assertCount(3, $parts);
         $this->assertSame($expectedSignature, $parts[2]);
     }
+    public function testAShopErrorPageIsSummarisedNotPastedIntoTheMessage(): void
+    {
+        $page = '<!DOCTYPE html><html><head><title>Error</title></head><body>' . str_repeat('<p>Stack trace line</p>', 400) . '</body></html>';
+        $client = $this->createClient([new MockResponse($page, ['http_code' => 200])]);
+
+        try {
+            $client->createCouponOrder(['products' => []]);
+            $this->fail('A CheckoutException was expected.');
+        } catch (CheckoutException $e) {
+            $this->assertSame(409, $e->getCode(), 'the order may exist: reconcile');
+            $this->assertStringContainsString('HTTP 200', $e->getMessage());
+            $this->assertStringContainsString('página de error de la tienda', $e->getMessage());
+            $this->assertStringNotContainsString('<', $e->getMessage());
+            $this->assertLessThan(300, strlen($e->getMessage()));
+        }
+    }
+
+    public function testALongPlainAnswerIsCutAndKeepsItsStart(): void
+    {
+        $client = $this->createClient([new MockResponse('Fatal error: ' . str_repeat('x', 5000), ['http_code' => 500])]);
+
+        try {
+            $client->createCouponOrder(['products' => []]);
+            $this->fail('A CheckoutException was expected.');
+        } catch (CheckoutException $e) {
+            $this->assertStringContainsString('HTTP 500: Fatal error: xxx', $e->getMessage());
+            $this->assertLessThan(300, strlen($e->getMessage()));
+        }
+    }
+
     public function testACouponOrderReturnsTheLeftoverVoucherPrestaShopKept(): void
     {
         $client = $this->createClient([new MockResponse(json_encode([
