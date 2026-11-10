@@ -122,7 +122,6 @@ class EscPosTicketBuilder
                 $printer->text('Pedido web: ' . $this->sanitize($ticketData->webOrderReference) . "\n");
             }
         }
-        $printer->text('Le ha atendido ' . $this->sanitize($ticketData->cashierName) . "\n");
         $printer->text($separator);
 
         // Items
@@ -233,6 +232,8 @@ class EscPosTicketBuilder
             $printer->setJustification(Printer::JUSTIFY_CENTER);
             $printer->text($this->sanitize('Sustituido por la factura ' . $ticketData->replacedByInvoice) . "\n");
         }
+        // Who served the customer: after the barcode and the QR (centered), right before the footer.
+        $printer->text('Le ha atendido ' . $this->sanitize($ticketData->cashierName) . "\n");
         $this->printMultilineCentered($printer, $ticketData->ticketFooter !== '' ? $ticketData->ticketFooter : 'Gracias por su compra', $columns);
 
         // Cut

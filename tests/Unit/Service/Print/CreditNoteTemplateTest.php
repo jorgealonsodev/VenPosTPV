@@ -185,9 +185,29 @@ final class CreditNoteTemplateTest extends TestCase
         $this->assertStringNotContainsString('Pedido web', $this->render(null));
     }
 
-    /** The output as it was before the cashier line read «Le ha atendido» (it was «Cajero: »). */
+    /**
+     * The output as it was before the cashier line read «Le ha atendido» (it was
+     * «Cajero: », right before the first separator) and moved above the footer.
+     */
     private static function withOldCashierLine(string $output): string
     {
-        return str_replace('Le ha atendido ', 'Cajero: ', $output);
+        if (preg_match('#\n *<div class="center">Le ha atendido ([^<]*)</div>(?=\n *<div class="footer">)#', $output, $m) !== 1) {
+            return $output;
+        }
+        $output = str_replace($m[0], '', $output);
+
+        return (string) preg_replace(
+            '#\n    \n    <div class="line"></div>#',
+            "\n        <div class=\"center\">Cajero: " . $m[1] . "</div>\n\n    <div class=\"line\"></div>",
+            $output,
+            1
+        );
+    }
+
+    public function testTheCashierLineIsRightBeforeTheFooter(): void
+    {
+        $html = $this->render(null);
+
+        $this->assertMatchesRegularExpression('#<div class="qr">.*</div>\s*<div class="center">Le ha atendido [^<]+</div>\s*<div class="footer">#s', $html);
     }
 }

@@ -86,7 +86,8 @@ final class TicketVatBreakdownTest extends TestCase
 
     public function testAReprintOfARedeemedTicketSaysWhichInvoiceReplacedIt(): void
     {
-        $this->assertStringContainsString("<div class=\"center bold\">Sustituido por la factura F26000004</div>\n    <div class=\"footer\">", $this->html($this->ticket([], 'F26000004')));
+        // Then who served the customer, right before the footer.
+        $this->assertMatchesRegularExpression('#<div class="center bold">Sustituido por la factura F26000004</div>\s*<div class="center">Le ha atendido [^<]+</div>\s*<div class="footer">#', $this->html($this->ticket([], 'F26000004')));
         $this->assertStringContainsString("Sustituido por la factura F26000004\n", $this->escPos($this->ticket([], 'F26000004')));
         $this->assertStringNotContainsString('Sustituido', $this->html($this->ticket([])));
         $this->assertStringNotContainsString('Sustituido', $this->escPos($this->ticket([])));
