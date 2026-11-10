@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS terminal (
     store_address VARCHAR(255) NOT NULL DEFAULT '',
     legal_name VARCHAR(120) NULL,
     tax_id VARCHAR(16) NULL,
+    -- Version00000052: IBAN printed on the tickets paid by transfer.
+    bank_account VARCHAR(34) NULL,
     ticket_header TEXT NULL,
     ticket_footer TEXT NULL,
     ticket_logo MEDIUMTEXT NULL,
@@ -695,4 +697,19 @@ CREATE TABLE IF NOT EXISTS catalog_override (
     PRIMARY KEY (id_product, id_product_attribute),
     KEY idx_catalog_override_ean13 (ean13),
     KEY idx_catalog_override_reference (reference)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- transfer_payment (Version00000052): a sale paid by bank transfer waits «Pendiente
+-- de pago» until an admin sees the money and marks it received.
+CREATE TABLE IF NOT EXISTS transfer_payment (
+    id INT UNSIGNED AUTO_INCREMENT NOT NULL,
+    order_id INT UNSIGNED NOT NULL,
+    amount DECIMAL(10,2) NOT NULL,
+    status VARCHAR(16) NOT NULL DEFAULT 'pending',
+    created_at DATETIME NOT NULL,
+    received_at DATETIME NULL,
+    received_by_user_id INT UNSIGNED NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_transfer_payment_order (order_id),
+    KEY idx_transfer_payment_status (status, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

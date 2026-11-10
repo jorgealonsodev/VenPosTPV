@@ -59,6 +59,10 @@ final class TicketData
         // as «Saldo pendiente del vale: <code> — <amount> €». Null for every other ticket.
         /** @var array{code: string, amount: float}|null */
         public readonly ?array $leftoverVoucher = null,
+        // A sale paid by bank transfer: the shop's IBAN (grouped by four, null when
+        // Ajustes → Tienda has none) and whether the money is still to be received.
+        /** @var array{account: ?string, pending: bool}|null */
+        public readonly ?array $transfer = null,
     ) {
     }
 

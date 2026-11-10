@@ -236,6 +236,31 @@ final class EscPosTicketBuilderTest extends TestCase
         $this->assertStringNotContainsString('Tarjeta: ', $out);
     }
 
+    public function testATicketPaidByTransferPrintsThePendingNoticeTheAccountAndTheConcept(): void
+    {
+        $sale = $this->createTicketData();
+        $make = fn (bool $pending, ?string $account): TicketData => new TicketData(
+            orderId: $sale->orderId, reference: 'A26000070', storeName: $sale->storeName, storeAddress: $sale->storeAddress,
+            ticketHeader: '', ticketFooter: '', ticketLogo: null, ticketWidthPx: null, date: new \DateTimeImmutable('2026-11-10 12:00'),
+            cashierName: 'Ana', lines: [new TicketLine('Camisa M', 1, 24.18, 24.18)], subtotal: 19.98, tax: 4.2, total: 24.18,
+            paymentMethod: 'transfer', amountTendered: 24.18, changeDue: 0.0, verificationUrl: 'http://tpv/v',
+            transfer: ['account' => $account, 'pending' => $pending],
+        );
+
+        $pendingOut = $this->createBuilder()->build($make(true, 'ES91 2100 0418 4502 0005 1332'));
+        $this->assertStringContainsString('Metodo: Transferencia', $pendingOut);
+        $this->assertStringContainsString('Pendiente de pago por transferencia', $pendingOut);
+        $this->assertStringContainsString('Cuenta: ES91 2100 0418 4502 0005 1332', $pendingOut);
+        $this->assertStringContainsString('Concepto: A26000070', $pendingOut);
+
+        $paidOut = $this->createBuilder()->build($make(false, 'ES91 2100 0418 4502 0005 1332'));
+        $this->assertStringNotContainsString('Pendiente de pago', $paidOut, 'reprinted once received');
+
+        $noAccount = $this->createBuilder()->build($make(true, null));
+        $this->assertStringNotContainsString('Cuenta:', $noAccount);
+        $this->assertStringNotContainsString('Concepto:', $noAccount);
+    }
+
     public function testSaleTicketPrintsCode128OfTheReferenceWithTextBelow(): void
     {
         $out = $this->createBuilder()->build($this->createTicketData());

@@ -110,6 +110,7 @@ final class ReportCsvTest extends TestCase
             . "Ventas en efectivo;64,00\r\n"
             . "Ventas con tarjeta;42,00\r\n"
             . "Ventas por transferencia;30,00\r\n"
+            . "Transferencias pendientes de pago (incluidas en ventas por transferencia);0,00\r\n"
             . "Crédito de cambio;0,00\r\n"
             . "Devoluciones en efectivo;0,00\r\n"
             . "Devoluciones con tarjeta;0,00\r\n"

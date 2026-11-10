@@ -157,7 +157,7 @@ const SettingsModal = {
         }
 
         // Shop data: saved on every till of the shop, so every till prints the same ticket header.
-        const SHOP_FIELDS = ['store_name', 'legal_name', 'tax_id', 'store_address', 'ticket_header', 'ticket_footer', 'ticket_logo', 'refund_window_days', 'ticket_code'];
+        const SHOP_FIELDS = ['store_name', 'legal_name', 'tax_id', 'bank_account', 'store_address', 'ticket_header', 'ticket_footer', 'ticket_logo', 'refund_window_days', 'ticket_code'];
         // What «Guardar» of Cajas sends for this computer's till.
         const TILL_FIELDS = ['name', 'ticket_letter', 'dataphone_mode', 'printer_type', 'ticket_width_px', 'printer_ip', 'printer_port', 'printer_queue',
             'label_height_mm', 'label_cut_each', 'ticket_margin_left_mm', 'ticket_margin_right_mm', 'ticket_logo_width_pct'];
@@ -1087,6 +1087,12 @@ const SettingsModal = {
                                     <input v-model="terminal.tax_id" type="text" maxlength="16" autocapitalize="characters" placeholder="B12345674"
                                         style="width:100%; max-width:200px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:inherit; font-size:14px; outline:none; box-sizing:border-box; text-transform:uppercase;">
                                     <div style="font-size:12px; color:var(--text3); margin-top:4px;">Obligatorio en la factura simplificada. Se comprueba la letra o cifra de control.</div>
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Número de cuenta (IBAN)</label>
+                                    <input v-model="terminal.bank_account" type="text" maxlength="42" autocapitalize="characters" placeholder="ES91 2100 0418 4502 0005 1332"
+                                        style="width:100%; max-width:340px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:'IBM Plex Mono'; font-size:14px; outline:none; box-sizing:border-box; text-transform:uppercase;">
+                                    <div style="font-size:12px; color:var(--text3); margin-top:4px;">Se imprime en los tickets pagados por transferencia, con el número del ticket como concepto.</div>
                                 </div>
                                 <div>
                                     <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:6px;">Dirección de la tienda</label>

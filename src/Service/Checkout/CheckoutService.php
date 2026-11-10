@@ -14,6 +14,7 @@ use VenPosTPV\Service\Cash\Exception\NoOpenCashSessionException;
 use VenPosTPV\Service\Catalog\CatalogPriceResolver;
 use VenPosTPV\Service\Catalog\Exception\ProductNotInCatalogException;
 use VenPosTPV\Service\Checkout\Exception\CheckoutException;
+use VenPosTPV\Service\Transfer\TransferPayments;
 use VenPosTPV\Service\Coupon\CouponRejectionReason;
 use VenPosTPV\Service\Coupon\VoucherBalance;
 use VenPosTPV\Service\Coupon\IssuedCouponStore;
@@ -1172,6 +1173,11 @@ class CheckoutService
             // The chained fiscal record of the ticket, in the same transaction (VERI*FACTU).
             ($this->fiscalRecorder ?? new FiscalRecorder($this->conn))
                 ->recordSale($orderId, (int) ($cashContext['terminal_id'] ?? 1), $reference, $total, $tax, $issuedAt);
+
+            if ((float) ($tender['transfer'] ?? 0) > 0) {
+                // The ticket is issued; the money waits «Pendiente de pago» until received.
+                (new TransferPayments($this->conn))->record($orderId, (float) $tender['transfer'], $issuedAt);
+            }
 
             return $orderId;
         } catch (\Throwable $e) {

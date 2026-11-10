@@ -349,7 +349,7 @@ const SaleScreen = {
     template: `
         <div v-if="showCashClose">
             <cash-close-screen
-                :session="{ openingCash: session.openingCash || 0, sales: (session.cashTotals && session.cashTotals.sales) || 0, salesCard: (session.cashTotals && session.cashTotals.salesCard) || 0, refunds: (session.cashTotals && session.cashTotals.refunds) || 0, refundsCard: (session.cashTotals && session.cashTotals.refundsCard) || 0, salesTransfer: (session.cashTotals && session.cashTotals.salesTransfer) || 0, refundsTransfer: (session.cashTotals && session.cashTotals.refundsTransfer) || 0, net: (session.cashTotals && session.cashTotals.net) || 0, expected: (session.cashTotals && session.cashTotals.expected) || null }"
+                :session="{ openingCash: session.openingCash || 0, sales: (session.cashTotals && session.cashTotals.sales) || 0, salesCard: (session.cashTotals && session.cashTotals.salesCard) || 0, refunds: (session.cashTotals && session.cashTotals.refunds) || 0, refundsCard: (session.cashTotals && session.cashTotals.refundsCard) || 0, salesTransfer: (session.cashTotals && session.cashTotals.salesTransfer) || 0, salesTransferPending: (session.cashTotals && session.cashTotals.salesTransferPending) || 0, refundsTransfer: (session.cashTotals && session.cashTotals.refundsTransfer) || 0, net: (session.cashTotals && session.cashTotals.net) || 0, expected: (session.cashTotals && session.cashTotals.expected) || null }"
                 :parked-count="parkedCount"
                 :outbox="session.outbox"
                 @back="handleCashCloseBack"

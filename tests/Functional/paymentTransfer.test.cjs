@@ -4,8 +4,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-// «Transferencia»: the cashier saw the transfer done; the whole total is charged now,
-// with no cash and no drawer (docs/pago-transferencia.md).
+// «Transferencia»: the ticket is issued at once for the whole total, with no cash and
+// no drawer; the money waits «Pendiente de pago» (docs/pago-transferencia.md).
 const root = path.resolve(__dirname, '../..');
 const SOURCE = fs.readFileSync(path.join(root, 'public/assets/js/components/PaymentModal.js'), 'utf8');
 
@@ -68,6 +68,6 @@ test('with a coupon, the rest can be paid by transfer', async () => {
 
 test('the window shows a transfer panel and its own confirm button', () => {
     assert.match(SOURCE, /<template v-if="method === 'transfer'">/);
-    assert.match(SOURCE, /Registrar cobro por transferencia/);
+    assert.match(SOURCE, /Registrar venta pendiente de transferencia/);
     assert.match(SOURCE, /@click="voucherTender = 'transfer'"/);
 });

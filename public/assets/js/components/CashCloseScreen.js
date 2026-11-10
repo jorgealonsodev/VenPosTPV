@@ -214,6 +214,10 @@ const CashCloseScreen = {
                             <span style="color:var(--text3); font-size:12px;">Ventas por transferencia</span>
                             <span style="font-family:'IBM Plex Mono'; font-size:13px; color:var(--text3);">€{{ Number(session.salesTransfer || 0).toFixed(2) }}</span>
                         </div>
+                        <div v-if="session.salesTransferPending" style="display:flex; justify-content:space-between; align-items:center;">
+                            <span style="color:var(--amber); font-size:12px;">· pendientes de pago</span>
+                            <span style="font-family:'IBM Plex Mono'; font-size:13px; color:var(--amber);">€{{ Number(session.salesTransferPending || 0).toFixed(2) }}</span>
+                        </div>
                         <div v-if="session.salesTransfer || session.refundsTransfer" style="display:flex; justify-content:space-between; align-items:center;">
                             <span style="color:var(--text3); font-size:12px;">Devoluciones por transferencia</span>
                             <span style="font-family:'IBM Plex Mono'; font-size:13px; color:var(--text3);">€{{ Number(session.refundsTransfer || 0).toFixed(2) }}</span>

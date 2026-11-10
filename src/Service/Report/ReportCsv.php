@@ -42,6 +42,7 @@ final class ReportCsv
         'sales_cash' => 'Ventas en efectivo',
         'sales_card' => 'Ventas con tarjeta',
         'sales_transfer' => 'Ventas por transferencia',
+        'sales_transfer_pending' => 'Transferencias pendientes de pago (incluidas en ventas por transferencia)',
         'exchange_credit' => 'Crédito de cambio',
         'refunds_cash' => 'Devoluciones en efectivo',
         'refunds_card' => 'Devoluciones con tarjeta',

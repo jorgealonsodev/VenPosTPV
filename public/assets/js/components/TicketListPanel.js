@@ -1,5 +1,7 @@
 /**
- * TicketListPanel — tabbed panel with Aparcados/Cobrados/Devueltos.
+ * TicketListPanel — tabbed panel with Aparcados/Cobrados/Devueltos/Pendientes de pago.
+ * «Pendientes de pago»: sales paid by bank transfer whose money has not been seen in
+ * the bank yet; an admin marks each one received (docs/pago-transferencia.md).
  * Emits: back, notify, restore
  */
 const TicketListPanel = {
@@ -15,6 +17,15 @@ const TicketListPanel = {
         const refundedOrders = Vue.ref([]);
         const loading = Vue.ref(false);
         const confirmDelete = Vue.ref(null);
+        const pendingTransfers = Vue.ref([]);
+        const transferBusy = Vue.ref(0);
+        const TABS = [
+            { id: 'aparcados', label: 'Aparcados' },
+            { id: 'cobrados', label: 'Cobrados' },
+            { id: 'devueltos', label: 'Devueltos' },
+            { id: 'pendientes', label: 'Pendientes de pago' },
+        ];
+        const isAdmin = Vue.computed(() => (typeof useSession !== 'undefined' && useSession.session ? useSession.session.role : '') === 'admin');
 
         const parkedTickets = Vue.computed(() => parkedState.tickets || []);
 
@@ -45,6 +56,48 @@ const TicketListPanel = {
                 refundedOrders.value = [];
             } finally {
                 loading.value = false;
+            }
+        }
+
+        async function loadPendingTransfers() {
+            loading.value = true;
+            try {
+                const result = await ApiClient.pendingTransfers();
+                pendingTransfers.value = result && Array.isArray(result.data) ? result.data : [];
+            } catch (err) {
+                emit('notify', 'Error al cargar pendientes de pago: ' + (err.message || 'Error'), 'var(--red)');
+                pendingTransfers.value = [];
+            } finally {
+                loading.value = false;
+            }
+        }
+
+        async function markTransferReceived(transfer) {
+            if (!isAdmin.value || transferBusy.value) return;
+            transferBusy.value = transfer.id;
+            try {
+                await ApiClient.markTransferReceived(transfer.id);
+                pendingTransfers.value = pendingTransfers.value.filter((t) => t.id !== transfer.id);
+                emit('notify', 'Transferencia de ' + transfer.reference + ' marcada como recibida', 'var(--green)');
+                // Paid now: its detail offers print, PDF, email and WhatsApp of the ticket.
+                await openSale(transfer);
+            } catch (err) {
+                emit('notify', 'No se ha podido marcar como recibida: ' + (err.message || 'Error'), 'var(--red)');
+                await loadPendingTransfers();
+            } finally {
+                transferBusy.value = 0;
+            }
+        }
+
+        async function openSale(transfer) {
+            try {
+                const result = await ApiClient.searchOrders(String(transfer.reference || '').toUpperCase());
+                const orders = result && Array.isArray(result.data) ? result.data : [];
+                const sale = orders.find((o) => Number(o.order_id) === Number(transfer.order_id))
+                    || orders.find((o) => o.reference === transfer.reference);
+                if (sale) selectOrder(sale);
+            } catch (err) {
+                // The sale is still in «Cobrados».
             }
         }
 
@@ -121,17 +174,20 @@ const TicketListPanel = {
             if (tab === 'aparcados') loadParked();
             if (tab === 'cobrados') loadPaid();
             if (tab === 'devueltos') loadRefunded();
+            if (tab === 'pendientes') loadPendingTransfers();
         });
 
         Vue.onMounted(() => {
             loadParked();
             if (activeTab.value === 'cobrados') loadPaid();
             if (activeTab.value === 'devueltos') loadRefunded();
+            // The tab shows how many transfers wait from the start.
+            loadPendingTransfers();
         });
 
         return {
             activeTab, selectedOrder, parkedTickets, paidOrders, refundedOrders, paidQuery, searchPaid,
-            loading, confirmDelete,
+            loading, confirmDelete, TABS, pendingTransfers, transferBusy, isAdmin, loadPendingTransfers, markTransferReceived,
             selectOrder, backToList, handleRestoreClick, askDelete, doDelete, cancelDelete,
             formatTicketTime, formatTicketDate, orderKey, orderLabel, paymentLabel: (code) => VenPosPaymentMethods.label(code),
         };
@@ -152,12 +208,13 @@ const TicketListPanel = {
 
             <!-- Tabs -->
             <div v-if="!selectedOrder" style="display:flex; border-bottom:1px solid var(--border); background:var(--surface); flex-shrink:0;">
-                <button v-for="tab in ['aparcados','cobrados','devueltos']" :key="tab"
-                    @click="activeTab = tab"
-                    style="flex:1; padding:10px 6px; border:none; background:transparent; font-family:inherit; font-size:13px; font-weight:600; cursor:pointer; text-transform:capitalize; border-bottom:3px solid transparent;"
-                    :style="activeTab === tab ? 'color:var(--text); border-bottom-color:var(--green);' : 'color:var(--text3);'">
-                    {{ tab }}
-                    <span v-if="tab === 'aparcados' && parkedTickets.length > 0" style="margin-left:4px; font-size:11px; color:var(--amber);">({{ parkedTickets.length }})</span>
+                <button v-for="tab in TABS" :key="tab.id"
+                    @click="activeTab = tab.id"
+                    style="flex:1; padding:10px 6px; border:none; background:transparent; font-family:inherit; font-size:13px; font-weight:600; cursor:pointer; border-bottom:3px solid transparent;"
+                    :style="activeTab === tab.id ? 'color:var(--text); border-bottom-color:var(--green);' : 'color:var(--text3);'">
+                    {{ tab.label }}
+                    <span v-if="tab.id === 'aparcados' && parkedTickets.length > 0" style="margin-left:4px; font-size:11px; color:var(--amber);">({{ parkedTickets.length }})</span>
+                    <span v-if="tab.id === 'pendientes' && pendingTransfers.length > 0" style="margin-left:4px; font-size:11px; color:var(--amber);">({{ pendingTransfers.length }})</span>
                 </button>
             </div>
 
@@ -267,6 +324,27 @@ const TicketListPanel = {
                             <span>{{ order.created_at }}</span>
                             <span v-if="order.payment_method"> — {{ paymentLabel(order.payment_method) }}</span>
                         </div>
+                    </div>
+                </template>
+
+                <!-- Pendientes de pago -->
+                <template v-if="activeTab === 'pendientes'">
+                    <div v-if="!loading && pendingTransfers.length === 0" style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; color:var(--text3); gap:10px;">
+                        <icon name="bank" :size="32" />
+                        <span style="font-size:13px;">No hay transferencias pendientes de pago</span>
+                    </div>
+                    <div v-if="pendingTransfers.length > 0 && !isAdmin" style="font-size:12px; color:var(--text3);">Solo un administrador puede marcarlas como recibidas, al verlas en el banco.</div>
+                    <div v-for="t in pendingTransfers" :key="t.id"
+                        style="background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+                        <div style="flex:1 1 180px; min-width:0; display:flex; flex-direction:column; gap:3px;">
+                            <span style="font-weight:600; color:var(--text); font-size:14px; font-family:'IBM Plex Mono';">{{ t.reference }}</span>
+                            <span style="color:var(--text3); font-size:12px;">{{ t.created_at }}<template v-if="t.cashier"> · {{ t.cashier }}</template><template v-if="t.terminal"> · {{ t.terminal }}</template></span>
+                        </div>
+                        <span style="color:var(--text); font-size:14px; font-weight:700; font-family:'IBM Plex Mono';">€{{ Number(t.amount || 0).toFixed(2) }}</span>
+                        <button v-if="isAdmin" @click="markTransferReceived(t)" :disabled="transferBusy !== 0"
+                            style="min-height:40px; padding:6px 12px; border-radius:8px; border:1px solid var(--green); background:var(--green-bg); color:var(--green); cursor:pointer; font-family:inherit; font-size:13px; font-weight:600;">
+                            {{ transferBusy === t.id ? 'Guardando…' : 'Marcar como recibida' }}
+                        </button>
                     </div>
                 </template>
             </div>

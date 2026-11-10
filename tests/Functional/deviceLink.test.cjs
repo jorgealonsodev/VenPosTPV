@@ -205,7 +205,7 @@ function loadSettings() {
     return { state, calls };
 }
 
-const SHOP_KEYS = ['store_name', 'legal_name', 'tax_id', 'store_address', 'ticket_header', 'ticket_footer', 'ticket_logo', 'refund_window_days', 'ticket_code'];
+const SHOP_KEYS = ['store_name', 'legal_name', 'tax_id', 'bank_account', 'store_address', 'ticket_header', 'ticket_footer', 'ticket_logo', 'refund_window_days', 'ticket_code'];
 
 async function testTiendaSavesOnlyShopDataAndCajasOnlyTillData() {
     const { state, calls } = loadSettings();

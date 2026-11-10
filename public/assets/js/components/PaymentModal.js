@@ -720,7 +720,7 @@ const PaymentModal = {
                             <div class="pay-card">
                                 <div class="pay-card-icon"><icon name="bank" :size="32" /></div>
                                 <div style="font-size:17px; font-weight:600;">Transferencia bancaria</div>
-                                <div style="color:var(--text2); font-size:14px;">Comprueba el justificante de la transferencia antes de registrar el cobro</div>
+                                <div style="color:var(--text2); font-size:14px;">Se emite el ticket con el número de cuenta y la venta queda pendiente de pago hasta que un administrador vea la transferencia en el banco</div>
                                 <div class="pay-num" style="font-size:28px; font-weight:700; margin-top:4px;">{{ eur(total) }}</div>
                             </div>
                         </template>
@@ -797,7 +797,7 @@ const PaymentModal = {
                         </template>
 
                         <button @click="handleConfirm" :disabled="!canConfirm()" class="pay-confirm">
-                            {{ isSubmitting ? 'Procesando…' : (method === 'voucher' ? 'Cobrar ' + eur(voucherPayable) + ' tras cupón' : (method === 'card' ? (dataphoneMode === 'independent' ? 'Registrar cobro con tarjeta' : 'Confirmar cobro con tarjeta') : (method === 'transfer' ? 'Registrar cobro por transferencia' : 'Cobrar ' + eur(total)))) }}
+                            {{ isSubmitting ? 'Procesando…' : (method === 'voucher' ? 'Cobrar ' + eur(voucherPayable) + ' tras cupón' : (method === 'card' ? (dataphoneMode === 'independent' ? 'Registrar cobro con tarjeta' : 'Confirmar cobro con tarjeta') : (method === 'transfer' ? 'Registrar venta pendiente de transferencia' : 'Cobrar ' + eur(total)))) }}
                         </button>
                     </div>
                 </div>

@@ -146,6 +146,7 @@ const useSession = (function () {
             refunds: Number(data.refunds_cash || 0),
             refundsCard: Number(data.refunds_card || 0),
             salesTransfer: Number(data.sales_transfer || 0),
+            salesTransferPending: Number(data.sales_transfer_pending || 0),
             refundsTransfer: Number(data.refunds_transfer || 0),
             net: Number(data.net_total || 0),
             cashIn: Number(data.cash_in_total || 0),

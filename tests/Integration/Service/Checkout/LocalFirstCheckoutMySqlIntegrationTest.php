@@ -23,6 +23,7 @@ use VenPosTPV\Service\Refund\OrderSearchService;
 use VenPosTPV\Service\Sale\TicketNumberer;
 use VenPosTPV\Service\Sync\Outbox;
 use VenPosTPV\Service\Sync\OutboxSyncTrigger;
+use VenPosTPV\Service\Transfer\TransferPayments;
 use VenPosTPV\Tests\Support\TestDatabase;
 
 /**
@@ -83,6 +84,7 @@ final class LocalFirstCheckoutMySqlIntegrationTest extends TestCase
         $ids = $c->fetchFirstColumn('SELECT id FROM order_meta WHERE session_id = ?', [self::SESSION_ID]);
         foreach ($ids as $id) {
             $c->executeStatement('DELETE FROM outbox WHERE order_id = ?', [(int) $id]);
+            $c->executeStatement('DELETE FROM transfer_payment WHERE order_id = ?', [(int) $id]);
         }
         $c->executeStatement('DELETE FROM movement WHERE session_id = ?', [self::SESSION_ID]);
         $c->executeStatement('DELETE FROM order_meta WHERE session_id = ?', [self::SESSION_ID]);
@@ -344,9 +346,46 @@ final class LocalFirstCheckoutMySqlIntegrationTest extends TestCase
 
         $report = (new CashSessionService($c, $this->createMock(TerminalService::class), new RequestStack()))->getXReport(1);
         $this->assertSame(24.2, $report['totals']['sales_transfer']);
+        $this->assertSame(24.2, $report['totals']['sales_transfer_pending'], 'not received in the bank yet');
         $this->assertSame(0.0, $report['totals']['sales_card']);
         $this->assertSame(24.2, $report['totals']['sales_total']);
         $this->assertSame(100.0, $report['expected_cash'], 'only the opening cash');
+    }
+
+    public function testATransferSaleWaitsPendingWithTheIbanOnItsTicketUntilAnAdminMarksItReceived(): void
+    {
+        $c = $this->connection;
+        $c->update('terminal', ['bank_account' => 'ES9121000418450200051332'], ['id' => self::TERMINAL_ID]);
+        $result = $this->service()->createOrder(1, $this->cart(2), 'transfer', 24.2);
+        $transfers = new TransferPayments($c);
+        $resolver = new TicketDataResolver($c, new TicketVerificationService('test-secret', 'http://tpv'), 'Tienda', '');
+
+        $pending = $transfers->pending();
+        $this->assertCount(1, $pending);
+        $this->assertSame([$result['order_id'], $this->code(1), 24.2], [$pending[0]['order_id'], $pending[0]['reference'], $pending[0]['amount']]);
+        $ticket = $resolver->resolve(TicketDataResolver::saleKey($result['order_id']));
+        $this->assertSame(['account' => 'ES91 2100 0418 4502 0005 1332', 'pending' => true], $ticket->transfer);
+
+        $this->assertSame('received', $transfers->markReceived($pending[0]['id'], 1));
+        $this->assertSame('already_received', $transfers->markReceived($pending[0]['id'], 1), 'only once');
+        $this->assertSame('not_found', $transfers->markReceived(999999999, 1));
+        $this->assertSame([], $transfers->pending());
+        $this->assertFalse($resolver->resolve(TicketDataResolver::saleKey($result['order_id']))->transfer['pending'], 'the reprint no longer says pending');
+        $row = $c->fetchAssociative('SELECT status, received_by_user_id, received_at IS NOT NULL AS dated FROM transfer_payment WHERE order_id = ?', [$result['order_id']]);
+        $this->assertEquals(['status' => 'received', 'received_by_user_id' => 1, 'dated' => 1], $row);
+
+        $report = (new CashSessionService($c, $this->createMock(TerminalService::class), new RequestStack()))->getXReport(1);
+        $this->assertSame(24.2, $report['totals']['sales_transfer']);
+        $this->assertSame(0.0, $report['totals']['sales_transfer_pending']);
+    }
+
+    public function testACashSaleHasNoTransferRow(): void
+    {
+        $result = $this->service()->createOrder(1, $this->cart(1), 'cash', 20.0);
+
+        $this->assertSame(0, (int) $this->connection->fetchOne('SELECT COUNT(*) FROM transfer_payment WHERE order_id = ?', [$result['order_id']]));
+        $ticket = (new TicketDataResolver($this->connection, new TicketVerificationService('test-secret', 'http://tpv'), 'Tienda', ''))->resolve(TicketDataResolver::saleKey($result['order_id']));
+        $this->assertNull($ticket->transfer);
     }
 
     public function testUnknownPaymentMethodIsA422AndStoresNothing(): void

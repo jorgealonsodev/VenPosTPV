@@ -56,6 +56,7 @@ const ReportsLogic = (function () {
         { key: 'sales_cash', label: 'Ventas en efectivo' },
         { key: 'sales_card', label: 'Ventas con tarjeta' },
         { key: 'sales_transfer', label: 'Ventas por transferencia' },
+        { key: 'sales_transfer_pending', label: 'Transferencias pendientes de pago (incluidas en ventas por transferencia)' },
         { key: 'exchange_credit', label: 'Crédito de cambio' },
         { key: 'sales_total', label: 'Total ventas', strong: true },
         { key: 'refunds_cash', label: 'Devoluciones en efectivo' },

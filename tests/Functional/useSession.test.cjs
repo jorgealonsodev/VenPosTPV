@@ -254,7 +254,7 @@ async function testRefreshCashTotalsReadsTheXReportByMethod() {
     await store.refreshCashTotals();
 
     assert.deepEqual(JSON.parse(JSON.stringify(store.session.cashTotals)), {
-        sales: 60, salesCard: 80, refunds: 17, refundsCard: 15, salesTransfer: 25, refundsTransfer: 5, net: 128, cashIn: 0, cashOut: 0, expected: 143,
+        sales: 60, salesCard: 80, refunds: 17, refundsCard: 15, salesTransfer: 25, salesTransferPending: 0, refundsTransfer: 5, net: 128, cashIn: 0, cashOut: 0, expected: 143,
     });
 }
 

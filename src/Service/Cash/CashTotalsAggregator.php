@@ -85,6 +85,17 @@ class CashTotalsAggregator
              FROM order_meta o WHERE " . $saleWhere,
             $saleParams
         );
+        // Part of sales_transfer: transfers not received yet («Pendientes de pago»).
+        try {
+            $salesTransferPending = (float) $this->connection->fetchOne(
+                "SELECT COALESCE(SUM(t.amount), 0) FROM transfer_payment t JOIN order_meta o ON o.id = t.order_id
+                 WHERE t.status = 'pending' AND " . $saleWhere,
+                $saleParams
+            );
+        } catch (\Throwable) {
+            // Database not migrated to pending transfers yet: there are none.
+            $salesTransferPending = 0.0;
+        }
         try {
             $refundsTransfer = (float) $this->connection->fetchOne(
                 "SELECT COALESCE(SUM(r.transfer_amount), 0) FROM refund r WHERE r.status = 'done' AND " . $refundWhere,
@@ -156,6 +167,7 @@ class CashTotalsAggregator
             'sales_cash' => round($sales, 2),
             'sales_card' => round($salesCard, 2),
             'sales_transfer' => round($salesTransfer, 2),
+            'sales_transfer_pending' => round($salesTransferPending, 2),
             'sales_total' => $salesTotal,
             'refunds_cash' => round($refunds, 2),
             'refunds_card' => round($refundsCard, 2),

@@ -719,7 +719,7 @@ class SalesReportService
 
         $totals = $this->totals->totals($scope);
         $data = [];
-        foreach (['sales_cash', 'sales_card', 'sales_transfer', 'sales_total', 'exchange_credit', 'refunds_cash', 'refunds_card', 'refunds_transfer', 'refunds_voucher', 'refunds_total',
+        foreach (['sales_cash', 'sales_card', 'sales_transfer', 'sales_transfer_pending', 'sales_total', 'exchange_credit', 'refunds_cash', 'refunds_card', 'refunds_transfer', 'refunds_voucher', 'refunds_total',
             'exchange_vouchers', 'refunds_web_pending', 'net_total', 'cash_in_total', 'cash_out_total'] as $key) {
             $data[$key] = (float) $totals[$key];
         }

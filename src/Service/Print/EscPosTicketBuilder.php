@@ -205,6 +205,17 @@ class EscPosTicketBuilder
             if ($ticketData->changeDue > 0) {
                 $printer->text('Cambio: ' . number_format($ticketData->changeDue, 2) . " €\n");
             }
+            if ($ticketData->transfer !== null) {
+                if ($ticketData->transfer['pending']) {
+                    $printer->setEmphasis(true);
+                    $printer->text("Pendiente de pago por transferencia\n");
+                    $printer->setEmphasis(false);
+                }
+                if ($ticketData->transfer['account'] !== null) {
+                    $printer->text('Cuenta: ' . $ticketData->transfer['account'] . "\n");
+                    $printer->text('Concepto: ' . $this->sanitize($ticketData->reference) . "\n");
+                }
+            }
             if ($ticketData->leftoverVoucher !== null) {
                 // The code page has no long dash: «-» instead of «—».
                 $printer->setEmphasis(true);
