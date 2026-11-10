@@ -3,6 +3,7 @@
 ## 0.8.3
 
 - New endpoint `POST /module/tpvconnect/price` (HMAC like the others) `{"id_product", "id_product_attribute", "price", "vat_rate"}` for the TPV's «Modo edición». `price` is the price **with VAT** (0 to 99999.99) and `vat_rate` one of 21, 10, 4 or 0. For a product it stores `Product->price` = price / (1 + rate) and the tax rules group of that rate in the shop's default country (none for 0 %). For a combination it sets the product's tax rules group and the combination impact so that the combination's price with VAT is the one sent. Answers `200 {"id_product", "id_product_attribute", "price", "price_net", "vat_rate"}`, `404` for an unknown product or combination, `422` for an invalid body or a rate the shop has no tax rule for. Prices are absolute, so repeating a request is harmless. Specific prices (reductions) are not touched.
+- Only the price columns are written (`product`/`product_shop` price and tax rules group, `product_attribute`/`product_attribute_shop` price), not the whole Product: PrestaShop validates every field on a full save, and a product whose short description is longer than its limit could otherwise never change price. Then the price cache is cleared and `actionProductUpdate` runs (a failure there is only logged: the price is saved).
 - Upgrade script `upgrade-0.8.3.php`: nothing to change in the shop.
 
 ## 0.8.0
