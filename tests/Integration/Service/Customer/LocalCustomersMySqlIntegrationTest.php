@@ -194,6 +194,37 @@ final class LocalCustomersMySqlIntegrationTest extends TestCase
         $this->assertSame([], $directory->search('gone' . self::EMAIL_DOMAIN));
     }
 
+    public function testTheSyncTakesEachCustomersPhoneFromItsAddressesAndNeverErasesOne(): void
+    {
+        $c = $this->connection;
+        $c->insert('customer', ['ps_customer_id' => self::PS_IDS[2], 'firstname' => 'Till', 'lastname' => 'Phone', 'email' => $this->email('tillphone'), 'phone' => '611 000 111', 'active' => 1]);
+
+        $api = $this->createMock(PrestaShopApiClient::class);
+        $api->method('getCustomers')->willReturn([
+            ['id' => self::PS_IDS[0], 'firstname' => 'Ana', 'lastname' => 'Martínez', 'email' => $this->email('ana'), 'active' => '1'],
+            ['id' => self::PS_IDS[1], 'firstname' => 'Jorge', 'lastname' => 'Pérez', 'email' => $this->email('jorge'), 'active' => '1'],
+            ['id' => self::PS_IDS[2], 'firstname' => 'Till', 'lastname' => 'Phone', 'email' => $this->email('tillphone'), 'active' => '1'],
+        ]);
+        $api->method('getCustomerPhones')->willReturn([self::PS_IDS[0] => '600 111 222', self::PS_IDS[1] => '+34 699 000 333']);
+        (new CustomerSyncService($api, $c))->syncAll();
+
+        $phone = static fn (int $ps): mixed => $c->fetchOne('SELECT phone FROM customer WHERE ps_customer_id = ?', [$ps]);
+        $this->assertSame('600 111 222', $phone(self::PS_IDS[0]));
+        $this->assertSame('+34 699 000 333', $phone(self::PS_IDS[1]));
+        $this->assertSame('611 000 111', $phone(self::PS_IDS[2]), 'no address phone: the one typed at the till stays');
+        $this->assertSame([self::PS_IDS[1]], array_column($this->directory()->search('jorge'), 'id'));
+        $this->assertSame('+34 699 000 333', $this->directory()->search('jorge')[0]['phone']);
+
+        // The addresses cannot be read (an older module without that permission): the customers still sync.
+        $api = $this->createMock(PrestaShopApiClient::class);
+        $api->method('getCustomers')->willReturn([['id' => self::PS_IDS[0], 'firstname' => 'Ana', 'lastname' => 'Nueva', 'email' => $this->email('ana'), 'active' => '1']]);
+        $api->method('getCustomerPhones')->willThrowException(new \RuntimeException('401'));
+        $counts = (new CustomerSyncService($api, $c))->syncAll();
+        $this->assertSame(1, $counts['customers']);
+        $this->assertSame('Nueva', $c->fetchOne('SELECT lastname FROM customer WHERE ps_customer_id = ?', [self::PS_IDS[0]]));
+        $this->assertSame('600 111 222', $phone(self::PS_IDS[0]), 'kept');
+    }
+
     public function testANewCustomerIsCreatedLocallyWithItsUploadQueuedAndAnEmailIsNotDuplicated(): void
     {
         $directory = $this->directory();

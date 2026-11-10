@@ -28,8 +28,14 @@ class CustomerSyncService
     public function syncAll(): array
     {
         $customers = $this->apiClient->getCustomers();
+        try {
+            $phones = $this->apiClient->getCustomerPhones();
+        } catch (\Throwable) {
+            // Addresses not readable (a module without that permission): phones stay as they are.
+            $phones = [];
+        }
 
-        return $this->connection->transactional(function () use ($customers): array {
+        return $this->connection->transactional(function () use ($customers, $phones): array {
             $now = (new \DateTimeImmutable())->format('Y-m-d H:i:s');
             $seen = [];
             foreach ($customers as $customer) {
@@ -40,15 +46,18 @@ class CustomerSyncService
                 $seen[] = $id;
                 $email = trim((string) ($customer['email'] ?? ''));
                 $this->connection->executeStatement(
-                    'INSERT INTO customer (ps_customer_id, firstname, lastname, email, active, created_at, updated_at, synced_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    // A phone from the addresses; without one, the phone kept (or typed at the till) stays.
+                    'INSERT INTO customer (ps_customer_id, firstname, lastname, email, phone, active, created_at, updated_at, synced_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                      ON DUPLICATE KEY UPDATE firstname = VALUES(firstname), lastname = VALUES(lastname), email = VALUES(email),
+                         phone = COALESCE(VALUES(phone), phone),
                          active = VALUES(active), updated_at = VALUES(updated_at), synced_at = VALUES(synced_at)',
                     [
                         $id,
                         mb_substr(trim((string) ($customer['firstname'] ?? '')), 0, 255),
                         mb_substr(trim((string) ($customer['lastname'] ?? '')), 0, 255),
                         $email !== '' ? mb_strtolower(mb_substr($email, 0, 255)) : null,
+                        $phones[$id] ?? null,
                         (int) ($customer['active'] ?? 1) === 1 ? 1 : 0,
                         $now,
                         $now,

@@ -10,7 +10,7 @@ Junto a **Enviar por email**, el TPV ofrece **WhatsApp** para mandar al cliente 
 
 ## Cómo se usa
 
-1. Pulsa **WhatsApp**. Escribe el teléfono del cliente o pulsa **Elegir cliente** y búscalo por nombre o teléfono (solo salen los clientes con teléfono). En el cobro se rellena con el teléfono del cliente de la venta, si lo tiene.
+1. Pulsa **WhatsApp**. Escribe el teléfono del cliente o pulsa **Elegir cliente** y búscalo por nombre o teléfono: salen todos los que coinciden, primero los que tienen teléfono; los que no lo tienen pone «sin teléfono» y no se pueden elegir, y si no hay ninguno lo dice. El teléfono de los clientes de la tienda sale de sus direcciones en PrestaShop (el móvil, o si no el fijo, de la dirección más reciente), que el TPV copia en la sincronización de clientes (`tpv:customers:sync`; el módulo TPV Connect 0.8.2 da permiso para leer las direcciones); un teléfono escrito en el TPV no se borra. En el cobro se rellena con el teléfono del cliente de la venta, si lo tiene.
 2. Pulsa **Abrir WhatsApp**. Se abre WhatsApp (la aplicación del móvil, o WhatsApp Web / la aplicación de escritorio en un ordenador) en el chat de ese número con el mensaje escrito, por ejemplo: «Hola, aquí tienes tu ticket R26000012 de Nada Más: https://…/d/…».
 3. En WhatsApp, pulsa **Enviar**. El TPV no envía nada por su cuenta y no necesita ninguna cuenta de WhatsApp Business ni de Meta.
 

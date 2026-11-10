@@ -35,7 +35,8 @@ class TpvConnectInstaller
     /**
      * Webservice resources and methods the TPV's key needs: catalog and stock
      * reads, stock writes, customers created at the till (POST customers) and
-     * coupons created at the till (GET cart_rules?schema=blank, POST cart_rules).
+     * coupons created at the till (GET cart_rules?schema=blank, POST cart_rules) and
+     * the customers' phones, read from their addresses (GET addresses).
      */
     public const WEBSERVICE_PERMISSIONS = [
         'products' => ['GET', 'HEAD'],
@@ -50,6 +51,8 @@ class TpvConnectInstaller
         'product_options' => ['GET', 'HEAD'],
         'product_option_values' => ['GET', 'HEAD'],
         'cart_rules' => ['GET', 'POST', 'HEAD'],
+        // The customers' phones («Elegir cliente» for WhatsApp) live in their addresses.
+        'addresses' => ['GET', 'HEAD'],
     ];
 
     private Module $module;
