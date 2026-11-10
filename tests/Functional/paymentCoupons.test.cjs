@@ -180,10 +180,10 @@ function testTheBoxShowsTheBalanceLines() {
     assert.match(source, /v-if="!voucherBalance"[^>]*>Cupón aplicado como descuento/);
 }
 
-async function testOnceChargedAClickOutsideNeverClosesThePaymentWindow() {
+async function testAClickOutsideNeverClosesThePaymentWindow() {
     const { state: choosing, emitted: closed } = loadPayment({ preview: async () => ({}), checkout: async () => ({}) });
     choosing.onBackdrop();
-    assert.deepEqual(closed, [['close', undefined]], 'before «Cobrar» a click outside still closes it');
+    assert.deepEqual(closed, [], 'choosing how to pay: only the ✕ closes it');
 
     const { state, emitted } = loadPayment({ preview: async () => ({}), checkout: async () => ({ data: { ps_order_id: 5, total: 23.14 } }) });
 
@@ -330,7 +330,7 @@ async function main() {
     await testAnUncertainCouponChargeSaysWhatToDoInOneShortMessage();
     await testAnAmountVoucherShowsItsBalanceAndWhatIsLeft();
     testTheBoxShowsTheBalanceLines();
-    await testOnceChargedAClickOutsideNeverClosesThePaymentWindow();
+    await testAClickOutsideNeverClosesThePaymentWindow();
     console.log('paymentCoupons functional harness: 14 passed');
 }
 
