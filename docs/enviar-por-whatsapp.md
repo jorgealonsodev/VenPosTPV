@@ -16,7 +16,7 @@ Junto a **Enviar por email**, el TPV ofrece **WhatsApp** para mandar al cliente 
 
 Si el navegador bloquea la ventana nueva, el TPV lo dice y deja el enlace para tocarlo.
 
-**Teléfono.** Se ignoran espacios, puntos, guiones y paréntesis. Con `+` o `00` delante se respeta el prefijo del país; 9 cifras que empiezan por 6, 7, 8 o 9 son un número español (+34); cualquier otro número necesita de 8 a 15 cifras con su prefijo. Si no, «Número de teléfono no válido».
+**Teléfono.** Se ignoran espacios, puntos, guiones y paréntesis. Con `+` o `00` delante se respeta el prefijo del país; 9 cifras que empiezan por 6, 7, 8 o 9 son un número español (+34); cualquier otro número necesita de 8 a 15 cifras con su prefijo. Si no, «Número de teléfono no válido». Al elegir un cliente, al rellenarse en el cobro o al salir del campo, el teléfono se muestra con su prefijo (por ejemplo «+34 615 65 82 90»). Si el teléfono de la tienda trae dos números o una nota («615658290 / 944223344», «+34 615 65 82 90 (móvil)»), se usa el primer número válido, y antes un móvil que un fijo.
 
 **Factura completa.** Solo con el consentimiento del cliente (RD 1619/2012 art. 9.2), el mismo que para el email: ver [factura-completa.md](factura-completa.md#whatsapp).
 

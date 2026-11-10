@@ -57,6 +57,8 @@ Send the same cart fields with the default `operation` (or `"operation":"order"`
 
 The module reuses that preview cart rather than creating another one. It checks the HMAC quote and expiry, input/cart context and product fingerprint, current product quantities, cart-rule identity/expiry/native eligibility, the attached rule's effective discount, and independently measured native pre-discount (`ONLY_PRODUCTS`) and payable (`BOTH`) totals before `validateOrder`. Any additional or changed cart-rule interaction fails closed. A changed, expired, forged, used, or amount-drifted coupon returns HTTP 422 before an order is created; the cashier must obtain a new preview.
 
+Since 0.8.1 PrestaShop's own e-mails (`order_conf`, the `voucher` mail of a partial-use rest) are not sent while a till order is created: the `actionEmailSendBefore` hook answers false inside `TpvOrderMail::withoutShopMail()` around `validateOrder`. Web orders still send theirs. See [tpv-coupon-checkout.md](tpv-coupon-checkout.md#till-orders-do-not-send-prestashops-e-mails-module-081).
+
 A successful order response includes `order_id`, `reference`, and `total_paid`. Existing non-coupon order requests preserve their previous payload and now also include `total_paid`.
 
 ## Retry and concurrency boundary

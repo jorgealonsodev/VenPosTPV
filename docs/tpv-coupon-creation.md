@@ -15,3 +15,7 @@ La respuesta correcta es `201` con `data.id`, un código automático de 8 caract
 Errores: `401` sin sesión, `403` con otro rol, `422` para entrada o contexto inválido, `503` si el esquema no está disponible y `409` si un POST no puede confirmarse. Un `409` incluye el código generado para reconciliarlo en PrestaShop; no se reintenta automáticamente para evitar duplicados.
 
 La moneda de los descuentos en euros procede de `PS_DEFAULT_CURRENCY`; debe ser un ID positivo configurado para la tienda. No se crean asociaciones de tienda no soportadas ni se afirma aislamiento global: el alcance multitienda se pide explícitamente mediante `id_shop` en las solicitudes Webservice.
+
+## Ver los cupones creados
+
+El botón **Cupones**, junto a **Crear cupón** en la cabecera de la pantalla de venta (administradores y cajeros), lista los cupones creados desde el TPV, también los vales con el saldo que sobra de otro vale: del más reciente al más antiguo, 25 por página con **Ver más**, y con búsqueda por parte del código. Cada uno muestra el código (**Copiar**), el valor, la caducidad, cuándo, quién y en qué caja se creó, su estado en PrestaShop (Disponible, Usado, Caducado, Desactivado, Borrado en la tienda, o Sin comprobar si la tienda no responde) y **Imprimir** y **PDF** para su vale. La lista sale aunque la tienda no responda. API y estados: [Cupones en el cobro](tpv-coupon-checkout.md#cupones-the-tills-coupons-and-their-state) (`GET /api/coupons?q=&page=`).
