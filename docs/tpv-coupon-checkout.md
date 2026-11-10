@@ -53,6 +53,10 @@ TPV Connect serializes module coupon redemption and native PrestaShop revalidate
 
 When the outcome of a coupon order is still uncertain (409 `coupon_reconcile_required`), the till says «No se ha podido confirmar el cobro con cupón en la tienda: el pedido puede haberse creado. No vuelvas a cobrar esta venta; revisa el pedido en PrestaShop.» with the server's short detail; an error page from the shop is named («página de error de la tienda (N bytes)»), never pasted.
 
+## The balance of an amount voucher
+
+When the validated code is an amount voucher with partial use (the till's vouchers and their rests), the preview carries `voucher: {balance, used, left}` (`VoucherBalance`, read with `CouponStatusLookup::findByCode()`; never part of the signed quote) and the payment modal shows «Saldo del vale», «Se usa del vale» and «Queda en un vale nuevo» (or «El vale se gasta entero») instead of «Cupón aplicado como descuento; no es saldo ni medio de pago.», which stays for percentage coupons. Without an answer from the shop the box shows the discount as before.
+
 ## Why a coupon is rejected
 
 The module answers a rejected preview with 422 and no reason the TPV can show. `CheckoutService::previewCoupon()` then asks PrestaShop for the coupon by its code (`CouponRejectionReason`, `CouponStatusLookup::findByCode()`: `GET /api/cart_rules?filter[code]=[…]`) and the cashier reads, under the code:

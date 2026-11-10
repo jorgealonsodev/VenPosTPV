@@ -86,7 +86,7 @@ final class CouponListServiceTest extends TestCase
         self::assertCount(1, $urls);
         self::assertStringContainsString('/api/cart_rules?', $urls[0]);
         self::assertStringContainsString('filter[id]=[103|102|101]', $urls[0]);
-        self::assertStringContainsString('display=[id,quantity,active,date_from,date_to]', $urls[0]);
+        self::assertStringContainsString('display=[id,quantity,active,date_from,date_to,reduction_amount,reduction_percent,reduction_tax,partial_use]', $urls[0]);
     }
 
     public function testADisabledOrDeletedCartRuleSaysSo(): void

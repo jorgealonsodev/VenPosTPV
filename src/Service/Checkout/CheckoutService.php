@@ -15,6 +15,7 @@ use VenPosTPV\Service\Catalog\CatalogPriceResolver;
 use VenPosTPV\Service\Catalog\Exception\ProductNotInCatalogException;
 use VenPosTPV\Service\Checkout\Exception\CheckoutException;
 use VenPosTPV\Service\Coupon\CouponRejectionReason;
+use VenPosTPV\Service\Coupon\VoucherBalance;
 use VenPosTPV\Service\Coupon\IssuedCouponStore;
 use VenPosTPV\Service\Customer\CustomerDirectory;
 use VenPosTPV\Service\Print\PrinterService;
@@ -71,6 +72,7 @@ class CheckoutService
         private readonly ?FreeItemSettingsStore $freeItemSettings = null,
         private readonly ?IssuedCouponStore $issuedCoupons = null,
         private readonly ?CouponRejectionReason $couponRejection = null,
+        private readonly ?VoucherBalance $voucherBalance = null,
     ) {
     }
 
@@ -409,6 +411,11 @@ class CheckoutService
         if (!$this->sameTotal($pricing['total'], (float) $preview['before_discount_total'])
             || !$this->sameTotal((float) $preview['before_discount_total'] - (float) $preview['discount_amount'], (float) $preview['total_paid'])) {
             throw CheckoutException::psValidationFailed('Coupon preview total does not match the local catalog');
+        }
+        // An amount voucher: its balance, what this sale uses and the rest kept in a new one.
+        $voucher = $this->voucherBalance?->forSale($code, (float) $preview['discount_amount']);
+        if ($voucher !== null) {
+            $preview['voucher'] = $voucher;
         }
 
         return $preview;
