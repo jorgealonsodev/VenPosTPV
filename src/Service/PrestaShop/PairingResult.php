@@ -20,7 +20,9 @@ final class PairingResult
 
     /**
      * The .env values the shop decides: the webservice key, the SSO secret (also
-     * the HMAC key of the signed module endpoints) and the shop's ids.
+     * the HMAC key of the signed module endpoints) and the shop's ids. Pairing
+     * only succeeds with a module that knows coupon_preview (PairingClient checks
+     * MIN_MODULE_VERSION), so it also turns coupon checkout on.
      *
      * @return array<string, string>
      */
@@ -33,6 +35,7 @@ final class PairingResult
             'PS_DEFAULT_SHOP' => (string) $this->shopId,
             'PS_DEFAULT_CURRENCY' => (string) $this->currencyId,
             'PS_SHOP_TIMEZONE' => $this->timezone,
+            'TPV_COUPON_CHECKOUT_ENABLED' => '1',
         ];
     }
 }

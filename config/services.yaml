@@ -1,10 +1,10 @@
 # config/services.yaml
 parameters:
     app.base_path: '%env(TPV_BASE_PATH)%'
-    # Coupon preview is unsafe against an older TPV Connect module, which
-    # interprets an unknown operation as order creation. Keep it off until the
-    # compatible module is deployed and an operator explicitly enables it.
-    env(TPV_COUPON_CHECKOUT_ENABLED): '0'
+    # Coupon preview needs TPV Connect >= 0.2.0: an older module interprets an
+    # unknown operation as order creation. The bundled module is compatible, so
+    # it is on by default; set TPV_COUPON_CHECKOUT_ENABLED=0 only against an old one.
+    env(TPV_COUPON_CHECKOUT_ENABLED): '1'
     # New native coupon creation uses the shop's local calendar day.
     env(PS_SHOP_TIMEZONE): 'Europe/Madrid'
     # Print agent versions (docs/prd/agente-impresion.md U1, U4): empty = none.

@@ -77,6 +77,8 @@ final class WebInstallerTest extends TestCase
         self::assertSame('', $v['TPV_BASE_PATH']);
         self::assertSame(" p'w\$X ", $v['TPV_DB_PASSWORD']);
         self::assertSame('127.0.0.1,::1', $v['TRUSTED_PROXIES']);
+        // The bundled module knows coupon_preview: coupon checkout is on from the start.
+        self::assertSame('1', $v['TPV_COUPON_CHECKOUT_ENABLED']);
         self::assertSame(64, \strlen($v['APP_SECRET']));
     }
 
@@ -249,6 +251,7 @@ final class WebInstallerTest extends TestCase
         self::assertSame('3', $env['PS_DEFAULT_SHOP']);
         self::assertSame('2', $env['PS_DEFAULT_CURRENCY']);
         self::assertSame('Atlantic/Canary', $env['PS_SHOP_TIMEZONE']);
+        self::assertSame('1', $env['TPV_COUPON_CHECKOUT_ENABLED']);
         self::assertSame('prod', $env['APP_ENV']);
         self::assertSame(" p'w\$X ", $env['TPV_DB_PASSWORD']);
     }

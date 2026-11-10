@@ -33,6 +33,7 @@ Los pasos pendientes y su motivo se ven en **Ajustes → Acerca de → Estado de
 |---|---|---|---|
 | 1 (prioridad 1000) | `migrations` | Aplica las migraciones pendientes de `migrations/` (el mismo `MigrationRunner` que el instalador) | no queda ninguna migración pendiente |
 | 2 (prioridad 100) | `free-item-products` | Crea o comprueba en PrestaShop los productos genéricos del artículo libre (`FreeItemSetupService`, lo mismo que `tpv:free-item:setup`) | el artículo libre está desactivado (`free_item.enabled` = 0: no llama a PrestaShop), o `free_item.ps_products` tiene el producto y los 20 huecos de cada IVA de `free_item.vat_rates` |
+| 3 (prioridad 90) | `coupon-checkout` | Pone `TPV_COUPON_CHECKOUT_ENABLED=1` en `.env` (con copia `.env.bak-…`) en las instalaciones anteriores, cuyo instalador lo dejaba a 0, y lo anota en `app_setting` (`coupon_checkout.enabled_by_upgrade`) | el cobro con cupón ya está activo, o el paso ya se hizo una vez (si un administrador lo vuelve a poner a 0, se respeta) |
 
 ### Migraciones desde la tarea de cada minuto
 

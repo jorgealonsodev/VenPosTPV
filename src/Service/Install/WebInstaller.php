@@ -174,7 +174,8 @@ final class WebInstaller
             'PS_DEFAULT_CURRENCY' => $pairing ? '1' : $get('ps_currency', '1'),
             'PS_DEFAULT_SHOP' => $pairing ? '1' : $get('ps_shop', '1'),
             'PS_SHOP_TIMEZONE' => $tz,
-            'TPV_COUPON_CHECKOUT_ENABLED' => '0',
+            // The bundled TPV Connect module knows coupon_preview (>= 0.2.0).
+            'TPV_COUPON_CHECKOUT_ENABLED' => '1',
             'MESSENGER_TRANSPORT_DSN' => 'doctrine://default',
             'TRUSTED_PROXIES' => '127.0.0.1,::1',
         ];

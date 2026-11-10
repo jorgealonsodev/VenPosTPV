@@ -2,14 +2,15 @@
 
 A TPV coupon is a native PrestaShop CartRule discount, not stored value or a tender balance. The POS asks TPV Connect for a signed five-minute preview, displays its authoritative gross, discount, and payable amount, then sends the same bound quote for native order creation.
 
-## Mandatory release order
+## Enablement
 
-1. Deploy the compatible TPV Connect module release (`0.2.0` or later) first.
-2. Confirm its `coupon_preview` operation works in an isolated test environment.
-3. Set `TPV_COUPON_CHECKOUT_ENABLED=1` only in the intended TPV runtime configuration.
-4. Restart/clear the application configuration cache as required by that runtime.
+Coupon checkout needs TPV Connect `0.2.0` or later (`coupon_preview`); the bundled module is compatible, so the gate is **on by default** and needs no manual step:
 
-The gate defaults to `0`; `env.example` documents `TPV_COUPON_CHECKOUT_ENABLED=0` without enabling it in the running application. Do **not** enable it against an old module: an old `orders` endpoint may ignore `operation: coupon_preview` and create an order. Gate-off returns `coupon_unavailable` and does not contact PrestaShop.
+- `config/services.yaml` defaults `TPV_COUPON_CHECKOUT_ENABLED` to `1`, and `env.example` documents `1`.
+- The web installer writes `TPV_COUPON_CHECKOUT_ENABLED=1`, and pairing (installer or Ajustes) writes it too, since pairing only succeeds with a module `>= PairingClient::MIN_MODULE_VERSION`.
+- Installs made while the installer wrote `0` are switched on once by the provisioning step `coupon-checkout` (docs/provisioning.md). An administrator who sets it back to `0` afterwards keeps it off.
+
+Set `TPV_COUPON_CHECKOUT_ENABLED=0` only against an old module: an old `orders` endpoint may ignore `operation: coupon_preview` and create an order. Gate-off returns `coupon_unavailable` and does not contact PrestaShop.
 
 ## Cashier behavior
 
