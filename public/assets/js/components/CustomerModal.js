@@ -104,12 +104,15 @@ const CustomerModal = {
         return { q, results, loading, searchError, filtered, mode, form, formError, saving, search, select, startCreate, create };
     },
     template: `
-        <div class="modal-backdrop" style="backdrop-filter:blur(3px); -webkit-backdrop-filter:blur(3px);" @click.self="$emit('close')">
+        <div class="modal-backdrop" style="backdrop-filter:blur(3px); -webkit-backdrop-filter:blur(3px);">
             <div style="background:var(--surface); border:1px solid var(--border); border-radius:20px; padding:28px; width:400px; display:flex; flex-direction:column; gap:16px;" @click.stop>
                 <template v-if="mode === 'search'">
                     <div style="display:flex; align-items:center; justify-content:space-between;">
                         <div style="font-size:16px; font-weight:600;">Seleccionar cliente</div>
-                        <button @click="startCreate" style="padding:6px 12px; border-radius:8px; border:1px solid var(--green-dim); background:var(--green-bg); color:var(--green); cursor:pointer; font-weight:600; font-size:12px;">+ Nuevo cliente</button>
+                        <span style="display:flex; align-items:center; gap:8px;">
+                            <button @click="startCreate" style="padding:6px 12px; border-radius:8px; border:1px solid var(--green-dim); background:var(--green-bg); color:var(--green); cursor:pointer; font-weight:600; font-size:12px;">+ Nuevo cliente</button>
+                            <button @click="$emit('close')" aria-label="Cerrar" style="background:none; border:none; color:var(--text); font-size:20px; cursor:pointer; line-height:1; padding:4px 8px;">✕</button>
+                        </span>
                     </div>
                     <input v-model="q" autofocus placeholder="Nombre, email o teléfono…"
                         style="background:var(--surface2); border:1px solid var(--border2); border-radius:10px; padding:11px 14px; color:var(--text); font-family:inherit; font-size:14px; outline:none;" />

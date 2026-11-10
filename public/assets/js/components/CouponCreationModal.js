@@ -221,7 +221,7 @@ const CouponCreationModal = {
         return { discountType, value, expiresAt, quantity, quantityPerUser, pending, error, createdCode, reconciliationRequired, copied, couponId, printable, emailEnabled, emailOpen, emailAddress, whatsappOpen, slipBusy, slipMessage, slipError, printSlip, openPdf, sendEmail, submit, copyCode, reset, validationError, close: () => emit('close') };
     },
     template: `
-        <div class="modal-backdrop" style="backdrop-filter:blur(3px); -webkit-backdrop-filter:blur(3px);" @click.self="!pending && $emit('close')">
+        <div class="modal-backdrop" style="backdrop-filter:blur(3px); -webkit-backdrop-filter:blur(3px);">
             <div style="background:var(--surface); border:1px solid var(--border); border-radius:20px; padding:28px; width:400px; max-width:92vw; display:flex; flex-direction:column; gap:16px;" @click.stop>
                 <div style="font-size:17px; font-weight:600; color:var(--text);">Crear cupón</div>
                 <template v-if="!createdCode">

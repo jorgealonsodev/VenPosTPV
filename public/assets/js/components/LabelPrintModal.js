@@ -152,7 +152,7 @@ const LabelPrintModal = {
         },
     },
     template: `
-        <div class="combinations-modal-backdrop" @click.self="$emit('close')">
+        <div class="combinations-modal-backdrop">
             <div class="combinations-modal label-modal" role="dialog" aria-modal="true" aria-labelledby="label-modal-title">
                 <div class="combinations-modal-header">
                     <h3 id="label-modal-title" style="margin:0; font-size:17px; color:var(--text); font-weight:700;">Etiquetas · {{ product.name }}</h3>

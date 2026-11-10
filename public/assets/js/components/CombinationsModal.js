@@ -24,7 +24,7 @@ const CombinationsModal = {
         }
     },
     template: `
-        <div class="combinations-modal-backdrop" @click.self="$emit('close')">
+        <div class="combinations-modal-backdrop">
             <div class="combinations-modal">
                 <div class="combinations-modal-header">
                     <h3 style="margin:0; font-size:16px; color:var(--text); font-weight:600;">{{ product.name }}</h3>

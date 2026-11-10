@@ -133,7 +133,7 @@ const ProductEditModal = (function () {
             },
         },
         template: `
-        <div class="modal-backdrop product-edit-backdrop" @click.self="$emit('close')">
+        <div class="modal-backdrop product-edit-backdrop">
             <div class="product-edit-modal" role="dialog" aria-modal="true" aria-labelledby="product-edit-title" @click.stop>
                 <div style="display:flex; align-items:flex-start; gap:8px;">
                     <div style="flex:1; min-width:0;">

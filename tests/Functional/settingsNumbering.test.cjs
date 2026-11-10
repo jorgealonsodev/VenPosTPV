@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { hasCacheVersionSince } = require('./support/cacheVersion.cjs');
 const vm = require('node:vm');
 
 function ref(value) { return { value }; }
@@ -94,9 +95,8 @@ async function testTheCreditNoteSeriesIsChangedAndTheServerErrorIsShown() {
 }
 
 function testTheScriptVersionWasBumped() {
-    const match = TEMPLATE.match(/components\/SettingsModal\.js\?v=(2026110[5-9]-[a-z0-9-]+)/);
-    assert.ok(match, 'SettingsModal.js has a 20261105- or later version');
-    assert.notEqual(match[1], '20261105-backup-alert-v1', 'browsers load the new SettingsModal.js');
+    assert.ok(hasCacheVersionSince(TEMPLATE, 'components/SettingsModal.js', '20261105'), 'SettingsModal.js has a 20261105- or later version');
+    assert.doesNotMatch(TEMPLATE, /SettingsModal\.js\?v=20261105-backup-alert-v1/, 'browsers load the new SettingsModal.js');
 }
 
 (async () => {

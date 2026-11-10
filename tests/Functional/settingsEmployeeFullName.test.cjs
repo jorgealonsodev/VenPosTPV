@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { hasCacheVersionSince } = require('./support/cacheVersion.cjs');
 const vm = require('node:vm');
 
 // Ajustes → Empleados: besides the user name, «Nombre y apellidos», printed on the ticket as the cashier.
@@ -78,6 +79,5 @@ test('the forms show «Nombre de usuario» and «Nombre y apellidos», and the l
 });
 
 test('the SettingsModal.js version was bumped', () => {
-    const match = TEMPLATE.match(/components\/SettingsModal\.js\?v=(20261109-[a-z0-9-]+)/);
-    assert.ok(match, 'SettingsModal.js has a 20261109- version');
+    assert.ok(hasCacheVersionSince(TEMPLATE, 'components/SettingsModal.js', '20261109'), 'SettingsModal.js has a 20261109- or later version');
 });

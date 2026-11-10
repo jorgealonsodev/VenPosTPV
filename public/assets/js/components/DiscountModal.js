@@ -16,7 +16,7 @@ const DiscountModal = {
         return { type, val, apply };
     },
     template: `
-        <div class="modal-backdrop" style="backdrop-filter:blur(3px); -webkit-backdrop-filter:blur(3px);" @click.self="$emit('close')">
+        <div class="modal-backdrop" style="backdrop-filter:blur(3px); -webkit-backdrop-filter:blur(3px);">
             <div style="background:var(--surface); border:1px solid var(--border); border-radius:20px; padding:32px; width:320px; display:flex; flex-direction:column; gap:20px;" @click.stop>
                 <div style="font-size:16px; font-weight:600;">Descuento global</div>
                 <div style="display:flex; gap:8px;">

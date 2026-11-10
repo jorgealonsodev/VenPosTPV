@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { hasCacheVersionSince } = require('./support/cacheVersion.cjs');
 const vm = require('node:vm');
 const test = require('node:test');
 
@@ -157,8 +158,8 @@ test('the sale screen tells the panel whether the user is an administrator', () 
     const panelTag = saleSource.match(/<catalog-panel[\s\S]*?\/>/);
     assert.ok(panelTag);
     assert.match(panelTag[0], /:is-admin="session\.role === 'admin'"/);
-    const modal = posTemplate.indexOf('/assets/js/components/ProductEditModal.js?v=20261109-');
-    assert.ok(modal > 0, 'the editor is loaded');
+    const modal = posTemplate.indexOf('/assets/js/components/ProductEditModal.js?v=');
+    assert.ok(modal > 0 && hasCacheVersionSince(posTemplate, 'components/ProductEditModal.js', '20261109'), 'the editor is loaded');
     assert.ok(modal < posTemplate.indexOf('/assets/js/components/CatalogPanel.js'), 'before the panel that uses it');
 });
 

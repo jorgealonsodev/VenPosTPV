@@ -8,6 +8,9 @@
  * instalación»: the installation steps still pending and why, docs/provisioning.md;
  * and «Volver a emparejar con la tienda»: TPV Connect's pairing code rewrites the
  * shop keys in .env).
+ *
+ * It closes only with its ✕, which first saves every section changed and not saved
+ * yet (closeSettings); a save that fails keeps it open on that section.
  */
 const SettingsModal = {
     emits: ['close'],
@@ -144,6 +147,8 @@ const SettingsModal = {
             try {
                 const resp = await ApiClient.terminalGet(terminalId);
                 terminal.value = resp.data || null;
+                markShopSaved();
+                markTillSaved();
             } catch (e) {
                 terminalError.value = 'Error al cargar configuración del terminal';
             } finally {
@@ -153,6 +158,21 @@ const SettingsModal = {
 
         // Shop data: saved on every till of the shop, so every till prints the same ticket header.
         const SHOP_FIELDS = ['store_name', 'legal_name', 'tax_id', 'store_address', 'ticket_header', 'ticket_footer', 'ticket_logo', 'refund_window_days', 'ticket_code'];
+        // What «Guardar» of Cajas sends for this computer's till.
+        const TILL_FIELDS = ['name', 'ticket_letter', 'dataphone_mode', 'printer_type', 'ticket_width_px', 'printer_ip', 'printer_port', 'printer_queue',
+            'label_height_mm', 'label_cut_each', 'ticket_margin_left_mm', 'ticket_margin_right_mm', 'ticket_logo_width_pct'];
+        const MAIL_FIELDS = ['host', 'port', 'encryption', 'username', 'from_email', 'from_name', 'backup_alert_email'];
+
+        // The values as last loaded or saved, per section: closing the window saves
+        // the sections whose values differ (closeSettings).
+        function pick(source, fields) {
+            const values = {};
+            fields.forEach((field) => { values[field] = source && source[field] != null ? String(source[field]) : ''; });
+            return JSON.stringify(values);
+        }
+        const savedState = { shop: null, till: null, mail: null, edit: null, syncPull: String(syncInterval.value), syncPush: String(syncPushInterval.value) };
+        function markShopSaved() { savedState.shop = terminal.value ? pick(terminal.value, SHOP_FIELDS) : null; }
+        function markTillSaved() { savedState.till = terminal.value ? pick(terminal.value, TILL_FIELDS) : null; }
 
         function errorText(e, fallback) {
             const match = /^HTTP (\d+): ([\s\S]*)$/.exec((e && e.message) || '');
@@ -186,6 +206,7 @@ const SettingsModal = {
                     }
                 });
                 await ApiClient.terminalUpdate(terminal.value.id, payload);
+                markShopSaved();
                 flash('Datos de la tienda guardados en todas las cajas');
             } catch (e) {
                 terminalError.value = errorText(e, 'Error al guardar los datos de la tienda');
@@ -235,6 +256,7 @@ const SettingsModal = {
                 });
 
                 await ApiClient.terminalUpdate(terminal.value.id, payload);
+                markTillSaved();
                 flash('Caja guardada');
                 // This computer's till: PaymentModal picks the new values up at once.
                 if (terminal.value.id === useSession.session.terminalId) {
@@ -394,6 +416,7 @@ const SettingsModal = {
             try {
                 const seconds = parseInt(syncInterval.value, 10);
                 await ApiClient.terminalUpdate(useSession.session.terminalId || terminal.value.id, { stock_sync_interval_seconds: seconds });
+                savedState.syncPull = String(syncInterval.value);
                 useSession.session.stockSyncIntervalSeconds = seconds;
                 useSession.startStockSyncTimer();
                 success.value = 'Intervalo PS → TPV guardado';
@@ -412,6 +435,7 @@ const SettingsModal = {
             try {
                 const seconds = parseInt(syncPushInterval.value, 10);
                 await ApiClient.terminalUpdate(useSession.session.terminalId || terminal.value.id, { stock_push_interval_seconds: seconds });
+                savedState.syncPush = String(syncPushInterval.value);
                 useSession.session.stockPushIntervalSeconds = seconds;
                 useSession.startStockPushTimer();
                 success.value = 'Intervalo TPV → PS guardado';
@@ -475,6 +499,7 @@ const SettingsModal = {
             editForm.role = emp.role;
             editForm.active = emp.active;
             editError.value = '';
+            savedState.edit = JSON.stringify(editForm);
         }
 
         function cancelEdit() {
@@ -534,6 +559,7 @@ const SettingsModal = {
 
         function applyMail(data) {
             Object.assign(mail, { backup_alert_email: '' }, data || {}, { password: '' });
+            savedState.mail = pick(mail, MAIL_FIELDS);
         }
 
         async function loadMail() {
@@ -600,6 +626,7 @@ const SettingsModal = {
                     : terminal.value && tillNumbering(terminal.value.id);
             numbering.editing = kind;
             numbering.next = current ? String(current.next_number) : '';
+            numbering.originalNext = numbering.next;
             numbering.reason = '';
             numbering.error = '';
         }
@@ -762,6 +789,55 @@ const SettingsModal = {
             window.addEventListener('pointercancel', up);
         }
 
+        // Closing the window saves, section by section, what was changed and not saved
+        // yet; a save that fails keeps the window open on its section with its error.
+        const closing = Vue.ref(false);
+
+        function pendingSaves() {
+            const steps = [];
+            if (terminal.value && savedState.shop !== null && pick(terminal.value, SHOP_FIELDS) !== savedState.shop) {
+                steps.push(['tienda', async () => { await saveShop(); return !terminalError.value; }]);
+            }
+            if (terminal.value && savedState.till !== null && pick(terminal.value, TILL_FIELDS) !== savedState.till) {
+                steps.push(['cajas', async () => { await saveTill(); return !terminalError.value; }]);
+            }
+            if (terminal.value && String(syncInterval.value) !== savedState.syncPull) {
+                steps.push(['sincronizacion', async () => { await saveSyncInterval(); return !syncError.value; }]);
+            }
+            if (terminal.value && String(syncPushInterval.value) !== savedState.syncPush) {
+                steps.push(['sincronizacion', async () => { await saveSyncPushInterval(); return !syncError.value; }]);
+            }
+            if (savedState.mail !== null && (pick(mail, MAIL_FIELDS) !== savedState.mail || mail.password)) {
+                steps.push(['email', async () => { await saveMail(); return !mailError.value; }]);
+            }
+            if (editingId.value !== null && JSON.stringify(editForm) !== savedState.edit) {
+                steps.push(['empleados', async () => { await handleSave(editingId.value); return editingId.value === null; }]);
+            }
+            if (showCreateForm.value && (createForm.name || createForm.full_name || createForm.code || createForm.pin)) {
+                steps.push(['empleados', async () => { await handleCreate(); return !showCreateForm.value; }]);
+            }
+            if (numbering.editing && (String(numbering.next).trim() !== String(numbering.originalNext ?? '') || String(numbering.reason || '').trim())) {
+                steps.push(['cajas', () => saveNumberingChange()]);
+            }
+            return steps;
+        }
+
+        async function closeSettings() {
+            if (closing.value) return;
+            closing.value = true;
+            try {
+                for (const [section, save] of pendingSaves()) {
+                    if (!(await save())) {
+                        activeSection.value = section;
+                        return;
+                    }
+                }
+                emit('close');
+            } finally {
+                closing.value = false;
+            }
+        }
+
         Vue.onMounted(() => {
             loadEmployees();
             loadTerminal();
@@ -780,7 +856,7 @@ const SettingsModal = {
             showCreateForm, createForm, createError, creating, handleCreate,
             editingId, editForm, editError, saving, startEdit, cancelEdit, handleSave,
             handleDeactivate, handleUnlock,
-            terminal, terminalLoading, terminalSaving, terminalError, saveShop, saveTill,
+            terminal, terminalLoading, terminalSaving, terminalError, loadTerminal, saveShop, saveTill,
             tills, tillsError, confirmMoveId, newTill, creatingTill, loadTills, editTill, moveTillHere, createTill, tillSeen, printerTypeLabel,
             handleLogoUpload, handleLogoDrop, handleLogoPaste, logoError, logoDragOver, removeLogo,
             syncInterval, syncPushInterval, syncSaving, syncPushSaving, syncError,
@@ -792,12 +868,13 @@ const SettingsModal = {
             cashCloses, loadCashCloses, printClose, pdfClose, formatMoney, formatDateTime,
             provisioning, provisioningLoading, provisioningError, loadProvisioning, provisioningLabel,
             pairing, openPairing, runPairing,
+            closing, closeSettings,
             emit,
         };
     },
     template: `
         <!-- Backdrop -->
-        <div @click.self="emit('close')"
+        <div
             style="position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:100; display:flex; align-items:center; justify-content:center; padding:24px; box-sizing:border-box;">
 
             <div ref="modalBox" :style="modalStyle" style="position:relative; background:var(--surface); border:1px solid var(--border); border-radius:16px; width:100%; max-width:720px; max-height:90vh; display:flex; flex-direction:column; overflow:hidden;">
@@ -809,7 +886,8 @@ const SettingsModal = {
                 <!-- Modal header -->
                 <div style="padding:20px 24px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; flex-shrink:0;">
                     <div style="font-size:16px; font-weight:700; color:var(--text);">⚙ Configuración</div>
-                    <button @click="emit('close')" style="background:transparent; border:none; color:var(--text3); font-size:20px; cursor:pointer; line-height:1; display:flex; align-items:center;"><icon name="close" :size="20"></icon></button>
+                    <!-- The only way to close Ajustes: it saves what was changed first. -->
+                    <button @click="closeSettings" :disabled="closing" :title="closing ? 'Guardando…' : 'Cerrar (guarda los cambios)'" aria-label="Cerrar" style="background:transparent; border:none; color:var(--text3); font-size:20px; cursor:pointer; line-height:1; display:flex; align-items:center;"><icon name="close" :size="20"></icon></button>
                 </div>
 
                 <!-- Toast success / error -->
