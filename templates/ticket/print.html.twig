@@ -81,7 +81,6 @@
         <div class="center">Pedido web: {{ ticket.webOrderReference }}</div>
 {% endif %}
     {% endif %}
-    <div class="center">Le ha atendido {{ ticket.cashierName }}</div>
 
     <div class="line"></div>
 
@@ -142,6 +141,8 @@
     </div>
 
     {% if ticket.replacedByInvoice %}<div class="center bold">Sustituido por la factura {{ ticket.replacedByInvoice }}</div>
-    {% endif %}<div class="footer">{{ (ticket.ticketFooter ?: 'Gracias por su compra')|nl2br }}</div>
+    {% endif %}{# Who served the customer: after the barcode and the QR, right before the footer. #}
+    <div class="center">Le ha atendido {{ ticket.cashierName }}</div>
+    <div class="footer">{{ (ticket.ticketFooter ?: 'Gracias por su compra')|nl2br }}</div>
 </body>
 </html>

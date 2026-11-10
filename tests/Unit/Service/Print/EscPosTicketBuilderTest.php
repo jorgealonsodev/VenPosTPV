@@ -76,6 +76,11 @@ final class EscPosTicketBuilderTest extends TestCase
 
         self::assertStringContainsString('Le ha atendido Juan', $bytes);
         self::assertStringNotContainsString('Cajero:', $bytes);
+        // After the barcode and the QR, right before the footer («Gracias…», «Cambios o devoluciones…»).
+        $served = strpos($bytes, 'Le ha atendido Juan');
+        self::assertGreaterThan(strpos($bytes, 'TOTAL:'), $served);
+        self::assertGreaterThan(strrpos($bytes, 'https://example.com/verify?token=abc'), $served, 'after the QR');
+        self::assertLessThan(strrpos($bytes, 'Gracias por su compra'), $served, 'before the footer');
     }
 
     public function testBuildContainsSpanishCharacters(): void
@@ -516,9 +521,18 @@ final class EscPosTicketBuilderTest extends TestCase
         self::assertStringNotContainsString('Pedido web', $this->createBuilder()->build($this->localSale('')));
     }
 
-    /** The output as it was before the cashier line read «Le ha atendido» (it was «Cajero: »). */
+    /**
+     * The output as it was before the cashier line read «Le ha atendido» (it was
+     * «Cajero: », under the reference, before the first separator) and moved above the footer.
+     */
     private static function withOldCashierLine(string $output): string
     {
-        return str_replace('Le ha atendido ', 'Cajero: ', $output);
+        if (preg_match('/Le ha atendido [^\n]*\n/', $output, $m) !== 1) {
+            return $output;
+        }
+        $output = str_replace($m[0], '', $output);
+        $separator = strpos($output, str_repeat('-', 10));
+
+        return substr($output, 0, $separator) . str_replace('Le ha atendido ', 'Cajero: ', $m[0]) . substr($output, $separator);
     }
 }
