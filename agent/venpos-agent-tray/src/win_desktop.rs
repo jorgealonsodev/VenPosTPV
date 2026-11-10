@@ -1,11 +1,11 @@
 //! The window's `ui::os` on Windows: opening a URL or the log, starting and
 //! stopping the service (elevated with the UAC prompt) and raising a window
 //! that is already open. The pure parts are in `model`.
-use crate::model::{self, ServiceAction, WindowInfo};
-use windows::Win32::Foundation::{CloseHandle, ERROR_CANCELLED, HWND, LPARAM};
+use crate::model::{self, Elevated, ServiceAction, WindowInfo};
+use windows::Win32::Foundation::{CloseHandle, ERROR_CANCELLED, HWND, LPARAM, WAIT_OBJECT_0};
 use windows::Win32::System::Threading::{
-    GetExitCodeProcess, INFINITE, OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
-    QueryFullProcessImageNameW, WaitForSingleObject,
+    GetExitCodeProcess, OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
+    WaitForSingleObject,
 };
 use windows::Win32::UI::Shell::{
     SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW, ShellExecuteW,
@@ -88,23 +88,24 @@ fn run_elevated(action: ServiceAction) -> Result<(), String> {
         });
     }
     if info.hProcess.is_invalid() {
-        return Ok(());
+        return model::service_result(action, Elevated::NoProcess);
     }
-    let mut code = 1u32;
+    let timeout = u32::try_from(model::SERVICE_TIMEOUT.as_millis()).unwrap_or(u32::MAX);
     // SAFETY: hProcess is a process handle owned by us (SEE_MASK_NOCLOSEPROCESS), closed once.
-    unsafe {
-        WaitForSingleObject(info.hProcess, INFINITE);
-        let _ = GetExitCodeProcess(info.hProcess, &mut code);
+    let outcome = unsafe {
+        let outcome = if WaitForSingleObject(info.hProcess, timeout) == WAIT_OBJECT_0 {
+            let mut code = 1u32;
+            match GetExitCodeProcess(info.hProcess, &mut code) {
+                Ok(()) => Elevated::Exited(code),
+                Err(_) => Elevated::NoProcess,
+            }
+        } else {
+            Elevated::TimedOut
+        };
         let _ = CloseHandle(info.hProcess);
-    }
-    if code == 0 {
-        Ok(())
-    } else {
-        Err(format!(
-            "No se {what} el servicio {} (código {code}). Mira el registro.",
-            model::WINDOWS_SERVICE
-        ))
-    }
+        outcome
+    };
+    model::service_result(action, outcome)
 }
 
 fn window_text(hwnd: HWND, class: bool) -> String {

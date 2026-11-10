@@ -170,6 +170,15 @@ fn handle(paths: &Paths, action: &Action, refresh: &mpsc::Sender<()>) -> bool {
 
 /// The "VenPos Agent" window (this program with `--panel`).
 fn open_window() {
+    static LAST: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+    let now = std::time::Instant::now();
+    {
+        let mut last = LAST.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !model::should_open_window(*last, now) {
+            return;
+        }
+        *last = Some(now);
+    }
     if !win_desktop::spawn_window(config_dir_arg().as_deref()) {
         message("No se pudo abrir la ventana de VenPos Agent.", true);
     }

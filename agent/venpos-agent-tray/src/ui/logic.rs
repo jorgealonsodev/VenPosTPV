@@ -661,3 +661,19 @@ mod tests {
         assert_eq!(log_open_problem("/x.log", Ok(())), None);
     }
 }
+
+/// Windows texts must not send the user to Linux commands (run by the Windows CI).
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    #[test]
+    fn windows_texts_point_to_the_window_not_to_linux_commands() {
+        for text in [MSG_SERVICE_STOPPED, MSG_NO_PERMISSION] {
+            assert!(!text.contains("sudo") && !text.contains("systemctl"), "{text}");
+        }
+        assert!(MSG_SERVICE_STOPPED.contains("Iniciar / reiniciar servicio"));
+        let denied = log_open_problem("C:\\log.txt", Err(io::ErrorKind::PermissionDenied.into())).unwrap();
+        assert_eq!(denied, "No tienes permiso para leer C:\\log.txt.");
+    }
+}
