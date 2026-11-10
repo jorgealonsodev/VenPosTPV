@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace VenPosTPV\Tests\Integration\Service\Refund;
 
+use VenPosTPV\Service\Transfer\TransferPayments;
 use Doctrine\DBAL\Connection;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\HttpFoundation\RequestStack;
@@ -78,6 +79,7 @@ final class RefundServiceMySqlIntegrationTest extends TestCase
         $this->connection->executeStatement('DELETE FROM refund_line');
         $this->connection->executeStatement('DELETE FROM refund');
         $this->connection->executeStatement('DELETE FROM movement WHERE session_id = ?', [self::SESSION_ID]);
+        $this->connection->executeStatement('DELETE FROM transfer_payment WHERE order_id IN (SELECT id FROM order_meta WHERE ps_order_id >= 880000)');
         $this->connection->executeStatement('DELETE FROM order_meta WHERE ps_order_id >= 880000');
         $this->connection->executeStatement('DELETE FROM session WHERE id = ?', [self::SESSION_ID]);
         $this->connection->executeStatement('DELETE FROM terminal WHERE id = 9101');
@@ -342,6 +344,28 @@ final class RefundServiceMySqlIntegrationTest extends TestCase
         $this->assertSame([], $this->movements(), 'the drawer is not touched');
         $row = $this->connection->fetchAssociative('SELECT cash_amount, card_amount, transfer_amount FROM refund WHERE id = ?', [$result['refund_id']]);
         $this->assertSame(['cash_amount' => '0.00', 'card_amount' => '0.00', 'transfer_amount' => '24.18'], $row);
+    }
+
+    public function testATransferSaleCannotBeRefundedWhileItsMoneyIsPendingAndCanOnceReceived(): void
+    {
+        $this->seedOrder(['cash' => 0.0, 'card' => 0.0, 'transfer' => 60.0]);
+        $orderId = (int) $this->connection->fetchOne('SELECT id FROM order_meta WHERE ps_order_id = ?', [self::ORDER_ID]);
+        $transfers = new TransferPayments($this->connection);
+        $transfers->record($orderId, 60.0, new \DateTimeImmutable());
+        $service = $this->service();
+
+        try {
+            $service->processRefund(1, self::ORDER_ID, [['line_index' => 0, 'quantity' => 1, 'restock' => true]], 'size');
+            $this->fail('A transfer still to be received cannot be paid back');
+        } catch (RefundException $e) {
+            $this->assertSame(409, $e->getCode());
+            $this->assertSame(RefundService::PENDING_TRANSFER_MESSAGE, $e->getMessage());
+        }
+        $this->assertSame(0, (int) $this->connection->fetchOne('SELECT COUNT(*) FROM refund WHERE ps_order_id = ?', [self::ORDER_ID]));
+
+        $transfers->markReceived((int) $this->connection->fetchOne('SELECT id FROM transfer_payment WHERE order_id = ?', [$orderId]), 1);
+        $result = $service->processRefund(1, self::ORDER_ID, [['line_index' => 0, 'quantity' => 1, 'restock' => true]], 'size');
+        $this->assertSame(24.18, $result['transfer_amount']);
     }
 
     public function testATransferSaleCanBePaidBackInCashInstead(): void

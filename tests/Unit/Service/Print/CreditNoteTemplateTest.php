@@ -127,6 +127,27 @@ final class CreditNoteTemplateTest extends TestCase
         $this->assertStringContainsString('<div>Metodo: Transferencia</div>', $html);
     }
 
+    public function testAPendingTransferTicketShowsTheNoticeTheAccountAndTheConceptInThePdf(): void
+    {
+        $twig = new Environment(new FilesystemLoader(\dirname(__DIR__, 4) . '/templates'));
+        $ticket = fn (bool $pending, ?string $account): string => $twig->render('ticket/print.html.twig', [
+            'ticket' => new TicketData(
+                orderId: 42, reference: 'A26000070', storeName: 'Tienda', storeAddress: '', ticketHeader: '', ticketFooter: '',
+                ticketLogo: null, ticketWidthPx: null, date: new \DateTimeImmutable('2026-11-10 12:00'), cashierName: 'Ana',
+                lines: [new TicketLine('Camisa M', 1, 24.18, 24.18)], subtotal: 19.98, tax: 4.2, total: 24.18,
+                paymentMethod: 'transfer', amountTendered: 24.18, changeDue: 0.0, verificationUrl: 'http://tpv/v',
+                transfer: ['account' => $account, 'pending' => $pending],
+            ),
+            'giftMode' => false, 'barcodePath' => '',
+        ]);
+
+        $pending = $ticket(true, 'ES91 2100 0418 4502 0005 1332');
+        $this->assertStringContainsString('<div class="bold">Pendiente de pago por transferencia</div>', $pending);
+        $this->assertStringContainsString('<div>Cuenta: ES91 2100 0418 4502 0005 1332</div><div>Concepto: A26000070</div>', $pending);
+        $this->assertStringNotContainsString('Pendiente de pago', $ticket(false, 'ES91 2100 0418 4502 0005 1332'));
+        $this->assertStringNotContainsString('Cuenta:', $ticket(true, null));
+    }
+
     public function testACreditNotePaidBackByTransferSaysSo(): void
     {
         $note = new CreditNoteInfo('R2026-000010', 'A26000042', null, 'Talla o color', 0.0, 0.0, transferAmount: 24.18);

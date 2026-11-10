@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace VenPosTPV\Service\Refund;
 
+use VenPosTPV\Service\Transfer\TransferPayments;
 use Doctrine\DBAL\Connection;
 use VenPosTPV\Service\Session\SessionValue;
 use VenPosTPV\Service\Cash\CashSessionService;
@@ -75,6 +76,9 @@ class RefundService
      * (docs/pago-transferencia.md).
      */
     public const TRANSFER_REFUNDS = ['transfer', 'cash'];
+
+    /** A ticket whose transfer has not been seen in the bank: nothing came in to pay back. */
+    public const PENDING_TRANSFER_MESSAGE = 'La transferencia de este ticket aún no ha llegado: márcala como recibida en Tickets → Pendientes de pago antes de devolverlo o cambiarlo';
 
     private readonly VoucherIssuer $voucherIssuer;
 
@@ -312,6 +316,10 @@ class RefundService
                     (int) $pending,
                     (string) ($order['reference'] !== '' ? $order['reference'] : $orderId)
                 ));
+            }
+
+            if ((new TransferPayments($this->conn))->isPending($orderId)) {
+                throw RefundException::conflict(self::PENDING_TRANSFER_MESSAGE);
             }
 
             $terminalId = (int) ($cashContext['terminal_id'] ?? 0);

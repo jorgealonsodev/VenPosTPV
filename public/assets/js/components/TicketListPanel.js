@@ -19,6 +19,8 @@ const TicketListPanel = {
         const confirmDelete = Vue.ref(null);
         const pendingTransfers = Vue.ref([]);
         const transferBusy = Vue.ref(0);
+        // Its own flag: it loads on mount together with the other tabs.
+        const transfersLoading = Vue.ref(false);
         const TABS = [
             { id: 'aparcados', label: 'Aparcados' },
             { id: 'cobrados', label: 'Cobrados' },
@@ -60,7 +62,7 @@ const TicketListPanel = {
         }
 
         async function loadPendingTransfers() {
-            loading.value = true;
+            transfersLoading.value = true;
             try {
                 const result = await ApiClient.pendingTransfers();
                 pendingTransfers.value = result && Array.isArray(result.data) ? result.data : [];
@@ -68,7 +70,7 @@ const TicketListPanel = {
                 emit('notify', 'Error al cargar pendientes de pago: ' + (err.message || 'Error'), 'var(--red)');
                 pendingTransfers.value = [];
             } finally {
-                loading.value = false;
+                transfersLoading.value = false;
             }
         }
 
@@ -187,7 +189,7 @@ const TicketListPanel = {
 
         return {
             activeTab, selectedOrder, parkedTickets, paidOrders, refundedOrders, paidQuery, searchPaid,
-            loading, confirmDelete, TABS, pendingTransfers, transferBusy, isAdmin, loadPendingTransfers, markTransferReceived,
+            loading, confirmDelete, TABS, pendingTransfers, transferBusy, transfersLoading, isAdmin, loadPendingTransfers, markTransferReceived,
             selectOrder, backToList, handleRestoreClick, askDelete, doDelete, cancelDelete,
             formatTicketTime, formatTicketDate, orderKey, orderLabel, paymentLabel: (code) => VenPosPaymentMethods.label(code),
         };
@@ -329,7 +331,7 @@ const TicketListPanel = {
 
                 <!-- Pendientes de pago -->
                 <template v-if="activeTab === 'pendientes'">
-                    <div v-if="!loading && pendingTransfers.length === 0" style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; color:var(--text3); gap:10px;">
+                    <div v-if="!transfersLoading && pendingTransfers.length === 0" style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; color:var(--text3); gap:10px;">
                         <icon name="bank" :size="32" />
                         <span style="font-size:13px;">No hay transferencias pendientes de pago</span>
                     </div>

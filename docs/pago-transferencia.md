@@ -25,7 +25,9 @@ Al marcarla se abre el detalle de esa venta, que permite **imprimir** el ticket,
 
 ## Devolver o cambiar un ticket pagado por transferencia
 
-La pantalla de devoluciones pregunta **cómo se devuelve**:
+Mientras la transferencia esté **pendiente de pago**, el ticket no se puede devolver ni cambiar: no ha entrado dinero que devolver. El TPV avisa de que primero hay que marcarla como recibida en **Tickets → Pendientes de pago**.
+
+Una vez recibida, la pantalla de devoluciones pregunta **cómo se devuelve**:
 
 - **Por transferencia** (la opción por defecto): el TPV solo registra la devolución. La transferencia al cliente la hace el administrador desde el banco.
 - **En efectivo**: sale de la caja como cualquier devolución en efectivo.

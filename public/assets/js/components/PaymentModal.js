@@ -263,7 +263,7 @@ const PaymentModal = {
                 return !hasFreeItem.value
                     && !voucherReconciliationRequired.value
                     && voucherPreview.value !== null
-                    && (voucherTender.value !== 'cash' || voucherCashParsed.value >= voucherPayable.value);
+                    && (voucherTender.value === 'card' || voucherTender.value === 'transfer' || (voucherTender.value === 'cash' && voucherCashParsed.value >= voucherPayable.value));
             }
             return false;
         }
