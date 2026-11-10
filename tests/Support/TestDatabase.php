@@ -80,6 +80,7 @@ final class TestDatabase
             $connection = self::makeConnection($settings);
             $connection->executeQuery('SELECT 1');
             self::ensureCurrentSchema($connection);
+            self::purgeOrphans($connection);
             $prepared = true;
 
             return $connection;
@@ -215,6 +216,19 @@ final class TestDatabase
         self::runMigration($connection, 'Version00000050CatalogOverride');
         self::runMigration($connection, 'Version00000051RefundTransferAmount');
         self::runMigration($connection, 'Version00000052TransferPaymentAndBankAccount');
+    }
+
+    /**
+     * Removes rows whose sale no longer exists. These tables have no foreign key to
+     * order_meta, and the application never deletes a sale, so such rows can only be
+     * left by a test that deleted its sales first. order_meta ids are not reused
+     * normally, but transfer_payment.order_id is unique: a leftover row would make
+     * the next sale that reaches that id fail («Order meta persist failed»).
+     */
+    private static function purgeOrphans(Connection $connection): void
+    {
+        $connection->executeStatement('DELETE FROM transfer_payment WHERE order_id NOT IN (SELECT id FROM order_meta)');
+        $connection->executeStatement('DELETE FROM outbox WHERE order_id IS NOT NULL AND order_id NOT IN (SELECT id FROM order_meta)');
     }
 
     private static function applyInstallSchema(Connection $connection): void

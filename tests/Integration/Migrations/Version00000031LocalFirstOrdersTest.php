@@ -21,6 +21,16 @@ final class Version00000031LocalFirstOrdersTest extends TestCase
 
     private ?Connection $connection = null;
 
+    /**
+     * The AUTO_INCREMENT counters of the tables this test drops or rebuilds. Re-adding
+     * order_meta.id renumbers it from 1, and recreating outbox and sale_line restarts
+     * them; later tests would then reuse ids whose rows other tests left behind
+     * (transfer_payment, outbox, sale_line), so the counters are put back.
+     *
+     * @var array<string, int>
+     */
+    private array $autoIncrements = [];
+
     protected function setUp(): void
     {
         $this->connection = TestDatabase::connection();
@@ -38,6 +48,34 @@ final class Version00000031LocalFirstOrdersTest extends TestCase
             // Leave the schema as the rest of the suite expects it.
             $this->migrate();
             $this->connection->close();
+            if ($this->autoIncrements !== []) {
+                // The next connection recreates sale_line (Version00000046).
+                $this->connection = TestDatabase::connection();
+                $this->restoreAutoIncrements();
+                $this->connection->close();
+            }
+        }
+    }
+
+    /** @return array<string, int> table => next AUTO_INCREMENT value */
+    private function readAutoIncrements(): array
+    {
+        $c = $this->connection;
+        // information_schema caches AUTO_INCREMENT for a day by default.
+        $c->executeStatement('SET SESSION information_schema_stats_expiry = 0');
+
+        return array_map('intval', $c->fetchAllKeyValue(
+            "SELECT TABLE_NAME, AUTO_INCREMENT FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN ('order_meta', 'outbox', 'sale_line') AND AUTO_INCREMENT IS NOT NULL"
+        ));
+    }
+
+    private function restoreAutoIncrements(): void
+    {
+        $current = $this->readAutoIncrements();
+        foreach ($this->autoIncrements as $table => $next) {
+            if (($current[$table] ?? 0) < $next) {
+                $this->connection->executeStatement(sprintf('ALTER TABLE `%s` AUTO_INCREMENT = %d', $table, $next));
+            }
         }
     }
 
@@ -60,6 +98,7 @@ final class Version00000031LocalFirstOrdersTest extends TestCase
     private function revertToLegacyShape(): void
     {
         $c = $this->connection;
+        $this->autoIncrements = $this->readAutoIncrements();
         $this->assertSame(0, (int) $c->fetchOne('SELECT COUNT(*) FROM order_meta WHERE ps_order_id IS NULL'), 'other tests left local sales behind');
         $c->executeStatement('DROP TABLE IF EXISTS outbox');
         // Its foreign key to order_meta.id did not exist before V31; the next test
