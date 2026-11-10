@@ -28,7 +28,7 @@ En la cabecera de la pantalla de venta, el botón **Informes** (solo lo ven los 
 | Por producto | `products` | Una fila por producto y combinación: referencia, nombre, unidades vendidas, devueltas y netas, ventas, devoluciones, importe neto y % del total. El artículo libre se agrupa por nombre como «Artículo libre: <nombre>». Con `view=unsold`, la lista «Sin ventas». |
 | Por categoría | `categories` | Unidades, ventas, devoluciones, importe neto y % por la categoría guardada en la venta (con su nombre de entonces); sin categoría, «Sin categoría». |
 | Por cajero | `cashiers` | Por empleado, con su nombre actual: tickets, ventas brutas, ticket medio, devoluciones (de quien las hizo) y ventas netas. |
-| Por forma de pago | `payments` | Ventas en efectivo y con tarjeta, crédito de cambio, devoluciones en efectivo, con tarjeta y con vale, vales de cambios cerrados, número de tickets por forma de pago y neto cobrado. |
+| Por forma de pago | `payments` | Ventas en efectivo, con tarjeta y por transferencia, crédito de cambio, devoluciones en efectivo, con tarjeta, por transferencia y con vale, vales de cambios cerrados, número de tickets por forma de pago y neto cobrado. |
 | IVA | `vat` | Por tipo de IVA: base, cuota y total de las ventas (suma de las bases de cada línea), de las devoluciones y el neto. |
 
 ## Qué cuenta

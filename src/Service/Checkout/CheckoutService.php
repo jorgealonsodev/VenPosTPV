@@ -14,6 +14,7 @@ use VenPosTPV\Service\Cash\Exception\NoOpenCashSessionException;
 use VenPosTPV\Service\Catalog\CatalogPriceResolver;
 use VenPosTPV\Service\Catalog\Exception\ProductNotInCatalogException;
 use VenPosTPV\Service\Checkout\Exception\CheckoutException;
+use VenPosTPV\Service\Transfer\TransferPayments;
 use VenPosTPV\Service\Coupon\CouponRejectionReason;
 use VenPosTPV\Service\Coupon\VoucherBalance;
 use VenPosTPV\Service\Coupon\IssuedCouponStore;
@@ -150,6 +151,10 @@ class CheckoutService
                 return $existing;
             }
         }
+        if (!\in_array($paymentMethod, self::PAYMENT_METHODS, true)) {
+            // Never booked as card: an unknown method would put its money nowhere.
+            throw CheckoutException::psValidationFailed(sprintf('Unknown payment_method "%s"', mb_substr($paymentMethod, 0, 32)));
+        }
         if (array_key_exists('coupon', $cartData)) {
             $this->assertNoFreeItemWithCoupon($cartData);
             if ($exchangeCredit > 0) {
@@ -161,6 +166,13 @@ class CheckoutService
 
         return $this->createLocalOrder($userId, $cartData, $paymentMethod, $amountTendered, $exchangeCredit, $requestId);
     }
+
+    /**
+     * How a sale is paid. «transfer»: the cashier saw the bank transfer done, so the
+     * sale is charged now, outside the drawer (docs/pago-transferencia.md). «exchange»:
+     * an exchange whose returned goods pay the whole new sale (ExchangeService::NO_PAYMENT_METHOD).
+     */
+    public const PAYMENT_METHODS = ['cash', 'card', 'mixed', 'transfer', 'exchange'];
 
     /** A client payment-attempt id: what api.js generates (a UUID) or any similar token. */
     private const REQUEST_ID = '/^[A-Za-z0-9_-]{8,64}$/';
@@ -249,10 +261,7 @@ class CheckoutService
         $payable = round(max(0.0, $total - $exchangeCredit), 2);
         $cashImpactAmount = $this->resolveCashImpactAmount($paymentMethod, $payable, $amountTendered, $cartData);
         $changeDue = max(0.0, round($amountTendered - $payable, 2));
-        $tender = [
-            'cash' => $cashImpactAmount,
-            'card' => round(max(0.0, $payable - $cashImpactAmount), 2),
-        ];
+        $tender = self::tender($paymentMethod, $cashImpactAmount, round(max(0.0, $payable - $cashImpactAmount), 2));
         if ($exchangeCredit > 0) {
             $tender['exchange_credit'] = round($total - $payable, 2);
         }
@@ -504,7 +513,7 @@ class CheckoutService
                         'payable' => $payable,
                         'cash_collected' => $cashCollected,
                         'card_collected' => $cardCollected,
-                    ], ['cash' => $cashCollected, 'card' => $cardCollected], true, $requestId, $leftoverBreakdown);
+                    ], self::tender($paymentMethod, $cashCollected, $cardCollected), true, $requestId, $leftoverBreakdown);
                     if ($cashCollected > 0) {
                         $this->insertCouponCashMovement($cashContext, $userId, $cashCollected, $psOrderId);
                     }
@@ -753,7 +762,8 @@ class CheckoutService
             }
             return [$payable, 0.0, round(max(0.0, $amountTendered - $payable), 2)];
         }
-        if ($paymentMethod === 'card') {
+        if ($paymentMethod === 'card' || $paymentMethod === 'transfer') {
+            // Neither touches the drawer; tender() files a transfer apart from card.
             return [0.0, $payable, 0.0];
         }
         if ($paymentMethod === 'mixed') {
@@ -764,7 +774,7 @@ class CheckoutService
             return [$cash, round($payable - $cash, 2), 0.0];
         }
 
-        throw CheckoutException::psValidationFailed('Coupon checkout requires cash, card, or mixed tender');
+        throw CheckoutException::psValidationFailed('Coupon checkout requires cash, card, mixed or transfer tender');
     }
 
     private function sameTotal(float $left, float $right): bool
@@ -1138,7 +1148,8 @@ class CheckoutService
                     'tender' => [
                         'cash' => round((float) ($tender['cash'] ?? 0), 2),
                         'card' => round((float) ($tender['card'] ?? 0), 2),
-                    ] + (isset($tender['exchange_credit']) ? ['exchange_credit' => round((float) $tender['exchange_credit'], 2)] : []),
+                    ] + (isset($tender['transfer']) ? ['transfer' => round((float) $tender['transfer'], 2)] : [])
+                      + (isset($tender['exchange_credit']) ? ['exchange_credit' => round((float) $tender['exchange_credit'], 2)] : []),
                     // Deliberately excludes bearer coupon code and quote.
                     'coupon' => $coupon,
                     // The voucher rest the customer takes away: printed on the ticket and reprints.
@@ -1162,6 +1173,11 @@ class CheckoutService
             // The chained fiscal record of the ticket, in the same transaction (VERI*FACTU).
             ($this->fiscalRecorder ?? new FiscalRecorder($this->conn))
                 ->recordSale($orderId, (int) ($cashContext['terminal_id'] ?? 1), $reference, $total, $tax, $issuedAt);
+
+            if ((float) ($tender['transfer'] ?? 0) > 0) {
+                // The ticket is issued; the money waits «Pendiente de pago» until received.
+                (new TransferPayments($this->conn))->record($orderId, (float) $tender['transfer'], $issuedAt);
+            }
 
             return $orderId;
         } catch (\Throwable $e) {
@@ -1233,6 +1249,21 @@ class CheckoutService
         } catch (\Throwable $e) {
             // Best-effort logging; do not throw
         }
+    }
+
+    /**
+     * The split stored in payment_breakdown.tender: what is not cash is card, except
+     * in a transfer sale, where it is the transfer (sales_transfer in the X/Z report).
+     *
+     * @return array{cash: float, card: float, transfer?: float}
+     */
+    private static function tender(string $paymentMethod, float $cash, float $rest): array
+    {
+        if ($paymentMethod === 'transfer') {
+            return ['cash' => 0.0, 'card' => 0.0, 'transfer' => round($cash + $rest, 2)];
+        }
+
+        return ['cash' => $cash, 'card' => $rest];
     }
 
     /** @param array<string,mixed> $cartData */

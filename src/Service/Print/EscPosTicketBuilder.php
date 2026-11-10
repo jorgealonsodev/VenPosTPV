@@ -159,6 +159,9 @@ class EscPosTicketBuilder
             if ($creditNote->cardAmount > 0) {
                 $printer->text('Tarjeta: ' . number_format($creditNote->cardAmount, 2) . " €\n");
             }
+            if ($creditNote->transferAmount > 0) {
+                $printer->text('Transferencia: ' . number_format($creditNote->transferAmount, 2) . " €\n");
+            }
             if ($creditNote->webRefundAmount !== null && $creditNote->webRefundAmount > 0) {
                 $printer->selectPrintMode(Printer::MODE_EMPHASIZED);
                 $printer->text('Reembolso pendiente en la web: ' . number_format($creditNote->webRefundAmount, 2) . " €\n");
@@ -201,6 +204,17 @@ class EscPosTicketBuilder
             }
             if ($ticketData->changeDue > 0) {
                 $printer->text('Cambio: ' . number_format($ticketData->changeDue, 2) . " €\n");
+            }
+            if ($ticketData->transfer !== null) {
+                if ($ticketData->transfer['pending']) {
+                    $printer->setEmphasis(true);
+                    $printer->text("Pendiente de pago por transferencia\n");
+                    $printer->setEmphasis(false);
+                }
+                if ($ticketData->transfer['account'] !== null) {
+                    $printer->text('Cuenta: ' . $ticketData->transfer['account'] . "\n");
+                    $printer->text('Concepto: ' . $this->sanitize($ticketData->reference) . "\n");
+                }
             }
             if ($ticketData->leftoverVoucher !== null) {
                 // The code page has no long dash: «-» instead of «—».

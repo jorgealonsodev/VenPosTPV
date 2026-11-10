@@ -73,6 +73,9 @@ const RefundScreen = {
         const exchangeMode = Vue.ref(false);
         const exchangeLines = Vue.ref([]);
         const exchangePayment = Vue.ref('');
+        // A ticket paid by bank transfer goes back by transfer (the admin makes it
+        // from the bank) or in cash: RefundService::TRANSFER_REFUNDS.
+        const transferRefund = Vue.ref('transfer');
         const exchangeTendered = Vue.ref('');
         const exchangeCash = Vue.ref('');
         const lastExchange = Vue.ref(null);
@@ -194,6 +197,7 @@ const RefundScreen = {
             reasonCode.value = '';
             reasonText.value = '';
             cardConfirmed.value = false;
+            transferRefund.value = 'transfer';
             selectedLines.value = (order.lines || []).map((line, idx) => {
                 const sold = Number(line.qty || line.quantity || 1);
                 const refundable = line.refundable_qty !== undefined ? Number(line.refundable_qty) : sold;
@@ -418,7 +422,16 @@ const RefundScreen = {
             const tender = order.tender || {};
             let cash = Math.max(0, Number(tender.cash || 0));
             let card = Math.max(0, Number(tender.card || 0));
+            const transfer = Math.max(0, Number(tender.transfer || 0));
             const credit = Math.max(0, Number(tender.exchange_credit || 0));
+            if (transfer > 0) {
+                const transferPart = credit > 0 ? round2(total * transfer / (transfer + credit)) : round2(total);
+                const voucher = round2(total - transferPart);
+                const split = transferRefund.value === 'cash'
+                    ? { cash: transferPart, card: 0, transfer: 0 }
+                    : { cash: 0, card: 0, transfer: transferPart };
+                return voucher > 0 ? { ...split, voucher } : split;
+            }
             if (credit > 0) {
                 const sum = cash + card + credit;
                 let cashPart = round2(total * cash / sum);
@@ -484,6 +497,15 @@ const RefundScreen = {
             exchangePayment.value = code;
         }
 
+        function isTransferSale() {
+            const order = selectedOrder.value;
+            return Boolean(order && !order.online && order.tender && Number(order.tender.transfer || 0) > 0);
+        }
+
+        function setTransferRefund(code) {
+            if (code === 'transfer' || code === 'cash') transferRefund.value = code;
+        }
+
         function cardRefundAmount() {
             if (noTicket.value) return noTicketTotal();
             return exchangeMode.value ? exchangePayoutSplit().card : estimatedSplit().card;
@@ -542,7 +564,7 @@ const RefundScreen = {
                     card_confirmed: needsCardConfirmation() ? Boolean(cardConfirmed.value) : false,
                 };
             }
-            return {
+            const request = {
                 lines: selectedLines.value
                     .filter((l) => l.checked)
                     .map((l) => ({ line_index: l.index, quantity: l.refundQty, restock: Boolean(l.restock) })),
@@ -550,6 +572,8 @@ const RefundScreen = {
                 reason_text: reasonCode.value === 'other' ? reasonText.value.trim() : '',
                 card_confirmed: needsCardConfirmation() ? Boolean(cardConfirmed.value) : false,
             };
+            if (isTransferSale()) request.transfer_refund = transferRefund.value;
+            return request;
         }
 
         function buildExchangeRequest() {
@@ -574,6 +598,7 @@ const RefundScreen = {
                 request.cash_amount = round2(exchangeCash.value);
                 request.amount_tendered = request.cash_amount;
             }
+            if (isTransferSale()) request.transfer_refund = transferRefund.value;
             return request;
         }
 
@@ -587,6 +612,7 @@ const RefundScreen = {
             if (balance > 0) parts.push('cobrar ' + balance.toFixed(2) + ' €');
             if (Number(refund.cash_amount) > 0) parts.push(Number(refund.cash_amount).toFixed(2) + ' € en efectivo');
             if (Number(refund.card_amount) > 0) parts.push(Number(refund.card_amount).toFixed(2) + ' € a tarjeta');
+            if (Number(refund.transfer_amount) > 0) parts.push(Number(refund.transfer_amount).toFixed(2) + ' € por transferencia');
             if (Number(refund.web_refund_amount) > 0) parts.push('reembolso pendiente en la web ' + Number(refund.web_refund_amount).toFixed(2) + ' €');
             if (Number(sale.change_due) > 0) parts.push('cambio ' + Number(sale.change_due).toFixed(2) + ' €');
             return parts.join(' · ');
@@ -726,6 +752,7 @@ const RefundScreen = {
             const parts = [(data.credit_note_number ? 'Abono ' + data.credit_note_number + ': ' : 'Devolución de ') + Number(data.refunded_amount || 0).toFixed(2) + ' €'];
             if (Number(data.cash_amount) > 0) parts.push(Number(data.cash_amount).toFixed(2) + ' € en efectivo');
             if (Number(data.card_amount) > 0) parts.push(Number(data.card_amount).toFixed(2) + ' € a tarjeta');
+            if (Number(data.transfer_amount) > 0) parts.push(Number(data.transfer_amount).toFixed(2) + ' € por transferencia');
             if (data.voucher_code) parts.push('Vale ' + data.voucher_code);
             if (Number(data.web_refund_amount) > 0) parts.push('reembolso pendiente en la web ' + Number(data.web_refund_amount).toFixed(2) + ' €');
             // Local first: done at the till, PrestaShop gets it when it can be reached.
@@ -903,6 +930,9 @@ const RefundScreen = {
             exchangeNewTotal,
             exchangeBalance,
             exchangePayoutSplit,
+            transferRefund,
+            isTransferSale,
+            setTransferRefund,
             setExchangePayment,
             cardRefundAmount,
             buildExchangeRequest,
@@ -915,7 +945,7 @@ const RefundScreen = {
             ticketSalePdf: (orderId) => ApiClient.ticketSalePdf(orderId),
             // Money as the rest of the POS shows it: 46.28 -> "46.28 €".
             euros: (n) => (Number(n) || 0).toFixed(2) + ' €',
-            paymentMethods: [{ code: 'cash', label: 'Efectivo' }, { code: 'card', label: 'Tarjeta' }, { code: 'mixed', label: 'Mixto' }],
+            paymentMethods: [{ code: 'cash', label: 'Efectivo' }, { code: 'card', label: 'Tarjeta' }, { code: 'mixed', label: 'Mixto' }, { code: 'transfer', label: 'Transferencia' }],
         };
     },
     template: `
@@ -1204,6 +1234,7 @@ const RefundScreen = {
                             <div v-if="exchangeBalance() < 0" style="color:var(--text2); font-size:15px; display:flex; flex-direction:column; gap:4px;">
                                 <div v-if="exchangePayoutSplit().cash > 0">Efectivo de caja: {{ euros(exchangePayoutSplit().cash) }}</div>
                                 <div v-if="exchangePayoutSplit().card > 0">A tarjeta (datáfono): {{ euros(exchangePayoutSplit().card) }}</div>
+                                <div v-if="exchangePayoutSplit().transfer > 0">Por transferencia (la hace el administrador desde el banco): {{ euros(exchangePayoutSplit().transfer) }}</div>
                                 <div v-if="exchangePayoutSplit().voucher > 0">En vale (PrestaShop): {{ euros(exchangePayoutSplit().voucher) }}</div>
                                 <div v-if="exchangePayoutSplit().web > 0" style="color:var(--text); font-weight:600;">Reembolso pendiente en la web: {{ euros(exchangePayoutSplit().web) }}</div>
                                 <div v-if="exchangePayoutSplit().web > 0">No se entrega dinero en caja: la oficina lo reembolsa desde la web.</div>
@@ -1226,6 +1257,7 @@ const RefundScreen = {
                             <div v-if="estimatedTotal() === 0" style="color:var(--text2); font-size:15px;">Marca las líneas que devuelve el cliente.</div>
                             <div v-if="estimatedSplit().cash > 0" style="color:var(--text); font-size:15px;">Efectivo de caja: {{ estimatedSplit().cash.toFixed(2) }} €</div>
                             <div v-if="estimatedSplit().card > 0" style="color:var(--text); font-size:15px;">A tarjeta (datáfono): {{ estimatedSplit().card.toFixed(2) }} €</div>
+                            <div v-if="estimatedSplit().transfer > 0" style="color:var(--text); font-size:15px;">Por transferencia (la hace el administrador desde el banco): {{ estimatedSplit().transfer.toFixed(2) }} €</div>
                             <div v-if="estimatedSplit().voucher > 0" style="color:var(--text); font-size:15px;">En vale (PrestaShop): {{ estimatedSplit().voucher.toFixed(2) }} €</div>
                             <template v-if="estimatedSplit().web > 0">
                                 <div style="color:var(--text); font-size:16px; font-weight:600;">Reembolso pendiente en la web: {{ euros(estimatedSplit().web) }}</div>
@@ -1233,6 +1265,17 @@ const RefundScreen = {
                             </template>
                         </div>
 
+                        <div v-if="isTransferSale() && (exchangeMode ? exchangeBalance() < 0 : estimatedTotal() > 0)" style="display:flex; flex-direction:column; gap:8px;">
+                            <div class="tpv-label">El ticket se pagó por transferencia: ¿cómo se devuelve?</div>
+                            <div class="tpv-chip-grid cols-2">
+                                <button class="tpv-chip" :class="{ 'is-selected': transferRefund === 'transfer' }" :aria-pressed="transferRefund === 'transfer' ? 'true' : 'false'" @click="setTransferRefund('transfer')">
+                                    Por transferencia<span v-if="transferRefund === 'transfer'" class="tpv-chip-mark"><icon name="check" :size="18" /></span>
+                                </button>
+                                <button class="tpv-chip" :class="{ 'is-selected': transferRefund === 'cash' }" :aria-pressed="transferRefund === 'cash' ? 'true' : 'false'" @click="setTransferRefund('cash')">
+                                    En efectivo<span v-if="transferRefund === 'cash'" class="tpv-chip-mark"><icon name="check" :size="18" /></span>
+                                </button>
+                            </div>
+                        </div>
                         <button v-if="needsCardConfirmation()" class="tpv-toggle" :class="{ 'is-on': cardConfirmed }" role="switch" :aria-checked="cardConfirmed ? 'true' : 'false'" style="width:100%; min-height:64px; text-align:left;" @click="cardConfirmed = !cardConfirmed">
                             <span class="tpv-check" :class="{ 'is-checked': cardConfirmed }"><icon v-if="cardConfirmed" name="check" :size="18" /></span>
                             <span style="flex:1;">He hecho la devolución de {{ euros(cardRefundAmount()) }} en el datáfono</span>

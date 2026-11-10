@@ -74,6 +74,7 @@ const PaymentModal = {
             { id: 'cash', label: 'Efectivo', icon: 'cash' },
             { id: 'card', label: 'Tarjeta', icon: 'card' },
             { id: 'mixed', label: 'Mixto', icon: 'split' },
+            { id: 'transfer', label: 'Transferencia', icon: 'bank' },
             { id: 'voucher', label: 'Vale regalo', icon: 'gift' },
         ];
         // Keypad keys, emitting the same tokens appendNum() always received from <numpad>.
@@ -256,13 +257,13 @@ const PaymentModal = {
         function canConfirm() {
             if (isSubmitting.value || voucherReconciliationRequired.value) return false;
             if (method.value === 'cash') return cashParsed.value >= props.total;
-            if (method.value === 'card') return true;
+            if (method.value === 'card' || method.value === 'transfer') return true;
             if (method.value === 'mixed') return (cardParsed.value + card2Parsed.value) >= props.total - 0.01;
             if (method.value === 'voucher') {
                 return !hasFreeItem.value
                     && !voucherReconciliationRequired.value
                     && voucherPreview.value !== null
-                    && (voucherTender.value === 'card' || voucherCashParsed.value >= voucherPayable.value);
+                    && (voucherTender.value === 'card' || voucherTender.value === 'transfer' || (voucherTender.value === 'cash' && voucherCashParsed.value >= voucherPayable.value));
             }
             return false;
         }
@@ -497,7 +498,7 @@ const PaymentModal = {
             attemptRequestId = null;
             const atCheckout = step.value === 'error';
             step.value = 'select';
-            method.value = tender === 'card' ? 'card' : 'cash';
+            method.value = tender === 'card' || tender === 'transfer' ? tender : 'cash';
             if (method.value === 'cash') cashInput.value = handed;
             if (atCheckout && canConfirm()) return handleConfirm();
             return undefined;
@@ -715,6 +716,15 @@ const PaymentModal = {
                             </div>
                         </template>
 
+                        <template v-if="method === 'transfer'">
+                            <div class="pay-card">
+                                <div class="pay-card-icon"><icon name="bank" :size="32" /></div>
+                                <div style="font-size:17px; font-weight:600;">Transferencia bancaria</div>
+                                <div style="color:var(--text2); font-size:14px;">Se emite el ticket con el número de cuenta y la venta queda pendiente de pago hasta que un administrador vea la transferencia en el banco</div>
+                                <div class="pay-num" style="font-size:28px; font-weight:700; margin-top:4px;">{{ eur(total) }}</div>
+                            </div>
+                        </template>
+
                         <template v-if="method === 'voucher'">
                             <div style="flex:1; display:flex; flex-direction:column; gap:12px;">
                                 <div class="tpv-label">Cupón de descuento PrestaShop</div>
@@ -741,7 +751,7 @@ const PaymentModal = {
                                         <strong v-if="voucherBalance.left > 0" class="pay-num">{{ eur(voucherBalance.left) }}</strong>
                                     </div>
                                     <div class="pay-row pay-row-total"><span>Resta por cobrar</span><strong class="pay-num">{{ eur(voucherPayable) }}</strong></div>
-                                    <div class="tpv-chip-grid cols-2" style="margin-top:4px;">
+                                    <div class="tpv-chip-grid cols-3" style="margin-top:4px;">
                                         <button @click="voucherTender = 'cash'" class="tpv-chip" :class="{ 'is-selected': voucherTender === 'cash' }">
                                             Efectivo
                                             <span v-if="voucherTender === 'cash'" class="tpv-chip-mark"><icon name="check" :size="16" /></span>
@@ -749,6 +759,10 @@ const PaymentModal = {
                                         <button @click="voucherTender = 'card'" class="tpv-chip" :class="{ 'is-selected': voucherTender === 'card' }">
                                             Tarjeta
                                             <span v-if="voucherTender === 'card'" class="tpv-chip-mark"><icon name="check" :size="16" /></span>
+                                        </button>
+                                        <button @click="voucherTender = 'transfer'" class="tpv-chip" :class="{ 'is-selected': voucherTender === 'transfer' }">
+                                            Transferencia
+                                            <span v-if="voucherTender === 'transfer'" class="tpv-chip-mark"><icon name="check" :size="16" /></span>
                                         </button>
                                     </div>
                                     <template v-if="voucherTender === 'cash'">
@@ -783,7 +797,7 @@ const PaymentModal = {
                         </template>
 
                         <button @click="handleConfirm" :disabled="!canConfirm()" class="pay-confirm">
-                            {{ isSubmitting ? 'Procesando…' : (method === 'voucher' ? 'Cobrar ' + eur(voucherPayable) + ' tras cupón' : (method === 'card' ? (dataphoneMode === 'independent' ? 'Registrar cobro con tarjeta' : 'Confirmar cobro con tarjeta') : 'Cobrar ' + eur(total))) }}
+                            {{ isSubmitting ? 'Procesando…' : (method === 'voucher' ? 'Cobrar ' + eur(voucherPayable) + ' tras cupón' : (method === 'card' ? (dataphoneMode === 'independent' ? 'Registrar cobro con tarjeta' : 'Confirmar cobro con tarjeta') : (method === 'transfer' ? 'Registrar venta pendiente de transferencia' : 'Cobrar ' + eur(total)))) }}
                         </button>
                     </div>
                 </div>

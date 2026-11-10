@@ -127,7 +127,7 @@ final class ExchangeServiceMySqlIntegrationTest extends TestCase
             'ps_order_id' => $orderId, 'terminal_id' => self::TERMINAL_ID, 'session_id' => self::SESSION_ID, 'user_id' => 1,
             'payment_breakdown' => json_encode([
                 'reference' => 'ORIG' . $orderId, 'total' => $price,
-                'payment_method' => $tender['card'] > 0 && $tender['cash'] > 0 ? 'mixed' : ($tender['card'] > 0 ? 'card' : 'cash'),
+                'payment_method' => ($tender['transfer'] ?? 0) > 0 ? 'transfer' : ($tender['card'] > 0 && $tender['cash'] > 0 ? 'mixed' : ($tender['card'] > 0 ? 'card' : 'cash')),
                 'amount_tendered' => $price, 'change_due' => 0, 'tax' => round($price - $price / 1.21, 2),
                 'lines' => [['name' => 'Producto ' . $productId, 'product_id' => $productId, 'id_product_attribute' => 0, 'qty' => 1, 'price' => $price, 'line_total' => $price, 'paid_total' => $price]],
                 'tender' => $tender,
@@ -409,6 +409,36 @@ final class ExchangeServiceMySqlIntegrationTest extends TestCase
         $mixed = $service->processExchange(1, self::ORDER_ID + 1, $this->returnFirstLine(), 'size', '', $this->cart(930006) + ['cash_amount' => 5.0], 'mixed', 5.0, false);
         $this->assertEquals(['cash' => 5.0, 'card' => 10.0, 'exchange_credit' => 40.0], $this->tender($mixed['sale']['order_id']));
         $this->assertEquals([['type' => 'sale', 'amount' => '5.00']], $this->movements());
+    }
+
+    public function testPositiveBalanceByTransferMovesNoCash(): void
+    {
+        $this->seedSale(930005, ['cash' => 40.0, 'card' => 0.0]);
+
+        $result = $this->service()->processExchange(1, self::ORDER_ID, $this->returnFirstLine(), 'size', '', $this->cart(930006), 'transfer', 0.0, false);
+
+        $this->assertSame('done', $result['status']);
+        $this->assertSame('transfer', $result['sale']['payment_method']);
+        $this->assertEquals(['cash' => 0.0, 'card' => 0.0, 'transfer' => 15.0, 'exchange_credit' => 40.0], $this->tender($result['sale']['order_id']));
+        $this->assertSame([], $this->movements());
+        $this->assertSame(0, $this->drawerOpens);
+    }
+
+    public function testATransferSaleExchangedForLessGivesTheDifferenceBackByTransferOrInCash(): void
+    {
+        $this->seedSale(930006, ['cash' => 0.0, 'card' => 0.0, 'transfer' => 55.0]);
+        $this->seedSale(930006, ['cash' => 0.0, 'card' => 0.0, 'transfer' => 55.0], null, self::ORDER_ID + 1);
+        $service = $this->service();
+
+        $byTransfer = $service->processExchange(1, self::ORDER_ID, $this->returnFirstLine(), 'size', '', $this->cart(930005), '', 0.0, false);
+        $this->assertSame(15.0, $byTransfer['refund']['transfer_amount']);
+        $this->assertSame(0.0, $byTransfer['refund']['cash_amount']);
+        $this->assertSame([], $this->movements());
+
+        $inCash = $service->processExchange(1, self::ORDER_ID + 1, $this->returnFirstLine(), 'size', '', $this->cart(930005), '', 0.0, false, 0, 0, null, 'cash');
+        $this->assertSame(15.0, $inCash['refund']['cash_amount']);
+        $this->assertSame(0.0, $inCash['refund']['transfer_amount']);
+        $this->assertEquals([['type' => 'refund', 'amount' => '15.00']], $this->movements());
     }
 
     public function testBalanceMustBeCoveredBeforeAnythingHappens(): void

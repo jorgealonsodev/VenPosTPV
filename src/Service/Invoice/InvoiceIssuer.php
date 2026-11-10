@@ -42,7 +42,7 @@ class InvoiceIssuer
     /** F5: recomputed VAT may differ from the stored one by this much at most. */
     private const VAT_TOLERANCE = 0.02;
 
-    private const PAYMENT_LABELS = ['cash' => 'Efectivo', 'card' => 'Tarjeta', 'exchange_credit' => 'Crédito de cambio'];
+    private const PAYMENT_LABELS = ['cash' => 'Efectivo', 'card' => 'Tarjeta', 'transfer' => 'Transferencia', 'exchange_credit' => 'Crédito de cambio'];
 
     private readonly CustomerDirectory $customers;
     private readonly InvoiceNumberer $numberer;

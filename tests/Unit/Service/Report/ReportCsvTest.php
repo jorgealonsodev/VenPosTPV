@@ -101,24 +101,28 @@ final class ReportCsvTest extends TestCase
 
     public function testPaymentsReportEndsWithTheNetAsTotal(): void
     {
-        $data = ['sales_cash' => 64.0, 'sales_card' => 42.0, 'sales_total' => 106.0, 'exchange_credit' => 0.0, 'refunds_cash' => 0.0, 'refunds_card' => 0.0,
-            'refunds_voucher' => 0.0, 'refunds_total' => 0.0, 'exchange_vouchers' => 0.0, 'net_total' => 106.0,
-            'tickets_by_method' => ['cash' => 1, 'card' => 1, 'mixed' => 1, 'exchange' => 0]];
+        $data = ['sales_cash' => 64.0, 'sales_card' => 42.0, 'sales_transfer' => 30.0, 'sales_total' => 136.0, 'exchange_credit' => 0.0, 'refunds_cash' => 0.0, 'refunds_card' => 0.0,
+            'refunds_transfer' => 0.0, 'refunds_voucher' => 0.0, 'refunds_total' => 0.0, 'exchange_vouchers' => 0.0, 'net_total' => 136.0,
+            'tickets_by_method' => ['cash' => 1, 'card' => 1, 'mixed' => 1, 'transfer' => 1, 'exchange' => 0]];
 
         $this->assertSame(
             self::BOM . "Concepto;Importe\r\n"
             . "Ventas en efectivo;64,00\r\n"
             . "Ventas con tarjeta;42,00\r\n"
+            . "Ventas por transferencia;30,00\r\n"
+            . "Transferencias pendientes de pago (incluidas en ventas por transferencia);0,00\r\n"
             . "Crédito de cambio;0,00\r\n"
             . "Devoluciones en efectivo;0,00\r\n"
             . "Devoluciones con tarjeta;0,00\r\n"
+            . "Devoluciones por transferencia;0,00\r\n"
             . "Devoluciones con vale;0,00\r\n"
             . "Vales de cambios cerrados (incluidos en devoluciones con vale);0,00\r\n"
             . "Tickets en efectivo;1\r\n"
             . "Tickets con tarjeta;1\r\n"
             . "Tickets mixtos;1\r\n"
+            . "Tickets por transferencia;1\r\n"
             . "Tickets pagados con crédito de cambio;0\r\n"
-            . "Total;106,00\r\n",
+            . "Total;136,00\r\n",
             (new ReportCsv())->render('payments', $data)
         );
     }

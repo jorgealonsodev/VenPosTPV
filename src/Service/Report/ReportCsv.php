@@ -41,9 +41,12 @@ final class ReportCsv
     private const PAYMENT_ROWS = [
         'sales_cash' => 'Ventas en efectivo',
         'sales_card' => 'Ventas con tarjeta',
+        'sales_transfer' => 'Ventas por transferencia',
+        'sales_transfer_pending' => 'Transferencias pendientes de pago (incluidas en ventas por transferencia)',
         'exchange_credit' => 'Crédito de cambio',
         'refunds_cash' => 'Devoluciones en efectivo',
         'refunds_card' => 'Devoluciones con tarjeta',
+        'refunds_transfer' => 'Devoluciones por transferencia',
         'refunds_voucher' => 'Devoluciones con vale',
         'exchange_vouchers' => 'Vales de cambios cerrados (incluidos en devoluciones con vale)',
     ];
@@ -52,6 +55,7 @@ final class ReportCsv
         'cash' => 'Tickets en efectivo',
         'card' => 'Tickets con tarjeta',
         'mixed' => 'Tickets mixtos',
+        'transfer' => 'Tickets por transferencia',
         'exchange' => 'Tickets pagados con crédito de cambio',
     ];
 

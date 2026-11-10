@@ -189,7 +189,7 @@ final class SalesReportMySqlIntegrationTest extends TestCase
         $this->assertSame(42.0, $data['sales_card']);
         $this->assertSame(106.0, $data['sales_total']);
         $this->assertSame(0.0, $data['exchange_credit']);
-        $this->assertSame(['cash' => 1, 'card' => 1, 'mixed' => 1, 'exchange' => 0], $data['tickets_by_method']);
+        $this->assertSame(['cash' => 1, 'card' => 1, 'mixed' => 1, 'transfer' => 0, 'exchange' => 0], $data['tickets_by_method']);
         $this->assertSame(0.0, $data['refunds_total']);
         $this->assertSame(106.0, $data['net_total']);
         $this->assertNull($data['session']);
@@ -204,7 +204,7 @@ final class SalesReportMySqlIntegrationTest extends TestCase
         $tillA = $this->reports()->build('payments', $this->filter('payments', ['from' => '2026-03-10', 'to' => '2026-03-10', 'terminal_id' => (string) SalesReportFixture::TILL_A]))['data'];
         $this->assertSame(64.0, $tillA['sales_cash']);
         $this->assertSame(6.0, $tillA['sales_card']);
-        $this->assertSame(['cash' => 1, 'card' => 0, 'mixed' => 1, 'exchange' => 0], $tillA['tickets_by_method']);
+        $this->assertSame(['cash' => 1, 'card' => 0, 'mixed' => 1, 'transfer' => 0, 'exchange' => 0], $tillA['tickets_by_method']);
     }
 
     public function testPaymentsBySessionReproduceTheZOfEachSessionCriterion8(): void

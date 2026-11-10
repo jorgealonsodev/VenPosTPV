@@ -209,7 +209,7 @@ const OrderDetailView = {
         // Opened from «Reimprimir» on the sale screen without a printer: show the choice at once.
         if (props.startWithChoice) openPdfChoice('ticket');
 
-        return { invoice, showInvoice, canInvoice, loadInvoice, onInvoiceIssued, pdfDoc, pdfConsent, totalQty, title, canPrint, reprint, pdf, pdfChoice, pdfEmailEnabled, pdfEmail, pdfEmailStatus, pdfEmailSending, openPdfChoice, downloadPdf, sendPdfEmail, pdfCustomers, searchPdfCustomers, pickPdfCustomer, pdfWhatsappEnabled, pdfWhatsapp, pdfPhone, onWhatsappShared };
+        return { paymentLabel: (code) => VenPosPaymentMethods.label(code), invoice, showInvoice, canInvoice, loadInvoice, onInvoiceIssued, pdfDoc, pdfConsent, totalQty, title, canPrint, reprint, pdf, pdfChoice, pdfEmailEnabled, pdfEmail, pdfEmailStatus, pdfEmailSending, openPdfChoice, downloadPdf, sendPdfEmail, pdfCustomers, searchPdfCustomers, pickPdfCustomer, pdfWhatsappEnabled, pdfWhatsapp, pdfPhone, onWhatsappShared };
     },
     template: `
         <div style="display:flex; flex-direction:column; height:100%; overflow:hidden;">
@@ -231,7 +231,7 @@ const OrderDetailView = {
                 <div v-if="invoice" style="font-size:12px; color:var(--blue); font-weight:600;">Sustituido por {{ invoice.number }} · {{ invoice.recipient && invoice.recipient.name }}</div>
                 <div style="font-size:12px; color:var(--text3); display:flex; gap:10px; flex-wrap:wrap;">
                     <span v-if="order.created_at">{{ order.created_at }}</span>
-                    <span v-if="order.payment_method">{{ order.payment_method }}</span>
+                    <span v-if="order.payment_method">{{ paymentLabel(order.payment_method) }}</span>
                 </div>
             </div>
 
@@ -265,7 +265,7 @@ const OrderDetailView = {
                 </div>
                 <div v-if="order.payment_method" style="display:flex; justify-content:space-between; font-size:12px; color:var(--text2); margin-top:4px;">
                     <span>Método de pago</span>
-                    <span style="text-transform:capitalize;">{{ order.payment_method }}</span>
+                    <span>{{ paymentLabel(order.payment_method) }}</span>
                 </div>
                 <div v-if="canPrint" style="display:flex; gap:8px; margin-top:8px;">
                     <button class="tpv-btn" style="flex:1;" @click="reprint"><icon name="receipt" :size="16" /> Reimprimir</button>

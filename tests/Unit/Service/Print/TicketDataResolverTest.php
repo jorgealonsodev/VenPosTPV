@@ -42,7 +42,7 @@ final class TicketDataResolverTest extends TestCase
         $conn->method('fetchAssociative')
             ->willReturnMap([
                 [
-                    'SELECT ps_order_id, terminal_id, user_id, payment_breakdown, created_at FROM order_meta WHERE ps_order_id = ?',
+                    'SELECT id, ps_order_id, terminal_id, user_id, payment_breakdown, created_at FROM order_meta WHERE ps_order_id = ?',
                     [42],
                     [
                         'ps_order_id' => 42,
@@ -119,7 +119,7 @@ final class TicketDataResolverTest extends TestCase
         $conn->method('fetchAssociative')
             ->willReturnMap([
                 [
-                    'SELECT ps_order_id, terminal_id, user_id, payment_breakdown, created_at FROM order_meta WHERE ps_order_id = ?',
+                    'SELECT id, ps_order_id, terminal_id, user_id, payment_breakdown, created_at FROM order_meta WHERE ps_order_id = ?',
                     [42],
                     [
                         'ps_order_id' => 42,
@@ -179,7 +179,7 @@ final class TicketDataResolverTest extends TestCase
         foreach ([[['store_name' => '', 'legal_name' => 'Moda Centro SL'], 'Moda Centro SL'], [['store_name' => null, 'legal_name' => null], 'Mi Tienda']] as [$terminal, $expected]) {
             $conn = $this->createMock(Connection::class);
             $conn->method('fetchAssociative')->willReturnMap([
-                ['SELECT ps_order_id, terminal_id, user_id, payment_breakdown, created_at FROM order_meta WHERE ps_order_id = ?', [42], ['ps_order_id' => 42, 'terminal_id' => 7, 'user_id' => 5, 'payment_breakdown' => json_encode(['reference' => 'R', 'total' => 1.0, 'lines' => []]), 'created_at' => '2024-01-15 14:30:00']],
+                ['SELECT id, ps_order_id, terminal_id, user_id, payment_breakdown, created_at FROM order_meta WHERE ps_order_id = ?', [42], ['ps_order_id' => 42, 'terminal_id' => 7, 'user_id' => 5, 'payment_breakdown' => json_encode(['reference' => 'R', 'total' => 1.0, 'lines' => []]), 'created_at' => '2024-01-15 14:30:00']],
                 ['SELECT full_name, name FROM user WHERE id = ?', [5], ['full_name' => null, 'name' => 'Juan']],
                 ['SELECT store_name, store_address, legal_name, tax_id, ticket_header, ticket_footer, ticket_logo, ticket_width_px FROM terminal WHERE id = ?', [7], $terminal + ['store_address' => '', 'tax_id' => null, 'ticket_header' => null, 'ticket_footer' => null, 'ticket_logo' => null, 'ticket_width_px' => null]],
             ]);

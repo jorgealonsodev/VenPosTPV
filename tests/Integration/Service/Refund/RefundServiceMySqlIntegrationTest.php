@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace VenPosTPV\Tests\Integration\Service\Refund;
 
+use VenPosTPV\Service\Transfer\TransferPayments;
 use Doctrine\DBAL\Connection;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\HttpFoundation\RequestStack;
@@ -78,6 +79,7 @@ final class RefundServiceMySqlIntegrationTest extends TestCase
         $this->connection->executeStatement('DELETE FROM refund_line');
         $this->connection->executeStatement('DELETE FROM refund');
         $this->connection->executeStatement('DELETE FROM movement WHERE session_id = ?', [self::SESSION_ID]);
+        $this->connection->executeStatement('DELETE FROM transfer_payment WHERE order_id IN (SELECT id FROM order_meta WHERE ps_order_id >= 880000)');
         $this->connection->executeStatement('DELETE FROM order_meta WHERE ps_order_id >= 880000');
         $this->connection->executeStatement('DELETE FROM session WHERE id = ?', [self::SESSION_ID]);
         $this->connection->executeStatement('DELETE FROM terminal WHERE id = 9101');
@@ -98,7 +100,7 @@ final class RefundServiceMySqlIntegrationTest extends TestCase
             'ps_order_id' => $orderId, 'terminal_id' => 1, 'session_id' => self::SESSION_ID, 'user_id' => 1,
             'payment_breakdown' => json_encode([
                 'reference' => 'REF' . $orderId, 'total' => 60.0,
-                'payment_method' => $tender['card'] > 0 && $tender['cash'] > 0 ? 'mixed' : ($tender['card'] > 0 ? 'card' : 'cash'),
+                'payment_method' => ($tender['transfer'] ?? 0) > 0 ? 'transfer' : ($tender['card'] > 0 && $tender['cash'] > 0 ? 'mixed' : ($tender['card'] > 0 ? 'card' : 'cash')),
                 'amount_tendered' => 60.0, 'change_due' => 0, 'lines' => $lines, 'tender' => $tender,
             ], JSON_THROW_ON_ERROR),
             'created_at' => $createdAt ?? (new \DateTimeImmutable('-1 day'))->format('Y-m-d H:i:s'),
@@ -328,6 +330,62 @@ final class RefundServiceMySqlIntegrationTest extends TestCase
         $this->assertSame(5, $this->stock(3, 7));
         $this->upload();
         $this->assertFalse($this->psPayloads[0]['lines'][0]['restock']);
+    }
+
+    public function testATransferSaleIsPaidBackByTransferWithoutCashNorCardConfirmation(): void
+    {
+        $this->seedOrder(['cash' => 0.0, 'card' => 0.0, 'transfer' => 60.0]);
+
+        $result = $this->service()->processRefund(1, self::ORDER_ID, [['line_index' => 0, 'quantity' => 1, 'restock' => true]], 'size');
+
+        $this->assertSame(24.18, $result['transfer_amount']);
+        $this->assertSame(0.0, $result['cash_amount']);
+        $this->assertSame(0.0, $result['card_amount']);
+        $this->assertSame([], $this->movements(), 'the drawer is not touched');
+        $row = $this->connection->fetchAssociative('SELECT cash_amount, card_amount, transfer_amount FROM refund WHERE id = ?', [$result['refund_id']]);
+        $this->assertSame(['cash_amount' => '0.00', 'card_amount' => '0.00', 'transfer_amount' => '24.18'], $row);
+    }
+
+    public function testATransferSaleCannotBeRefundedWhileItsMoneyIsPendingAndCanOnceReceived(): void
+    {
+        $this->seedOrder(['cash' => 0.0, 'card' => 0.0, 'transfer' => 60.0]);
+        $orderId = (int) $this->connection->fetchOne('SELECT id FROM order_meta WHERE ps_order_id = ?', [self::ORDER_ID]);
+        $transfers = new TransferPayments($this->connection);
+        $transfers->record($orderId, 60.0, new \DateTimeImmutable());
+        $service = $this->service();
+
+        try {
+            $service->processRefund(1, self::ORDER_ID, [['line_index' => 0, 'quantity' => 1, 'restock' => true]], 'size');
+            $this->fail('A transfer still to be received cannot be paid back');
+        } catch (RefundException $e) {
+            $this->assertSame(409, $e->getCode());
+            $this->assertSame(RefundService::PENDING_TRANSFER_MESSAGE, $e->getMessage());
+        }
+        $this->assertSame(0, (int) $this->connection->fetchOne('SELECT COUNT(*) FROM refund WHERE ps_order_id = ?', [self::ORDER_ID]));
+
+        $transfers->markReceived((int) $this->connection->fetchOne('SELECT id FROM transfer_payment WHERE order_id = ?', [$orderId]), 1);
+        $result = $service->processRefund(1, self::ORDER_ID, [['line_index' => 0, 'quantity' => 1, 'restock' => true]], 'size');
+        $this->assertSame(24.18, $result['transfer_amount']);
+    }
+
+    public function testATransferSaleCanBePaidBackInCashInstead(): void
+    {
+        $this->seedOrder(['cash' => 0.0, 'card' => 0.0, 'transfer' => 60.0]);
+
+        $result = $this->service()->processRefund(1, self::ORDER_ID, [['line_index' => 0, 'quantity' => 1, 'restock' => true]], 'size', '', false, 0, null, 'cash');
+
+        $this->assertSame(24.18, $result['cash_amount']);
+        $this->assertSame(0.0, $result['transfer_amount']);
+        $this->assertSame(['24.18'], array_column($this->movements(), 'amount'));
+    }
+
+    public function testATransferCanOnlyBePaidBackByTransferOrCash(): void
+    {
+        $this->seedOrder(['cash' => 0.0, 'card' => 0.0, 'transfer' => 60.0]);
+        $service = $this->service();
+
+        $this->expectRefundError(422, fn () => $service->processRefund(1, self::ORDER_ID, [['line_index' => 0, 'quantity' => 1, 'restock' => true]], 'size', '', true, 0, null, 'card'));
+        $this->assertSame(0, (int) $this->connection->fetchOne('SELECT COUNT(*) FROM refund WHERE ps_order_id = ?', [self::ORDER_ID]));
     }
 
     public function testReasonMustBeFromTheListAndOtherNeedsText(): void

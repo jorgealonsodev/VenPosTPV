@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace VenPosTPV\Service\Print;
 
+use VenPosTPV\Service\Fiscal\Iban;
+use VenPosTPV\Service\Transfer\TransferPayments;
 use Doctrine\DBAL\Connection;
 use VenPosTPV\Service\Sale\VatRate;
 use Doctrine\DBAL\Exception\TableNotFoundException;
@@ -43,11 +45,11 @@ class TicketDataResolver
     {
         $row = $orderId < 0
             ? $this->connection->fetchAssociative(
-                'SELECT ps_order_id, terminal_id, user_id, payment_breakdown, created_at FROM order_meta WHERE id = ?',
+                'SELECT id, ps_order_id, terminal_id, user_id, payment_breakdown, created_at FROM order_meta WHERE id = ?',
                 [-$orderId]
             )
             : $this->connection->fetchAssociative(
-                'SELECT ps_order_id, terminal_id, user_id, payment_breakdown, created_at FROM order_meta WHERE ps_order_id = ?',
+                'SELECT id, ps_order_id, terminal_id, user_id, payment_breakdown, created_at FROM order_meta WHERE ps_order_id = ?',
                 [$orderId]
             );
 
@@ -132,7 +134,28 @@ class TicketDataResolver
             vatBreakdown: $vatBreakdown,
             replacedByInvoice: $this->replacingInvoice($orderId),
             leftoverVoucher: self::leftoverVoucher($breakdown),
+            transfer: ($breakdown['payment_method'] ?? null) === 'transfer' ? $this->transferInfo((int) $row['id'], (int) $row['terminal_id']) : null,
         );
+    }
+
+    /**
+     * A sale paid by bank transfer: the shop's IBAN to pay into (Ajustes → Tienda) and
+     * whether the money is still «Pendiente de pago» (docs/pago-transferencia.md).
+     *
+     * @return array{account: ?string, pending: bool}
+     */
+    private function transferInfo(int $localOrderId, int $terminalId): array
+    {
+        try {
+            $iban = $this->connection->fetchOne('SELECT bank_account FROM terminal WHERE id = ?', [$terminalId]);
+        } catch (\Throwable) {
+            $iban = null; // before Version00000052
+        }
+
+        return [
+            'account' => \is_string($iban) && $iban !== '' ? Iban::format($iban) : null,
+            'pending' => (new TransferPayments($this->connection))->isPending($localOrderId),
+        ];
     }
 
     /**
@@ -380,6 +403,7 @@ class TicketDataResolver
                 voucherAmount: $refund['voucher_amount'] !== null ? round((float) $refund['voucher_amount'], 2) : null,
                 exchangeCredit: $refund['exchange_credit'] !== null ? round((float) $refund['exchange_credit'], 2) : null,
                 webRefundAmount: $online && isset($refund['web_refund_amount']) ? round((float) $refund['web_refund_amount'], 2) : null,
+                transferAmount: round((float) ($refund['transfer_amount'] ?? 0), 2),
             ),
             legalName: $legalName,
             taxId: $taxId,

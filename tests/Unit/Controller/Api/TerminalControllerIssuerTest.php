@@ -62,6 +62,22 @@ final class TerminalControllerIssuerTest extends TestCase
         $this->assertNull($updates[0]['legal_name']);
     }
 
+    public function testTheIbanIsSavedAsShopDataWithoutSpacesAndAWrongOneIsRejected(): void
+    {
+        [$controller, $updates] = $this->controller();
+
+        $ok = $controller->update(1, SessionRequest::json(['bank_account' => 'es91 2100 0418 4502 0005 1332'], self::ADMIN));
+        $bad = $controller->update(1, SessionRequest::json(['bank_account' => 'ES92 2100 0418 4502 0005 1332'], self::ADMIN));
+        $controller->update(1, SessionRequest::json(['bank_account' => ' '], self::ADMIN));
+
+        $this->assertSame(Response::HTTP_OK, $ok->getStatusCode());
+        $this->assertSame(Response::HTTP_UNPROCESSABLE_ENTITY, $bad->getStatusCode());
+        $this->assertSame('Número de cuenta no válido: revisa el IBAN (ES y 22 cifras)', json_decode((string) $bad->getContent(), true)['error']);
+        $this->assertCount(2, $updates, 'the wrong one saved nothing');
+        $this->assertSame(['bank_account' => 'ES9121000418450200051332'], $updates[0]);
+        $this->assertSame(['bank_account' => null], $updates[1]);
+    }
+
     public function testStoreNameIsSavedTrimmedAndClearedWhenEmpty(): void
     {
         [$controller, $updates] = $this->controller();

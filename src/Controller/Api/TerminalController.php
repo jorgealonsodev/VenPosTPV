@@ -11,6 +11,7 @@ use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Attribute\AsController;
 use Symfony\Component\Routing\Attribute\Route;
+use VenPosTPV\Service\Fiscal\Iban;
 use VenPosTPV\Service\Fiscal\SpanishTaxId;
 use VenPosTPV\Service\Invoice\InvoiceNumberer;
 use VenPosTPV\Service\Label\LabelSettings;
@@ -70,8 +71,21 @@ final class TerminalController
         $row['label_height_mm'] = $labels->heightMm;
         $row['label_cut_each'] = $labels->cutEach;
         $row += $this->ticketLayout($id);
+        $row['bank_account'] = $this->bankAccount($id);
 
         return new JsonResponse(['data' => $row]);
+    }
+
+    /** The shop's IBAN (Version00000052), null before that migration runs or when unset. */
+    private function bankAccount(int $id): ?string
+    {
+        try {
+            $value = $this->connection->fetchOne('SELECT bank_account FROM terminal WHERE id = ?', [$id]);
+        } catch (\Throwable) {
+            return null;
+        }
+
+        return \is_string($value) && $value !== '' ? $value : null;
     }
 
     /**
@@ -210,6 +224,14 @@ final class TerminalController
             $fields['tax_id'] = $taxId === '' ? null : $taxId;
         }
 
+        if (array_key_exists('bank_account', $body)) {
+            $iban = Iban::normalize((string) $body['bank_account']);
+            if ($iban !== '' && !Iban::isValid($iban)) {
+                return new JsonResponse(['error' => 'Número de cuenta no válido: revisa el IBAN (ES y 22 cifras)'], Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
+            $fields['bank_account'] = $iban === '' ? null : $iban;
+        }
+
         if (array_key_exists('ticket_header', $body)) {
             $fields['ticket_header'] = $this->normalizeNullableText($body['ticket_header']);
         }
@@ -314,7 +336,9 @@ final class TerminalController
             $fields['active'] = $body['active'] ? 1 : 0;
         }
 
-        $shopFields = array_intersect_key($fields, array_flip(self::SHOP_FIELDS));
+        // The IBAN (Version00000052) is shop data too, kept out of SHOP_FIELDS so the
+        // other reads of those fields work before that migration runs.
+        $shopFields = array_intersect_key($fields, array_flip([...self::SHOP_FIELDS, 'bank_account']));
         $tillFields = array_diff_key($fields, $shopFields);
 
         if ($fields) {
@@ -395,8 +419,17 @@ final class TerminalController
         } catch (UniqueConstraintViolationException) {
             return $this->letterInUse();
         }
+        $newId = (int) $this->connection->lastInsertId();
+        try {
+            // The shop's IBAN too (Version00000052; nothing to copy before it runs).
+            $this->connection->executeStatement(
+                'UPDATE terminal SET bank_account = (SELECT b FROM (SELECT bank_account AS b FROM terminal WHERE ps_shop_id = ? AND active = 1 AND id <> ? AND bank_account IS NOT NULL ORDER BY id LIMIT 1) s) WHERE id = ?',
+                [$shopId, $newId, $newId]
+            );
+        } catch (\Throwable) {
+        }
 
-        return new JsonResponse(['data' => ['id' => (int) $this->connection->lastInsertId()]], Response::HTTP_CREATED);
+        return new JsonResponse(['data' => ['id' => $newId]], Response::HTTP_CREATED);
     }
 
     // -------------------------------------------------------------------------

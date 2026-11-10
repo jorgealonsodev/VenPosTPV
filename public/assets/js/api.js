@@ -100,6 +100,10 @@ const ApiClient = (function () {
         catalogResetOverride: (productId, attributeId) => request('/api/catalog/edit/' + encodeURIComponent(productId) + '/' + encodeURIComponent(attributeId) + '/override', { method: 'DELETE', queueOnNetworkFailure: false }),
         catalogSetStock: (productId, attributeId, quantity) => request('/api/catalog/edit/' + encodeURIComponent(productId) + '/' + encodeURIComponent(attributeId) + '/stock', { method: 'PUT', body: JSON.stringify({ quantity }), queueOnNetworkFailure: false }),
         // «Cupones»: the till's coupons, newest first ({data, has_more, status_checked}).
+        // «Tickets → Pendientes de pago»: sales paid by transfer not received yet; marking
+        // one received is never queued offline (an admin does it looking at the bank).
+        pendingTransfers: () => request('/api/transfers/pending', { method: 'GET', queueOnNetworkFailure: false }),
+        markTransferReceived: (id) => request('/api/transfers/' + encodeURIComponent(id) + '/received', { method: 'POST', body: JSON.stringify({}), queueOnNetworkFailure: false }),
         listCoupons: (q, page) => request('/api/coupons?q=' + encodeURIComponent(q || '') + '&page=' + encodeURIComponent(page || 1), { method: 'GET', queueOnNetworkFailure: false }),
         createCoupon: (payload) => request('/api/coupons', { method: 'POST', body: JSON.stringify(payload), queueOnNetworkFailure: false }),
         // The slip of a created coupon (its local id): printing and email are never

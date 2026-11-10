@@ -110,9 +110,22 @@ final class CashReport
         $amount('Fondo inicial', $money('opening_cash'));
         $amount('Ventas efectivo', $money('sales_cash'));
         $amount('Ventas tarjeta', $money('sales_card'));
+        // Transfer lines only on a till that had transfers: older reports stay as they were.
+        $transfers = $this->number('sales_transfer') != 0.0 || $this->number('refunds_transfer') != 0.0;
+        if ($transfers) {
+            $amount('Ventas transferencia', $money('sales_transfer'));
+            if ($this->number('sales_transfer_pending') != 0.0) {
+                // Part of the line above: not received in the bank yet.
+                $amount('Pendiente de pago', $money('sales_transfer_pending'));
+            }
+        }
         $amount('Total ventas', $money('sales_total'), true);
         $amount('Devoluciones efectivo', $money('refunds_cash'));
         $amount('Devoluciones tarjeta', $money('refunds_card'));
+        if ($transfers) {
+            // Shorter: «Devoluciones transferencia» and its amount do not fit in 32 characters.
+            $amount('Devol. transferencia', $money('refunds_transfer'));
+        }
         $amount('Devoluciones vale', $money('refunds_voucher'));
         $amount('Entradas de efectivo', $money('cash_in_total'));
         $amount('Salidas de efectivo', $money('cash_out_total'));
