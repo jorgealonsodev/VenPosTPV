@@ -278,6 +278,8 @@ CREATE TABLE IF NOT EXISTS refund (
     cash_amount DECIMAL(10,2) NOT NULL DEFAULT 0,
     card_amount DECIMAL(10,2) NOT NULL DEFAULT 0,
     card_confirmed TINYINT(1) NOT NULL DEFAULT 0,
+    -- Version00000051: paid back by bank transfer (a ticket paid by transfer).
+    transfer_amount DECIMAL(10,2) NOT NULL DEFAULT 0,
     voucher_code VARCHAR(32) NULL,
     voucher_amount DECIMAL(10,2) NULL,
     voucher_cart_rule_id INT UNSIGNED NULL,

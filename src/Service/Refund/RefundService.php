@@ -69,6 +69,13 @@ class RefundService
     /** Tenders a voucher share can be paid with instead when no voucher can be created (D3). */
     public const VOUCHER_FALLBACKS = ['cash', 'card'];
 
+    /**
+     * How the share of a ticket paid by bank transfer goes back: by transfer (the
+     * admin makes it from the bank; the till only records it) or in cash
+     * (docs/pago-transferencia.md).
+     */
+    public const TRANSFER_REFUNDS = ['transfer', 'cash'];
+
     private readonly VoucherIssuer $voucherIssuer;
 
     public function __construct(
@@ -108,8 +115,9 @@ class RefundService
         bool $cardConfirmed = false,
         int $shopId = 0,
         ?string $voucherFallback = null,
+        ?string $transferRefund = null,
     ): array {
-        return $this->startOrderRefund($userId, $psOrderId, 0, $lines, $reasonCode, $reasonText, $cardConfirmed, null, null, $shopId, $voucherFallback);
+        return $this->startOrderRefund($userId, $psOrderId, 0, $lines, $reasonCode, $reasonText, $cardConfirmed, null, null, $shopId, $voucherFallback, $transferRefund);
     }
 
     /**
@@ -130,12 +138,13 @@ class RefundService
         bool $cardConfirmed = false,
         int $shopId = 0,
         ?string $voucherFallback = null,
+        ?string $transferRefund = null,
     ): array {
         if ($orderId <= 0) {
             throw RefundException::orderNotFound($orderId);
         }
 
-        return $this->startOrderRefund($userId, 0, $orderId, $lines, $reasonCode, $reasonText, $cardConfirmed, null, null, $shopId, $voucherFallback);
+        return $this->startOrderRefund($userId, 0, $orderId, $lines, $reasonCode, $reasonText, $cardConfirmed, null, null, $shopId, $voucherFallback, $transferRefund);
     }
 
     /**
@@ -166,6 +175,7 @@ class RefundService
         int $shopId = 0,
         int $orderId = 0,
         ?string $voucherFallback = null,
+        ?string $transferRefund = null,
     ): array {
         if ($lines === []) {
             throw RefundException::validationFailed('Select at least one line to return');
@@ -174,7 +184,7 @@ class RefundService
             throw RefundException::validationFailed('Add at least one new item to the exchange');
         }
 
-        return $this->startOrderRefund($userId, $psOrderId, $orderId, $lines, $reasonCode, $reasonText, $cardConfirmed, $newTotal, $reserved, $shopId, $voucherFallback);
+        return $this->startOrderRefund($userId, $psOrderId, $orderId, $lines, $reasonCode, $reasonText, $cardConfirmed, $newTotal, $reserved, $shopId, $voucherFallback, $transferRefund);
     }
 
     /**
@@ -206,10 +216,14 @@ class RefundService
         ?callable $reserved,
         int $shopId,
         ?string $voucherFallback,
+        ?string $transferRefund = null,
     ): array {
         $reasonText = $this->assertReason($reasonCode, $reasonText);
         if ($voucherFallback !== null && !\in_array($voucherFallback, self::VOUCHER_FALLBACKS, true)) {
             throw RefundException::validationFailed('Choose cash or card instead of the voucher');
+        }
+        if ($transferRefund !== null && !\in_array($transferRefund, self::TRANSFER_REFUNDS, true)) {
+            throw RefundException::validationFailed('A transfer is paid back by transfer or in cash');
         }
 
         $cashContext = $this->cashSessionService->requireOpenSession($userId);
@@ -221,7 +235,7 @@ class RefundService
             $orderId = $local === false ? 0 : (int) $local;
         }
         if ($orderId > 0) {
-            return $this->refundSale($orderId, $lines, $cardConfirmed, $requestId, $cashContext, $userId, $reasonCode, $reasonText, $exchangeTotal, $reserved, $shopId, $voucherFallback);
+            return $this->refundSale($orderId, $lines, $cardConfirmed, $requestId, $cashContext, $userId, $reasonCode, $reasonText, $exchangeTotal, $reserved, $shopId, $voucherFallback, $transferRefund ?? 'transfer');
         }
 
         // Not a TPV sale: an online order, read from the shop under a named lock
@@ -269,13 +283,14 @@ class RefundService
         ?callable $reserved,
         int $shopId,
         ?string $voucherFallback,
+        string $transferRefund = 'transfer',
     ): array {
         $sessionId = (int) $cashContext['session_id'];
         $numberer = $this->numberer();
         $numberer->prepareYear(new \DateTimeImmutable());
 
         /** @var array{0: int, 1: ?int} $planned */
-        $planned = $this->conn->transactional(function () use ($orderId, $lines, $cardConfirmed, $requestId, $cashContext, $sessionId, $userId, $reasonCode, $reasonText, $exchangeTotal, $reserved, $shopId, $voucherFallback, $numberer): array {
+        $planned = $this->conn->transactional(function () use ($orderId, $lines, $cardConfirmed, $requestId, $cashContext, $sessionId, $userId, $reasonCode, $reasonText, $exchangeTotal, $reserved, $shopId, $voucherFallback, $transferRefund, $numberer): array {
             // Session before order_meta, the order every cash writer locks in.
             $this->lockOpenSessionForRefund($sessionId);
             if ($this->conn->fetchOne('SELECT id FROM order_meta WHERE id = ? FOR UPDATE', [$orderId]) === false) {
@@ -303,7 +318,11 @@ class RefundService
             $this->assertWithinRefundWindow(new \DateTimeImmutable((string) $order['created_at']), $terminalId, 'This sale', 'sold');
 
             [$plannedLines, $total, $exchangeCredit, $payout] = $this->planAmounts($order, $lines, $exchangeTotal);
-            [$cashAmount, $cardAmount, $voucherAmount] = $payout > 0 ? $this->splitByTender($order, $payout) : [0.0, 0.0, 0.0];
+            [$cashAmount, $cardAmount, $voucherAmount, $transferAmount] = $payout > 0 ? $this->splitByTender($order, $payout) : [0.0, 0.0, 0.0, 0.0];
+            if ($transferAmount > 0 && $transferRefund === 'cash') {
+                $cashAmount = round($cashAmount + $transferAmount, 2);
+                $transferAmount = 0.0;
+            }
             if ($voucherAmount > 0 && $voucherFallback !== null) {
                 // No voucher can be created (D3): the cashier pays that share by another tender.
                 if ($voucherFallback === 'cash') {
@@ -354,6 +373,10 @@ class RefundService
             ];
             if ($voucherAmount > 0) {
                 $row['voucher_amount'] = $voucherAmount;
+            }
+            if ($transferAmount > 0) {
+                // Only when there is one: a database before Version00000051 has no column.
+                $row['transfer_amount'] = $transferAmount;
             }
             if ($exchangeCredit !== null) {
                 $row['exchange_credit'] = $exchangeCredit;
@@ -736,6 +759,7 @@ class RefundService
             'refunded_amount' => round((float) $refund['total'], 2),
             'cash_amount' => round((float) $refund['cash_amount'], 2),
             'card_amount' => round((float) $refund['card_amount'], 2),
+            'transfer_amount' => round((float) ($refund['transfer_amount'] ?? 0), 2),
             'voucher_code' => isset($refund['voucher_code']) && $refund['voucher_code'] !== '' ? (string) $refund['voucher_code'] : null,
             'online' => false,
             'web_refund_amount' => null,
@@ -1181,6 +1205,7 @@ class RefundService
             'refunded_amount' => $total,
             'cash_amount' => $cashAmount,
             'card_amount' => round((float) $refund['card_amount'], 2),
+            'transfer_amount' => round((float) ($refund['transfer_amount'] ?? 0), 2),
             'voucher_code' => isset($refund['voucher_code']) && $refund['voucher_code'] !== '' ? (string) $refund['voucher_code'] : null,
             'online' => !empty($refund['online']),
             'web_refund_amount' => !empty($refund['online']) && isset($refund['web_refund_amount']) ? round((float) $refund['web_refund_amount'], 2) : null,
@@ -1322,18 +1347,31 @@ class RefundService
     /**
      * Proportional to how the sale was paid. The exchange-credit share (a sale of
      * an exchange) is returned as a voucher; without one the split is cash/card
-     * exactly as before, the card taking the rounding remainder.
+     * exactly as before, the card taking the rounding remainder. A transfer share
+     * (a sale paid by bank transfer) goes back by transfer; a sale is paid by
+     * transfer alone, so then the transfer takes the whole amount.
      *
      * @param array<string, mixed> $order
      *
-     * @return array{0: float, 1: float, 2: float} cash, card and voucher amounts
+     * @return array{0: float, 1: float, 2: float, 3: float} cash, card, voucher and transfer amounts
      */
     private function splitByTender(array $order, float $total): array
     {
         $tender = $order['tender'] ?? null;
         $cash = \is_array($tender) ? max(0.0, (float) ($tender['cash'] ?? 0)) : 0.0;
         $card = \is_array($tender) ? max(0.0, (float) ($tender['card'] ?? 0)) : 0.0;
+        $transfer = \is_array($tender) ? max(0.0, (float) ($tender['transfer'] ?? 0)) : 0.0;
         $credit = \is_array($tender) ? max(0.0, (float) ($tender['exchange_credit'] ?? 0)) : 0.0;
+
+        if ($transfer > 0) {
+            if ($credit <= 0) {
+                return [0.0, 0.0, 0.0, round($total, 2)];
+            }
+            // An exchange whose balance was paid by transfer: the credit share is the voucher.
+            $transferAmount = round($total * $transfer / ($transfer + $credit), 2);
+
+            return [0.0, 0.0, round($total - $transferAmount, 2), $transferAmount];
+        }
 
         if ($credit <= 0) {
             if ($cash + $card <= 0) {
@@ -1342,7 +1380,7 @@ class RefundService
             }
             $cashAmount = round($total * $cash / ($cash + $card), 2);
 
-            return [$cashAmount, round($total - $cashAmount, 2), 0.0];
+            return [$cashAmount, round($total - $cashAmount, 2), 0.0, 0.0];
         }
 
         $sum = $cash + $card + $credit;
@@ -1360,7 +1398,7 @@ class RefundService
             $voucherAmount = 0.0;
         }
 
-        return [$cashAmount, $cardAmount, $voucherAmount];
+        return [$cashAmount, $cardAmount, $voucherAmount, 0.0];
     }
 
     private function logRefundOrphan(int $psOrderId, int $orderSlipId, int $refundId, \Throwable $error): void

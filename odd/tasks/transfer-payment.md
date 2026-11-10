@@ -13,9 +13,9 @@ Branch: `feat/transfer-payment`. Delivery: ask-on-risk. Runners: `php vendor/bin
 
 ## Tasks
 
-- [x] T1 (S1, S4, S5) sale by transfer, inline. RED: LocalFirstCheckout transfer/unknown-method tests, paymentTransfer.test.cjs; GREEN.
+- [x] T1 (S1, S4, S5) sale by transfer, inline, commit 276af5b. RED: LocalFirstCheckout transfer/unknown-method tests, paymentTransfer.test.cjs; GREEN.
 - [x] T2 (S2) totals, reports, inline. CashReportTest transfer lines, ReportCsvTest, useSession test.
-- [ ] T3 (S3) refunds and exchanges by transfer (migration `refund.transfer_amount`), inline.
+- [x] T3 (S3) refunds and exchanges by transfer (migration `refund.transfer_amount`), inline. RED: RefundService transfer tests, refundTransfer.test.cjs, Exchange transfer tests, CashReportByMethod transfer; GREEN.
 
 ## Log
 
@@ -24,3 +24,4 @@ Branch: `feat/transfer-payment`. Delivery: ask-on-risk. Runners: `php vendor/bin
 - L3: today a non-cash, non-mixed method is booked as card (CheckoutService tender, resolveCouponTender rejects others); PS module takes the method string as payment name.
 - L4: base (main 8943ae7) already fails 19 integration tests (SalesApi 6, SyncStatus 3, LocalFirstCheckout 2 key-order, migrations, install…); this branch adds no new failure.
 - L5: printed X/Z show transfer lines only when the till had transfers (older reports unchanged); «Devol. transferencia» fits 32 columns.
+- L6: T3 done; full integration run has the same 19 failures as main, unit 1101 green, JS 188 green. Docs: docs/pago-transferencia.md. PDF ticket shows «Metodo: Transferencia» (other methods keep their old raw label).

@@ -51,7 +51,7 @@ use VenPosTPV\Service\Refund\VoucherIssuer;
  */
 class ExchangeService
 {
-    private const PAYMENT_METHODS = ['cash', 'card', 'mixed'];
+    private const PAYMENT_METHODS = ['cash', 'card', 'mixed', 'transfer'];
 
     /** Payment method stored and sent to PrestaShop when the credit pays everything. */
     public const NO_PAYMENT_METHOD = 'exchange';
@@ -93,6 +93,7 @@ class ExchangeService
         int $shopId = 0,
         int $orderId = 0,
         ?string $voucherFallback = null,
+        ?string $transferRefund = null,
     ): array {
         try {
             $newTotal = $this->checkoutService->quoteCart($newCartData);
@@ -134,6 +135,7 @@ class ExchangeService
                 $shopId,
                 $orderId,
                 $voucherFallback,
+                $transferRefund,
             );
         } catch (RefundException $e) {
             $exchangeId = (int) $reservation['exchange_id'];
@@ -312,7 +314,7 @@ class ExchangeService
             return [self::NO_PAYMENT_METHOD, 0.0];
         }
         if (!\in_array($paymentMethod, self::PAYMENT_METHODS, true)) {
-            throw RefundException::validationFailed(sprintf('Choose cash, card or mixed to collect the %.2f balance', $balance));
+            throw RefundException::validationFailed(sprintf('Choose cash, card, mixed or transfer to collect the %.2f balance', $balance));
         }
         if ($paymentMethod === 'cash' && round($amountTendered, 2) < $balance) {
             throw RefundException::validationFailed(sprintf('Cash tendered does not cover the %.2f balance', $balance));

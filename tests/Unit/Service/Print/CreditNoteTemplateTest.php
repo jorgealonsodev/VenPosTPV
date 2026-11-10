@@ -120,6 +120,23 @@ final class CreditNoteTemplateTest extends TestCase
         return (string) preg_replace('#<style>.*?</style>#s', '', $html);
     }
 
+    public function testASaleTicketPaidByTransferNamesTheMethodInSpanish(): void
+    {
+        $html = $this->render(null, method: 'transfer', tendered: 24.18, change: 0.0);
+
+        $this->assertStringContainsString('<div>Metodo: Transferencia</div>', $html);
+    }
+
+    public function testACreditNotePaidBackByTransferSaysSo(): void
+    {
+        $note = new CreditNoteInfo('R2026-000010', 'A26000042', null, 'Talla o color', 0.0, 0.0, transferAmount: 24.18);
+        $html = $this->render($note, method: 'transfer', tendered: 0.0, change: 0.0);
+
+        $this->assertStringContainsString('<div>Transferencia: 24,18 €</div>', $html);
+        $this->assertStringNotContainsString('Efectivo:', $html);
+        $this->assertStringNotContainsString('Tarjeta:', $html);
+    }
+
     public function testExchangeCreditNoteStatesTheAmountAppliedAndOnlyThePaidOutPart(): void
     {
         $note = new CreditNoteInfo('R2026-000009', 'REF42', null, 'Talla o color', 0.0, 15.0, exchangeCredit: 40.0);

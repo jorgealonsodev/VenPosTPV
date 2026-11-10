@@ -380,6 +380,7 @@ class TicketDataResolver
                 voucherAmount: $refund['voucher_amount'] !== null ? round((float) $refund['voucher_amount'], 2) : null,
                 exchangeCredit: $refund['exchange_credit'] !== null ? round((float) $refund['exchange_credit'], 2) : null,
                 webRefundAmount: $online && isset($refund['web_refund_amount']) ? round((float) $refund['web_refund_amount'], 2) : null,
+                transferAmount: round((float) ($refund['transfer_amount'] ?? 0), 2),
             ),
             legalName: $legalName,
             taxId: $taxId,

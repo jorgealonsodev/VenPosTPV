@@ -66,7 +66,7 @@ final class CashReportByMethodMySqlIntegrationTest extends TestCase
     {
         $this->connection->executeStatement("DELETE FROM refund WHERE request_id LIKE 'cashreport%'");
         $this->connection->executeStatement('DELETE FROM movement WHERE session_id = ?', [self::SESSION_ID]);
-        $this->connection->executeStatement('DELETE FROM order_meta WHERE ps_order_id BETWEEN 920001 AND 920004');
+        $this->connection->executeStatement('DELETE FROM order_meta WHERE ps_order_id BETWEEN 920001 AND 920005');
         $this->connection->executeStatement('DELETE FROM session WHERE id = ?', [self::SESSION_ID]);
     }
 
@@ -94,6 +94,29 @@ final class CashReportByMethodMySqlIntegrationTest extends TestCase
         $this->assertSame(20.0, $report['refunds_voucher']);
     }
 
+    public function testTransfersAreTheirOwnLinesInTheTotalsAndNeverInTheDrawer(): void
+    {
+        $c = $this->connection;
+        $c->insert('order_meta', ['ps_order_id' => 920005, 'terminal_id' => 1, 'session_id' => self::SESSION_ID, 'user_id' => 1,
+            'payment_breakdown' => json_encode(['reference' => 'R920005', 'total' => 70, 'payment_method' => 'transfer', 'tender' => ['cash' => 0, 'card' => 0, 'transfer' => 70]])]);
+        $c->insert('refund', ['request_id' => 'cashreportt0', 'status' => 'done', 'ps_order_id' => 920005, 'terminal_id' => 1,
+            'session_id' => self::SESSION_ID, 'user_id' => 1, 'reason_code' => 'size', 'total' => 9, 'cash_amount' => 0, 'card_amount' => 0, 'transfer_amount' => 9]);
+        $_SESSION = ['shop_id' => 1, 'cash_session_id' => self::SESSION_ID];
+        $report = (new CashSessionService($c, $this->createMock(TerminalService::class), new RequestStack()))->getXReport(1);
+        $totals = $report['totals'];
+
+        $this->assertSame(70.0, $totals['sales_transfer']);
+        $this->assertSame(80.0, $totals['sales_card'], 'card unchanged');
+        $this->assertSame(210.0, $totals['sales_total']);
+        $this->assertSame(9.0, $totals['refunds_transfer']);
+        $this->assertSame(15.0, $totals['refunds_card'], 'card unchanged');
+        $this->assertSame(41.0, $totals['refunds_total']);
+        $this->assertSame(169.0, $totals['net_total']);
+        $this->assertSame(143.0, $totals['expected_cash'], 'a transfer never touches the drawer');
+        $this->assertSame(70.0, $report['sales_transfer']);
+        $this->assertSame(9.0, $report['refunds_transfer']);
+    }
+
     public function testXReportShowsRefundsByMethodSeparatelyWithNetAndCashDrawerUnchanged(): void
     {
         $_SESSION = ['shop_id' => 1, 'cash_session_id' => self::SESSION_ID];
@@ -115,5 +138,7 @@ final class CashReportByMethodMySqlIntegrationTest extends TestCase
         $this->assertSame(15.0, $report['refunds_card']);
         $this->assertSame(108.0, $report['net_total']);
         $this->assertSame(0.0, $totals['refunds_voucher']);
+        $this->assertSame(0.0, $totals['sales_transfer']);
+        $this->assertSame(0.0, $totals['refunds_transfer']);
     }
 }

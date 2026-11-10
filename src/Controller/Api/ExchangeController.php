@@ -18,7 +18,7 @@ use VenPosTPV\Service\Refund\OrderSearchService;
 
 /**
  * Product exchanges of TPV sales: POST /api/exchange {order_id | reference |
- * ps_order_id (compatibility, and online orders), voucher_fallback?, return_lines:
+ * ps_order_id (compatibility, and online orders), voucher_fallback?, transfer_refund?, return_lines:
  * [{line_index, quantity, restock}], reason_code, reason_text, new_cart_data (as
  * /api/checkout cart_data), payment_method, amount_tendered, cash_amount?,
  * card_confirmed?}. The response carries credit, new_total and balance, the refund
@@ -79,6 +79,7 @@ class ExchangeController
             (int) $session->get('shop_id', 0),
             $target['order_id'] ?? 0,
             $voucherFallback,
+            RefundController::transferRefund($body),
         ));
     }
 

@@ -11,6 +11,7 @@ namespace VenPosTPV\Service\Print;
  * is the part applied to an exchange's new items (R13); cash and card then hold
  * only what went back to the customer. webRefundAmount is set for an online order
  * (R10): the TPV paid nothing and the office refunds that amount from the web.
+ * transferAmount is paid back by bank transfer (a ticket paid by transfer).
  */
 final class CreditNoteInfo
 {
@@ -25,6 +26,7 @@ final class CreditNoteInfo
         public readonly ?float $voucherAmount = null,
         public readonly ?float $exchangeCredit = null,
         public readonly ?float $webRefundAmount = null,
+        public readonly float $transferAmount = 0.0,
     ) {
     }
 }

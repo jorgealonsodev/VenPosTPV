@@ -159,6 +159,9 @@ class EscPosTicketBuilder
             if ($creditNote->cardAmount > 0) {
                 $printer->text('Tarjeta: ' . number_format($creditNote->cardAmount, 2) . " €\n");
             }
+            if ($creditNote->transferAmount > 0) {
+                $printer->text('Transferencia: ' . number_format($creditNote->transferAmount, 2) . " €\n");
+            }
             if ($creditNote->webRefundAmount !== null && $creditNote->webRefundAmount > 0) {
                 $printer->selectPrintMode(Printer::MODE_EMPHASIZED);
                 $printer->text('Reembolso pendiente en la web: ' . number_format($creditNote->webRefundAmount, 2) . " €\n");

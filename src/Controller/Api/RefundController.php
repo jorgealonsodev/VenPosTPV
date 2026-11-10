@@ -77,8 +77,8 @@ class RefundController
         try {
             $this->cashSessionService->requireOpenSession($userId);
             $result = isset($target['order_id'])
-                ? $this->refundService->processSaleRefund($userId, $target['order_id'], $lines, $reasonCode, $reasonText, $cardConfirmed, $shopId, $voucherFallback)
-                : $this->refundService->processRefund($userId, $target['ps_order_id'], $lines, $reasonCode, $reasonText, $cardConfirmed, $shopId, $voucherFallback);
+                ? $this->refundService->processSaleRefund($userId, $target['order_id'], $lines, $reasonCode, $reasonText, $cardConfirmed, $shopId, $voucherFallback, self::transferRefund($body))
+                : $this->refundService->processRefund($userId, $target['ps_order_id'], $lines, $reasonCode, $reasonText, $cardConfirmed, $shopId, $voucherFallback, self::transferRefund($body));
             $result = $this->handOverRefund($result, $request);
 
             return new JsonResponse(['data' => $result], Response::HTTP_OK);
@@ -90,6 +90,20 @@ class RefundController
                 Response::HTTP_INTERNAL_SERVER_ERROR
             );
         }
+    }
+
+    /**
+     * transfer_refund: how the share of a ticket paid by bank transfer goes back,
+     * «transfer» (the default) or «cash» (RefundService::TRANSFER_REFUNDS, which
+     * rejects anything else). Shared with exchanges.
+     *
+     * @param array<string, mixed> $body
+     */
+    public static function transferRefund(array $body): ?string
+    {
+        $value = $body['transfer_refund'] ?? null;
+
+        return \is_string($value) && $value !== '' ? $value : null;
     }
 
     /**
