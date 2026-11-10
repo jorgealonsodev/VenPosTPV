@@ -100,6 +100,10 @@ final class ExchangeServiceMySqlIntegrationTest extends TestCase
     {
         $c = $this->connection;
         $c->executeStatement('DELETE FROM outbox WHERE order_id IN (SELECT id FROM order_meta WHERE session_id = ? OR (ps_order_id >= 930000 AND ps_order_id < 1000000))', [self::SESSION_ID]);
+        // A sale paid by transfer leaves its pending transfer row; its unique order_id
+        // would block the next sale that gets the same id.
+        $c->executeStatement('DELETE FROM transfer_payment WHERE order_id IN (SELECT id FROM order_meta WHERE session_id = ? OR (ps_order_id >= 930000 AND ps_order_id < 1000000))', [self::SESSION_ID]);
+        $c->executeStatement('DELETE FROM sale_line WHERE order_id IN (SELECT id FROM order_meta WHERE session_id = ? OR (ps_order_id >= 930000 AND ps_order_id < 1000000))', [self::SESSION_ID]);
         $c->executeStatement('DELETE FROM order_meta WHERE session_id = ? AND ps_order_id IS NULL', [self::SESSION_ID]);
         $c->executeStatement('DELETE FROM ticket_sequence WHERE letter = ?', [self::LETTER]);
         $c->executeStatement('DELETE FROM exchange WHERE ps_order_id >= 930000 AND ps_order_id < 940000');

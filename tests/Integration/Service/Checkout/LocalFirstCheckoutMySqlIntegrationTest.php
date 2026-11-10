@@ -24,6 +24,7 @@ use VenPosTPV\Service\Sale\TicketNumberer;
 use VenPosTPV\Service\Sync\Outbox;
 use VenPosTPV\Service\Sync\OutboxSyncTrigger;
 use VenPosTPV\Service\Transfer\TransferPayments;
+use VenPosTPV\Tests\Support\JsonKeys;
 use VenPosTPV\Tests\Support\TestDatabase;
 
 /**
@@ -196,7 +197,7 @@ final class LocalFirstCheckoutMySqlIntegrationTest extends TestCase
         $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $outbox[0]['request_id']);
         $payload = json_decode((string) $outbox[0]['payload'], true);
         $this->assertSame($this->code(1), $payload['reference'], 'the ticket code is the PrestaShop reference');
-        $this->assertSame([['id_product' => self::PRODUCT, 'id_product_attribute' => 0, 'quantity' => 2, 'price' => self::PRICE]], $payload['products']);
+        $this->assertSame(JsonKeys::sorted([['id_product' => self::PRODUCT, 'id_product_attribute' => 0, 'quantity' => 2, 'price' => self::PRICE]]), JsonKeys::sorted($payload['products']));
         $this->assertSame('cash', $payload['payment_method']);
 
         $this->assertEquals([new PrintTicketMessage(TicketDataResolver::saleKey($orderId), self::TERMINAL_ID)], $this->dispatched);

@@ -12,6 +12,7 @@ use VenPosTPV\Service\Refund\Exception\RefundException;
 use VenPosTPV\Service\Refund\PsRefundClient;
 use VenPosTPV\Service\Sync\Outbox;
 use VenPosTPV\Service\Sync\OutboxSync;
+use VenPosTPV\Tests\Support\JsonKeys;
 use VenPosTPV\Tests\Support\TestDatabase;
 
 /**
@@ -266,7 +267,7 @@ final class OutboxSyncMySqlIntegrationTest extends TestCase
         $this->assertSame('done', $this->outbox($id, 2)['status']);
         $this->assertCount(1, $this->refunds);
         // PRD S2/D2: the sale's PrestaShop id is known only now, and is what the slip uses.
-        $this->assertSame(['ps_order_id' => 7107] + $refundPayload, $this->refunds[0]);
+        $this->assertSame(JsonKeys::sorted(['ps_order_id' => 7107] + $refundPayload), JsonKeys::sorted($this->refunds[0]));
     }
 
     /**

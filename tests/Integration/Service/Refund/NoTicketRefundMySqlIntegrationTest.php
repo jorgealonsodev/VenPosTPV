@@ -19,6 +19,7 @@ use VenPosTPV\Service\Refund\PsRefundClient;
 use VenPosTPV\Service\Refund\PsRestockClient;
 use VenPosTPV\Service\Refund\RefundService;
 use VenPosTPV\Service\Sync\OutboxSync;
+use VenPosTPV\Tests\Support\JsonKeys;
 use VenPosTPV\Tests\Support\TestDatabase;
 
 /**
@@ -222,10 +223,10 @@ final class NoTicketRefundMySqlIntegrationTest extends TestCase
         $this->assertSame(1, $this->upload()['uploaded']);
         $this->assertCount(1, $this->restockPayloads);
         $this->assertSame($this->refundRow()['request_id'], $this->restockPayloads[0]['request_id']);
-        $this->assertSame([
+        $this->assertSame(JsonKeys::sorted([
             ['id_product' => self::SHIRT, 'id_product_attribute' => self::SHIRT_M, 'quantity' => 1],
             ['id_product' => self::SOCKS, 'id_product_attribute' => 0, 'quantity' => 2],
-        ], $this->restockPayloads[0]['lines']);
+        ]), JsonKeys::sorted($this->restockPayloads[0]['lines']));
         $this->assertSame(6, $this->stock(self::SHIRT, self::SHIRT_M));
         $this->assertSame(11, $this->stock(self::SOCKS, 0));
 
