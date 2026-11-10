@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { hasCacheVersionSince } = require('./support/cacheVersion.cjs');
 
 // «Crear cupón» → after «Código creado» the cashier prints the coupon on the till's
 // ticket printer, opens its PDF or emails it.
@@ -129,7 +130,7 @@ function testTheApiClientAndThePageVersion() {
     assert.match(apiSource, /couponEmail: \(couponId, email\) => request\([^\n]*'\/email', \{ method: 'POST', body: JSON\.stringify\(\{ email \}\), queueOnNetworkFailure: false/);
     const page = fs.readFileSync(path.resolve(__dirname, '../../templates/pos.html.twig'), 'utf8');
     assert.match(page, /CouponCreationModal\.js\?v=20261109-/);
-    assert.match(page, /js\/api\.js\?v=20261109-/);
+    assert.ok(hasCacheVersionSince(page, 'api.js', '20261109'), 'api.js');
 }
 
 async function main() {

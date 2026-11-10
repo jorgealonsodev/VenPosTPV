@@ -99,6 +99,8 @@ const ApiClient = (function () {
         catalogSaveOverride: (productId, attributeId, values) => request('/api/catalog/edit/' + encodeURIComponent(productId) + '/' + encodeURIComponent(attributeId) + '/override', { method: 'PUT', body: JSON.stringify(values), queueOnNetworkFailure: false }),
         catalogResetOverride: (productId, attributeId) => request('/api/catalog/edit/' + encodeURIComponent(productId) + '/' + encodeURIComponent(attributeId) + '/override', { method: 'DELETE', queueOnNetworkFailure: false }),
         catalogSetStock: (productId, attributeId, quantity) => request('/api/catalog/edit/' + encodeURIComponent(productId) + '/' + encodeURIComponent(attributeId) + '/stock', { method: 'PUT', body: JSON.stringify({ quantity }), queueOnNetworkFailure: false }),
+        // «Cupones»: the till's coupons, newest first ({data, has_more, status_checked}).
+        listCoupons: (q, page) => request('/api/coupons?q=' + encodeURIComponent(q || '') + '&page=' + encodeURIComponent(page || 1), { method: 'GET', queueOnNetworkFailure: false }),
         createCoupon: (payload) => request('/api/coupons', { method: 'POST', body: JSON.stringify(payload), queueOnNetworkFailure: false }),
         // The slip of a created coupon (its local id): printing and email are never
         // queued offline, a replay would print or send it again; the PDF opens like the ticket PDFs.

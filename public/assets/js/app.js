@@ -67,6 +67,7 @@ app.component('payment-modal', PaymentModal);
 app.component('discount-modal', DiscountModal);
 app.component('customer-modal', CustomerModal);
 app.component('coupon-creation-modal', CouponCreationModal);
+app.component('coupon-list-modal', CouponListModal);
 app.component('cash-close-screen', CashCloseScreen);
 app.component('refund-screen', RefundScreen);
 app.component('incidents-screen', IncidentsScreen);

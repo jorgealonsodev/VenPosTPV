@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { hasCacheVersionSince } = require('./support/cacheVersion.cjs');
 const test = require('node:test');
 
 // «WhatsApp» next to «Enviar por email»: the cashier types a number or picks a
@@ -154,7 +155,7 @@ test('ApiClient asks the link of each document without queueing it offline', () 
 
 test('the POS page loads the phone helper and the panel before the screens that use them', () => {
     const page = fs.readFileSync(path.resolve(__dirname, '../../templates/pos.html.twig'), 'utf8');
-    const at = (file) => page.indexOf('/assets/js/' + file + '?v=20261109-');
+    const at = (file) => (hasCacheVersionSince(page, file, '20261109') ? page.indexOf('/assets/js/' + file + '?v=') : -1);
     for (const file of ['lib/phone.js', 'components/WhatsAppShare.js', 'components/OrderDetailView.js', 'components/CouponCreationModal.js', 'components/PaymentModal.js', 'api.js']) {
         assert.ok(at(file) > 0, file);
     }

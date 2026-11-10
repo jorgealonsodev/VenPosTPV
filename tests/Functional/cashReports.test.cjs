@@ -9,6 +9,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { hasCacheVersionSince } = require('./support/cacheVersion.cjs');
 
 const read = (file) => fs.readFileSync(path.resolve(__dirname, '../../public/assets/js', file), 'utf8');
 
@@ -223,6 +224,6 @@ test('the changed scripts have a new cache version', () => {
     const twig = fs.readFileSync(path.resolve(__dirname, '../../templates/pos.html.twig'), 'utf8');
     for (const file of ['api.js', 'stores/useSession.js', 'components/CashCloseScreen.js', 'components/SettingsModal.js', 'app.js']) {
         // A later change may bump the version again (api.js: 20261109-free-item-v1).
-        assert.match(twig, new RegExp(`/assets/js/${file.replace('.', '\\.')}\\?v=2026110[5-9]-`), file);
+        assert.ok(hasCacheVersionSince(twig, file, '20261105'), file);
     }
 });

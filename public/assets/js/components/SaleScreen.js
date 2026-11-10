@@ -39,6 +39,8 @@ const SaleScreen = {
         }
         const showCustomer = Vue.ref(false);
         const showCouponCreation = Vue.ref(false);
+        // «Cupones»: the coupons created from the till and their state.
+        const showCouponList = Vue.ref(false);
         const showCashClose = Vue.ref(false);
         const showRefund = Vue.ref(false);
         const showSettings = Vue.ref(false);
@@ -325,7 +327,7 @@ const SaleScreen = {
         return {
             brandBase: (window.TPV_BASE || '') + '/assets/img/brand',
             session, cart, catalog,
-            showPayment, showDiscount, showCustomer, showCouponCreation, showCashClose, showRefund, showSettings,
+            showPayment, showDiscount, showCustomer, showCouponCreation, showCouponList, showCashClose, showRefund, showSettings,
             showLogoutConfirm, showSyncPanel, showTickets, showParkModal, parkNote, showVoidConfirm,
             showIncidents, openIncidents, refreshOutbox, stockByKey, stockNotice, showLabels, showReports,
             parkedCount,
@@ -406,6 +408,11 @@ const SaleScreen = {
                         title="Crear cupón"
                         style="min-height:44px; display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;">
                         <icon name="coupon" :size="13" /> Crear cupón
+                    </button>
+                    <button v-if="session.role === 'admin' || session.role === 'cashier'" @click="showCouponList = true"
+                        title="Ver los cupones creados y su estado"
+                        style="min-height:44px; display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;">
+                        <icon name="coupon" :size="13" /> Cupones
                     </button>
                     <button v-if="session.role === 'admin'" @click="showReports = true"
                         title="Informes de ventas"
@@ -565,6 +572,9 @@ const SaleScreen = {
 
             <!-- Coupon Creation Modal -->
             <coupon-creation-modal v-if="showCouponCreation" @close="showCouponCreation = false" />
+
+            <!-- Coupon list («Cupones») -->
+            <coupon-list-modal v-if="showCouponList" @close="showCouponList = false" />
 
             <!-- Toast -->
             <div v-if="notification" class="toast" :style="{ border: '1px solid ' + notification.color, color: notification.color }">

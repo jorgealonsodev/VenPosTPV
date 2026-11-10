@@ -46,3 +46,20 @@ An amount (€) coupon created with **Crear cupón** is always single use (quant
 Order metadata records gross, native coupon reduction, payable, and cash/card tender separately. Bearer code and quote are not stored in local metadata or orphan logs. Drawer movement is only net collected cash, never the coupon's face value or change.
 
 TPV Connect serializes module coupon redemption and native PrestaShop revalidates the rule at creation. This does not prove cross-channel atomicity with unrelated web checkout; native PrestaShop remains the authority for consumption.
+
+## «Cupones»: the till's coupons and their state
+
+The sale screen header has **Cupones** next to **Crear cupón** (administrators and cashiers). It lists the coupons created from the till (`issued_coupon`: «Crear cupón» and the leftover vouchers), newest first, 25 per page with **Ver más**, and searches by part of the code. Each coupon shows its code (**Copiar**), value (`20,00 €` / `10 %`), expiry date, when, by whom (the employee's full name, else the user name) and on which till it was created, and its state with **Imprimir** and **PDF** for its slip.
+
+`GET /api/coupons?q=&page=` (`CouponController::list`, `CouponListService`) answers `{data: [{id, ps_cart_rule_id, code, type, value, expires_at, created_at, cashier, terminal, status, uses_left}], has_more, status_checked}`. The state comes from PrestaShop in one webservice request per page (`CouponStatusLookup`: `GET /api/cart_rules?display=[id,quantity,active,date_to]&filter[id]=[…]`):
+
+| `status` | Shown as | When |
+|---|---|---|
+| `available` | Disponible (with «N usos» when more than one is left) | active, uses left, not past its end date |
+| `used` | Usado | no uses left |
+| `expired` | Caducado | past its end date (shop timezone, `PS_SHOP_TIMEZONE`) |
+| `disabled` | Desactivado | deactivated in PrestaShop |
+| `deleted` | Borrado en la tienda | PrestaShop no longer has the cart rule |
+| `unknown` | Sin comprobar | the shop did not answer (`status_checked` false: the list warns that the state may be out of date; a past local expiry still shows Caducado) |
+
+The list never fails because of the shop: without it the coupons still show from the till's copy.
