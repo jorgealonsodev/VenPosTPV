@@ -1,4 +1,4 @@
-//! What the Linux tray and window show and send, without any GUI: texts,
+//! What the tray and the window show and send, without any GUI: texts,
 //! error mapping, printer choices and the requests built from them. The
 //! ksni and egui layers only render this and forward clicks.
 use crate::model::{self, PairOutcome};
@@ -9,11 +9,19 @@ use agent_core::state::{AgentStatus, Light};
 use std::io;
 use std::path::PathBuf;
 
+#[cfg(not(windows))]
 pub const MSG_SERVICE_STOPPED: &str =
     "El servicio VenPos Agent no está en marcha. Arráncalo con: sudo systemctl start venpos-agent";
+#[cfg(windows)]
+pub const MSG_SERVICE_STOPPED: &str =
+    "El servicio VenPos Agent no está en marcha. Pulsa «Iniciar / reiniciar servicio».";
+#[cfg(not(windows))]
 pub const MSG_NO_PERMISSION: &str = "No tienes permiso para hablar con el servicio VenPos Agent. \
      Añade tu usuario al grupo venpos-agent con: sudo usermod -aG venpos-agent $USER \
      y vuelve a iniciar sesión.";
+#[cfg(windows)]
+pub const MSG_NO_PERMISSION: &str = "No tienes permiso para hablar con el servicio VenPos Agent. \
+     Vuelve a instalar VenPos Agent con su instalador.";
 pub const MSG_NOT_PAIRED: &str = "El agente todavía no está emparejado con el TPV.";
 
 /// Text for a failure to reach the service over the local socket.
@@ -270,8 +278,13 @@ pub fn log_open_problem(path: &str, readable: io::Result<()>) -> Option<String> 
         Ok(()) => None,
         Err(e) if e.kind() == io::ErrorKind::NotFound => Some(format!("Todavía no hay registro en {path}")),
         Err(e) if e.kind() == io::ErrorKind::PermissionDenied => Some(format!(
-            "No tienes permiso para leer {path}. Añade tu usuario al grupo venpos-agent con: \
-             sudo usermod -aG venpos-agent $USER (y vuelve a iniciar sesión)."
+            "No tienes permiso para leer {path}.{}",
+            if cfg!(windows) {
+                ""
+            } else {
+                " Añade tu usuario al grupo venpos-agent con: \
+                 sudo usermod -aG venpos-agent $USER (y vuelve a iniciar sesión)."
+            }
         )),
         Err(e) => Some(format!("No se pudo leer {path}: {e}")),
     }
@@ -356,7 +369,7 @@ pub fn tray_menu(snapshot: &Snapshot, installed: &[InstalledPrinter]) -> Vec<Tra
     menu
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
     use agent_core::printer::{PrinterState, QueueStatus};

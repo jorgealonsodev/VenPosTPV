@@ -128,8 +128,89 @@ pub fn pair_outcome(result: std::io::Result<Response>) -> PairOutcome {
     }
 }
 
+/// Title of the "VenPos Agent" window; a second launch looks for it to raise it.
+pub const WINDOW_TITLE: &str = "VenPos Agent";
+
+/// The window's service buttons.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(windows), allow(dead_code))]
+pub enum ServiceAction {
+    Restart,
+    Stop,
+}
+
+/// PowerShell arguments that restart (which also starts a stopped service) or
+/// stop the Windows service and wait for it; a failure ends with a non-zero exit.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn windows_service_command(action: ServiceAction) -> String {
+    let verb = match action {
+        ServiceAction::Restart => "Restart",
+        ServiceAction::Stop => "Stop",
+    };
+    format!(
+        "-NoProfile -NonInteractive -WindowStyle Hidden -Command \"{verb}-Service -Name {WINDOWS_SERVICE} -Force -ErrorAction Stop\""
+    )
+}
+
+/// Name of the Windows service (venpos-agent's windows_svc::SERVICE_NAME).
+pub const WINDOWS_SERVICE: &str = "VenPosAgent";
+
+/// A top-level window, as a second launch of the window sees it.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub struct WindowInfo {
+    pub title: String,
+    pub class: String,
+    /// Its process runs this same executable.
+    pub same_exe: bool,
+    /// It belongs to another process than the one looking.
+    pub other_process: bool,
+}
+
+/// The "VenPos Agent" window of another launch (not a tray message box, whose
+/// class is the dialog class #32770 and whose title is the same).
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn is_agent_window(w: &WindowInfo) -> bool {
+    w.title == WINDOW_TITLE && w.class != "#32770" && w.same_exe && w.other_process
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn windows_service_commands_wait_and_fail_loudly() {
+        assert_eq!(
+            windows_service_command(ServiceAction::Restart),
+            "-NoProfile -NonInteractive -WindowStyle Hidden -Command \"Restart-Service -Name VenPosAgent -Force -ErrorAction Stop\""
+        );
+        assert_eq!(
+            windows_service_command(ServiceAction::Stop),
+            "-NoProfile -NonInteractive -WindowStyle Hidden -Command \"Stop-Service -Name VenPosAgent -Force -ErrorAction Stop\""
+        );
+    }
+
+    #[test]
+    fn only_another_open_agent_window_is_raised() {
+        let w = |title: &str, class: &str, same_exe: bool, other: bool| WindowInfo {
+            title: title.into(),
+            class: class.into(),
+            same_exe,
+            other_process: other,
+        };
+        assert!(is_agent_window(&w(WINDOW_TITLE, "Window Class", true, true)));
+        assert!(
+            !is_agent_window(&w(WINDOW_TITLE, "#32770", true, true)),
+            "a tray message box"
+        );
+        assert!(
+            !is_agent_window(&w(WINDOW_TITLE, "Window Class", false, true)),
+            "another program"
+        );
+        assert!(
+            !is_agent_window(&w(WINDOW_TITLE, "Window Class", true, false)),
+            "this process"
+        );
+        assert!(!is_agent_window(&w("Otra", "Window Class", true, true)));
+    }
     #[test]
     fn spaces_typed_in_the_tpv_address_are_ignored() {
         assert_eq!(

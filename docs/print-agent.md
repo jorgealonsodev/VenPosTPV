@@ -8,6 +8,7 @@ El agente tiene dos partes:
 
 - **El servicio «VenPos Agent»**: trabaja solo, sin ventana, desde que se enciende el ordenador. Es el que imprime.
 - **El icono de la bandeja** (junto al reloj): enseña cómo va y sirve para emparejar la caja más tarde. Verde: conectado. Ámbar: sin conexión con el TPV. Rojo: la impresora tiene un problema. Si cierras el icono, el servicio sigue imprimiendo.
+- **La ventana «VenPos Agent»**: se abre desde el menú Inicio (**VenPos Agent**), con doble clic en el icono o con botón derecho en el icono → **Abrir VenPos Agent**. Tiene el estado, la impresora de tickets y la de etiquetas con **Guardar** e **Imprimir prueba**, **Emparejar con el TPV** (dirección y código de 6 cifras), **Abrir ajustes del TPV** (abre el TPV en el navegador), **Ver registro**, **Iniciar / reiniciar servicio** y **Detener servicio** (estos dos piden permiso de administrador). Si ya está abierta, la trae delante.
 
 El agente nunca abre el cajón por su cuenta: solo cuando el TPV lo pide al cobrar.
 

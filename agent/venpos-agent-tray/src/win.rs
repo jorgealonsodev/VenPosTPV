@@ -1,6 +1,7 @@
 //! Windows tray loop: Win32 message pump on the main thread, service status
 //! polled over the named pipe from a helper thread.
 use crate::model;
+use crate::win_desktop::{self, message};
 use agent_core::config::{Config, Destination, Target};
 use agent_core::ipc::{self, Request};
 use agent_core::paths::Paths;
@@ -9,16 +10,13 @@ use agent_core::state::{AgentStatus, Light};
 use std::collections::HashMap;
 use std::sync::mpsc;
 use std::time::Duration;
+use tray_icon::TrayIconEvent;
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
-use windows::Win32::UI::Shell::ShellExecuteW;
-use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, MB_ICONINFORMATION, MB_ICONWARNING, MB_OK, MESSAGEBOX_STYLE, MSG, MessageBoxW, PM_REMOVE,
-    PeekMessageW, SW_SHOWNORMAL, TranslateMessage,
-};
-use windows::core::HSTRING;
+use windows::Win32::UI::WindowsAndMessaging::{DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, TranslateMessage};
 
 enum Action {
+    OpenWindow,
     TestPrint,
     Pair,
     Choose(Target, Destination),
@@ -34,7 +32,7 @@ struct Ui {
     actions: HashMap<MenuId, Action>,
 }
 
-fn config_dir_arg() -> Option<std::path::PathBuf> {
+pub fn config_dir_arg() -> Option<std::path::PathBuf> {
     let mut args = std::env::args_os().skip(1);
     while let Some(a) = args.next() {
         if a == "--config-dir" {
@@ -44,24 +42,8 @@ fn config_dir_arg() -> Option<std::path::PathBuf> {
     None
 }
 
-fn message(text: &str, warn: bool) {
-    let style: MESSAGEBOX_STYLE = MB_OK | if warn { MB_ICONWARNING } else { MB_ICONINFORMATION };
-    // SAFETY: HSTRINGs are NUL-terminated and live for the call; no owner window.
-    unsafe { MessageBoxW(None, &HSTRING::from(text), &HSTRING::from("VenPos Agent"), style) };
-}
-
 fn shell_open(target: &str) {
-    // SAFETY: HSTRINGs live for the call; `target` is a validated https URL or the log path.
-    unsafe {
-        ShellExecuteW(
-            None,
-            &HSTRING::from("open"),
-            &HSTRING::from(target),
-            None,
-            None,
-            SW_SHOWNORMAL,
-        )
-    };
+    win_desktop::open(target);
 }
 
 fn icon(light: Light) -> Option<Icon> {
@@ -76,6 +58,10 @@ fn icon(light: Light) -> Option<Icon> {
 fn build_menu(paths: &Paths, status: Option<&AgentStatus>) -> Ui {
     let menu = Menu::new();
     let mut actions = HashMap::new();
+    let open = MenuItem::new("Abrir VenPos Agent", true, None);
+    actions.insert(open.id().clone(), Action::OpenWindow);
+    let _ = menu.append(&open);
+    let _ = menu.append(&PredefinedMenuItem::separator());
     let status_item = MenuItem::new(model::status_line(status), false, None);
     let _ = menu.append(&status_item);
     let _ = menu.append(&PredefinedMenuItem::separator());
@@ -125,6 +111,7 @@ fn build_menu(paths: &Paths, status: Option<&AgentStatus>) -> Ui {
 
 fn handle(paths: &Paths, action: &Action, refresh: &mpsc::Sender<()>) -> bool {
     match action {
+        Action::OpenWindow => open_window(),
         Action::Pair => {
             let cfg = Config::load(&paths.config_file).unwrap_or_default();
             let prefill = model::pair_server_prefill(cfg.server_url.as_deref());
@@ -181,8 +168,14 @@ fn handle(paths: &Paths, action: &Action, refresh: &mpsc::Sender<()>) -> bool {
     true
 }
 
-pub fn run() {
-    let paths = Paths::resolve(config_dir_arg().as_deref());
+/// The "VenPos Agent" window (this program with `--panel`).
+fn open_window() {
+    if !win_desktop::spawn_window(config_dir_arg().as_deref()) {
+        message("No se pudo abrir la ventana de VenPos Agent.", true);
+    }
+}
+
+pub fn run(paths: Paths) {
     let (tx, rx) = mpsc::channel::<Option<AgentStatus>>();
     // Wakes the poller early (after pairing) instead of waiting 5 s.
     let (refresh, wake) = mpsc::channel::<()>();
@@ -223,6 +216,12 @@ pub fn run() {
             unsafe {
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
+            }
+        }
+        // A double click on the icon opens the window too.
+        while let Ok(ev) = TrayIconEvent::receiver().try_recv() {
+            if matches!(ev, TrayIconEvent::DoubleClick { .. }) {
+                open_window();
             }
         }
         while let Ok(ev) = MenuEvent::receiver().try_recv() {
