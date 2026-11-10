@@ -152,6 +152,52 @@ pub fn windows_service_command(action: ServiceAction) -> String {
     )
 }
 
+/// How long a service button waits for PowerShell (UAC prompt included).
+#[cfg_attr(not(windows), allow(dead_code))]
+pub const SERVICE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// What became of the elevated PowerShell a service button started.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(windows), allow(dead_code))]
+pub enum Elevated {
+    /// Windows gave no process to wait for: the outcome is unknown.
+    NoProcess,
+    /// Still running after SERVICE_TIMEOUT.
+    TimedOut,
+    Exited(u32),
+}
+
+/// The button's notice: success only when PowerShell exited with 0.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn service_result(action: ServiceAction, outcome: Elevated) -> Result<(), String> {
+    let (done, doing) = match action {
+        ServiceAction::Restart => ("reinició", "reiniciarse"),
+        ServiceAction::Stop => ("detuvo", "detenerse"),
+    };
+    match outcome {
+        Elevated::Exited(0) => Ok(()),
+        Elevated::Exited(code) => Err(format!(
+            "No se {done} el servicio {WINDOWS_SERVICE} (código {code}). Mira el registro."
+        )),
+        Elevated::NoProcess => Err(format!(
+            "No se pudo comprobar si se {done} el servicio: mira su estado arriba en unos segundos."
+        )),
+        Elevated::TimedOut => Err(format!(
+            "El servicio tarda demasiado en {doing}: mira su estado arriba en unos segundos."
+        )),
+    }
+}
+
+/// A double click and a menu click close together open one window, not two
+/// (the second launch would not see the first window yet).
+#[cfg_attr(not(windows), allow(dead_code))]
+pub const OPEN_DEBOUNCE: std::time::Duration = std::time::Duration::from_secs(3);
+
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn should_open_window(last: Option<std::time::Instant>, now: std::time::Instant) -> bool {
+    last.is_none_or(|t| now.saturating_duration_since(t) >= OPEN_DEBOUNCE)
+}
+
 /// Name of the Windows service (venpos-agent's windows_svc::SERVICE_NAME).
 pub const WINDOWS_SERVICE: &str = "VenPosAgent";
 
@@ -175,6 +221,34 @@ pub fn is_agent_window(w: &WindowInfo) -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_service_button_only_reports_success_when_powershell_exited_with_zero() {
+        assert_eq!(service_result(ServiceAction::Restart, Elevated::Exited(0)), Ok(()));
+        assert_eq!(
+            service_result(ServiceAction::Stop, Elevated::Exited(1)),
+            Err("No se detuvo el servicio VenPosAgent (código 1). Mira el registro.".into())
+        );
+        assert_eq!(
+            service_result(ServiceAction::Restart, Elevated::NoProcess),
+            Err("No se pudo comprobar si se reinició el servicio: mira su estado arriba en unos segundos.".into())
+        );
+        assert_eq!(
+            service_result(ServiceAction::Stop, Elevated::TimedOut),
+            Err("El servicio tarda demasiado en detenerse: mira su estado arriba en unos segundos.".into())
+        );
+    }
+
+    #[test]
+    fn a_second_open_within_the_debounce_is_ignored() {
+        let t0 = std::time::Instant::now();
+        assert!(should_open_window(None, t0));
+        assert!(!should_open_window(
+            Some(t0),
+            t0 + std::time::Duration::from_millis(500)
+        ));
+        assert!(should_open_window(Some(t0), t0 + OPEN_DEBOUNCE));
+    }
 
     #[test]
     fn windows_service_commands_wait_and_fail_loudly() {
