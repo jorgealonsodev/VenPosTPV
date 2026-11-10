@@ -64,6 +64,7 @@ final class PairingClientTest extends TestCase
             'PS_DEFAULT_SHOP' => '1',
             'PS_DEFAULT_CURRENCY' => '2',
             'PS_SHOP_TIMEZONE' => 'Europe/Madrid',
+            'TPV_COUPON_CHECKOUT_ENABLED' => '1',
         ], $result->envValues());
         self::assertSame('0.8.0', $result->moduleVersion);
     }

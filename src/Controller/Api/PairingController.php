@@ -64,7 +64,7 @@ final class PairingController
 
         try {
             $result = $this->client->pair($shopUrl, $code, $tpvUrl);
-            $backup = $this->envUpdater->update($result->envValues(), ($this->environment ?? self::environment(...))(), $this->appEnv);
+            $backup = $this->envUpdater->update($result->envValues(), ($this->environment ?? EnvFileUpdater::processEnvironment(...))(), $this->appEnv);
         } catch (PairingException $e) {
             return self::json(['error' => $e->getMessage()], Response::HTTP_UNPROCESSABLE_ENTITY);
         } catch (InstallException $e) {
@@ -77,25 +77,6 @@ final class PairingController
             'module_version' => $result->moduleVersion,
             'backup' => $backup,
         ]], Response::HTTP_OK);
-    }
-
-    /**
-     * Variables a server sets (Apache SetEnv, PHP-FPM env[], the shell) win over
-     * .env; SYMFONY_DOTENV_VARS names the ones Dotenv loaded from the files.
-     *
-     * @return array<string, string>
-     */
-    private static function environment(): array
-    {
-        $env = [];
-        foreach ($_SERVER + getenv() as $name => $value) {
-            if (\is_string($name) && \is_scalar($value)) {
-                $env[$name] = (string) $value;
-            }
-        }
-        $env['SYMFONY_DOTENV_VARS'] = (string) ($_SERVER['SYMFONY_DOTENV_VARS'] ?? $_ENV['SYMFONY_DOTENV_VARS'] ?? '');
-
-        return $env;
     }
 
     private static function denied(): JsonResponse

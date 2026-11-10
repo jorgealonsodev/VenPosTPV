@@ -32,6 +32,26 @@ final class EnvFileUpdater
     }
 
     /**
+     * The process environment as update() expects it. Variables a server sets
+     * (Apache SetEnv, PHP-FPM env[], the shell) win over .env; SYMFONY_DOTENV_VARS
+     * names the ones Dotenv loaded from the files.
+     *
+     * @return array<string, string>
+     */
+    public static function processEnvironment(): array
+    {
+        $env = [];
+        foreach ($_SERVER + getenv() as $name => $value) {
+            if (\is_string($name) && \is_scalar($value)) {
+                $env[$name] = (string) $value;
+            }
+        }
+        $env['SYMFONY_DOTENV_VARS'] = (string) ($_SERVER['SYMFONY_DOTENV_VARS'] ?? $_ENV['SYMFONY_DOTENV_VARS'] ?? '');
+
+        return $env;
+    }
+
+    /**
      * @param array<string, string> $values      the keys to set
      * @param array<string, string> $environment the process environment (getenv()) plus
      *                                           SYMFONY_DOTENV_VARS, the names Dotenv loaded
