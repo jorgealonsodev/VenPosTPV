@@ -4,35 +4,20 @@ declare(strict_types=1);
 
 namespace VenPosTPV\Tests\Integration\Migrations;
 
-use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Platforms\MySQLPlatform;
 use Doctrine\DBAL\Schema\Schema;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\NullLogger;
 require_once __DIR__ . '/../../../migrations/Version00000010CreateSyncLogTable.php';
 use VenPosTPV\Migrations\Version00000010CreateSyncLogTable;
+use VenPosTPV\Tests\Support\TestDatabase;
 
 class Version00000010CreateSyncLogTableTest extends TestCase
 {
     private function getConnection(): ?\Doctrine\DBAL\Connection
     {
-        $config = [
-            'driver' => 'pdo_mysql',
-            'host' => getenv('TPV_DB_HOST') ?: '127.0.0.1',
-            'port' => (int) (getenv('TPV_DB_PORT') ?: 3306),
-            'dbname' => getenv('TPV_DB_NAME') ?: 'tpv',
-            'user' => getenv('TPV_DB_USER') ?: 'tpv_user',
-            'password' => getenv('TPV_DB_PASSWORD') ?: '',
-            'charset' => 'utf8mb4',
-        ];
-
-        try {
-            $conn = DriverManager::getConnection($config);
-            $conn->executeQuery('SELECT 1');
-            return $conn;
-        } catch (\Throwable) {
-            return null;
-        }
+        // An empty throwaway database: this test creates and drops whole tables.
+        return TestDatabase::scratchConnection();
     }
 
     private function dropSyncLogTable(\Doctrine\DBAL\Connection $conn): void

@@ -356,7 +356,9 @@ final class ExchangeCreditRefundMySqlIntegrationTest extends TestCase
         $this->assertNull($this->refundRow()['voucher_amount']);
         $this->assertEquals([['type' => 'refund', 'amount' => '55.00']], $this->movements());
         $this->upload();
-        $this->assertSame(['ps_order_id', 'request_id', 'refund_type', 'reason', 'lines'], array_keys($this->refundPayloads[0]));
+        // Exactly these keys, no voucher ones; the outbox JSON column does not keep their order.
+        $this->assertEqualsCanonicalizing(['ps_order_id', 'request_id', 'refund_type', 'reason', 'lines'], array_keys($this->refundPayloads[0]));
+        $this->assertCount(5, $this->refundPayloads[0]);
     }
 
     public function testVoucherShareWithPrestaShopUnreachableFailsCleanlyAndCanBePaidInCashInstead(): void

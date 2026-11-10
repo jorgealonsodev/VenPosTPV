@@ -204,14 +204,25 @@ class OrderSearchService
     }
 
     /**
+     * A sale by its ticket code (order_meta.reference), then by the reference kept
+     * only in payment_breakdown (older rows), then by its PrestaShop reference.
+     * MySQL renders a JSON column as `"reference": "X"` (with a space), so the LIKE
+     * alone never found a sale there; it only matched on MariaDB's text JSON.
+     *
      * @return array<string, mixed>|null
      */
     public function getOrderByReference(string $reference): ?array
     {
         $row = $this->connection->fetchAssociative(
-            'SELECT ' . self::SALE_COLUMNS . ' FROM order_meta WHERE payment_breakdown LIKE ?',
-            ['%"reference":"' . $reference . '"%']
+            'SELECT ' . self::SALE_COLUMNS . ' FROM order_meta WHERE reference = ? ORDER BY id LIMIT 1',
+            [$reference]
         );
+        if ($row === false) {
+            $row = $this->connection->fetchAssociative(
+                'SELECT ' . self::SALE_COLUMNS . ' FROM order_meta WHERE payment_breakdown LIKE ?',
+                ['%"reference":"' . $reference . '"%']
+            );
+        }
         if ($row === false) {
             $row = $this->connection->fetchAssociative('SELECT ' . self::SALE_COLUMNS . ' FROM order_meta WHERE ps_reference = ?', [$reference]);
         }

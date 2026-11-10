@@ -24,6 +24,7 @@ use VenPosTPV\Service\Sale\TicketNumberer;
 use VenPosTPV\Service\Sync\Outbox;
 use VenPosTPV\Service\Sync\OutboxSync;
 use VenPosTPV\Service\Sync\OutboxSyncTrigger;
+use VenPosTPV\Tests\Support\JsonKeys;
 use VenPosTPV\Tests\Support\TestDatabase;
 
 /**
@@ -238,7 +239,7 @@ final class LocalCustomersMySqlIntegrationTest extends TestCase
         $this->assertSame(['Marta', 'Ruiz', $this->email('marta'), '611 222 333'], [$row['firstname'], $row['lastname'], $row['email'], $row['phone']]);
         $outbox = $this->connection->fetchAssociative('SELECT * FROM outbox WHERE id = ?', [(int) $row['outbox_id']]);
         $this->assertSame(['customer', null, 'pending'], [$outbox['type'], $outbox['order_id'], $outbox['status']]);
-        $this->assertSame(['firstname' => 'Marta', 'lastname' => 'Ruiz', 'email' => $this->email('marta'), '_local' => ['customer_id' => $created['local_id']]], json_decode((string) $outbox['payload'], true));
+        $this->assertSame(JsonKeys::sorted(['firstname' => 'Marta', 'lastname' => 'Ruiz', 'email' => $this->email('marta'), '_local' => ['customer_id' => $created['local_id']]]), JsonKeys::sorted(json_decode((string) $outbox['payload'], true)));
 
         $again = $directory->create(['firstname' => 'Marta', 'lastname' => 'Otra', 'email' => $this->email('marta')]);
         $this->assertTrue($again['existing']);

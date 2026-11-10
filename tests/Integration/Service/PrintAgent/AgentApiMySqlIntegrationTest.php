@@ -25,6 +25,7 @@ use VenPosTPV\Service\PrintAgent\DrawerAudit;
 use VenPosTPV\Service\PrintAgent\LongPollLink;
 use VenPosTPV\Service\PrintAgent\PrintJobQueue;
 use VenPosTPV\Service\PrintAgent\RateLimiter;
+use VenPosTPV\Tests\Support\JsonKeys;
 use VenPosTPV\Tests\Support\TestDatabase;
 
 /**
@@ -518,7 +519,7 @@ final class AgentApiMySqlIntegrationTest extends TestCase
         $this->assertSame(204, $response->getStatusCode());
         $this->assertTrue($response->headers->hasCacheControlDirective('no-store'));
         $status = self::body($this->pos()->status($this->posRequest('GET', '/s', self::ADMIN, false), $this->tillA));
-        $this->assertSame([['target' => 'ticket', 'name' => 'EPSON TM-T20II', 'state' => 'ready', 'detail' => null], ['target' => 'label', 'name' => 'Zebra', 'state' => 'unknown', 'detail' => null]], $status['printers']);
+        $this->assertSame(JsonKeys::sorted([['target' => 'ticket', 'name' => 'EPSON TM-T20II', 'state' => 'ready', 'detail' => null], ['target' => 'label', 'name' => 'Zebra', 'state' => 'unknown', 'detail' => null]]), JsonKeys::sorted($status['printers']));
         foreach (AgentApiController::PRINTER_STATES as $state) {
             $this->api()->status($this->agentRequest('PUT', '/s', $key, ['printers' => [['target' => 'ticket', 'name' => 'P', 'state' => $state]]]));
             $this->assertSame($state, self::body($this->pos()->status($this->posRequest('GET', '/s', self::ADMIN, false), $this->tillA))['printers'][0]['state']);
