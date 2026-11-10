@@ -508,7 +508,7 @@ if (is_file(__DIR__ . '/../classes/RestockProcessor.php')) {
 if (is_file(__DIR__ . '/../classes/ReferencedOrderCreator.php')) {
     require_once __DIR__ . '/../classes/ReferencedOrderCreator.php';
 }
-foreach (['FreeItemOrderLines', 'FreeItemProductSetup', 'LeftoverVoucher', 'TpvPairing'] as $class) {
+foreach (['FreeItemOrderLines', 'FreeItemProductSetup', 'LeftoverVoucher', 'TpvPairing', 'PriceProcessor'] as $class) {
     if (is_file(__DIR__ . '/../classes/' . $class . '.php')) {
         require_once __DIR__ . '/../classes/' . $class . '.php';
     }
