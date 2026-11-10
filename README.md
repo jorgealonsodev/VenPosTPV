@@ -28,7 +28,7 @@ Descarga los tres paquetes de la [última release](https://github.com/jorgealons
 - **Cupones:** crear cupones de PrestaShop desde la caja e imprimirlos, descargarlos o enviarlos.
 - **Caja:** apertura, informe X, cierre con informe Z contando por monedas y billetes o por importe total.
 - **Informes de ventas:** por día, forma de pago, producto, categoría, IVA, hora y cajero, con exportación a CSV.
-- **Catálogo:** búsqueda y escaneo; modo edición para administradores (stock en la web, EAN y referencia solo en el TPV).
+- **Catálogo:** búsqueda y escaneo; modo edición para administradores (stock, precio con IVA de cada artículo o talla y tipo de IVA del artículo, guardados también en la web con el módulo 0.8.3; EAN y referencia solo en el TPV). Los productos que la web vende sin IVA salen marcados «SIN IVA».
 - **Etiquetas** con código de barras y un QR con el mismo código, en la impresora de tickets.
 - **Venta sin conexión:** las ventas se guardan en local y se envían cuando vuelve la red.
 - **Impresión en tienda:** un agente para Windows y Linux recoge tickets, aperturas de cajón y etiquetas, y los manda a las impresoras ESC/POS de cada caja.

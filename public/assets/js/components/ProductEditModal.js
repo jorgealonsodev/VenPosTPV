@@ -38,8 +38,20 @@ const ProductEditModal = (function () {
             if (!/^\d{1,6}$/.test(raw)) return { error: 'El stock debe ser un número entero igual o mayor que 0' };
             quantity = Number(raw);
         }
-        return { ean13: ean === '' ? null : ean, reference: reference === '' ? null : reference, quantity };
+        let price = null;
+        let vatRate = null;
+        if (input.priceEditable) {
+            const rawPrice = String(input.price == null ? '' : input.price).trim().replace(',', '.');
+            if (!/^\d{1,5}(\.\d{1,2})?$/.test(rawPrice)) return { error: 'El precio debe ser un importe con hasta 2 decimales, por ejemplo 270,00' };
+            price = Number(rawPrice);
+            vatRate = Number(input.vatRate);
+            if (!VAT_RATES.includes(vatRate)) return { error: 'Elige el IVA: 21, 10, 4 o 0 %' };
+        }
+        return { ean13: ean === '' ? null : ean, reference: reference === '' ? null : reference, quantity, price, vatRate };
     }
+
+    // The VAT rates PrestaShop can apply (CatalogEditService::VAT_RATES).
+    const VAT_RATES = [21, 10, 4, 0];
 
     function errorText(err, fallback) {
         return (err && err.body && err.body.error) || fallback;
@@ -54,7 +66,7 @@ const ProductEditModal = (function () {
         },
         emits: ['close', 'saved', 'notify'],
         data() {
-            return { item: null, loading: true, saving: false, error: '', quantity: '', ean13: '', reference: '' };
+            return { item: null, loading: true, saving: false, error: '', quantity: '', ean13: '', reference: '', price: '', vatRate: 21, vatRates: VAT_RATES };
         },
         computed: {
             base() {
@@ -73,6 +85,9 @@ const ProductEditModal = (function () {
                 this.quantity = String(item.stock.quantity);
                 this.ean13 = (item.local && item.local.ean13) || '';
                 this.reference = (item.local && item.local.reference) || '';
+                const price = item.price || {};
+                this.price = price.price == null ? '' : Number(price.price).toFixed(2).replace('.', ',');
+                this.vatRate = price.vat_rate == null ? 21 : Number(price.vat_rate);
             },
             async load() {
                 this.loading = true;
@@ -88,7 +103,8 @@ const ProductEditModal = (function () {
             },
             async save() {
                 if (!this.item || this.saving) return;
-                const checked = validate({ ean13: this.ean13, reference: this.reference, quantity: this.quantity, stockEditable: this.item.stock.editable });
+                const checked = validate({ ean13: this.ean13, reference: this.reference, quantity: this.quantity, stockEditable: this.item.stock.editable,
+                    price: this.price, vatRate: this.vatRate, priceEditable: !!this.item.price });
                 if (checked.error) {
                     this.error = checked.error;
                     return;
@@ -103,6 +119,10 @@ const ProductEditModal = (function () {
                     }
                     if (checked.quantity !== null && checked.quantity !== item.stock.quantity) {
                         item = (await ApiClient.catalogSetStock(this.productId, this.attributeId, checked.quantity)).data;
+                    }
+                    const current = item.price || {};
+                    if (checked.price !== null && (checked.price !== Number(current.price) || checked.vatRate !== (current.vat_rate == null ? null : Number(current.vat_rate)))) {
+                        item = (await ApiClient.catalogSetPrice(this.productId, this.attributeId, checked.price, checked.vatRate)).data;
                     }
                     this.fill(item);
                     this.$emit('saved', item);
@@ -154,6 +174,19 @@ const ProductEditModal = (function () {
                         <div class="product-edit-note">El stock se guarda también en la web.</div>
                     </div>
 
+                    <div v-if="item.price" class="product-edit-field">
+                        <label class="tpv-label" for="product-edit-price">Precio con IVA (tienda y web)</label>
+                        <div style="display:flex; gap:8px;">
+                            <input id="product-edit-price" v-model="price" type="text" inputmode="decimal" autocomplete="off"
+                                class="tpv-input product-edit-input pay-num" style="flex:1; min-width:0;" placeholder="0,00" />
+                            <select v-model.number="vatRate" class="tpv-input product-edit-input" aria-label="IVA" style="width:110px;">
+                                <option v-for="r in vatRates" :key="r" :value="r">IVA {{ r }} %</option>
+                            </select>
+                        </div>
+                        <div v-if="item.price.vat_rate === 0" class="product-edit-note" style="color:var(--red);">Ahora este artículo no tiene IVA en la web.</div>
+                        <div class="product-edit-note">El precio se guarda también en la web.{{ item.id_product_attribute ? ' El IVA es del artículo: se aplica a todas sus tallas y colores.' : '' }}</div>
+                    </div>
+
                     <div class="product-edit-field">
                         <label class="tpv-label" for="product-edit-ean">EAN (solo en el TPV)</label>
                         <input id="product-edit-ean" v-model="ean13" type="text" inputmode="numeric" autocomplete="off" maxlength="13"
@@ -171,7 +204,7 @@ const ProductEditModal = (function () {
                     <div v-if="!item.overrides_available" class="product-edit-note" role="status">
                         El EAN y la referencia locales necesitan actualizar la base de datos del TPV.
                     </div>
-                    <div class="product-edit-note">Vacío = se usa el valor de la web. El precio siempre es el de la web.</div>
+                    <div class="product-edit-note">EAN y referencia vacíos = se usa el valor de la web.</div>
                 </template>
 
                 <div v-if="error" role="alert" style="color:var(--red); font-size:14px;">{{ error }}</div>
@@ -188,6 +221,7 @@ const ProductEditModal = (function () {
     };
 
     component.validate = validate;
+    component.VAT_RATES = VAT_RATES;
     component.validEanCheckDigit = validEanCheckDigit;
 
     return component;

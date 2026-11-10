@@ -171,8 +171,8 @@ function loadModal(api) {
 
 test('the editor checks the EAN like the server', () => {
     const { validate } = loadModal({});
-    assert.deepEqual({ ...validate({ ean13: '4006381333931', reference: ' R ', quantity: '3', stockEditable: true }) }, { ean13: '4006381333931', reference: 'R', quantity: 3 });
-    assert.deepEqual({ ...validate({ ean13: '96385074', reference: '', quantity: '', stockEditable: false }) }, { ean13: '96385074', reference: null, quantity: null });
+    assert.deepEqual({ ...validate({ ean13: '4006381333931', reference: ' R ', quantity: '3', stockEditable: true }) }, { ean13: '4006381333931', reference: 'R', quantity: 3, price: null, vatRate: null });
+    assert.deepEqual({ ...validate({ ean13: '96385074', reference: '', quantity: '', stockEditable: false }) }, { ean13: '96385074', reference: null, quantity: null, price: null, vatRate: null });
     assert.equal(validate({ ean13: '', reference: '', quantity: '0', stockEditable: true }).ean13, null, 'empty clears the local EAN');
     assert.equal(validate({ ean13: '4006381333932' }).error, 'El EAN «4006381333932» no es válido: el dígito de control no cuadra');
     assert.equal(validate({ ean13: '400638133393' }).error, 'El EAN debe tener 8 o 13 cifras');
@@ -248,4 +248,48 @@ test('«Restablecer» removes the local values', async () => {
     assert.deepEqual(calls, [[1, 0]]);
     assert.equal(view.ean13, '');
     assert.equal(emitted[0][0], 'saved');
+});
+
+const PRICED = { ...ITEM, id_product: 6479, id_product_attribute: 17775, price: { price: 270, vat_rate: 0 } };
+
+test('the editor shows the price with VAT and the rate, and saves a new price and rate', async () => {
+    const calls = [];
+    const api = {
+        get: () => Promise.resolve({ data: PRICED }),
+        catalogSetPrice: (id, attr, price, rate) => { calls.push([id, attr, price, rate]); return Promise.resolve({ data: { ...PRICED, price: { price, vat_rate: rate } } }); },
+    };
+    const { view, emitted } = mountModal(PRICED, api);
+    await view.load();
+    assert.equal(view.price, '270,00');
+    assert.equal(view.vatRate, 0);
+
+    view.price = '270,00';
+    view.vatRate = 21;
+    await view.save();
+
+    assert.deepEqual(calls, [[6479, 17775, 270, 21]]);
+    assert.deepEqual(emitted.map(([name]) => name), ['saved', 'notify', 'close']);
+});
+
+test('an unchanged price is not sent, and a wrong price is refused before asking', async () => {
+    const calls = [];
+    const api = {
+        get: () => Promise.resolve({ data: PRICED }),
+        catalogSetPrice: (...args) => { calls.push(args); return Promise.resolve({ data: PRICED }); },
+    };
+    const { view } = mountModal(PRICED, api);
+    await view.load();
+    await view.save();
+    assert.deepEqual(calls, [], 'nothing changed');
+
+    view.price = '12,345';
+    await view.save();
+    assert.match(view.error, /hasta 2 decimales/);
+    assert.deepEqual(calls, []);
+});
+
+test('the editor offers 21, 10, 4 and 0 % and no longer says the price is only the web one', () => {
+    assert.match(modalSource, /Precio con IVA \(tienda y web\)/);
+    assert.match(modalSource, /const VAT_RATES = \[21, 10, 4, 0\];/);
+    assert.doesNotMatch(modalSource, /El precio siempre es el de la web/);
 });

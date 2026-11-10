@@ -13,7 +13,7 @@ Branch: `feat/edit-mode-price`. Delivery: ask-on-risk. Runners: phpunit tests/Un
 ## Tasks
 
 - [x] T1 (S2-S4) module endpoint `tpvconnect/price` (HMAC, idempotent): set Product price + tax rules group, or Combination price impact; version 0.8.3 with upgrade script.
-- [ ] T2 (S1-S4) TPV: CatalogEditService::setPrice → module, then refresh local catalog prices; API route; ProductEditModal fields «Precio (tienda y web)» and «IVA».
+- [x] T2 (S1-S4) TPV: CatalogEditService::setPrice → module, then refresh local catalog prices; API route; ProductEditModal fields «Precio (tienda y web)» and «IVA».
 
 ## Log
 
@@ -21,3 +21,4 @@ Branch: `feat/edit-mode-price`. Delivery: ask-on-risk. Runners: phpunit tests/Un
 - L2: user chose «Tienda y web (Recomendado)».
 - L3: "el precio, por articulo y por combinacion"
 - L4: "los precios cambiados desde el tpv ya son con iva incluido" — confirms S4: the typed price includes VAT; PrestaShop gets price / (1 + rate).
+- L5: T1 2fcccde (module 0.8.3, 193 module tests). T2: PsPriceClient, CatalogEditService::setPrice/price(), PUT /api/catalog/edit/{p}/{a}/price, ProductEditModal price + IVA select. Unit 1120, JS 199. Integration: ExchangeService testPositiveBalanceByCardOrMixed / ByTransfer and ExchangeCreditRefund also fail on main 986fb46 in the full run (state-dependent, pass alone) — not from this feature; to investigate apart.

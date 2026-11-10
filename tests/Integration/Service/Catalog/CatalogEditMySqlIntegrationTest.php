@@ -8,6 +8,7 @@ use Doctrine\DBAL\Connection;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use VenPosTPV\Service\Catalog\CatalogEditService;
+use VenPosTPV\Service\Catalog\PsPriceClient;
 use VenPosTPV\Service\Catalog\Exception\CatalogEditException;
 use VenPosTPV\Service\Catalog\ProductSearchService;
 use VenPosTPV\Service\Label\LabelBarcode;
@@ -238,9 +239,104 @@ final class CatalogEditMySqlIntegrationTest extends TestCase
         }
     }
 
-    private function service(?PrestaShopApiClient $ps = null): CatalogEditService
+    private function service(?PrestaShopApiClient $ps = null, ?PsPriceClient $prices = null): CatalogEditService
     {
-        return new CatalogEditService($this->db(), $ps ?? $this->createMock(PrestaShopApiClient::class));
+        return new CatalogEditService($this->db(), $ps ?? $this->createMock(PrestaShopApiClient::class), $prices);
+    }
+
+    /** @param list<array{int, int, float, float}> $calls */
+    private function priceClient(array &$calls, ?\Throwable $failure = null): PsPriceClient
+    {
+        $client = $this->createMock(PsPriceClient::class);
+        $client->method('setPrice')->willReturnCallback(function (int $p, int $a, float $price, float $rate) use (&$calls, $failure): array {
+            $calls[] = [$p, $a, $price, $rate];
+            if ($failure !== null) {
+                throw $failure;
+            }
+
+            return ['price_net' => round($price / (1 + $rate / 100), 6)];
+        });
+
+        return $client;
+    }
+
+    /** @return array<string, mixed> */
+    private function prices(string $table, int $id): array
+    {
+        $cols = $table === 'catalog_product' ? 'price, price_net, price_ttc' : 'price_impact, price_net, price_ttc';
+
+        return array_map('floatval', (array) $this->db()->fetchAssociative('SELECT ' . $cols . ' FROM ' . $table . ' WHERE id = ?', [$id]));
+    }
+
+    public function testThePriceWithVatOfAProductGoesToPrestaShopThenToTheCatalogAndIsAudited(): void
+    {
+        $calls = [];
+        $item = $this->service(null, $this->priceClient($calls))->setPrice(self::SINGLE, 0, '270,00', 21, 7, 2, '10.0.0.1');
+
+        self::assertSame([[self::SINGLE, 0, 270.0, 21.0]], $calls);
+        self::assertSame(['price' => 223.140496, 'price_net' => 223.140496, 'price_ttc' => 270.0], $this->prices('catalog_product', self::SINGLE));
+        self::assertSame(['price' => 270.0, 'vat_rate' => 21.0], $item['price']);
+        $audit = $this->db()->fetchAssociative("SELECT user_id, terminal_id, payload FROM audit_log WHERE action = 'catalog_price_set' AND target = ?", [self::SINGLE . ':0']);
+        self::assertSame([7, 2], [(int) $audit['user_id'], (int) $audit['terminal_id']]);
+        self::assertEquals(['price' => 12.1, 'vat_rate' => 21], json_decode((string) $audit['payload'], true)['before']);
+    }
+
+    public function testACombinationGetsItsOwnPriceAndTheProductRateAppliesToAllItsSizes(): void
+    {
+        $calls = [];
+        // The product costs 20 without VAT; size M at 30,25 with 10 % is 27,50 without: +7,50.
+        $item = $this->service(null, $this->priceClient($calls))->setPrice(self::SIZED, self::SIZE_M, 30.25, 10, 7);
+
+        self::assertSame([[self::SIZED, self::SIZE_M, 30.25, 10.0]], $calls);
+        self::assertSame(['price_impact' => 7.5, 'price_net' => 27.5, 'price_ttc' => 30.25], $this->prices('catalog_combination', self::SIZE_M));
+        self::assertSame(['price' => 20.0, 'price_net' => 20.0, 'price_ttc' => 22.0], $this->prices('catalog_product', self::SIZED), 'the product keeps its price at the new rate');
+        self::assertSame(['price' => 30.25, 'vat_rate' => 10.0], $item['price']);
+    }
+
+    public function testWhenPrestaShopRefusesThePriceNothingChangesLocally(): void
+    {
+        $calls = [];
+        $service = $this->service(null, $this->priceClient($calls, new CatalogEditException('PrestaShop no ha aceptado el cambio de precio; no se ha cambiado nada', 502, 'prestashop_price_failed')));
+
+        try {
+            $service->setPrice(self::SINGLE, 0, 99, 21, 7);
+            self::fail('A refused price must not change the catalog');
+        } catch (CatalogEditException $e) {
+            self::assertSame(502, $e->status);
+        }
+        self::assertSame(['price' => 10.0, 'price_net' => 10.0, 'price_ttc' => 12.1], $this->prices('catalog_product', self::SINGLE));
+        self::assertFalse($this->db()->fetchOne("SELECT 1 FROM audit_log WHERE action = 'catalog_price_set' AND target = ?", [self::SINGLE . ':0']));
+    }
+
+    /** @return iterable<string, array{mixed, mixed, string}> */
+    public static function invalidPrices(): iterable
+    {
+        yield 'negative' => ['-1', 21, 'invalid_price'];
+        yield 'three decimals' => ['1.234', 21, 'invalid_price'];
+        yield 'text' => ['abc', 21, 'invalid_price'];
+        yield 'too high' => ['100000', 21, 'invalid_price'];
+        yield 'unknown rate' => ['10', 7, 'invalid_vat_rate'];
+        yield 'no rate' => ['10', null, 'invalid_vat_rate'];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('invalidPrices')]
+    public function testAnInvalidPriceOrRateIsRefusedBeforeAskingPrestaShop(mixed $price, mixed $rate, string $code): void
+    {
+        $calls = [];
+        try {
+            $this->service(null, $this->priceClient($calls))->setPrice(self::SINGLE, 0, $price, $rate, 7);
+            self::fail('Must be refused');
+        } catch (CatalogEditException $e) {
+            self::assertSame([422, $code], [$e->status, $e->errorCode]);
+        }
+        self::assertSame([], $calls);
+    }
+
+    public function testAProductWithoutVatShowsARateOfZero(): void
+    {
+        $this->db()->update('catalog_product', ['price_ttc' => 270, 'price_net' => 270, 'price' => 270], ['id' => self::SINGLE]);
+
+        self::assertSame(['price' => 270.0, 'vat_rate' => 0.0], $this->service()->item(self::SINGLE, 0)['price']);
     }
 
     private function db(): Connection
@@ -274,9 +370,9 @@ final class CatalogEditMySqlIntegrationTest extends TestCase
     private function seed(): void
     {
         $db = $this->db();
-        $db->insert('catalog_product', ['id' => self::SINGLE, 'name' => 'Override Gorro', 'reference' => 'OVR-SYNC-1', 'ean13' => self::SINGLE_EAN, 'price' => 10, 'price_ttc' => 12.1, 'active' => 1]);
-        $db->insert('catalog_product', ['id' => self::SIZED, 'name' => 'Override Camiseta', 'reference' => 'OVR-SYNC-2', 'ean13' => '', 'price' => 20, 'price_ttc' => 24.2, 'active' => 1]);
-        $db->insert('catalog_combination', ['id' => self::SIZE_M, 'id_product' => self::SIZED, 'reference' => 'OVR-SYNC-M', 'ean13' => self::SIZE_M_EAN, 'price_impact' => 0, 'price_ttc' => 24.2]);
+        $db->insert('catalog_product', ['id' => self::SINGLE, 'name' => 'Override Gorro', 'reference' => 'OVR-SYNC-1', 'ean13' => self::SINGLE_EAN, 'price' => 10, 'price_ttc' => 12.1, 'price_net' => 10, 'active' => 1]);
+        $db->insert('catalog_product', ['id' => self::SIZED, 'name' => 'Override Camiseta', 'reference' => 'OVR-SYNC-2', 'ean13' => '', 'price' => 20, 'price_ttc' => 24.2, 'price_net' => 20, 'active' => 1]);
+        $db->insert('catalog_combination', ['id' => self::SIZE_M, 'id_product' => self::SIZED, 'reference' => 'OVR-SYNC-M', 'ean13' => self::SIZE_M_EAN, 'price_impact' => 0, 'price_ttc' => 24.2, 'price_net' => 20]);
         $db->insert('catalog_combination_attribute', ['combination_id' => self::SIZE_M, 'group_name' => 'Talla', 'attribute_name' => 'M']);
         $db->insert('catalog_stock', ['id_product' => self::SINGLE, 'id_product_attribute' => 0, 'quantity' => 5, 'ps_stock_id' => self::SINGLE_PS_STOCK]);
         $db->insert('catalog_stock', ['id_product' => self::SIZED, 'id_product_attribute' => 0, 'quantity' => 7, 'ps_stock_id' => 9960021]);
