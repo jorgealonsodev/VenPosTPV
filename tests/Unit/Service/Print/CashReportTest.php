@@ -94,6 +94,24 @@ final class CashReportTest extends TestCase
         }
     }
 
+    public function testTransferLinesShowOnlyOnATillThatHadTransfers(): void
+    {
+        $without = implode("\n", $this->x()->lines(32));
+        $this->assertStringNotContainsString('transferencia', $without, 'a till without transfers prints as before');
+
+        $report = new CashReport(
+            kind: CashReport::X, sessionId: 41, terminalId: 3, terminalName: 'Caja 1', terminalLetter: null,
+            storeName: 'Mi Tienda', legalName: null, taxId: null, cashierName: 'Ana',
+            openedAt: new \DateTimeImmutable('2026-11-05 09:00:00'), closedAt: null,
+            issuedAt: new \DateTimeImmutable('2026-11-05 13:30:00'), totals: ['sales_transfer' => 45.5, 'refunds_transfer' => 10.0] + $this->totals(),
+        );
+        $lines = $report->lines(32);
+
+        $this->assertContains('Ventas transferencia     45,50 €', $lines);
+        $this->assertContains('Devol. transferencia     10,00 €', $lines);
+        $this->assertLessThan(array_search('Total ventas', array_map(static fn ($l) => trim(preg_replace('/\s+[\d.,]+ €$/', '', $l)), $lines), true), array_search('Ventas transferencia     45,50 €', $lines, true));
+    }
+
     public function testThePositiveDifferenceKeepsItsSign(): void
     {
         $report = new CashReport(

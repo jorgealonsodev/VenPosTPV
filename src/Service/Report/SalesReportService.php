@@ -33,7 +33,7 @@ class SalesReportService
     public const UNCATEGORISED = 'Sin categoría';
 
     /** The payment methods of a sale, always listed even when no ticket used them. */
-    private const METHODS = ['cash', 'card', 'mixed', 'exchange'];
+    private const METHODS = ['cash', 'card', 'mixed', 'transfer', 'exchange'];
 
     /** The outbox states of an operation still to upload. */
     private const PENDING = "('pending', 'processing', 'incident')";
@@ -719,7 +719,7 @@ class SalesReportService
 
         $totals = $this->totals->totals($scope);
         $data = [];
-        foreach (['sales_cash', 'sales_card', 'sales_total', 'exchange_credit', 'refunds_cash', 'refunds_card', 'refunds_voucher', 'refunds_total',
+        foreach (['sales_cash', 'sales_card', 'sales_transfer', 'sales_total', 'exchange_credit', 'refunds_cash', 'refunds_card', 'refunds_transfer', 'refunds_voucher', 'refunds_total',
             'exchange_vouchers', 'refunds_web_pending', 'net_total', 'cash_in_total', 'cash_out_total'] as $key) {
             $data[$key] = (float) $totals[$key];
         }

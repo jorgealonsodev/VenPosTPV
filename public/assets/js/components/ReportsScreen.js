@@ -55,10 +55,12 @@ const ReportsLogic = (function () {
     const PAYMENT_ROWS = [
         { key: 'sales_cash', label: 'Ventas en efectivo' },
         { key: 'sales_card', label: 'Ventas con tarjeta' },
+        { key: 'sales_transfer', label: 'Ventas por transferencia' },
         { key: 'exchange_credit', label: 'Crédito de cambio' },
         { key: 'sales_total', label: 'Total ventas', strong: true },
         { key: 'refunds_cash', label: 'Devoluciones en efectivo' },
         { key: 'refunds_card', label: 'Devoluciones con tarjeta' },
+        { key: 'refunds_transfer', label: 'Devoluciones por transferencia' },
         { key: 'refunds_voucher', label: 'Devoluciones con vale' },
         { key: 'refunds_total', label: 'Total devoluciones', strong: true },
         { key: 'exchange_vouchers', label: 'Vales de cambios cerrados (incluidos en devoluciones con vale)' },
@@ -71,6 +73,7 @@ const ReportsLogic = (function () {
         cash: 'Tickets en efectivo',
         card: 'Tickets con tarjeta',
         mixed: 'Tickets mixtos',
+        transfer: 'Tickets por transferencia',
         exchange: 'Tickets pagados con crédito de cambio',
     };
 

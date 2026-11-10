@@ -133,7 +133,7 @@ const TicketListPanel = {
             activeTab, selectedOrder, parkedTickets, paidOrders, refundedOrders, paidQuery, searchPaid,
             loading, confirmDelete,
             selectOrder, backToList, handleRestoreClick, askDelete, doDelete, cancelDelete,
-            formatTicketTime, formatTicketDate, orderKey, orderLabel,
+            formatTicketTime, formatTicketDate, orderKey, orderLabel, paymentLabel: (code) => VenPosPaymentMethods.label(code),
         };
     },
     template: `
@@ -244,7 +244,7 @@ const TicketListPanel = {
                         </div>
                         <div style="color:var(--text3); font-size:12px;">
                             <span>{{ order.created_at }}</span>
-                            <span v-if="order.payment_method"> — {{ order.payment_method }}</span>
+                            <span v-if="order.payment_method"> — {{ paymentLabel(order.payment_method) }}</span>
                         </div>
                     </div>
                 </template>
@@ -265,7 +265,7 @@ const TicketListPanel = {
                         </div>
                         <div style="color:var(--text3); font-size:12px;">
                             <span>{{ order.created_at }}</span>
-                            <span v-if="order.payment_method"> — {{ order.payment_method }}</span>
+                            <span v-if="order.payment_method"> — {{ paymentLabel(order.payment_method) }}</span>
                         </div>
                     </div>
                 </template>

@@ -308,6 +308,8 @@ class CashSessionService
             'refunds_cash' => $totals['refunds_cash'],
             'sales_card' => $totals['sales_card'],
             'refunds_card' => $totals['refunds_card'],
+            'sales_transfer' => $totals['sales_transfer'],
+            'refunds_transfer' => $totals['refunds_transfer'],
             'refunds_voucher' => $totals['refunds_voucher'],
             'net_total' => $totals['net_total'],
             'cash_in_total' => $totals['cash_in_total'],

@@ -148,6 +148,18 @@ final class CouponLeftoverMySqlIntegrationTest extends TestCase
         $this->assertSame(1, (int) $this->connection->fetchOne('SELECT COUNT(*) FROM issued_coupon WHERE code = ?', [self::LEFTOVER_CODE]));
     }
 
+    public function testACouponSalePaidByTransferIsFiledAsTransferNotCard(): void
+    {
+        $orders = 0;
+        $result = $this->service(null, $orders)->createOrder(1, $this->cart(), 'transfer', 0.0, 0.0, 'leftover-attempt-4');
+
+        $this->assertSame('transfer', $result['payment_method']);
+        $breakdown = json_decode((string) $this->connection->fetchOne('SELECT payment_breakdown FROM order_meta WHERE id = ?', [$result['order_id']]), true);
+        $this->assertSame('transfer', $breakdown['payment_method']);
+        $this->assertEquals(['cash' => 0, 'card' => 0, 'transfer' => 0], $breakdown['tender']);
+        $this->assertSame(0, (int) $this->connection->fetchOne('SELECT COUNT(*) FROM movement WHERE session_id = ?', [self::SESSION_ID]));
+    }
+
     public function testASaleWithoutLeftoverHasNone(): void
     {
         $orders = 0;

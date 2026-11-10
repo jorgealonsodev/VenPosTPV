@@ -327,6 +327,40 @@ final class LocalFirstCheckoutMySqlIntegrationTest extends TestCase
         $this->assertSame(124.2, $report['expected_cash'], 'opening 100 + the 24.20 charged');
     }
 
+    public function testTransferSaleIsChargedWholeWithoutDrawerOrCashAndCountedApart(): void
+    {
+        $result = $this->service()->createOrder(1, $this->cart(2), 'transfer', 24.2);
+        $c = $this->connection;
+
+        $this->assertSame('transfer', $result['payment_method']);
+        $this->assertSame(0.0, $result['change_due']);
+        $this->assertSame(0, (int) $c->fetchOne('SELECT COUNT(*) FROM movement WHERE session_id = ?', [self::SESSION_ID]), 'no cash moves');
+        $this->assertSame(0, $this->drawerOpens, 'the drawer stays shut');
+        $breakdown = json_decode((string) $c->fetchOne('SELECT payment_breakdown FROM order_meta WHERE id = ?', [$result['order_id']]), true);
+        $this->assertSame('transfer', $breakdown['payment_method']);
+        $this->assertEquals(['cash' => 0.0, 'card' => 0.0, 'transfer' => 24.2], $breakdown['tender']);
+        $payload = json_decode((string) $c->fetchOne('SELECT payload FROM outbox WHERE order_id = ?', [$result['order_id']]), true);
+        $this->assertSame('transfer', $payload['payment_method'], 'the PrestaShop order says transfer');
+
+        $report = (new CashSessionService($c, $this->createMock(TerminalService::class), new RequestStack()))->getXReport(1);
+        $this->assertSame(24.2, $report['totals']['sales_transfer']);
+        $this->assertSame(0.0, $report['totals']['sales_card']);
+        $this->assertSame(24.2, $report['totals']['sales_total']);
+        $this->assertSame(100.0, $report['expected_cash'], 'only the opening cash');
+    }
+
+    public function testUnknownPaymentMethodIsA422AndStoresNothing(): void
+    {
+        try {
+            $this->service()->createOrder(1, $this->cart(2), 'bizum', 24.2);
+            $this->fail('An unknown payment method must be rejected, not booked as card');
+        } catch (CheckoutException $e) {
+            $this->assertSame(422, $e->getCode());
+        }
+        $this->assertNothingStored();
+        $this->assertSame(0, $this->lastNumber());
+    }
+
     public function testMixedSaleWithNegativeCashIsA422AndStoresNothing(): void
     {
         try {

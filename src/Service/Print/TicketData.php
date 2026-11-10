@@ -84,6 +84,7 @@ final class TicketData
             'cash' => 'Efectivo',
             'card' => 'Tarjeta',
             'mixed' => 'Mixto',
+            'transfer' => 'Transferencia',
             'voucher' => 'Vale',
             'exchange' => 'Abono',
             default => $this->paymentMethod,

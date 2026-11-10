@@ -79,6 +79,21 @@ class CashTotalsAggregator
             "SELECT COALESCE(SUM(r.card_amount), 0) FROM refund r WHERE r.status = 'done' AND " . $refundWhere,
             $refundParams
         );
+        // Transfers (docs/pago-transferencia.md) never touch the drawer either.
+        $salesTransfer = (float) $this->connection->fetchOne(
+            "SELECT COALESCE(SUM(CAST(JSON_UNQUOTE(JSON_EXTRACT(o.payment_breakdown, '$.tender.transfer')) AS DECIMAL(10,2))), 0)
+             FROM order_meta o WHERE " . $saleWhere,
+            $saleParams
+        );
+        try {
+            $refundsTransfer = (float) $this->connection->fetchOne(
+                "SELECT COALESCE(SUM(r.transfer_amount), 0) FROM refund r WHERE r.status = 'done' AND " . $refundWhere,
+                $refundParams
+            );
+        } catch (\Throwable) {
+            // Database not migrated to transfer refunds yet: there are none.
+            $refundsTransfer = 0.0;
+        }
         // Vouchers (refunds without ticket) are neither cash nor card.
         $refundsVoucher = (float) $this->connection->fetchOne(
             "SELECT COALESCE(SUM(r.voucher_amount), 0) FROM refund r WHERE r.status = 'done' AND " . $refundWhere,
@@ -117,8 +132,8 @@ class CashTotalsAggregator
         }
         $refundsVoucher += $exchangeVouchers;
 
-        $salesTotal = round($sales + $salesCard, 2);
-        $refundsTotal = round($refunds + $refundsCard + $refundsVoucher, 2);
+        $salesTotal = round($sales + $salesCard + $salesTransfer, 2);
+        $refundsTotal = round($refunds + $refundsCard + $refundsTransfer + $refundsVoucher, 2);
 
         // Online orders returned at the shop (R10): no money moved here, the office
         // refunds them from the web. Informative only; no money key includes it.
@@ -140,9 +155,11 @@ class CashTotalsAggregator
         $totals += [
             'sales_cash' => round($sales, 2),
             'sales_card' => round($salesCard, 2),
+            'sales_transfer' => round($salesTransfer, 2),
             'sales_total' => $salesTotal,
             'refunds_cash' => round($refunds, 2),
             'refunds_card' => round($refundsCard, 2),
+            'refunds_transfer' => round($refundsTransfer, 2),
             'refunds_voucher' => round($refundsVoucher, 2),
             'refunds_total' => $refundsTotal,
             'refunds_web_pending' => round($refundsWebPending, 2),

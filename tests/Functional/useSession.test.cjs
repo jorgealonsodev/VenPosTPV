@@ -246,7 +246,7 @@ async function testRefreshCashTotalsReadsTheXReportByMethod() {
     const { store } = loadStore({
         cashCurrent: () => Promise.resolve({ data: { open: false } }),
         cashReportX: () => Promise.resolve({ data: {
-            sales_cash: 60, sales_card: 80, refunds_cash: 17, refunds_card: 15, net_total: 108,
+            sales_cash: 60, sales_card: 80, sales_transfer: 25, refunds_cash: 17, refunds_card: 15, refunds_transfer: 5, net_total: 128,
             cash_in_total: 0, cash_out_total: 0, expected_cash: 143,
         } }),
     });
@@ -254,7 +254,7 @@ async function testRefreshCashTotalsReadsTheXReportByMethod() {
     await store.refreshCashTotals();
 
     assert.deepEqual(JSON.parse(JSON.stringify(store.session.cashTotals)), {
-        sales: 60, salesCard: 80, refunds: 17, refundsCard: 15, net: 108, cashIn: 0, cashOut: 0, expected: 143,
+        sales: 60, salesCard: 80, refunds: 17, refundsCard: 15, salesTransfer: 25, refundsTransfer: 5, net: 128, cashIn: 0, cashOut: 0, expected: 143,
     });
 }
 
