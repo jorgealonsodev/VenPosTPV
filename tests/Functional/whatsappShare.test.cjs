@@ -119,7 +119,7 @@ test('a refusal from the server shows its reason and opens nothing', async () =>
 
 test('the sale customer phone prefills the field', () => {
     const { state } = mount({ kind: 'ticket', docId: 42, initialPhone: '611 22 33 44' });
-    assert.equal(state.phone.value, '611 22 33 44');
+    assert.equal(state.phone.value, '+34 611 22 33 44', 'with its country code');
 });
 
 const ANA = { local_id: 1, id: 5, name: 'Ana Martínez', email: 'ana@example.com', phone: '600 111 222' };
@@ -144,11 +144,22 @@ test('«Elegir cliente» lists every customer found; one without a phone says so
     assert.match(source, /sin teléfono/);
 
     state.pickCustomer(ANA);
-    assert.equal(state.phone.value, '600 111 222');
+    assert.equal(state.phone.value, '+34 600 11 12 22', 'with its country code');
     assert.equal(state.pickerOpen.value, false);
     assert.deepEqual(JSON.parse(JSON.stringify(state.customers.value)), []);
     assert.match(source, /v-for="c in customers"[^>]*@click="pickCustomer\(c\)"/);
     assert.match(source, /v-model="customerQuery"[^>]*@input="searchCustomers"/);
+});
+
+test('a typed number gets its country code when the field is left', () => {
+    const { state } = mount({ kind: 'ticket', docId: 42 });
+    state.phone.value = '615658290';
+    state.formatPhone();
+    assert.equal(state.phone.value, '+34 615 65 82 90');
+    state.phone.value = '61565';
+    state.formatPhone();
+    assert.equal(state.phone.value, '61565', 'an incomplete number is left as typed');
+    assert.match(source, /@blur="formatPhone"/);
 });
 
 test('a search that finds nobody says so', async () => {

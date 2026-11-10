@@ -13,7 +13,16 @@ const WhatsAppShare = {
     props: ['kind', 'docId', 'initialPhone', 'consent'],
     emits: ['shared'],
     setup(props, { emit }) {
-        const phone = Vue.ref(String(props.initialPhone || ''));
+        // The field shows the number with its country code (+34 …) as soon as it is a phone.
+        function withCountryCode(raw) {
+            const digits = VenPosPhone.normalize(raw);
+            return digits === null ? String(raw || '') : VenPosPhone.display(digits);
+        }
+        const phone = Vue.ref(withCountryCode(props.initialPhone));
+
+        function formatPhone() {
+            phone.value = withCountryCode(phone.value);
+        }
         const status = Vue.ref('');
         const busy = Vue.ref(false);
         // The wa.me link, shown to tap when the browser blocks the new window.
@@ -70,7 +79,7 @@ const WhatsAppShare = {
 
         function pickCustomer(customer) {
             if (!hasPhone(customer)) return;
-            phone.value = String(customer.phone || '');
+            phone.value = withCountryCode(customer.phone);
             pickerOpen.value = false;
             customers.value = [];
             ++searchSeq;
@@ -116,12 +125,12 @@ const WhatsAppShare = {
             }
         }
 
-        return { phone, status, busy, link, pickerOpen, customerQuery, customers, searched, hasPhone, togglePicker, searchCustomers, pickCustomer, openWhatsApp };
+        return { phone, formatPhone, withCountryCode, status, busy, link, pickerOpen, customerQuery, customers, searched, hasPhone, togglePicker, searchCustomers, pickCustomer, openWhatsApp };
     },
     template: `
         <div class="whatsapp-share" style="display:flex; flex-direction:column; gap:8px;">
             <div style="display:flex; gap:8px;">
-                <input v-model="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Teléfono del cliente" aria-label="Teléfono del cliente" class="tpv-input" style="flex:1; min-width:0;" @keydown.enter.prevent="openWhatsApp" />
+                <input v-model="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Teléfono del cliente" aria-label="Teléfono del cliente" class="tpv-input" style="flex:1; min-width:0;" @blur="formatPhone" @keydown.enter.prevent="openWhatsApp" />
                 <button type="button" class="tpv-btn" :aria-expanded="pickerOpen ? 'true' : 'false'" @click="togglePicker">
                     Elegir cliente
                 </button>
@@ -131,7 +140,7 @@ const WhatsAppShare = {
                 <button v-for="c in customers" :key="c.local_id || c.id || c.phone" type="button" class="tpv-row" style="min-height:48px; text-align:left;" :disabled="!hasPhone(c)" :style="hasPhone(c) ? '' : 'opacity:.6; cursor:not-allowed;'" @click="pickCustomer(c)">
                     <span style="flex:1; min-width:0;">
                         <span style="display:block; font-weight:600; color:var(--text);">{{ c.name }}</span>
-                        <span style="display:block; font-size:13px; color:var(--text2);">{{ hasPhone(c) ? c.phone : 'sin teléfono' }}</span>
+                        <span style="display:block; font-size:13px; color:var(--text2);">{{ hasPhone(c) ? withCountryCode(c.phone) : 'sin teléfono' }}</span>
                     </span>
                 </button>
                 <div v-if="searched && !customers.length" style="font-size:13px; color:var(--text2);">Ningún cliente con ese nombre o teléfono.</div>
