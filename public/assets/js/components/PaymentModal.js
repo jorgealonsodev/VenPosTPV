@@ -70,13 +70,22 @@ const PaymentModal = {
         }
 
         // `icon` names an <icon> line icon (Icon.js), not an emoji.
+        // Only the methods the shop offers (Ajustes → Tienda → «Métodos de pago»).
+        const enabledMethods = Array.isArray(useSession.session.paymentMethods) && useSession.session.paymentMethods.length > 0
+            ? useSession.session.paymentMethods
+            : null;
         const methods = [
             { id: 'cash', label: 'Efectivo', icon: 'cash' },
             { id: 'card', label: 'Tarjeta', icon: 'card' },
             { id: 'mixed', label: 'Mixto', icon: 'split' },
             { id: 'transfer', label: 'Transferencia', icon: 'bank' },
             { id: 'voucher', label: 'Vale regalo', icon: 'gift' },
-        ];
+        ].filter((m) => enabledMethods === null || enabledMethods.includes(m.id));
+        // What pays the rest after a coupon: the enabled ones of cash, card and transfer.
+        const voucherTenders = ['cash', 'card', 'transfer'].filter((m) => enabledMethods === null || enabledMethods.includes(m));
+        // The window opens on the first method the shop offers.
+        if (methods.length > 0 && !methods.some((m) => m.id === method.value)) method.value = methods[0].id;
+        if (voucherTenders.length > 0 && !voucherTenders.includes(voucherTender.value)) voucherTender.value = voucherTenders[0];
         // Keypad keys, emitting the same tokens appendNum() always received from <numpad>.
         const keypadKeys = ['7', '8', '9', '4', '5', '6', '1', '2', '3', 'decimal', '0', 'backspace'];
         const quickAmounts = ['10', '20', '50', '100'];
@@ -558,7 +567,7 @@ const PaymentModal = {
             cashInput.value = props.total.toFixed(2).replace('.', ',');
         }
 
-        return { method, cashInput, card1, card2, step, errorMsg, errorRetry, lastOrderId, lastSaleId, methods, cashParsed, change, cardParsed, card2Parsed, dataphoneMode, printerType, voucherCode, voucherPreview, voucherBusy, voucherError, voucherTender, voucherCashInput, voucherPayable, voucherDiscount, voucherGross, voucherBalance, voucherCashParsed, voucherChange, voucherReconciliationRequired, couponOffline, chargeWithoutCoupon, completedTotal, completedChange, doneTotal, doneChange, isSubmitting, canConfirm, handleConfirm, retryCheckout, returnToSelection, appendNum, exacto, downloadTicket, emailEnabled, ticketEmail, ticketPhone, whatsappOpen, emailStatus, emailSending, sendTicketEmail, applyVoucher, invalidateVoucher, hasFreeItem, freeItemCouponMessage: FREE_ITEM_COUPON_MESSAGE, keypadKeys, quickAmounts, eur, drawerWarning, finish, onBackdrop, leftoverVoucher, leftoverPrintable, leftoverEmailEnabled, leftoverEmailOpen, leftoverEmail, leftoverWhatsappOpen, leftoverBusy, leftoverStatus, printLeftover, openLeftoverPdf, sendLeftoverEmail };
+        return { voucherTenders, method, cashInput, card1, card2, step, errorMsg, errorRetry, lastOrderId, lastSaleId, methods, cashParsed, change, cardParsed, card2Parsed, dataphoneMode, printerType, voucherCode, voucherPreview, voucherBusy, voucherError, voucherTender, voucherCashInput, voucherPayable, voucherDiscount, voucherGross, voucherBalance, voucherCashParsed, voucherChange, voucherReconciliationRequired, couponOffline, chargeWithoutCoupon, completedTotal, completedChange, doneTotal, doneChange, isSubmitting, canConfirm, handleConfirm, retryCheckout, returnToSelection, appendNum, exacto, downloadTicket, emailEnabled, ticketEmail, ticketPhone, whatsappOpen, emailStatus, emailSending, sendTicketEmail, applyVoucher, invalidateVoucher, hasFreeItem, freeItemCouponMessage: FREE_ITEM_COUPON_MESSAGE, keypadKeys, quickAmounts, eur, drawerWarning, finish, onBackdrop, leftoverVoucher, leftoverPrintable, leftoverEmailEnabled, leftoverEmailOpen, leftoverEmail, leftoverWhatsappOpen, leftoverBusy, leftoverStatus, printLeftover, openLeftoverPdf, sendLeftoverEmail };
     },
     template: `
         <div class="modal-backdrop">
@@ -652,7 +661,7 @@ const PaymentModal = {
                 </div>
 
                 <!-- Payment method -->
-                <div class="pay-methods" role="radiogroup" aria-label="Método de pago">
+                <div class="pay-methods" role="radiogroup" aria-label="Método de pago" :style="{ '--pay-cols': Math.min(methods.length, 5) }">
                     <button v-for="pm in methods" :key="pm.id" @click="method = pm.id"
                         class="pay-method" :class="{ 'is-selected': method === pm.id }"
                         role="radio" :aria-checked="method === pm.id ? 'true' : 'false'">
@@ -751,16 +760,16 @@ const PaymentModal = {
                                         <strong v-if="voucherBalance.left > 0" class="pay-num">{{ eur(voucherBalance.left) }}</strong>
                                     </div>
                                     <div class="pay-row pay-row-total"><span>Resta por cobrar</span><strong class="pay-num">{{ eur(voucherPayable) }}</strong></div>
-                                    <div class="tpv-chip-grid cols-3" style="margin-top:4px;">
-                                        <button @click="voucherTender = 'cash'" class="tpv-chip" :class="{ 'is-selected': voucherTender === 'cash' }">
+                                    <div class="tpv-chip-grid" :class="'cols-' + Math.max(1, voucherTenders.length)" style="margin-top:4px;">
+                                        <button v-if="voucherTenders.includes('cash')" @click="voucherTender = 'cash'" class="tpv-chip" :class="{ 'is-selected': voucherTender === 'cash' }">
                                             Efectivo
                                             <span v-if="voucherTender === 'cash'" class="tpv-chip-mark"><icon name="check" :size="16" /></span>
                                         </button>
-                                        <button @click="voucherTender = 'card'" class="tpv-chip" :class="{ 'is-selected': voucherTender === 'card' }">
+                                        <button v-if="voucherTenders.includes('card')" @click="voucherTender = 'card'" class="tpv-chip" :class="{ 'is-selected': voucherTender === 'card' }">
                                             Tarjeta
                                             <span v-if="voucherTender === 'card'" class="tpv-chip-mark"><icon name="check" :size="16" /></span>
                                         </button>
-                                        <button @click="voucherTender = 'transfer'" class="tpv-chip" :class="{ 'is-selected': voucherTender === 'transfer' }">
+                                        <button v-if="voucherTenders.includes('transfer')" @click="voucherTender = 'transfer'" class="tpv-chip" :class="{ 'is-selected': voucherTender === 'transfer' }">
                                             Transferencia
                                             <span v-if="voucherTender === 'transfer'" class="tpv-chip-mark"><icon name="check" :size="16" /></span>
                                         </button>

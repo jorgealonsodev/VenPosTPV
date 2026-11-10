@@ -170,7 +170,57 @@ const SettingsModal = {
             fields.forEach((field) => { values[field] = source && source[field] != null ? String(source[field]) : ''; });
             return JSON.stringify(values);
         }
-        const savedState = { shop: null, till: null, mail: null, edit: null, syncPull: String(syncInterval.value), syncPush: String(syncPushInterval.value) };
+        const savedState = { shop: null, till: null, mail: null, edit: null, syncPull: String(syncInterval.value), syncPush: String(syncPushInterval.value), payMethods: null };
+
+        // Tienda → «Métodos de pago» (PaymentMethodsSettings): the ways of paying the
+        // payment window offers, for every till. null until read.
+        const PAY_METHODS = [
+            { id: 'cash', label: 'Efectivo' },
+            { id: 'card', label: 'Tarjeta' },
+            { id: 'mixed', label: 'Mixto (efectivo + tarjeta)' },
+            { id: 'transfer', label: 'Transferencia' },
+            { id: 'voucher', label: 'Vale regalo (cupón de la tienda)' },
+        ];
+        const payMethods = Vue.ref(null);
+        const payMethodsError = Vue.ref('');
+        const payMethodsSaving = Vue.ref(false);
+
+        async function loadPaymentMethods() {
+            if (typeof ApiClient.paymentMethods !== 'function') return;
+            try {
+                const res = await ApiClient.paymentMethods();
+                payMethods.value = res && res.data && Array.isArray(res.data.enabled) ? res.data.enabled.slice() : null;
+                savedState.payMethods = payMethods.value ? JSON.stringify(payMethods.value) : null;
+            } catch (e) {
+                payMethodsError.value = errorText(e, 'No se han podido cargar los métodos de pago');
+            }
+        }
+
+        function togglePayMethod(id) {
+            if (!payMethods.value) return;
+            const on = new Set(payMethods.value);
+            if (on.has(id)) on.delete(id); else on.add(id);
+            payMethods.value = PAY_METHODS.map((m) => m.id).filter((m) => on.has(m));
+            payMethodsError.value = '';
+        }
+
+        async function savePaymentMethods() {
+            if (!payMethods.value) return;
+            payMethodsSaving.value = true;
+            payMethodsError.value = '';
+            try {
+                const res = await ApiClient.savePaymentMethods(payMethods.value);
+                const enabled = res && res.data && Array.isArray(res.data.enabled) ? res.data.enabled.slice() : payMethods.value.slice();
+                payMethods.value = enabled;
+                savedState.payMethods = JSON.stringify(enabled);
+                useSession.session.paymentMethods = enabled.slice();
+                flash('Métodos de pago guardados para todas las cajas');
+            } catch (e) {
+                payMethodsError.value = errorText(e, 'No se han podido guardar los métodos de pago');
+            } finally {
+                payMethodsSaving.value = false;
+            }
+        }
         function markShopSaved() { savedState.shop = terminal.value ? pick(terminal.value, SHOP_FIELDS) : null; }
         function markTillSaved() { savedState.till = terminal.value ? pick(terminal.value, TILL_FIELDS) : null; }
 
@@ -798,6 +848,9 @@ const SettingsModal = {
             if (terminal.value && savedState.shop !== null && pick(terminal.value, SHOP_FIELDS) !== savedState.shop) {
                 steps.push(['tienda', async () => { await saveShop(); return !terminalError.value; }]);
             }
+            if (payMethods.value && savedState.payMethods !== null && JSON.stringify(payMethods.value) !== savedState.payMethods) {
+                steps.push(['tienda', async () => { await savePaymentMethods(); return !payMethodsError.value; }]);
+            }
             if (terminal.value && savedState.till !== null && pick(terminal.value, TILL_FIELDS) !== savedState.till) {
                 steps.push(['cajas', async () => { await saveTill(); return !terminalError.value; }]);
             }
@@ -844,9 +897,11 @@ const SettingsModal = {
             loadTills();
             loadSystemPrinters();
             loadNumbering();
+            loadPaymentMethods();
         });
 
         return {
+            PAY_METHODS, payMethods, payMethodsError, payMethodsSaving, loadPaymentMethods, togglePayMethod, savePaymentMethods,
             modalBox, modalStyle, startResize,
             brandBase: ((typeof window !== 'undefined' && window.TPV_BASE) || '') + '/assets/img/brand',
             labelTestStatus, printTestLabel,
@@ -1166,6 +1221,23 @@ const SettingsModal = {
                                     </button>
                                 </div>
                                 <div v-if="terminalError" style="color:var(--red); font-size:12px;">{{ terminalError }}</div>
+                            </div>
+
+                            <div v-if="payMethods" style="margin-top:22px; display:flex; flex-direction:column; gap:10px;">
+                                <div style="font-size:14px; font-weight:600; color:var(--text);">Métodos de pago</div>
+                                <div style="font-size:12px; color:var(--text3);">Los que se ofrecen al cobrar, en todas las cajas. El pago mixto necesita Efectivo y Tarjeta.</div>
+                                <label v-for="m in PAY_METHODS" :key="m.id" style="display:flex; align-items:center; gap:10px; min-height:40px; font-size:14px; color:var(--text); cursor:pointer;">
+                                    <input type="checkbox" :checked="payMethods.includes(m.id)" @change="togglePayMethod(m.id)" style="width:20px; height:20px;" />
+                                    {{ m.label }}
+                                </label>
+                                <div>
+                                    <button @click="savePaymentMethods" :disabled="payMethodsSaving"
+                                        style="padding:8px 20px; border-radius:9px; border:none; background:var(--green); color:#000; font-family:inherit; font-size:13px; font-weight:600; cursor:pointer;"
+                                        :style="payMethodsSaving ? 'opacity:0.6; cursor:not-allowed;' : ''">
+                                        {{ payMethodsSaving ? 'Guardando...' : 'Guardar métodos de pago' }}
+                                    </button>
+                                </div>
+                                <div v-if="payMethodsError" style="color:var(--red); font-size:12px;">{{ payMethodsError }}</div>
                             </div>
                         </div>
 

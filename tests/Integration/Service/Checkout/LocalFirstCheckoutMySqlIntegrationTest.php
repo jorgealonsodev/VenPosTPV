@@ -439,6 +439,27 @@ final class LocalFirstCheckoutMySqlIntegrationTest extends TestCase
         $this->assertStringContainsString('IVA 21 %: 4.20', $paper);
     }
 
+    public function testAMethodTheShopTurnedOffIsRefusedAndStoresNothing(): void
+    {
+        $settings = new \VenPosTPV\Service\Checkout\PaymentMethodsSettings($this->connection);
+        $settings->save(['cash', 'transfer']);
+        try {
+            try {
+                $this->service()->createOrder(1, $this->cart(2), 'card', 24.2);
+                $this->fail('Card is off in Ajustes');
+            } catch (CheckoutException $e) {
+                $this->assertSame(422, $e->getCode());
+                $this->assertStringContainsString('El método de pago «Tarjeta» no está activo en Ajustes → Tienda', $e->getMessage());
+            }
+            $this->assertNothingStored();
+
+            $sale = $this->service()->createOrder(1, $this->cart(2), 'cash', 24.2);
+            $this->assertSame('cash', $sale['payment_method'], 'an active method still sells');
+        } finally {
+            $this->connection->executeStatement("DELETE FROM app_setting WHERE name = 'payment.methods'");
+        }
+    }
+
     public function testUnknownPaymentMethodIsA422AndStoresNothing(): void
     {
         try {

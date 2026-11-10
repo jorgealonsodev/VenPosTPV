@@ -945,7 +945,9 @@ const RefundScreen = {
             ticketSalePdf: (orderId) => ApiClient.ticketSalePdf(orderId),
             // Money as the rest of the POS shows it: 46.28 -> "46.28 €".
             euros: (n) => (Number(n) || 0).toFixed(2) + ' €',
-            paymentMethods: [{ code: 'cash', label: 'Efectivo' }, { code: 'card', label: 'Tarjeta' }, { code: 'mixed', label: 'Mixto' }, { code: 'transfer', label: 'Transferencia' }],
+            // The difference of an exchange is paid with the methods the shop offers (Ajustes → Tienda).
+            paymentMethods: [{ code: 'cash', label: 'Efectivo' }, { code: 'card', label: 'Tarjeta' }, { code: 'mixed', label: 'Mixto' }, { code: 'transfer', label: 'Transferencia' }]
+                .filter((m) => !(useSession.session && Array.isArray(useSession.session.paymentMethods) && useSession.session.paymentMethods.length > 0) || useSession.session.paymentMethods.includes(m.code)),
         };
     },
     template: `

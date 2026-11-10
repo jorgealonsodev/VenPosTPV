@@ -33,6 +33,8 @@ const useSession = (function () {
         printAgent: null,
         stockSyncIntervalSeconds: 60,
         stockPushIntervalSeconds: 0,
+        // Ajustes → Tienda → «Métodos de pago»; null = all of them (until it is read).
+        paymentMethods: null,
     });
 
     function load() {
@@ -168,7 +170,18 @@ const useSession = (function () {
         }
     }
 
+    // The shop's payment methods for the payment window; a failure keeps the last
+    // known list (the checkout refuses a method that is off anyway).
+    async function refreshPaymentMethods() {
+        if (!session.user || typeof ApiClient.paymentMethods !== 'function') return;
+        try {
+            const res = await ApiClient.paymentMethods();
+            if (res && res.data && Array.isArray(res.data.enabled)) session.paymentMethods = res.data.enabled.slice();
+        } catch (e) { /* keep the last list */ }
+    }
+
     async function hydrateCashSession() {
+        refreshPaymentMethods();
         // Without a till there is no drawer to ask for (the API answers 409).
         if (!session.deviceLinked) return null;
         const generation = ++cashHydrationGeneration;
@@ -482,6 +495,7 @@ const useSession = (function () {
         closeCash,
         printCashReport,
         hydrateCashSession,
+        refreshPaymentMethods,
         refreshCashTotals,
         refreshOutbox,
         refreshPrintAgent,

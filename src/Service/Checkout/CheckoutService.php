@@ -74,6 +74,7 @@ class CheckoutService
         private readonly ?IssuedCouponStore $issuedCoupons = null,
         private readonly ?CouponRejectionReason $couponRejection = null,
         private readonly ?VoucherBalance $voucherBalance = null,
+        private readonly ?PaymentMethodsSettings $paymentMethods = null,
     ) {
     }
 
@@ -155,6 +156,7 @@ class CheckoutService
             // Never booked as card: an unknown method would put its money nowhere.
             throw CheckoutException::psValidationFailed(sprintf('Unknown payment_method "%s"', mb_substr($paymentMethod, 0, 32)));
         }
+        $this->assertMethodEnabled($paymentMethod, array_key_exists('coupon', $cartData));
         if (array_key_exists('coupon', $cartData)) {
             $this->assertNoFreeItemWithCoupon($cartData);
             if ($exchangeCredit > 0) {
@@ -173,6 +175,26 @@ class CheckoutService
      * an exchange whose returned goods pay the whole new sale (ExchangeService::NO_PAYMENT_METHOD).
      */
     public const PAYMENT_METHODS = ['cash', 'card', 'mixed', 'transfer', 'exchange'];
+
+    /**
+     * Ajustes → Tienda → «Métodos de pago»: a method the shop turned off is refused,
+     * and so is a coupon sale when «Vale regalo» is off. The exchange's own code
+     * (returned goods paying the whole sale) is never a choice of the cashier.
+     *
+     * @throws CheckoutException
+     */
+    private function assertMethodEnabled(string $paymentMethod, bool $withCoupon): void
+    {
+        $settings = $this->paymentMethods ?? new PaymentMethodsSettings($this->conn);
+        if ($withCoupon && !$settings->isEnabled('voucher')) {
+            throw CheckoutException::psValidationFailed('El pago con vale regalo no está activo en Ajustes → Tienda');
+        }
+        if ($paymentMethod !== 'exchange' && !$settings->isEnabled($paymentMethod)) {
+            throw CheckoutException::psValidationFailed(sprintf('El método de pago «%s» no está activo en Ajustes → Tienda', self::METHOD_LABELS[$paymentMethod] ?? $paymentMethod));
+        }
+    }
+
+    private const METHOD_LABELS = ['cash' => 'Efectivo', 'card' => 'Tarjeta', 'mixed' => 'Mixto', 'transfer' => 'Transferencia'];
 
     /** A client payment-attempt id: what api.js generates (a UUID) or any similar token. */
     private const REQUEST_ID = '/^[A-Za-z0-9_-]{8,64}$/';
