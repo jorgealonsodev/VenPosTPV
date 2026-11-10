@@ -27,7 +27,7 @@ class CouponStatusLookup
     /**
      * @param list<int> $ids cart rule ids
      *
-     * @return array<int, array{quantity: int, active: bool, date_from: string, date_to: string}>|null keyed by id
+     * @return array<int, array{quantity: int, active: bool, date_from: string, date_to: string, reduction_amount: float, reduction_percent: float, reduction_tax: bool, partial_use: bool}>|null keyed by id
      *         (a rule PrestaShop no longer has is missing); null when the shop did not answer
      */
     public function find(array $ids): ?array
@@ -44,7 +44,7 @@ class CouponStatusLookup
      * The cart rules with exactly this code (PrestaShop keeps codes unique, so at most one).
      * Only letters, digits, "-" and "_": anything else could change the filter, so it is not sent.
      *
-     * @return array<int, array{quantity: int, active: bool, date_from: string, date_to: string}>|null keyed by id;
+     * @return array<int, array{quantity: int, active: bool, date_from: string, date_to: string, reduction_amount: float, reduction_percent: float, reduction_tax: bool, partial_use: bool}>|null keyed by id;
      *         null when the shop did not answer or the code cannot be looked up
      */
     public function findByCode(string $code): ?array
@@ -56,7 +56,7 @@ class CouponStatusLookup
         return $this->fetch('filter[code]', '[' . $code . ']');
     }
 
-    /** @return array<int, array{quantity: int, active: bool, date_from: string, date_to: string}>|null */
+    /** @return array<int, array{quantity: int, active: bool, date_from: string, date_to: string, reduction_amount: float, reduction_percent: float, reduction_tax: bool, partial_use: bool}>|null */
     private function fetch(string $filter, string $value): ?array
     {
         if ($this->baseUrl === '' || $this->apiKey === '') {
@@ -67,7 +67,7 @@ class CouponStatusLookup
                 'auth_basic' => [$this->apiKey, ''],
                 'query' => [
                     'output_format' => 'JSON',
-                    'display' => '[id,quantity,active,date_from,date_to]',
+                    'display' => '[id,quantity,active,date_from,date_to,reduction_amount,reduction_percent,reduction_tax,partial_use]',
                     $filter => $value,
                 ],
                 'headers' => ['Accept' => 'application/json'],
@@ -98,6 +98,10 @@ class CouponStatusLookup
                 'active' => (string) ($rule['active'] ?? '0') === '1',
                 'date_from' => (string) ($rule['date_from'] ?? ''),
                 'date_to' => (string) ($rule['date_to'] ?? ''),
+                'reduction_amount' => (float) ($rule['reduction_amount'] ?? 0),
+                'reduction_percent' => (float) ($rule['reduction_percent'] ?? 0),
+                'reduction_tax' => (string) ($rule['reduction_tax'] ?? '0') === '1',
+                'partial_use' => (string) ($rule['partial_use'] ?? '0') === '1',
             ];
         }
 

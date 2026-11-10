@@ -97,6 +97,11 @@ const PaymentModal = {
         const voucherPayable = Vue.computed(() => voucherPreview.value ? Number(voucherPreview.value.total_paid) : 0);
         const voucherDiscount = Vue.computed(() => voucherPreview.value ? Number(voucherPreview.value.discount_amount) : 0);
         const voucherGross = Vue.computed(() => voucherPreview.value ? Number(voucherPreview.value.before_discount_total) : Number(props.total));
+        // An amount voucher: its balance, what this sale uses and the rest kept in a new voucher.
+        const voucherBalance = Vue.computed(() => {
+            const v = voucherPreview.value && voucherPreview.value.voucher;
+            return v && Number.isFinite(Number(v.balance)) ? { balance: Number(v.balance), used: Number(v.used), left: Number(v.left) } : null;
+        });
         const voucherCashParsed = Vue.computed(() => parseFloat(String(voucherCashInput.value).replace(',', '.')) || 0);
         const voucherChange = Vue.computed(() => Math.max(0, voucherCashParsed.value - voucherPayable.value));
         const doneTotal = Vue.computed(() => completedTotal.value === null ? Number(props.total) : completedTotal.value);
@@ -557,7 +562,7 @@ const PaymentModal = {
             cashInput.value = props.total.toFixed(2).replace('.', ',');
         }
 
-        return { method, cashInput, card1, card2, step, errorMsg, errorRetry, lastOrderId, lastSaleId, methods, cashParsed, change, cardParsed, card2Parsed, dataphoneMode, printerType, voucherCode, voucherPreview, voucherBusy, voucherError, voucherTender, voucherCashInput, voucherPayable, voucherDiscount, voucherGross, voucherCashParsed, voucherChange, voucherReconciliationRequired, couponOffline, chargeWithoutCoupon, completedTotal, completedChange, doneTotal, doneChange, isSubmitting, canConfirm, handleConfirm, retryCheckout, returnToSelection, appendNum, exacto, downloadTicket, emailEnabled, ticketEmail, ticketPhone, whatsappOpen, emailStatus, emailSending, sendTicketEmail, applyVoucher, invalidateVoucher, hasFreeItem, freeItemCouponMessage: FREE_ITEM_COUPON_MESSAGE, keypadKeys, quickAmounts, eur, drawerWarning, finish, onBackdrop, leftoverVoucher, leftoverPrintable, leftoverEmailEnabled, leftoverEmailOpen, leftoverEmail, leftoverWhatsappOpen, leftoverBusy, leftoverStatus, printLeftover, openLeftoverPdf, sendLeftoverEmail };
+        return { method, cashInput, card1, card2, step, errorMsg, errorRetry, lastOrderId, lastSaleId, methods, cashParsed, change, cardParsed, card2Parsed, dataphoneMode, printerType, voucherCode, voucherPreview, voucherBusy, voucherError, voucherTender, voucherCashInput, voucherPayable, voucherDiscount, voucherGross, voucherBalance, voucherCashParsed, voucherChange, voucherReconciliationRequired, couponOffline, chargeWithoutCoupon, completedTotal, completedChange, doneTotal, doneChange, isSubmitting, canConfirm, handleConfirm, retryCheckout, returnToSelection, appendNum, exacto, downloadTicket, emailEnabled, ticketEmail, ticketPhone, whatsappOpen, emailStatus, emailSending, sendTicketEmail, applyVoucher, invalidateVoucher, hasFreeItem, freeItemCouponMessage: FREE_ITEM_COUPON_MESSAGE, keypadKeys, quickAmounts, eur, drawerWarning, finish, onBackdrop, leftoverVoucher, leftoverPrintable, leftoverEmailEnabled, leftoverEmailOpen, leftoverEmail, leftoverWhatsappOpen, leftoverBusy, leftoverStatus, printLeftover, openLeftoverPdf, sendLeftoverEmail };
     },
     template: `
         <div class="modal-backdrop" @click.self="onBackdrop">
@@ -732,9 +737,14 @@ const PaymentModal = {
                                     Cobrar sin cupón
                                 </button>
                                 <div v-if="voucherPreview" class="pay-voucher">
-                                    <div style="font-size:13px; color:var(--text2);">Cupón aplicado como descuento; no es saldo ni medio de pago.</div>
+                                    <div v-if="!voucherBalance" style="font-size:13px; color:var(--text2);">Cupón aplicado como descuento; no es saldo ni medio de pago.</div>
+                                    <div v-else class="pay-row"><span>Saldo del vale</span><strong class="pay-num">{{ eur(voucherBalance.balance) }}</strong></div>
                                     <div class="pay-row"><span>Bruto</span><strong class="pay-num">{{ eur(voucherGross) }}</strong></div>
-                                    <div class="pay-row" style="color:var(--green);"><span>Descuento cupón</span><strong class="pay-num">-{{ eur(voucherDiscount) }}</strong></div>
+                                    <div class="pay-row" style="color:var(--green);"><span>{{ voucherBalance ? 'Se usa del vale' : 'Descuento cupón' }}</span><strong class="pay-num">-{{ eur(voucherDiscount) }}</strong></div>
+                                    <div v-if="voucherBalance" class="pay-row" :style="{ color: voucherBalance.left > 0 ? 'var(--green)' : 'var(--text3)' }">
+                                        <span>{{ voucherBalance.left > 0 ? 'Queda en un vale nuevo' : 'El vale se gasta entero' }}</span>
+                                        <strong v-if="voucherBalance.left > 0" class="pay-num">{{ eur(voucherBalance.left) }}</strong>
+                                    </div>
                                     <div class="pay-row pay-row-total"><span>Resta por cobrar</span><strong class="pay-num">{{ eur(voucherPayable) }}</strong></div>
                                     <div class="tpv-chip-grid cols-2" style="margin-top:4px;">
                                         <button @click="voucherTender = 'cash'" class="tpv-chip" :class="{ 'is-selected': voucherTender === 'cash' }">

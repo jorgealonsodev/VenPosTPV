@@ -18,6 +18,7 @@ use VenPosTPV\Service\Fiscal\FiscalRecorder;
 use VenPosTPV\Service\Sale\SaleLineWriter;
 use VenPosTPV\Service\Checkout\Exception\CheckoutException;
 use VenPosTPV\Service\Coupon\CouponRejectionReason;
+use VenPosTPV\Service\Coupon\VoucherBalance;
 use VenPosTPV\Service\Checkout\PsOrderClient;
 use VenPosTPV\Service\Print\PrinterService;
 use VenPosTPV\Service\Print\TicketDataResolver;
@@ -39,6 +40,7 @@ final class CheckoutServiceTest extends TestCase
         ?OutboxSyncTrigger $syncTrigger = null,
         ?FiscalRecorder $fiscalRecorder = null,
         ?CouponRejectionReason $couponRejection = null,
+        ?VoucherBalance $voucherBalance = null,
     ): CheckoutService {
         $numberer = $this->createMock(TicketNumberer::class);
         $numberer->method('next')->willReturn('A26000001');
@@ -59,6 +61,7 @@ final class CheckoutServiceTest extends TestCase
             $fiscalRecorder ?? $this->createMock(FiscalRecorder::class),
             $this->createMock(SaleLineWriter::class),
             couponRejection: $couponRejection,
+            voucherBalance: $voucherBalance,
         );
     }
 
@@ -122,6 +125,27 @@ final class CheckoutServiceTest extends TestCase
         ], 'SAVE10');
 
         $this->assertSame(13.14, $preview['total_paid']);
+    }
+
+    public function testThePreviewOfAnAmountVoucherCarriesItsBalance(): void
+    {
+        $client = $this->createMock(PsOrderClient::class);
+        $client->method('previewCoupon')->willReturn([
+            'operation' => 'coupon_preview', 'cart_id' => 7,
+            'before_discount_total' => 23.14, 'discount_amount' => 23.14, 'total_paid' => 0.0,
+            'coupon' => ['code' => 'GIFT64', 'expires_at' => '2027-11-10 23:59:59'], 'quote' => 'signed.quote',
+        ]);
+        $balance = $this->createMock(VoucherBalance::class);
+        $balance->expects($this->once())->method('forSale')->with('GIFT64', 23.14)->willReturn(['balance' => 64.0, 'used' => 23.14, 'left' => 40.86]);
+        $cashSession = $this->createMock(CashSessionService::class);
+        $cashSession->method('requireOpenSession')->willReturn(['session_id' => 1, 'terminal_id' => 1]);
+        $conn = $this->catalogConnection(['1' => ['price' => 23.90, 'price_ttc' => 23.14]], 10);
+        $service = $this->createService(client: $client, conn: $conn, cashSessionService: $cashSession, couponCheckoutEnabled: true, voucherBalance: $balance);
+
+        $preview = $service->previewCoupon(1, ['lines' => [['product_id' => 1, 'qty' => 1, 'price' => 23.14]], 'total' => 23.14, 'customer' => ['id' => 2]], 'GIFT64');
+
+        $this->assertSame(['balance' => 64.0, 'used' => 23.14, 'left' => 40.86], $preview['voucher']);
+        $this->assertSame('signed.quote', $preview['quote'], 'the signed quote is unchanged');
     }
 
     public function testACouponTheModuleRejectsIsExplainedToTheCashier(): void

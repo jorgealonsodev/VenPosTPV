@@ -158,6 +158,28 @@ async function testAnUncertainCouponChargeSaysWhatToDoInOneShortMessage() {
     assert.doesNotMatch(state.errorMsg.value, /HTTP 409|\{"error"/);
 }
 
+async function testAnAmountVoucherShowsItsBalanceAndWhatIsLeft() {
+    const withBalance = { ...couponPreview, discount_amount: 36, before_discount_total: 36, total_paid: 0, voucher: { balance: 64, used: 36, left: 28 } };
+    const { state } = loadPayment({ preview: async () => ({ data: withBalance }), checkout: async () => ({}) });
+    state.method.value = 'voucher';
+    state.voucherCode.value = '9VZ4WTAX-2';
+    await state.applyVoucher();
+    assert.deepEqual(JSON.parse(JSON.stringify(state.voucherBalance.value)), { balance: 64, used: 36, left: 28 });
+
+    const { state: percent } = loadPayment({ preview: async () => ({ data: couponPreview }), checkout: async () => ({}) });
+    percent.method.value = 'voucher';
+    percent.voucherCode.value = 'SAVE10';
+    await percent.applyVoucher();
+    assert.equal(percent.voucherBalance.value, null, 'a discount coupon has no balance');
+}
+
+function testTheBoxShowsTheBalanceLines() {
+    const source = require('node:fs').readFileSync(require('node:path').resolve(__dirname, '../../public/assets/js/components/PaymentModal.js'), 'utf8');
+    assert.match(source, /Saldo del vale[\s\S]{0,200}voucherBalance\.balance/);
+    assert.match(source, /Queda en un vale nuevo[\s\S]{0,200}voucherBalance\.left/);
+    assert.match(source, /v-if="!voucherBalance"[^>]*>Cupón aplicado como descuento/);
+}
+
 async function testCouponSagaFailureRequiresGlobalReconciliationGuard() {
     await assertUncertainCouponOutcomeBlocksEveryCheckout(async () => ({
         data: { ps_order_id: 92, total: 13.14, saga_error: true },
@@ -274,7 +296,9 @@ async function main() {
     await testVoucherDoneShowsServerNetAndCashChange();
     await testARejectedCouponShowsTheServerSentenceNotTheRawResponse();
     await testAnUncertainCouponChargeSaysWhatToDoInOneShortMessage();
-    console.log('paymentCoupons functional harness: 11 passed');
+    await testAnAmountVoucherShowsItsBalanceAndWhatIsLeft();
+    testTheBoxShowsTheBalanceLines();
+    console.log('paymentCoupons functional harness: 13 passed');
 }
 
 main().catch((error) => { console.error(error); process.exitCode = 1; });
