@@ -180,6 +180,38 @@ function testTheBoxShowsTheBalanceLines() {
     assert.match(source, /v-if="!voucherBalance"[^>]*>Cupón aplicado como descuento/);
 }
 
+async function testOnceChargedAClickOutsideNeverClosesThePaymentWindow() {
+    const { state: choosing, emitted: closed } = loadPayment({ preview: async () => ({}), checkout: async () => ({}) });
+    choosing.onBackdrop();
+    assert.deepEqual(closed, [['close', undefined]], 'before «Cobrar» a click outside still closes it');
+
+    const { state, emitted } = loadPayment({ preview: async () => ({}), checkout: async () => ({ data: { ps_order_id: 5, total: 23.14 } }) });
+
+    state.method.value = 'cash';
+    state.cashInput.value = '30,00';
+    await state.handleConfirm();
+    const before = emitted.length;
+    state.onBackdrop();
+    assert.equal(emitted.length, before, 'charged: only «Terminar» or «Nueva venta» closes it');
+    assert.equal(state.step.value, 'done');
+
+    const source = fs.readFileSync(path.resolve(__dirname, '../../public/assets/js/components/PaymentModal.js'), 'utf8');
+    assert.match(source, /class="pay-close"[^>]*:disabled="isSubmitting"|:disabled="isSubmitting"[^>]*class="pay-close"/, 'the ✕ cannot cancel a payment in progress');
+
+    const { state: failed, emitted: failedEmitted } = loadPayment({ preview: async () => ({}), checkout: async () => { throw new Error('HTTP 502: Bad Gateway'); } });
+    failed.method.value = 'cash';
+    failed.cashInput.value = '30,00';
+    await failed.handleConfirm();
+    assert.equal(failed.step.value, 'error');
+    failed.onBackdrop();
+    assert.deepEqual(failedEmitted, [], 'after a failed «Cobrar» the cashier decides on the error screen');
+
+    const { state: busy, emitted: busyEmitted } = loadPayment({ preview: async () => ({}), checkout: async () => ({}) });
+    busy.isSubmitting.value = true;
+    busy.onBackdrop();
+    assert.deepEqual(busyEmitted, [], 'while charging');
+}
+
 async function testCouponSagaFailureRequiresGlobalReconciliationGuard() {
     await assertUncertainCouponOutcomeBlocksEveryCheckout(async () => ({
         data: { ps_order_id: 92, total: 13.14, saga_error: true },
@@ -298,7 +330,8 @@ async function main() {
     await testAnUncertainCouponChargeSaysWhatToDoInOneShortMessage();
     await testAnAmountVoucherShowsItsBalanceAndWhatIsLeft();
     testTheBoxShowsTheBalanceLines();
-    console.log('paymentCoupons functional harness: 13 passed');
+    await testOnceChargedAClickOutsideNeverClosesThePaymentWindow();
+    console.log('paymentCoupons functional harness: 14 passed');
 }
 
 main().catch((error) => { console.error(error); process.exitCode = 1; });

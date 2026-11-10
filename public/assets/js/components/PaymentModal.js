@@ -141,9 +141,10 @@ const PaymentModal = {
         }
 
         function onBackdrop() {
-            // A charged sale that waits (agent printing, ticket by email) is completed, never just closed.
-            if (step.value === 'done' && completedSale) {
-                finish();
+            // Only while choosing how to pay. Once «Cobrar» is pressed (charging, charged,
+            // or its error screen) a click outside does nothing: the window closes with
+            // «Terminar» / «Nueva venta» or from the error screen.
+            if (step.value !== 'select' || isSubmitting.value) {
                 return;
             }
             emit('close');
@@ -650,7 +651,7 @@ const PaymentModal = {
                 <div class="pay-head">
                     <div class="pay-title">Cobrar ticket</div>
                     <div class="pay-total pay-num">{{ eur(total) }}</div>
-                    <button @click="$emit('close')" class="pay-close" aria-label="Cerrar">
+                    <button @click="$emit('close')" :disabled="isSubmitting" class="pay-close" aria-label="Cerrar">
                         <icon name="close" :size="20" />
                     </button>
                 </div>
