@@ -154,24 +154,52 @@ class PsPriceGateway implements PriceGateway
         return $id > 0 ? $id : null;
     }
 
+    /**
+     * Only the price columns are written: saving the whole Product would validate
+     * every other field too, and a shop whose descriptions are longer than
+     * PrestaShop allows (description_short above its limit) could never change a
+     * price. The product and each shop's copy (product_shop) get the same values.
+     */
     public function saveProduct(int $productId, ?float $netPrice, int $taxRulesGroup): void
     {
-        $product = new Product($productId);
+        $fields = ['id_tax_rules_group' => $taxRulesGroup, 'date_upd' => date('Y-m-d H:i:s')];
         if ($netPrice !== null) {
-            $product->price = $netPrice;
+            $fields['price'] = number_format($netPrice, 6, '.', '');
         }
-        $product->id_tax_rules_group = $taxRulesGroup;
-        if (!$product->update()) {
-            throw new RuntimeException('The product could not be saved');
+        $db = Db::getInstance();
+        if (!$db->update('product', $fields, '`id_product` = ' . $productId)
+            || !$db->update('product_shop', $fields, '`id_product` = ' . $productId)) {
+            throw new RuntimeException('The product price could not be saved');
         }
+        $this->afterPriceChange($productId);
     }
 
     public function saveCombinationImpact(int $productId, int $attributeId, float $impact): void
     {
-        $combination = new Combination($attributeId);
-        $combination->price = $impact;
-        if (!$combination->update()) {
-            throw new RuntimeException('The combination could not be saved');
+        $fields = ['price' => number_format($impact, 6, '.', '')];
+        $db = Db::getInstance();
+        $where = '`id_product_attribute` = ' . $attributeId;
+        if (!$db->update('product_attribute', $fields, $where . ' AND `id_product` = ' . $productId)
+            || !$db->update('product_attribute_shop', $fields, $where)) {
+            throw new RuntimeException('The combination price could not be saved');
+        }
+        $this->afterPriceChange($productId);
+    }
+
+    /**
+     * What PrestaShop does after a product save, so the shop shows the new price at
+     * once. The price is already saved: a failure here must not report it as failed.
+     */
+    private function afterPriceChange(int $productId): void
+    {
+        try {
+            if (method_exists('Product', 'resetStaticCache')) {
+                Product::resetStaticCache();
+            }
+            Cache::clean('Product::getPriceStatic_' . $productId . '*');
+            Hook::exec('actionProductUpdate', ['id_product' => $productId, 'product' => new Product($productId)]);
+        } catch (Throwable $e) {
+            PrestaShopLogger::addLog('tpvconnect: price saved for product ' . $productId . ', but refreshing the shop failed: ' . $e->getMessage(), 2);
         }
     }
 }
