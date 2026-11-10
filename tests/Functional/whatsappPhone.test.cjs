@@ -9,7 +9,7 @@ const source = fs.readFileSync(path.resolve(__dirname, '../../public/assets/js/l
 const context = { String, encodeURIComponent };
 context.globalThis = context;
 vm.runInNewContext(`${source}\nglobalThis.__phone = VenPosPhone;`, context, { filename: 'phone.js' });
-const { normalize, whatsappUrl } = context.__phone;
+const { normalize, whatsappUrl, display } = context.__phone;
 
 test('a Spanish mobile or landline of 9 digits gets +34', () => {
     assert.equal(normalize('600111222'), '34600111222');
@@ -39,6 +39,21 @@ test('empty or non-numeric input is not a phone', () => {
     for (const bad of ['', '   ', null, undefined, 'ana', '600-ABC-222', '+', '00', '++34600111222', '6001112a2']) {
         assert.equal(normalize(bad), null, String(bad));
     }
+});
+
+test('a shop phone with two numbers or a note gives its first usable number, a mobile first', () => {
+    assert.equal(normalize('615658290 / 944223344'), '34615658290');
+    assert.equal(normalize('944223344 / 615658290'), '34615658290', 'the mobile, even second');
+    assert.equal(normalize('+34 615 65 82 90 (móvil)'), '34615658290');
+    assert.equal(normalize('944 22 33 44, 615 65 82 90'), '34615658290');
+    assert.equal(normalize('615658290 y 655111222'), '34615658290');
+    assert.equal(normalize('Tel: 615658290'), null, 'letters outside a note are not a phone');
+});
+
+test('the field shows the number with its country code', () => {
+    assert.equal(display('34615658290'), '+34 615 65 82 90');
+    assert.equal(display('447700900123'), '+447700900123');
+    assert.equal(display(null), '');
 });
 
 test('the wa.me link carries the digits and the encoded message', () => {
