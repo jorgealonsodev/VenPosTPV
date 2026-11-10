@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace VenPosTPV\Tests\Integration\Controller\Api;
 
-use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Platforms\MySQLPlatform;
 use PHPUnit\Framework\TestCase;
 use VenPosTPV\Controller\Api\SyncStatusController;
@@ -13,6 +12,7 @@ use VenPosTPV\Service\PrestaShop\PrestaShopApiClient;
 use VenPosTPV\Service\Sync\StockPushService;
 use VenPosTPV\Service\Sync\SyncLogRepository;
 use VenPosTPV\Service\Sync\SyncStatusService;
+use VenPosTPV\Tests\Support\TestDatabase;
 
 /**
  * @group integration
@@ -23,44 +23,9 @@ class SyncStatusIntegrationTest extends TestCase
 
     protected function setUp(): void
     {
-        $config = [
-            'driver' => 'pdo_mysql',
-            'host' => getenv('TPV_DB_HOST') ?: '127.0.0.1',
-            'port' => (int) (getenv('TPV_DB_PORT') ?: 3306),
-            'dbname' => getenv('TPV_DB_NAME') ?: 'venpostpv',
-            'user' => getenv('TPV_DB_USER') ?: 'root',
-            'password' => getenv('TPV_DB_PASSWORD') ?: '',
-            'charset' => 'utf8mb4',
-        ];
-
-        try {
-            $conn = DriverManager::getConnection($config);
-            $conn->executeQuery('SELECT 1');
-            $this->connection = $conn;
-        } catch (\Throwable) {
-            $this->connection = null;
-        }
-    }
-
-    private function ensureSyncLogTable(): void
-    {
-        if ($this->connection === null) {
-            return;
-        }
-
-        $this->connection->executeStatement('
-            CREATE TABLE IF NOT EXISTS sync_log (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                type ENUM(\'catalog\', \'stock\', \'prices\') NOT NULL,
-                direction ENUM(\'inbound\', \'outbound\') NOT NULL,
-                synced_at DATETIME NOT NULL,
-                row_count INT NULL,
-                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE KEY uk_type_direction (type, direction),
-                INDEX idx_type_direction (type, direction),
-                INDEX idx_synced_at (synced_at)
-            ) ENGINE=InnoDB
-        ');
+        // The isolated test database: this test empties sync_log, which must never
+        // happen on the development database.
+        $this->connection = TestDatabase::connection();
     }
 
     private function clearSyncLog(): void
@@ -92,7 +57,6 @@ class SyncStatusIntegrationTest extends TestCase
             $this->markTestSkipped('MySQL database not available for integration testing');
         }
 
-        $this->ensureSyncLogTable();
         $this->clearSyncLog();
 
         $controller = $this->createController();
@@ -131,7 +95,6 @@ class SyncStatusIntegrationTest extends TestCase
             $this->markTestSkipped('MySQL database not available for integration testing');
         }
 
-        $this->ensureSyncLogTable();
         $this->clearSyncLog();
 
         $now = new \DateTimeImmutable();
@@ -162,7 +125,6 @@ class SyncStatusIntegrationTest extends TestCase
             $this->markTestSkipped('MySQL database not available for integration testing');
         }
 
-        $this->ensureSyncLogTable();
         $this->clearSyncLog();
 
         $controller = $this->createController(['online' => false, 'latency_ms' => null]);

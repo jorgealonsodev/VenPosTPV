@@ -122,11 +122,15 @@ final class InstallProvisioningMySqlIntegrationTest extends TestCase
         foreach ($report->steps as $step) {
             $byId[$step->id] = $step;
         }
-        $this->assertSame(['migrations', 'free-item-products'], array_keys($byId), 'the migrations go first');
+        // coupon-checkout joined the steps in a39363f; coupon checkout is on by default
+        // (config/services.yaml), so the step is already done and changes nothing.
+        $this->assertSame(['migrations', 'free-item-products', 'coupon-checkout'], array_keys($byId), 'the migrations go first');
         $this->assertSame(StepStatus::DONE, $byId['migrations']->status);
         $this->assertFalse($byId['migrations']->attempted, 'the installer already migrated');
         $this->assertSame(StepStatus::FAILED, $byId['free-item-products']->status);
         $this->assertStringStartsWith('PrestaShop no ha preparado los productos del artículo libre: ', (string) $byId['free-item-products']->reason);
+        $this->assertSame(StepStatus::DONE, $byId['coupon-checkout']->status);
+        $this->assertFalse($byId['coupon-checkout']->attempted, 'coupon checkout is already enabled: .env is not rewritten');
 
         $this->assertSame(0, (new MigrationRunner(\dirname(__DIR__, 3) . '/migrations'))->pendingCount($this->conn));
         $stored = $this->conn->fetchOne("SELECT value FROM app_setting WHERE name = 'provisioning.free-item-products'");
