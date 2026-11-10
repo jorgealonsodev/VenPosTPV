@@ -15,6 +15,7 @@ require_once _PS_MODULE_DIR_ . 'tpvconnect/classes/CouponCheckout.php';
 require_once _PS_MODULE_DIR_ . 'tpvconnect/classes/ReferencedOrderCreator.php';
 require_once _PS_MODULE_DIR_ . 'tpvconnect/classes/FreeItemOrderLines.php';
 require_once _PS_MODULE_DIR_ . 'tpvconnect/classes/LeftoverVoucher.php';
+require_once _PS_MODULE_DIR_ . 'tpvconnect/classes/TpvOrderMail.php';
 
 /**
  * Front controller for order creation endpoint.
@@ -197,7 +198,9 @@ class TpvconnectOrdersModuleFrontController extends ModuleFrontController
         if (isset($data['transaction_id'])) {
             $extraVars['transaction_id'] = (string) $data['transaction_id'];
         }
-        $this->module->validateOrder(
+        // Without PrestaShop's own e-mails: the till hands the ticket over, and a
+        // shop that cannot send mail must not break the order half way.
+        TpvOrderMail::withoutShopMail(fn () => $this->module->validateOrder(
             (int) $cart->id,
             $idOrderState,
             $totalPaid,
@@ -207,7 +210,7 @@ class TpvconnectOrdersModuleFrontController extends ModuleFrontController
             $idCurrency,
             false,
             $cart->secure_key
-        );
+        ));
         $order = new Order((int) $this->module->currentOrder);
         if (!Validate::isLoadedObject($order)) {
             throw new RuntimeException('Order was not created');

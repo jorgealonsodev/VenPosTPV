@@ -141,6 +141,23 @@ async function test409RequiresGlobalReconciliationGuard() {
     });
 }
 
+async function testAnUncertainCouponChargeSaysWhatToDoInOneShortMessage() {
+    const body = JSON.stringify({ error: 'Coupon checkout outcome is uncertain: PrestaShop order service unavailable: PS module returned unexpected HTTP 200: página de error de la tienda (9390 bytes)', code: 'coupon_reconcile_required', retry: false });
+    const { state } = loadPayment({
+        preview: async () => ({ data: couponPreview }),
+        couponCheckout: async () => { throw new Error('HTTP 409: ' + body); },
+        checkout: async () => ({}),
+    });
+    state.method.value = 'voucher';
+    state.voucherCode.value = 'SAVE10';
+    await state.applyVoucher();
+    await state.handleConfirm();
+    assert.equal(state.voucherReconciliationRequired.value, true);
+    assert.match(state.errorMsg.value, /^No se ha podido confirmar el cobro con cupón en la tienda: el pedido puede haberse creado\. No vuelvas a cobrar esta venta; revisa el pedido en PrestaShop\./);
+    assert.match(state.errorMsg.value, /página de error de la tienda/, 'the technical detail stays, short');
+    assert.doesNotMatch(state.errorMsg.value, /HTTP 409|\{"error"/);
+}
+
 async function testCouponSagaFailureRequiresGlobalReconciliationGuard() {
     await assertUncertainCouponOutcomeBlocksEveryCheckout(async () => ({
         data: { ps_order_id: 92, total: 13.14, saga_error: true },
@@ -256,7 +273,8 @@ async function main() {
     await testOrdinaryCashCardAndMixedRemainUnchanged();
     await testVoucherDoneShowsServerNetAndCashChange();
     await testARejectedCouponShowsTheServerSentenceNotTheRawResponse();
-    console.log('paymentCoupons functional harness: 10 passed');
+    await testAnUncertainCouponChargeSaysWhatToDoInOneShortMessage();
+    console.log('paymentCoupons functional harness: 11 passed');
 }
 
 main().catch((error) => { console.error(error); process.exitCode = 1; });

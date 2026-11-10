@@ -377,10 +377,24 @@ class PsOrderClient
         }
 
         if ($statusCode >= 500) {
-            throw CheckoutException::psUnavailable(sprintf('PS module returned HTTP %d: %s', $statusCode, $content));
+            throw CheckoutException::psUnavailable(sprintf('PS module returned HTTP %d: %s', $statusCode, self::bodySummary($content)));
         }
 
-        throw CheckoutException::psUnavailable(sprintf('PS module returned unexpected HTTP %d: %s', $statusCode, $content));
+        throw CheckoutException::psUnavailable(sprintf('PS module returned unexpected HTTP %d: %s', $statusCode, self::bodySummary($content)));
+    }
+
+    /**
+     * What the shop answered, short enough for the cashier's screen: an error page
+     * (PrestaShop died, e.g. while sending its mail) is named, never pasted.
+     */
+    private static function bodySummary(string $content): string
+    {
+        if (preg_match('/<(!doctype|html|body)\b/i', $content) === 1) {
+            return sprintf('página de error de la tienda (%d bytes)', \strlen($content));
+        }
+        $text = trim((string) preg_replace('/\s+/', ' ', $content));
+
+        return mb_strlen($text) > 160 ? mb_substr($text, 0, 160) . '…' : $text;
     }
 
     /**

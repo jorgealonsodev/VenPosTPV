@@ -15,6 +15,7 @@ require_once __DIR__ . '/classes/SsoToken.php';
 require_once __DIR__ . '/classes/ReferencedOrderCreator.php';
 require_once __DIR__ . '/classes/FreeItemOrderLines.php';
 require_once __DIR__ . '/classes/TpvPairing.php';
+require_once __DIR__ . '/classes/TpvOrderMail.php';
 
 class Tpvconnect extends PaymentModule
 {
@@ -22,7 +23,7 @@ class Tpvconnect extends PaymentModule
     {
         $this->name = 'tpvconnect';
         $this->tab = 'administration';
-        $this->version = '0.8.0';
+        $this->version = '0.8.1';
         $this->author = 'VenPosTPV';
         $this->need_instance = 1;
         $this->bootstrap = true;
@@ -185,6 +186,15 @@ class Tpvconnect extends PaymentModule
         if ($concept !== null) {
             $params['product_var_tpl']['name'] = $concept;
         }
+    }
+
+    /**
+     * Blocks PrestaShop's e-mails while a till order is created (TpvOrderMail):
+     * false skips the message, true lets every other e-mail go.
+     */
+    public function hookActionEmailSendBefore(array $params): bool
+    {
+        return !TpvOrderMail::blocks();
     }
 
     public function hookActionAdminControllerSetMedia(array $params): void

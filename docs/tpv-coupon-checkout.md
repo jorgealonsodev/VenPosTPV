@@ -47,6 +47,12 @@ Order metadata records gross, native coupon reduction, payable, and cash/card te
 
 TPV Connect serializes module coupon redemption and native PrestaShop revalidates the rule at creation. This does not prove cross-channel atomicity with unrelated web checkout; native PrestaShop remains the authority for consumption.
 
+## Till orders do not send PrestaShop's e-mails (module 0.8.1)
+
+`PaymentModule::validateOrder` sends PrestaShop's own e-mails while it creates the order (`order_conf`, the `voucher` mail of a partial-use rest). On a hosting that disables `proc_open`, the sendmail transport dies with `Call to undefined function proc_open()` half way through the order: no order state, the coupon not consumed, its rest left bound to the till's customer, and the till gets an error page instead of the order. Since tpvconnect 0.8.1 the module's `actionEmailSendBefore` hook answers false while a till order is created (`TpvOrderMail::withoutShopMail()` around `validateOrder`), so `Mail::send()` skips the message and reports it as sent; the till hands the ticket and the voucher over itself. Web orders still send their e-mails, so a shop on such a hosting needs SMTP (Advanced Parameters → E-mail) for them. `upgrade-0.8.1.php` registers the hook.
+
+When the outcome of a coupon order is still uncertain (409 `coupon_reconcile_required`), the till says «No se ha podido confirmar el cobro con cupón en la tienda: el pedido puede haberse creado. No vuelvas a cobrar esta venta; revisa el pedido en PrestaShop.» with the server's short detail; an error page from the shop is named («página de error de la tienda (N bytes)»), never pasted.
+
 ## Why a coupon is rejected
 
 The module answers a rejected preview with 422 and no reason the TPV can show. `CheckoutService::previewCoupon()` then asks PrestaShop for the coupon by its code (`CouponRejectionReason`, `CouponStatusLookup::findByCode()`: `GET /api/cart_rules?filter[code]=[…]`) and the cashier reads, under the code:
