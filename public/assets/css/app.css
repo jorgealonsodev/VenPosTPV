@@ -655,8 +655,9 @@ html, body, #app {
     background: var(--green-bg); border: 1px solid var(--green); border-radius: 10px; padding: 10px 12px;
 }
 .pay-leftover-voucher-line { color: var(--green); font-weight: 700; font-size: 15px; line-height: 1.4; text-align: center; overflow-wrap: anywhere; }
-.pay-leftover-voucher-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-.pay-leftover-voucher-actions .tpv-btn { flex: 1 1 0; min-width: 0; }
+/* Two buttons per row: four in one row left no room for «Imprimir vale». */
+.pay-leftover-voucher-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
+.pay-leftover-voucher-actions .tpv-btn { min-width: 0; white-space: nowrap; justify-content: center; }
 .pay-leftover-voucher-email { display: flex; gap: 6px; }
 .pay-leftover-voucher-email input {
     flex: 1; min-width: 0; padding: 9px 12px; border-radius: 9px; border: 1px solid var(--border);
