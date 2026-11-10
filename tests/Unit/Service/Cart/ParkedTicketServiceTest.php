@@ -150,6 +150,35 @@ class ParkedTicketServiceTest extends TestCase
         $this->assertArrayNotHasKey('vat_rate', $catalog);
     }
 
+    public function testParkTicketKeepsTheLineImageSoTheRestoredTicketShowsIt(): void
+    {
+        $conn = $this->createMock(Connection::class);
+        $conn->method('fetchAssociative')->willReturn(false);
+        $stored = null;
+        $conn->expects($this->once())
+            ->method('insert')
+            ->with('parked_ticket', $this->callback(function (array $data) use (&$stored): bool {
+                $stored = json_decode((string) $data['lines_json'], true, 512, JSON_THROW_ON_ERROR);
+
+                return true;
+            }));
+        $conn->method('lastInsertId')->willReturn('44');
+
+        $created = (new ParkedTicketService($conn))->park([
+            'client_ref' => 'parked_images',
+            'lines' => [
+                ['id' => 'l1', 'product_id' => 12, 'name' => 'Bañador', 'price' => 36.0, 'qty' => 1, 'image_url' => 'https://shop.test/12-home_default/banador.jpg'],
+                ['id' => 'l2', 'product_id' => 13, 'name' => 'Gorro', 'price' => 10.0, 'qty' => 1, 'image_url' => 'javascript:alert(1)'],
+                ['id' => 'l3', 'product_id' => 14, 'name' => 'Toalla', 'price' => 20.0, 'qty' => 1],
+            ],
+        ]);
+
+        $this->assertSame('https://shop.test/12-home_default/banador.jpg', $stored[0]['image_url']);
+        $this->assertArrayNotHasKey('image_url', $stored[1], 'only web images are kept');
+        $this->assertArrayNotHasKey('image_url', $stored[2]);
+        $this->assertEquals($created['lines'], $stored, 'the stored lines are the returned ones');
+    }
+
     public function testParkTicketIsIdempotentOnExistingClientRef(): void
     {
         $conn = $this->createMock(Connection::class);

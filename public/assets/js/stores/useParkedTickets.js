@@ -31,6 +31,8 @@ const useParkedTickets = (function () {
             price: Number(l.price || 0),
             qty: Number(l.qty || l.quantity || 1),
             discount: Number(l.discount || 0),
+            // Thumbnail of the ticket line; display only (restore fills it from the catalog when missing).
+            image_url: typeof l.image_url === 'string' && /^https?:\/\//i.test(l.image_url) ? l.image_url : null,
         };
         // docs/prd/articulo-libre.md A9: a free item keeps its concept and VAT rate,
         // and its net price is recomputed from that rate (reprice skips it).

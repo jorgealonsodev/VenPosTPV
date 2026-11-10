@@ -267,6 +267,36 @@ async function testRestoreKeepsTheParkedPriceWhenTheCatalogCannotBeRead() {
     assert.equal(useCart.cart.total, 12);
 }
 
+async function testRestoreShowsTheProductImagesAgain() {
+    const { useCart, useParkedTickets } = loadEnvironment({
+        initialParkedStorage: JSON.stringify([
+            {
+                id: 33,
+                client_ref: 'parked_images',
+                note: 'Probador 5',
+                lines: [
+                    { id: 'l_kept', product_id: 200, id_product_attribute: 0, name: 'Gorro', price: 10, qty: 1, discount: 0, image_url: 'https://shop.test/img/kept.jpg' },
+                    { id: 'l_old', product_id: 300, id_product_attribute: 7, name: 'Bañador (Talla S)', price: 36, qty: 1, discount: 0 },
+                ],
+                discount: null,
+                total: 46,
+                created_at: '2026-11-10 19:00:00',
+            },
+        ]),
+        catalogProducts: {
+            200: { id: 200, price: 10, image_url: 'https://shop.test/img/200.jpg', combinations: [] },
+            300: { id: 300, price: 36, image_url: 'https://shop.test/img/300.jpg', combinations: [{ id: 7, price: 36, image_url: 'https://shop.test/img/300-7.jpg' }] },
+        },
+    });
+
+    assert.equal(useParkedTickets.state.tickets[0].lines[0].image_url, 'https://shop.test/img/kept.jpg', 'a parked line keeps its image');
+
+    await useParkedTickets.restoreWithSwap(useParkedTickets.state.tickets[0], useCart, 'María García');
+
+    assert.equal(useCart.cart.lines[0].image_url, 'https://shop.test/img/kept.jpg');
+    assert.equal(useCart.cart.lines[1].image_url, 'https://shop.test/img/300-7.jpg', 'a ticket parked without images gets the combination image from the catalog');
+}
+
 async function main() {
     await testParkPersistsToLocalStorageAndServerWithOptionalNote();
     await testParkFallsBackToLocalStorageWhenServerFailsAndSyncsOnRefresh();
@@ -274,7 +304,8 @@ async function main() {
     await testClearAllEmptiesBothServerAndLocalStorageForZCloseDiscard();
     await testRestoreReplacesTheParkedPriceSnapshotWithTheCatalogPrice();
     await testRestoreKeepsTheParkedPriceWhenTheCatalogCannotBeRead();
-    console.log('parkedTickets functional harness: 6 passed');
+    await testRestoreShowsTheProductImagesAgain();
+    console.log('parkedTickets functional harness: 7 passed');
 }
 
 main().catch((error) => {
