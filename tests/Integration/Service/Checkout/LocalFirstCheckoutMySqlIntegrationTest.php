@@ -400,17 +400,30 @@ final class LocalFirstCheckoutMySqlIntegrationTest extends TestCase
             $ticket = $resolver->resolve(TicketDataResolver::saleKey($sale['order_id']));
 
             $this->assertSame([10.0, 2.42], [$ticket->lines[0]->discountPct, $ticket->lines[0]->discountAmount], $method);
-            $this->assertSame([2.42, 1.09, 'Dto. ticket'], [$ticket->itemsDiscount(), $ticket->ticketDiscount, $ticket->ticketDiscountLabel], $method);
+            $this->assertSame([2.42, 1.09, 'Dto. ticket (5 %)'], [$ticket->itemsDiscount(), $ticket->ticketDiscount, $ticket->ticketDiscountLabel], $method);
 
             $paper = (new \VenPosTPV\Service\Print\EscPosTicketBuilder(['type' => 'network', 'host' => '127.0.0.1', 'port' => 9100, 'paperWidth' => 80, 'enabled' => true]))->build($ticket);
-            foreach (['Dto. 10 %: -2.42', 'Subtotal: 24.20', 'Dto. articulos: -2.42', 'Dto. ticket: -1.09', 'IVA 21 %: 3.59', 'TOTAL: 20.69'] as $text) {
+            foreach (['Dto. 10 %: -2.42', 'Subtotal: 24.20', 'Dto. articulos: -2.42', 'Dto. ticket (5 %): -1.09', 'IVA 21 %: 3.59', 'TOTAL: 20.69'] as $text) {
                 $this->assertStringContainsString($text, $paper, $method . ' paper');
             }
             $pdf = $twig->render('ticket/print.html.twig', ['ticket' => $ticket, 'giftMode' => false, 'barcodePath' => '', 'qrPath' => '', 'logoPath' => '']);
-            foreach (['Dto. 10 %: -2,42 €', 'Dto. artículos: -2,42 €', 'Dto. ticket: -1,09 €', 'IVA 21 %: 3,59 €', 'TOTAL: 20,69 €'] as $text) {
+            foreach (['Dto. 10 %: -2,42 €', 'Dto. artículos: -2,42 €', 'Dto. ticket (5 %): -1,09 €', 'IVA 21 %: 3,59 €', 'TOTAL: 20,69 €'] as $text) {
                 $this->assertStringContainsString($text, $pdf, $method . ' pdf');
             }
         }
+    }
+
+    public function testATicketDiscountOfAnAmountPrintsOnlyTheAmount(): void
+    {
+        // 2 x 12,10 = 24,20, minus 0,50 €: 23,70.
+        $cart = ['lines' => [['product_id' => self::PRODUCT, 'id_product_attribute' => 0, 'qty' => 2, 'price' => self::PRICE, 'name' => 'Camiseta']],
+            'discount' => ['type' => 'amt', 'value' => 0.5], 'total' => 23.7];
+        $sale = $this->service()->createOrder(1, $cart, 'cash', 23.7);
+        $ticket = (new TicketDataResolver($this->connection, new TicketVerificationService('test-secret', 'http://tpv'), 'Tienda', ''))->resolve(TicketDataResolver::saleKey($sale['order_id']));
+
+        $this->assertSame([0.5, 'Dto. ticket'], [$ticket->ticketDiscount, $ticket->ticketDiscountLabel]);
+        $breakdown = json_decode((string) $this->connection->fetchOne('SELECT payment_breakdown FROM order_meta WHERE id = ?', [$sale['order_id']]), true);
+        $this->assertEquals(['type' => 'amt', 'value' => 0.5], $breakdown['ticket_discount']);
     }
 
     public function testATicketWithoutDiscountsPrintsNoDiscountLine(): void
@@ -419,6 +432,8 @@ final class LocalFirstCheckoutMySqlIntegrationTest extends TestCase
         $ticket = (new TicketDataResolver($this->connection, new TicketVerificationService('test-secret', 'http://tpv'), 'Tienda', ''))->resolve(TicketDataResolver::saleKey($sale['order_id']));
 
         $this->assertSame([0.0, 0.0], [$ticket->itemsDiscount(), $ticket->ticketDiscount]);
+        $breakdown = json_decode((string) $this->connection->fetchOne('SELECT payment_breakdown FROM order_meta WHERE id = ?', [$sale['order_id']]), true);
+        $this->assertArrayNotHasKey('ticket_discount', $breakdown, 'a sale without discount stores as before');
         $paper = (new \VenPosTPV\Service\Print\EscPosTicketBuilder(['type' => 'network', 'host' => '127.0.0.1', 'port' => 9100, 'paperWidth' => 80, 'enabled' => true]))->build($ticket);
         $this->assertStringNotContainsString('Dto.', $paper);
         $this->assertStringContainsString('IVA 21 %: 4.20', $paper);

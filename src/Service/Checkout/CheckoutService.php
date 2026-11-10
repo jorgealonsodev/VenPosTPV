@@ -253,6 +253,7 @@ class CheckoutService
         $lines = $pricing['lines'];
         $total = $pricing['total'];
         $stockWarnings = $this->validateStock($lines);
+        $ticketDiscount = self::ticketDiscount($cartData['discount'] ?? null);
 
         $customer = $this->customerDirectory()->resolveForSale($cartData['customer'] ?? null);
         $payload = $this->orderPayload($lines, $customer, $paymentMethod, $amountTendered);
@@ -273,14 +274,14 @@ class CheckoutService
 
         try {
             $numberer->prepareYear($terminalId, $date);
-            [$orderId, $reference] = $this->conn->transactional(function () use ($numberer, $outbox, $terminalId, $sessionId, $date, $userId, $total, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines, $tender, $cashImpactAmount, $payload, $requestId, $customer): array {
+            [$orderId, $reference] = $this->conn->transactional(function () use ($numberer, $outbox, $terminalId, $sessionId, $date, $userId, $total, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines, $tender, $cashImpactAmount, $payload, $requestId, $customer, $ticketDiscount): array {
                 if ($cashImpactAmount > 0) {
                     // Lock order shared with refunds: session, number counter, fiscal
                     // chain. Taking the session after the chain deadlocks with a refund.
                     $this->cashSessionService->lockOpenSessionInTransaction($sessionId);
                 }
                 $reference = $numberer->next($terminalId, $date);
-                $orderId = $this->insertOrderMeta(null, $userId, $reference, $total, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines, null, $tender, false, $requestId);
+                $orderId = $this->insertOrderMeta(null, $userId, $reference, $total, $paymentMethod, $amountTendered, $changeDue, $cashContext, $lines, null, $tender, false, $requestId, null, $ticketDiscount);
                 if ($cashImpactAmount > 0) {
                     $this->cashSessionService->recordMovementInTransaction($sessionId, 'sale', $cashImpactAmount, 'Checkout sale', null, $orderId);
                 }
@@ -971,6 +972,21 @@ class CheckoutService
     /**
      * @throws CheckoutException
      */
+    /**
+     * The ticket-wide discount as the cashier typed it, for the ticket's label:
+     * {type: pct|amt, value}; null without one.
+     *
+     * @return array{type: string, value: float}|null
+     */
+    private static function ticketDiscount(mixed $discount): ?array
+    {
+        if (!\is_array($discount) || !is_numeric($discount['value'] ?? null) || (float) $discount['value'] <= 0) {
+            return null;
+        }
+
+        return ['type' => ($discount['type'] ?? 'pct') === 'amt' ? 'amt' : 'pct', 'value' => round((float) $discount['value'], 2)];
+    }
+
     private function resolveDiscountAmount(mixed $discount, float $subtotal): float
     {
         if (!is_array($discount) || !isset($discount['value'])) {
@@ -1070,6 +1086,7 @@ class CheckoutService
         bool $synced = true,
         ?string $requestId = null,
         ?array $leftoverVoucher = null,
+        ?array $ticketDiscount = null,
     ): int {
         try {
             $breakdownLines = [];
@@ -1153,7 +1170,9 @@ class CheckoutService
                     // Deliberately excludes bearer coupon code and quote.
                     'coupon' => $coupon,
                     // The voucher rest the customer takes away: printed on the ticket and reprints.
-                ] + ($leftoverVoucher !== null ? ['leftover_voucher' => $leftoverVoucher] : []), JSON_THROW_ON_ERROR),
+                ] + ($leftoverVoucher !== null ? ['leftover_voucher' => $leftoverVoucher] : [])
+                  // The ticket-wide discount as typed: «Dto. ticket (5 %)» or an amount.
+                  + ($ticketDiscount !== null ? ['ticket_discount' => $ticketDiscount] : []), JSON_THROW_ON_ERROR),
                 'printed' => 0,
                 'synced' => $synced ? 1 : 0,
                 'created_at' => $issuedAt->format('Y-m-d H:i:s'),

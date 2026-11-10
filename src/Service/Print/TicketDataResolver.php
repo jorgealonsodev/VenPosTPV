@@ -149,8 +149,27 @@ class TicketDataResolver
             leftoverVoucher: self::leftoverVoucher($breakdown),
             transfer: ($breakdown['payment_method'] ?? null) === 'transfer' ? $this->transferInfo((int) $row['id'], (int) $row['terminal_id']) : null,
             ticketDiscount: $ticketDiscount,
-            ticketDiscountLabel: \is_array($breakdown['coupon'] ?? null) ? 'Cupón' : 'Dto. ticket',
+            ticketDiscountLabel: self::ticketDiscountLabel($breakdown),
         );
+    }
+
+    /**
+     * «Cupón», «Dto. ticket (5 %)» for a percentage, «Dto. ticket» for an amount (or a
+     * sale stored before the discount's type was kept).
+     *
+     * @param array<string, mixed> $breakdown
+     */
+    private static function ticketDiscountLabel(array $breakdown): string
+    {
+        if (\is_array($breakdown['coupon'] ?? null)) {
+            return 'Cupón';
+        }
+        $discount = $breakdown['ticket_discount'] ?? null;
+        if (\is_array($discount) && ($discount['type'] ?? null) === 'pct' && is_numeric($discount['value'] ?? null)) {
+            return 'Dto. ticket (' . TicketData::formatRate((float) $discount['value']) . ')';
+        }
+
+        return 'Dto. ticket';
     }
 
     /**
