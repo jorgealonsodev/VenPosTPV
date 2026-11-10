@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.4
+
+- New endpoint `POST /module/tpvconnect/codes` (HMAC) `{"id_product", "id_product_attribute", "ean13", "reference"}` for the TPV's «Modo edición»: writes the EAN-13 (empty, 8 or 13 digits) and the reference (up to 64 characters, none of `< > ; = { }`) of a product or a combination; empty or null clears it. Only those columns are written (`product` or `product_attribute`), then `actionProductUpdate` runs. Answers `200 {"id_product", "id_product_attribute", "ean13", "reference"}`, `404` for an unknown product or combination, `422` for an invalid body.
+- Upgrade script `upgrade-0.8.4.php`: nothing to change in the shop.
+
 ## 0.8.3
 
 - New endpoint `POST /module/tpvconnect/price` (HMAC like the others) `{"id_product", "id_product_attribute", "price", "vat_rate"}` for the TPV's «Modo edición». `price` is the price **with VAT** (0 to 99999.99) and `vat_rate` one of 21, 10, 4 or 0. For a product it stores `Product->price` = price / (1 + rate) and the tax rules group of that rate in the shop's default country (none for 0 %). For a combination it sets the product's tax rules group and the combination impact so that the combination's price with VAT is the one sent. Answers `200 {"id_product", "id_product_attribute", "price", "price_net", "vat_rate"}`, `404` for an unknown product or combination, `422` for an invalid body or a rate the shop has no tax rule for. Prices are absolute, so repeating a request is harmless. Specific prices (reductions) are not touched.

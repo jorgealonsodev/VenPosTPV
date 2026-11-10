@@ -339,6 +339,79 @@ final class CatalogEditMySqlIntegrationTest extends TestCase
         self::assertSame(['price' => 270.0, 'vat_rate' => 0.0], $this->service()->item(self::SINGLE, 0)['price']);
     }
 
+    /** @param list<array<int, mixed>> $calls */
+    private function codesClient(array &$calls, ?\Throwable $failure = null): PsPriceClient
+    {
+        $client = $this->createMock(PsPriceClient::class);
+        $client->method('setCodes')->willReturnCallback(function (int $p, int $a, ?string $ean, ?string $ref) use (&$calls, $failure): void {
+            $calls[] = [$p, $a, $ean, $ref];
+            if ($failure !== null) {
+                throw $failure;
+            }
+        });
+
+        return $client;
+    }
+
+    public function testTheEanAndReferenceOfAProductGoToPrestaShopThenToTheCatalog(): void
+    {
+        $calls = [];
+        $item = $this->service(null, $this->codesClient($calls))->saveOverride(self::SINGLE, 0, self::LOCAL_EAN, 'GORRO-NUEVO', 7, 2, '10.0.0.1');
+
+        self::assertSame([[self::SINGLE, 0, self::LOCAL_EAN, 'GORRO-NUEVO']], $calls);
+        self::assertSame(['ean13' => self::LOCAL_EAN, 'reference' => 'GORRO-NUEVO'], $this->db()->fetchAssociative('SELECT ean13, reference FROM catalog_product WHERE id = ?', [self::SINGLE]));
+        self::assertSame(['ean13' => self::LOCAL_EAN, 'reference' => 'GORRO-NUEVO'], $item['synced']);
+        self::assertNull($item['local'], 'no TPV-only value any more');
+        $audit = $this->db()->fetchOne("SELECT payload FROM audit_log WHERE action = 'catalog_codes_set' AND target = ?", [self::SINGLE . ':0']);
+        self::assertSame(['ean13' => self::SINGLE_EAN, 'reference' => 'OVR-SYNC-1'], json_decode((string) $audit, true)['before']);
+    }
+
+    public function testACombinationGetsItsCodesInTheShopAndAnOldLocalValueIsDropped(): void
+    {
+        $this->service()->saveOverride(self::SIZED, self::SIZE_M, self::LOCAL_SIZE_EAN, null, 7);
+        $calls = [];
+
+        $item = $this->service(null, $this->codesClient($calls))->saveOverride(self::SIZED, self::SIZE_M, self::LOCAL_SIZE_EAN, 'CAM-M', 7);
+
+        self::assertSame([[self::SIZED, self::SIZE_M, self::LOCAL_SIZE_EAN, 'CAM-M']], $calls);
+        self::assertSame(['ean13' => self::LOCAL_SIZE_EAN, 'reference' => 'CAM-M'], $this->db()->fetchAssociative('SELECT ean13, reference FROM catalog_combination WHERE id = ?', [self::SIZE_M]));
+        self::assertFalse($this->db()->fetchOne('SELECT 1 FROM catalog_override WHERE id_product = ? AND id_product_attribute = ?', [self::SIZED, self::SIZE_M]));
+        self::assertNull($item['local']);
+    }
+
+    public function testEmptyClearsTheCodesInTheShopToo(): void
+    {
+        $calls = [];
+        $this->service(null, $this->codesClient($calls))->saveOverride(self::SINGLE, 0, '', '', 7);
+
+        self::assertSame([[self::SINGLE, 0, null, null]], $calls);
+        self::assertSame(['ean13' => '', 'reference' => ''], $this->db()->fetchAssociative('SELECT ean13, reference FROM catalog_product WHERE id = ?', [self::SINGLE]));
+    }
+
+    public function testTheShopsOwnEanIsKeptEvenWithAWrongCheckDigitWhenOnlyTheReferenceChanges(): void
+    {
+        $this->db()->update('catalog_product', ['ean13' => '8400000000011'], ['id' => self::SINGLE]);
+        $calls = [];
+
+        $this->service(null, $this->codesClient($calls))->saveOverride(self::SINGLE, 0, '8400000000011', 'NUEVA', 7);
+
+        self::assertSame([[self::SINGLE, 0, '8400000000011', 'NUEVA']], $calls);
+    }
+
+    public function testWhenPrestaShopRefusesTheCodesNothingChangesLocally(): void
+    {
+        $calls = [];
+        $service = $this->service(null, $this->codesClient($calls, new CatalogEditException('PrestaShop no ha aceptado el cambio de EAN o referencia; no se ha cambiado nada', 502, 'prestashop_codes_failed')));
+
+        try {
+            $service->saveOverride(self::SINGLE, 0, self::LOCAL_EAN, 'X', 7);
+            self::fail('A refused change must not touch the catalog');
+        } catch (CatalogEditException $e) {
+            self::assertSame(502, $e->status);
+        }
+        self::assertSame(['ean13' => self::SINGLE_EAN, 'reference' => 'OVR-SYNC-1'], $this->db()->fetchAssociative('SELECT ean13, reference FROM catalog_product WHERE id = ?', [self::SINGLE]));
+    }
+
     private function db(): Connection
     {
         \assert($this->connection !== null);

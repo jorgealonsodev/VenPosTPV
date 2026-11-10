@@ -66,4 +66,40 @@ final class PsPriceClientTest extends TestCase
             self::assertSame([502, 'prestashop_price_failed'], [$e->status, $e->errorCode]);
         }
     }
+
+    public function testTheCodesArePostedSignedWithEmptyForCleared(): void
+    {
+        $sent = null;
+        $http = new MockHttpClient(function (string $method, string $url, array $options) use (&$sent): MockResponse {
+            $sent = [$url, $options['body']];
+
+            return new MockResponse('{"id_product":7,"id_product_attribute":71,"ean13":"96385074","reference":""}', ['http_code' => 200]);
+        });
+
+        (new PsPriceClient('https://shop.test', 'secret', $http))->setCodes(7, 71, '96385074', null);
+
+        self::assertSame(['https://shop.test/module/tpvconnect/codes', '{"id_product":7,"id_product_attribute":71,"ean13":"96385074","reference":""}'], $sent);
+    }
+
+    /** @return iterable<string, array{int, string, int, string}> */
+    public static function codesFailures(): iterable
+    {
+        yield 'unknown item' => [404, '{"error":"Product not found","details":{}}', 404, 'prestashop_not_found'];
+        yield 'module before 0.8.4' => [404, '<html>Página no encontrada</html>', 502, 'prestashop_codes_failed'];
+        yield 'refused ean' => [422, '{"error":"Validation failed","details":{"ean13":"Empty, or 8 or 13 digits"}}', 422, 'prestashop_codes_invalid'];
+        yield 'shop error' => [500, '{"error":"Codes change failed"}', 502, 'prestashop_codes_failed'];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('codesFailures')]
+    public function testARefusedCodesChangeSaysWhy(int $status, string $answer, int $expectedStatus, string $code): void
+    {
+        $client = new PsPriceClient('https://shop.test', 'secret', new MockHttpClient(new MockResponse($answer, ['http_code' => $status])));
+
+        try {
+            $client->setCodes(7, 0, '96385074', 'R');
+            self::fail('Expected a refusal');
+        } catch (CatalogEditException $e) {
+            self::assertSame([$expectedStatus, $code], [$e->status, $e->errorCode]);
+        }
+    }
 }

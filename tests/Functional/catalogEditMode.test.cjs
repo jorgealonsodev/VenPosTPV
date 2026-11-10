@@ -197,7 +197,7 @@ const ITEM = {
     stock: { quantity: 4, editable: true, reason: null }, overrides_available: true,
 };
 
-test('the editor saves only what changed: the local EAN, then the stock', async () => {
+test('the editor saves only what changed: the EAN (in the web), then the stock', async () => {
     const calls = [];
     const api = {
         get: (url) => { calls.push(['get', url]); return Promise.resolve({ data: ITEM }); },
@@ -213,7 +213,7 @@ test('the editor saves only what changed: the local EAN, then the stock', async 
     view.quantity = '9';
     await view.save();
 
-    assert.deepEqual(calls.slice(1), [['override', 1, 0, { ean13: '4006381333931', reference: null }], ['stock', 1, 0, 9]]);
+    assert.deepEqual(calls.slice(1), [['override', 1, 0, { ean13: '4006381333931', reference: 'CAM-1' }], ['stock', 1, 0, 9]]);
     assert.deepEqual(emitted.map(([name]) => name), ['saved', 'notify', 'close']);
 });
 
@@ -233,7 +233,7 @@ test('a refused stock change shows the server reason and keeps the editor open',
 });
 
 test('«Restablecer» removes the local values', async () => {
-    const local = { ...ITEM, local: { ean13: '4006381333931', reference: null } };
+    const local = { ...ITEM, local: { ean13: '4006381333931', reference: null }, effective: { ean13: '4006381333931', reference: 'CAM-1' } };
     const calls = [];
     const api = {
         get: () => Promise.resolve({ data: local }),
@@ -246,7 +246,7 @@ test('«Restablecer» removes the local values', async () => {
     await view.reset();
 
     assert.deepEqual(calls, [[1, 0]]);
-    assert.equal(view.ean13, '');
+    assert.equal(view.ean13, '8400000000011', 'the web EAN again');
     assert.equal(emitted[0][0], 'saved');
 });
 
@@ -292,4 +292,29 @@ test('the editor offers 21, 10, 4 and 0 % and no longer says the price is only t
     assert.match(modalSource, /Precio con IVA \(tienda y web\)/);
     assert.match(modalSource, /const VAT_RATES = \[21, 10, 4, 0\];/);
     assert.doesNotMatch(modalSource, /El precio siempre es el de la web/);
+});
+
+test('the EAN and reference start with what the till uses, and an unchanged wrong EAN of the web does not block a save', async () => {
+    const calls = [];
+    const api = {
+        get: () => Promise.resolve({ data: ITEM }),
+        catalogSaveOverride: (...args) => { calls.push(['override', ...args]); return Promise.resolve({ data: ITEM }); },
+        catalogSetStock: (id, attr, qty) => { calls.push(['stock', qty]); return Promise.resolve({ data: { ...ITEM, stock: { ...ITEM.stock, quantity: qty } } }); },
+    };
+    const { view } = mountModal(ITEM, api);
+    await view.load();
+    assert.equal(view.ean13, '8400000000011', 'the web EAN, whose check digit is wrong');
+    assert.equal(view.reference, 'CAM-1');
+
+    view.quantity = '9';
+    await view.save();
+
+    assert.equal(view.error, '');
+    assert.deepEqual(calls, [['stock', 9]], 'nothing else sent');
+});
+
+test('the labels say every field is saved in the web too', () => {
+    assert.match(modalSource, /EAN \(tienda y web\)/);
+    assert.match(modalSource, /Referencia \(tienda y web\)/);
+    assert.doesNotMatch(modalSource, /solo en el TPV\)/);
 });
