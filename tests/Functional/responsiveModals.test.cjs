@@ -23,7 +23,9 @@ test('on a phone the payment modal is a full-screen sheet whose confirm button s
     assert.match(block, /\.pay-confirm\s*\{[^}]*position:\s*fixed;[^}]*bottom:/, 'pinned to the bottom of the screen, never below the fold');
     assert.match(block, /\.pay-right\s*\{[^}]*padding-bottom:\s*calc\(/, 'the content keeps clear of the pinned button');
     assert.match(block, /\.pay-key\s*\{[^}]*height:\s*46px/, 'smaller keys so the whole payment fits more phones');
-    assert.match(block, /\.pay-method\s*\{[^}]*min-height:\s*46px/);
+    assert.match(block, /\.pay-methods\s*\{[^}]*display:\s*flex;[^}]*flex-wrap:\s*nowrap/, 'every payment method on one line');
+    assert.match(block, /\.pay-method\s*\{[^}]*flex:\s*1 1 auto;[^}]*flex-direction:\s*column;[^}]*min-height:\s*44px;[^}]*font-size:\s*11px/, 'small icon over a small label');
+    assert.match(block, /\.pay-method-mark\s*\{[^}]*display:\s*none/, 'the selected mark would cover the label; the green border stays');
 });
 
 test('the payment result card fits the screen and scrolls', () => {
@@ -35,5 +37,5 @@ test('browsers reload the files the modal rules changed', () => {
     ['components/CustomerModal.js', 'components/DiscountModal.js', 'components/CashOpenScreen.js'].forEach((file) => {
         assert.ok(hasCacheVersionSince(page, file, '20261111'), file);
     });
-    assert.match(page, /\/assets\/css\/app\.css\?v=20261111-responsive-v[3-9]/);
+    assert.match(page, /\/assets\/css\/app\.css\?v=20261111-responsive-v[4-9]/);
 });
