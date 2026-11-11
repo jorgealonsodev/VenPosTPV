@@ -122,9 +122,9 @@ const CashCloseScreen = {
         return { counted, denoms, total, countMode, amountInput, amountError, triedClose, setCountMode, confirmClose, expected, diff, handleDiscardParked, pendingUploadsText, blockedUploadsText, uploadsOnTheirOwn, incidentsText, printingX, xStatus, xFailed, printX };
     },
     template: `
-        <div style="width:100%; height:100%; background:var(--bg); overflow:auto; padding:32px; display:flex; flex-direction:column; gap:24px;">
+        <div class="cash-close-screen" style="width:100%; height:100%; background:var(--bg); overflow:auto; padding:32px; display:flex; flex-direction:column; gap:24px;">
             <div style="display:flex; align-items:center; gap:16px;">
-                <button @click="$emit('back')" style="background:var(--surface2); border:none; border-radius:8px; width:36px; height:36px; cursor:pointer; color:var(--text2); display:flex; align-items:center; justify-content:center;">
+                <button class="cash-close-back" @click="$emit('back')" style="background:var(--surface2); border:none; border-radius:8px; width:36px; height:36px; cursor:pointer; color:var(--text2); display:flex; align-items:center; justify-content:center;">
                     <icon name="arrow_back" :size="16" />
                 </button>
                 <div>
@@ -134,7 +134,7 @@ const CashCloseScreen = {
             </div>
 
             <!-- Parked Tickets Warning Banner -->
-            <div v-if="parkedCount && parkedCount > 0"
+            <div v-if="parkedCount && parkedCount > 0" class="cash-close-notice"
                 style="max-width:900px; background:var(--amber-bg); border:1px solid var(--amber); border-radius:14px; padding:14px 18px; display:flex; align-items:center; justify-content:space-between; gap:14px;">
                 <div style="display:flex; flex-direction:column; gap:2px;">
                     <div style="font-size:13px; font-weight:700; color:var(--amber);">
@@ -144,7 +144,7 @@ const CashCloseScreen = {
                         No bloquean stock ni impiden el Cierre Z. Puedes conservarlos para el siguiente turno o descartarlos ahora.
                     </div>
                 </div>
-                <button @click="handleDiscardParked"
+                <button class="cash-close-discard" @click="handleDiscardParked"
                     style="flex-shrink:0; padding:8px 14px; border-radius:8px; border:1px solid var(--amber); background:var(--surface); color:var(--amber); cursor:pointer; font-family:inherit; font-size:12px; font-weight:600;">
                     Descartar aparcados ({{ parkedCount }})
                 </button>
@@ -162,9 +162,9 @@ const CashCloseScreen = {
                 </div>
             </div>
 
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; max-width:900px;">
+            <div class="cash-close-grid" style="display:grid; gap:20px; max-width:900px;">
                 <!-- Conteo -->
-                <div style="background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:24px;">
+                <div class="cash-close-card" style="background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:24px;">
                     <div style="font-size:13px; font-weight:600; margin-bottom:12px;">Conteo de caja</div>
                     <div class="cash-count-modes" role="tablist">
                         <button type="button" role="tab" :aria-selected="countMode === 'denoms'" :class="{ active: countMode === 'denoms' }" @click="setCountMode('denoms')">Por monedas y billetes</button>
@@ -176,10 +176,10 @@ const CashCloseScreen = {
                             style="font-family:'IBM Plex Mono'; font-size:22px;" />
                         <div v-if="amountError && (amountInput !== '' || triedClose)" role="alert" style="font-size:12px; color:var(--red);">{{ amountError }}</div>
                     </div>
-                    <div v-else style="display:grid; grid-template-columns:repeat(3, 1fr); gap:8px;">
+                    <div v-else class="cash-close-denoms" style="display:grid; gap:8px;">
                         <div v-for="d in denoms" :key="d.v" style="background:var(--surface2); border-radius:10px; padding:10px 12px; display:flex; flex-direction:column; gap:4px;">
                             <div style="font-size:11px; color:var(--text3); font-family:'IBM Plex Mono';">{{ d.label }}</div>
-                            <input type="number" min="0" v-model="counted[d.v]" placeholder="0"
+                            <input type="number" inputmode="numeric" min="0" v-model="counted[d.v]" placeholder="0"
                                 style="background:transparent; border:none; border-bottom:1px solid var(--border2); color:var(--text); font-family:'IBM Plex Mono'; font-size:14px; outline:none; width:100%; padding:2px 0;" />
                             <div v-if="counted[d.v] > 0" style="font-size:10px; color:var(--text3); font-family:'IBM Plex Mono';">= €{{ (d.v * parseInt(counted[d.v])).toFixed(2) }}</div>
                         </div>
@@ -188,7 +188,7 @@ const CashCloseScreen = {
 
                 <!-- Resumen -->
                 <div style="display:flex; flex-direction:column; gap:14px;">
-                    <div style="background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:24px; display:flex; flex-direction:column; gap:14px;">
+                    <div class="cash-close-card" style="background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:24px; display:flex; flex-direction:column; gap:14px;">
                         <div style="font-size:13px; font-weight:600;">Resumen de sesión</div>
                         <div style="display:flex; justify-content:space-between; align-items:center;">
                             <span style="color:var(--text2); font-size:13px;">Fondo inicial</span>
@@ -232,7 +232,7 @@ const CashCloseScreen = {
                         </div>
                     </div>
 
-                    <div style="background:var(--surface); border-radius:16px; padding:24px;"
+                    <div class="cash-close-card" style="background:var(--surface); border-radius:16px; padding:24px;"
                         :style="{ border: '1px solid ' + (Math.abs(diff) < 1 ? 'var(--green-dim)' : 'var(--amber)') }">
                         <div style="font-size:12px; color:var(--text3); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:8px;">Total contado</div>
                         <div style="font-family:'IBM Plex Mono'; font-size:36px; font-weight:700;"

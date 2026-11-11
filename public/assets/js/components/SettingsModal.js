@@ -929,10 +929,10 @@ const SettingsModal = {
     },
     template: `
         <!-- Backdrop -->
-        <div
+        <div class="settings-backdrop"
             style="position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:100; display:flex; align-items:center; justify-content:center; padding:24px; box-sizing:border-box;">
 
-            <div ref="modalBox" :style="modalStyle" style="position:relative; background:var(--surface); border:1px solid var(--border); border-radius:16px; width:100%; max-width:720px; max-height:90vh; display:flex; flex-direction:column; overflow:hidden;">
+            <div ref="modalBox" class="settings-modal" :class="{ 'is-sized': modalStyle.width }" :style="modalStyle" style="position:relative; background:var(--surface); border:1px solid var(--border); border-radius:16px; width:100%; max-width:720px; max-height:90vh; display:flex; flex-direction:column; overflow:hidden;">
                 <!-- Corner handles: drag to enlarge or shrink the window -->
                 <div class="settings-resize settings-resize-nw" @pointerdown.prevent="startResize($event, -1, -1)" aria-hidden="true"></div>
                 <div class="settings-resize settings-resize-ne" @pointerdown.prevent="startResize($event, 1, -1)" aria-hidden="true"></div>
@@ -942,7 +942,7 @@ const SettingsModal = {
                 <div style="padding:20px 24px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; flex-shrink:0;">
                     <div style="font-size:16px; font-weight:700; color:var(--text);">⚙ Configuración</div>
                     <!-- The only way to close Ajustes: it saves what was changed first. -->
-                    <button @click="closeSettings" :disabled="closing" :title="closing ? 'Guardando…' : 'Cerrar (guarda los cambios)'" aria-label="Cerrar" style="background:transparent; border:none; color:var(--text3); font-size:20px; cursor:pointer; line-height:1; display:flex; align-items:center;"><icon name="close" :size="20"></icon></button>
+                    <button @click="closeSettings" class="settings-close" :disabled="closing" :title="closing ? 'Guardando…' : 'Cerrar (guarda los cambios)'" aria-label="Cerrar" style="background:transparent; border:none; color:var(--text3); font-size:20px; cursor:pointer; line-height:1; display:flex; align-items:center;"><icon name="close" :size="20"></icon></button>
                 </div>
 
                 <!-- Toast success / error -->
@@ -950,9 +950,9 @@ const SettingsModal = {
                 <div v-if="error" style="margin:12px 24px 0; padding:10px 14px; background:var(--red-bg); color:var(--red); border-radius:8px; font-size:13px;">{{ error }}</div>
 
                 <!-- Body: sidebar + content -->
-                <div style="flex:1; display:flex; overflow:hidden;">
+                <div class="settings-body" style="flex:1; display:flex; overflow:hidden;">
                     <!-- Sidebar -->
-                    <div style="width:180px; border-right:1px solid var(--border); display:flex; flex-direction:column; flex-shrink:0; overflow-y:auto; padding:12px 0;">
+                    <div class="settings-nav" style="width:180px; border-right:1px solid var(--border); display:flex; flex-direction:column; flex-shrink:0; overflow-y:auto; padding:12px 0;">
                         <button @click="activeSection = 'empleados'"
                             style="min-height:48px; padding:0 16px; background:transparent; border:none; border-left:3px solid transparent; color:var(--text2); font-family:inherit; font-size:14px; text-align:left; cursor:pointer; display:flex; align-items:center; gap:10px; transition:background .15s;"
                             :style="activeSection === 'empleados' ? 'background:var(--surface2); border-left-color:var(--green); color:var(--text); font-weight:600;' : 'hover:bg-surface2'"
@@ -1010,7 +1010,7 @@ const SettingsModal = {
                     </div>
 
                     <!-- Content area -->
-                    <div style="flex:1; overflow-y:auto; padding:20px 24px;">
+                    <div class="settings-content" style="flex:1; overflow-y:auto; padding:20px 24px;">
 
                         <!-- ==================== EMPLEADOS ==================== -->
                         <div v-if="activeSection === 'empleados'">

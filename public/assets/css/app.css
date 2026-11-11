@@ -1121,3 +1121,125 @@ html, body, #app {
     font: inherit; font-size: 13px; cursor: pointer;
 }
 .cash-count-modes button.active { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 0 0 1px var(--border); }
+
+/* ── Secondary screens on tablet and phone ───────────────────────────
+   Refunds, labels, cash close, reports and settings. From 1024px these screens keep
+   their layout: the rules below sit in media queries, except the wrapper that lets a
+   report table scroll when it does not fit and the two cash close grids, whose columns
+   moved here from the inline style so the phone can change them. */
+.reports-table-scroll { flex-shrink: 0; overflow-x: auto; }
+.cash-close-grid { grid-template-columns: 1fr 1fr; }
+.cash-close-denoms { grid-template-columns: repeat(3, 1fr); }
+
+/* Tablet and phone. Refunds, labels and cash close keep two columns on a tablet. */
+@media (max-width: 1023px) {
+    /* Only the tables pan sideways, never the whole report. */
+    .reports-body { overflow-x: hidden; }
+    /* Ajustes: its height follows the visible screen, and a size saved on a bigger
+       screen (or in the other orientation) never exceeds this one. */
+    .settings-modal:not(.is-sized) {
+        max-height: 90vh !important;
+        max-height: 90dvh !important;
+    }
+    .settings-modal.is-sized {
+        max-width: calc(100vw - 32px) !important;
+        max-height: calc(100vh - 32px) !important;
+        max-height: calc(100dvh - 32px) !important;
+    }
+}
+
+/* Phone: one column that scrolls. */
+@media (max-width: 767px) {
+    /* The refund search button is a magnifier, like the sale screen search, so the box keeps
+       the row; «Sin ticket» drops to a row of its own. */
+    .refund-search { flex-wrap: wrap; }
+    .refund-search > input { min-width: 0; font-size: 16px; }
+    .refund-search-btn { flex: 0 0 48px; padding: 0 !important; justify-content: center; }
+    .refund-search-label { display: none; }
+    .refund-no-ticket { flex: 1 0 100%; justify-content: center; }
+
+    /* Refunds and labels: the lines first, the decisions below them, and the action
+       pinned to the bottom of the screen. */
+    .tpv-split { flex-direction: column; overflow-x: hidden; overflow-y: auto; }
+    .tpv-split-main { width: 100%; flex: none; overflow: visible; padding: 12px; border-right: 0; border-bottom: 1px solid var(--border); }
+    .tpv-split-side { display: contents; } /* its body and foot become rows of the scrolling column */
+    .tpv-split-side-body { flex: none; overflow: visible; padding: 12px; background: var(--surface); }
+    .tpv-split-side-foot {
+        position: sticky;
+        bottom: 0;
+        z-index: 1;
+        flex: none;
+        padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+        background: var(--surface);
+    }
+    .refund-header { gap: 8px !important; padding: 0 10px !important; }
+    /* A long order label is cut with an ellipsis before anything else gives way. */
+    .refund-header > * { flex-shrink: 0; white-space: nowrap; }
+    .refund-header > div { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    .refund-header > div:first-of-type { flex-shrink: 1; }
+    .refund-header-context { flex-shrink: 100; }
+    /* Labels: the quantity controls drop below the product name. */
+    .label-row { flex-wrap: wrap; }
+    .label-row > .tpv-stepper { flex: 1 0 100%; justify-content: flex-end; }
+
+    /* Cash close: the count, then the summary and the actions. */
+    .cash-close-screen { padding: 16px !important; gap: 16px !important; }
+    .cash-close-grid { grid-template-columns: minmax(0, 1fr); gap: 14px !important; }
+    .cash-close-denoms { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .cash-close-card { padding: 16px !important; }
+    .cash-close-notice { flex-wrap: wrap; }
+
+    /* Reports: tighter edges; the first column of a scrolling table stays readable. */
+    .reports-header { padding: 0 10px; gap: 8px; }
+    .reports-body { padding: 12px; }
+    .reports-table-scroll th:first-child,
+    .reports-table-scroll td:first-child { min-width: 120px; }
+
+    /* Ajustes: a full-screen sheet. The saved size and the corner handles do not
+       apply, the sections are a row of tabs that scrolls sideways, and the fields
+       take the whole width. */
+    .settings-backdrop { padding: 0 !important; }
+    .settings-backdrop > .settings-modal { /* outranks the tablet limits above */
+        width: 100vw !important;
+        max-width: 100vw !important;
+        height: 100vh !important;
+        height: 100dvh !important;
+        max-height: none !important;
+        border: 0 !important;
+        border-radius: 0 !important;
+    }
+    .settings-resize { display: none; }
+    .settings-body { flex-direction: column !important; }
+    .settings-nav {
+        width: auto !important;
+        flex-direction: row !important;
+        overflow-x: auto !important;
+        overflow-y: hidden !important;
+        padding: 0 !important;
+        border-right: 0 !important;
+        border-bottom: 1px solid var(--border);
+    }
+    .settings-nav > button { flex: 0 0 auto; white-space: nowrap; }
+    .settings-content { padding: 16px !important; }
+    .settings-content input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]),
+    .settings-content select,
+    .settings-content textarea { width: 100% !important; max-width: none !important; box-sizing: border-box; }
+    .settings-content table { display: block; overflow-x: auto; white-space: nowrap; }
+}
+
+/* Touch: the controls of these screens are at least 44px. */
+@media (pointer: coarse), (max-width: 1023px) {
+    .cash-close-back { width: 44px !important; height: 44px !important; }
+    .cash-close-discard { min-height: 44px; }
+    .cash-close-denoms input { min-height: 44px; }
+    .cash-count-modes button { min-height: 44px; }
+    .reports-chip { min-height: 44px; }
+    .reports-custom .tpv-input,
+    .reports-selects .tpv-input { min-height: 44px; }
+    /* The negative margin keeps the header of the window at its height. */
+    .settings-close { min-width: 44px; min-height: 44px; justify-content: center; margin: -12px -10px -12px 0; }
+}
+
+/* The cash close screen is mounted in an auto-height wrapper, so `height:100%` gave it no
+   height and a tall count could not scroll: it takes the viewport height itself. */
+.cash-close-screen { height: 100vh !important; height: 100dvh !important; }
