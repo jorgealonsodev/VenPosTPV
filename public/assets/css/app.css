@@ -372,6 +372,17 @@ html, body, #app {
     .pos-main[data-pane="catalog"] .layout-ticket { display: none; }
     .pos-main[data-pane="ticket"] .layout-catalog { display: none; }
     .catalog-grid { grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); }
+    /* Idle, the search is a magnifier button; tapping it opens the full-width box. */
+    .catalog-search-box:not(:focus-within):not(.has-text) { flex: 0 0 44px !important; }
+    .catalog-search-box:not(:focus-within):not(.has-text) input {
+        height: 44px;
+        padding: 0 !important;
+        color: transparent;
+        caret-color: transparent;
+        cursor: pointer;
+    }
+    .catalog-search-box:not(:focus-within):not(.has-text) input::placeholder { color: transparent; }
+    .catalog-search-box:not(:focus-within):not(.has-text) > span { left: 14px !important; color: var(--text2) !important; }
     .pos-pane-back {
         display: flex;
         align-items: center;
@@ -407,6 +418,18 @@ html, body, #app {
     }
     .pos-mobile-bar-total { font-family: 'IBM Plex Mono', monospace; font-size: 18px; }
     .pos-mobile-bar-open { margin-left: auto; }
+}
+
+/* Touch: the controls used during a sale are at least 44px. */
+@media (pointer: coarse), (max-width: 1023px) {
+    .ticket-qty-btn,
+    .ticket-remove-btn { width: 44px !important; height: 44px !important; border-radius: 10px !important; }
+    .ticket-actions > button { min-height: 44px; font-size: 13px !important; }
+    .ticket-customer-btn { min-height: 44px; }
+    .catalog-toolbar > button { width: 44px !important; height: 44px !important; }
+    .catalog-search-box input { min-height: 44px; }
+    button.cat-arrow { width: 44px; } /* outranks the base .cat-arrow rule further down */
+    .cat-tabs > button { min-height: 44px; }
 }
 
 @media (max-width: 359px) {

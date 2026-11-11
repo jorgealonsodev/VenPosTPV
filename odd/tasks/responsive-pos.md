@@ -15,14 +15,14 @@ Test runner: `node --test tests/Functional/*.test.cjs`; layout checked in the br
 - S7. Secondary screens (refunds, labels, cash close, reports, settings) are usable on tablet and phone: two-column layouts stack, wide tables scroll inside their own container.
 - S8. Viewport: heights follow the dynamic viewport (`dvh`) so the on-screen keyboard and browser bars do not hide the bottom of the screen.
 - S9. Desktop (>=1600px) layout is unchanged.
-- S10. Search box, user verbatim: "cuando ponemos en buscar en modo movil el campo de busqueda debe ampliarse de golpe por que no deja ver el texto". On phone and tablet the box takes the whole row on focus and while it has text, with no animation; the tool buttons drop to a second row.
+- S10. Search box, user verbatim: "cuando ponemos en buscar en modo movil el campo de busqueda debe ampliarse de golpe por que no deja ver el texto". On phone and tablet the box takes the whole row on focus and while it has text, with no animation; the tool buttons drop to a second row. Follow-up, user verbatim: "si tal en vesion movil pon un boton de lupa y al calcarlo abre la busqueda": on a phone the idle search is a 44px magnifier button; tapping it opens the full-width box.
 
 Assumptions (mine, not stated by the user): breakpoints 1599px (header menu), 1279px (4 product columns), 1023px (tablet, 3 columns), 767px (phone); the phone pattern is "catalog + bottom bar that opens the ticket".
 
 ## Tasks
 
-- [ ] T1 (S2, S3, S4, S8, S9, S10) header menu and sale layout. Route: inline. Commit: pending.
-- [ ] T2 (S5) touch targets in ticket and catalog. Route: inline. Commit: pending.
+- [x] T1 (S2, S3, S4, S8, S9, S10) header menu and sale layout. Route: inline. Commit: 9c266be. Review: medium, under_budget (not due). Live since 2026-11-11.
+- [x] T2 (S5, S10) touch targets in ticket and catalog; phone search opens from a magnifier button. Route: inline. Commit: see git log (feat(pos): touch-sized sale controls). Live since 2026-11-11.
 - [ ] T3 (S6) payment modal and small modals. Route: inline. Commit: pending.
 - [ ] T4 (S7) secondary screens. Route: inline, re-evaluate per screen. Commit: pending.
 
@@ -38,3 +38,6 @@ Forecast: about 900 authored changed lines, delivered as one merge per task.
 - L5 (2026-11-11) Verification method: Playwright tab on the online POS with `/assets/*.js|css` fulfilled from the working copy (only that tab sees the change). Look-only: no charging, cash close or settings saves.
 - L6 (2026-11-11) Browser check of T1: the first breakpoint (1399px) was too low; with labels unwrapped the admin row needs about 1435px and «Reimprimir» adds about 110px, so the menu starts below 1600px. Chrome emulation reports fractional widths, so a boundary value such as 1399 may not match its own media query.
 - L7 (2026-11-11) User: "cuando ponemos en buscar en modo movil el campo de busqueda debe ampliarse de golpe por que no deja ver el texto". Added S10 to T1; applied to tablet as well because at 768px the box was 147px wide and cut the placeholder (my extension).
+- L8 (2026-11-11) T1 evidence: RED 6/6 then GREEN; full functional suite 215/215; browser (online POS, local assets): no clipped header element at 360-1440, 2/3/4/5 product columns at 390/768/1024/1366+, phone bar opens the ticket and the back button returns, search box 126->366px on focus at 390 and 165->405px at 768, desktop 1920 unchanged (62% catalog, no menu). Uploaded 5 files by FTPS (server matched main before, sha256 checked after), cache rotated to prod-old-185017, live check without overrides passed. Not merged to main nor pushed yet.
+- L9 (2026-11-11) User: "si tal en vesion movil pon un boton de lupa y al calcarlo abre la busqueda". S10 rewritten for the phone; tablet keeps the visible box that expands.
+- L10 (2026-11-11) T2 evidence: RED 4/4 then GREEN; suite 219/219; browser at 390px: magnifier 44x44 -> 366x44 on tap with focus in the input; every ticket control >= 44px (qty, remove, customer, Descuento/Aparcar/Anular, Cobrar 62px), nothing off-screen; category arrows 44px; size picker fits. A test line was added to the online cart and removed again (cart left empty).
