@@ -231,7 +231,7 @@ const LabelsScreen = {
                     <form @submit.prevent="addByCode(query)" style="display:flex; gap:10px;">
                         <input class="tpv-input" style="flex:1;" v-model="query" placeholder="Escanea o busca por nombre, referencia o EAN"
                             aria-label="Escanea o busca un producto" autocomplete="off" />
-                        <button class="tpv-btn" type="submit" :disabled="busy || !query.trim()"><icon name="search" :size="16" /> Añadir</button>
+                        <button class="tpv-btn tpv-search-btn" type="submit" :disabled="busy || !query.trim()" aria-label="Añadir"><icon name="search" :size="16" /> <span class="tpv-search-label">Añadir</span></button>
                     </form>
 
                     <div v-if="message" class="tpv-banner tpv-banner-error">{{ message }}</div>

@@ -584,7 +584,7 @@ const ReportsScreen = {
                         <div v-if="data.pending_upload && (data.pending_upload.sales || data.pending_upload.refunds)" class="tpv-banner tpv-banner-info" role="status">
                             <span>Pendientes de subir a PrestaShop: {{ data.pending_upload.sales }} ventas y {{ data.pending_upload.refunds }} devoluciones. Ya cuentan en el informe.</span>
                         </div>
-                        <table class="reports-table">
+                        <div class="reports-table-scroll"><table class="reports-table">
                             <thead><tr>
                                 <th>Concepto</th>
                                 <th class="num">Este periodo</th>
@@ -601,7 +601,7 @@ const ReportsScreen = {
                                     <td class="num">{{ formatPercent(data.comparison[row.key] && data.comparison[row.key].percent) }}</td>
                                 </tr>
                             </tbody>
-                        </table>
+                        </table></div>
                     </template>
 
                     <!-- Por día: bar chart of net sales, then the table -->
@@ -613,7 +613,7 @@ const ReportsScreen = {
                                 <div v-if="chart.showLabels" class="reports-bar-label">{{ bar.date.slice(8, 10) }}</div>
                             </div>
                         </div>
-                        <table class="reports-table">
+                        <div class="reports-table-scroll"><table class="reports-table">
                             <thead><tr>
                                 <th>Fecha</th><th class="num">Tickets</th><th class="num">Unidades</th>
                                 <th class="num">Ventas brutas</th><th class="num">Devoluciones</th><th class="num">Ventas netas</th>
@@ -636,12 +636,12 @@ const ReportsScreen = {
                                 <td class="num">{{ formatAmount(data.totals.refunds) }}</td>
                                 <td class="num">{{ formatAmount(data.totals.net_sales) }}</td>
                             </tr></tfoot>
-                        </table>
+                        </table></div>
                     </template>
 
                     <!-- Por hora: 24 slots, every day of the range added up -->
                     <template v-else-if="activeType === 'hourly'">
-                        <table class="reports-table">
+                        <div class="reports-table-scroll"><table class="reports-table">
                             <thead><tr><th>Hora</th><th class="num">Tickets</th><th class="num">Ventas brutas</th></tr></thead>
                             <tbody>
                                 <tr v-for="h in data.hours" :key="h.hour" :class="{ muted: !h.tickets }">
@@ -655,13 +655,13 @@ const ReportsScreen = {
                                 <td class="num">{{ formatCount(data.totals.tickets) }}</td>
                                 <td class="num">{{ formatAmount(data.totals.gross_sales) }}</td>
                             </tr></tfoot>
-                        </table>
+                        </table></div>
                     </template>
 
                     <!-- Por producto: sold (with order, grouping and pages) or «Sin ventas» -->
                     <template v-else-if="activeType === 'products' && data.view === 'unsold'">
                         <div v-if="!data.rows.length" class="reports-state">{{ ReportsLogic.UNSOLD_EMPTY_TEXT }}</div>
-                        <table v-else class="reports-table">
+                        <div v-else class="reports-table-scroll"><table class="reports-table">
                             <thead><tr><th>Referencia</th><th>Nombre</th><th>Categoría</th></tr></thead>
                             <tbody>
                                 <tr v-for="p in data.rows" :key="p.product_id">
@@ -670,10 +670,10 @@ const ReportsScreen = {
                                     <td>{{ p.category_name || 'Sin categoría' }}</td>
                                 </tr>
                             </tbody>
-                        </table>
+                        </table></div>
                     </template>
                     <template v-else-if="activeType === 'products'">
-                        <table class="reports-table">
+                        <div class="reports-table-scroll"><table class="reports-table">
                             <thead><tr>
                                 <th>Referencia</th><th>Nombre</th>
                                 <th class="num">Vendidas</th><th class="num">Devueltas</th><th class="num">Netas</th>
@@ -702,12 +702,12 @@ const ReportsScreen = {
                                 <td class="num">{{ formatAmount(data.totals.net_amount) }}</td>
                                 <td class="num">{{ data.totals.net_amount ? '100,0 %' : '—' }}</td>
                             </tr></tfoot>
-                        </table>
+                        </table></div>
                     </template>
 
                     <!-- Por categoría: the category stored in each sale -->
                     <template v-else-if="activeType === 'categories'">
-                        <table class="reports-table">
+                        <div class="reports-table-scroll"><table class="reports-table">
                             <thead><tr>
                                 <th>Categoría</th>
                                 <th class="num">Vendidas</th><th class="num">Devueltas</th><th class="num">Netas</th>
@@ -735,12 +735,12 @@ const ReportsScreen = {
                                 <td class="num">{{ formatAmount(data.totals.net_amount) }}</td>
                                 <td class="num">{{ data.totals.net_amount ? '100,0 %' : '—' }}</td>
                             </tr></tfoot>
-                        </table>
+                        </table></div>
                     </template>
 
                     <!-- Por cajero: refunds by who made them -->
                     <template v-else-if="activeType === 'cashiers'">
-                        <table class="reports-table">
+                        <div class="reports-table-scroll"><table class="reports-table">
                             <thead><tr>
                                 <th>Empleado</th><th class="num">Tickets</th><th class="num">Ventas brutas</th><th class="num">Ticket medio</th>
                                 <th class="num">Devoluciones</th><th class="num">Ventas netas</th>
@@ -763,12 +763,12 @@ const ReportsScreen = {
                                 <td class="num">{{ formatAmount(data.totals.refunds) }}</td>
                                 <td class="num">{{ formatAmount(data.totals.net_sales) }}</td>
                             </tr></tfoot>
-                        </table>
+                        </table></div>
                     </template>
 
                     <!-- Por forma de pago: same rules as the Z -->
                     <template v-else-if="activeType === 'payments'">
-                        <table class="reports-table">
+                        <div class="reports-table-scroll"><table class="reports-table">
                             <thead><tr><th>Concepto</th><th class="num">Importe</th></tr></thead>
                             <tbody>
                                 <tr v-for="row in ReportsLogic.PAYMENT_ROWS" :key="row.key" :class="{ strong: row.strong }">
@@ -776,8 +776,8 @@ const ReportsScreen = {
                                     <td class="num">{{ formatAmount(data[row.key]) }}</td>
                                 </tr>
                             </tbody>
-                        </table>
-                        <table class="reports-table">
+                        </table></div>
+                        <div class="reports-table-scroll"><table class="reports-table">
                             <thead><tr><th>Tickets por forma de pago</th><th class="num">Tickets</th></tr></thead>
                             <tbody>
                                 <tr v-for="m in methodRows" :key="m.key">
@@ -785,11 +785,11 @@ const ReportsScreen = {
                                     <td class="num">{{ formatCount(m.count) }}</td>
                                 </tr>
                             </tbody>
-                        </table>
+                        </table></div>
                     </template>
                     <!-- IVA: base, VAT and total per rate of sales, refunds and net -->
                     <template v-else-if="activeType === 'vat'">
-                        <table class="reports-table reports-table-wide">
+                        <div class="reports-table-scroll"><table class="reports-table reports-table-wide">
                             <thead>
                                 <tr>
                                     <th rowspan="2">Tipo de IVA</th>
@@ -827,7 +827,7 @@ const ReportsScreen = {
                                     <td class="num" :class="{ negative: data.totals.net.vat < 0 }">{{ formatAmount(data.totals.net.vat) }}</td>
                                     <td class="num" :class="{ negative: data.totals.net.total < 0 }">{{ formatAmount(data.totals.net.total) }}</td>
                             </tr></tfoot>
-                        </table>
+                        </table></div>
                     </template>
 
                     <div v-if="activeType === 'products' && (productPage.hasPrev || productPage.hasNext)" class="reports-pager">

@@ -42,7 +42,7 @@ const app = createApp({
         };
     },
     template: `
-        <div style="width:100vw; height:100vh; overflow:hidden; position:relative;">
+        <div class="app-root">
             <login-screen v-if="session.screen === 'login'" :store-name="session.storeName" @login="onLogin" />
             <device-link-screen v-else-if="session.screen === 'deviceLink'" />
             <cash-open-screen v-else-if="session.screen === 'cashOpen'" :cashier-name="session.cashierName" @open="onOpenCash" />

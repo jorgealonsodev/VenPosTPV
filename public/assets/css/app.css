@@ -211,9 +211,229 @@ html, body, #app {
     background: var(--surface);
 }
 
+/* ── App shell and sale screen (desktop first; tablet and phone below) ── */
+.app-root {
+    width: 100vw;
+    height: 100vh;
+    height: 100dvh; /* follows the browser bars and the on-screen keyboard */
+    overflow: hidden;
+    position: relative;
+}
+
+.pos-header {
+    position: relative;
+    z-index: 80; /* above the sale panes for its menu, below every modal and notice */
+    height: 60px;
+    min-height: 60px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 0 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+}
+.pos-header-store {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 700;
+    font-size: 15px;
+    letter-spacing: -0.01em;
+    color: var(--text);
+}
+.pos-header-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.pos-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.pos-header-menu-toggle,
+.pos-header-menu-backdrop,
+.pos-menu-label { display: none; }
+.pos-header-menu-toggle {
+    position: relative;
+    min-height: 44px;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.pos-header-menu-toggle[aria-expanded="true"] {
+    background: var(--surface2);
+    border-color: var(--green);
+    color: var(--green);
+}
+.pos-header-menu-badge {
+    background: var(--amber);
+    color: #000;
+    font-weight: 700;
+    font-size: 11px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-family: 'IBM Plex Mono', monospace;
+}
+
+.pos-main {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    overflow: hidden;
+}
+.catalog-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 8px;
+}
+.pos-mobile-bar,
+.pos-pane-back { display: none; }
+
+/* The header row needs about 1435px for an admin, 1545px with «Reimprimir»: below 1600px
+   its actions open from a menu instead of wrapping their labels or being clipped. */
+@media (max-width: 1599px) {
+    .pos-header-menu-toggle { display: inline-flex; }
+    .pos-header-menu-backdrop {
+        display: block;
+        position: fixed;
+        inset: 0;
+        z-index: 1;
+        background: rgba(0, 0, 0, 0.35);
+    }
+    .pos-header-right { position: relative; z-index: 2; }
+    .pos-header-actions { display: none; }
+    .pos-header-actions.is-open {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        position: absolute;
+        top: calc(100% + 8px);
+        right: 0;
+        width: min(440px, calc(100vw - 16px));
+        max-height: calc(100vh - 84px);
+        max-height: calc(100dvh - 84px);
+        overflow-y: auto;
+        padding: 12px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+    }
+    .pos-header-actions.is-open > button {
+        width: 100%;
+        min-height: 52px !important;
+        padding: 8px 14px !important;
+        justify-content: flex-start !important;
+        gap: 10px !important;
+        font-size: 14px !important;
+        color: var(--text) !important;
+        text-align: left;
+    }
+    .pos-header-actions.is-open .pos-menu-label { display: inline; }
+}
+
+@media (max-width: 1279px) {
+    .catalog-grid { grid-template-columns: repeat(4, 1fr); }
+}
+
+/* Tablet: both panes stay side by side, with fewer and wider product cards. */
 @media (max-width: 1023px) {
-    .layout-catalog { width: 55%; }
-    .layout-ticket  { width: 45%; }
+    .layout-catalog { width: 56%; }
+    .layout-ticket  { width: 44%; }
+    .catalog-grid { grid-template-columns: repeat(3, 1fr); }
+    /* While searching, the box takes the whole row at once and the tools drop below it. */
+    .catalog-toolbar { flex-wrap: wrap; padding: 10px 12px !important; gap: 8px !important; }
+    .catalog-search-box { min-width: 0; }
+    .catalog-search-box:focus-within,
+    .catalog-search-box.has-text { flex: 1 0 100% !important; }
+    .catalog-search-box input { font-size: 16px !important; }
+}
+
+/* Phone: one pane at a time; the catalog's bottom bar opens the ticket. */
+@media (max-width: 767px) {
+    .pos-header { gap: 10px; padding: 0 10px; }
+    .pos-header-meta { display: none !important; }
+    .pos-header-actions.is-open { grid-template-columns: 1fr; }
+    .pos-main { position: relative; }
+    .layout-catalog,
+    .layout-ticket { width: 100%; border-right: 0; }
+    .pos-main[data-pane="catalog"] .layout-ticket { display: none; }
+    .pos-main[data-pane="ticket"] .layout-catalog { display: none; }
+    .catalog-grid { grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); }
+    /* Idle, the search is a magnifier button; tapping it opens the full-width box. */
+    .catalog-search-box:not(:focus-within):not(.has-text) { flex: 0 0 44px !important; }
+    .catalog-search-box:not(:focus-within):not(.has-text) input {
+        height: 44px;
+        padding: 0 !important;
+        color: transparent;
+        caret-color: transparent;
+        cursor: pointer;
+    }
+    .catalog-search-box:not(:focus-within):not(.has-text) input::placeholder { color: transparent; }
+    .catalog-search-box:not(:focus-within):not(.has-text) > span { left: 14px !important; color: var(--text2) !important; }
+    .pos-pane-back {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-shrink: 0;
+        min-height: 48px;
+        padding: 0 16px;
+        border: 0;
+        border-bottom: 1px solid var(--border);
+        background: var(--surface);
+        color: var(--text2);
+        font-family: inherit;
+        font-size: 15px;
+        font-weight: 600;
+        cursor: pointer;
+    }
+    .pos-pane-back > span { font-size: 22px; line-height: 1; }
+    .pos-mobile-bar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-shrink: 0;
+        min-height: 60px;
+        padding: 8px 16px calc(8px + env(safe-area-inset-bottom, 0px));
+        border: 0;
+        border-top: 1px solid var(--border);
+        background: var(--green);
+        color: #04140c;
+        font-family: inherit;
+        font-size: 15px;
+        font-weight: 700;
+        cursor: pointer;
+    }
+    .pos-mobile-bar-total { font-family: 'IBM Plex Mono', monospace; font-size: 18px; }
+    .pos-mobile-bar-open { margin-left: auto; }
+}
+
+/* Touch: the controls used during a sale are at least 44px. */
+@media (pointer: coarse), (max-width: 1023px) {
+    .ticket-qty-btn,
+    .ticket-remove-btn { width: 44px !important; height: 44px !important; border-radius: 10px !important; }
+    .ticket-actions > button { min-height: 44px; font-size: 13px !important; }
+    .ticket-customer-btn { min-height: 44px; }
+    .catalog-toolbar > button { width: 44px !important; height: 44px !important; }
+    .catalog-search-box input { min-height: 44px; }
+    button.cat-arrow { width: 44px; } /* outranks the base .cat-arrow rule further down */
+    .cat-tabs > button { min-height: 44px; }
+}
+
+@media (max-width: 359px) {
+    .pos-header-cashier { display: none !important; }
 }
 
 /* ── Combinations Modal ─────────────────────────────────────────── */
@@ -640,7 +860,7 @@ html, body, #app {
 /* Done / error cards */
 .pay-result {
     background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
-    padding: 48px 56px; max-width: 460px; text-align: center;
+    padding: 48px 56px; max-width: min(460px, calc(100vw - 24px)); max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px); overflow-y: auto; text-align: center;
     display: flex; flex-direction: column; align-items: center; gap: 14px;
     box-shadow: 0 24px 64px rgba(0,0,0,0.35);
 }
@@ -671,9 +891,46 @@ html, body, #app {
     .pay-key:active, .pay-confirm:active:not(:disabled) { transform: none; }
 }
 @media (max-width: 760px) {
-    .pay-methods { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .pay-body { flex-direction: column; min-height: 0; }
     .pay-left { flex: none; border-right: none; border-bottom: 1px solid var(--border); padding-right: 24px; }
+    /* Phone: a full-screen sheet with compact keys; «Cobrar» is pinned to the bottom of the screen. */
+    .pay-modal { width: 100vw; max-width: 100vw; height: 100vh; height: 100dvh; max-height: none; border: 0; border-radius: 0; }
+    .pay-head { padding: 8px 8px 8px 16px; }
+    .pay-total { font-size: 24px; }
+    /* Every payment method on one line: a small icon over a small label, as wide as its text needs. */
+    .pay-methods { display: flex; flex-wrap: nowrap; gap: 4px; padding: 10px 12px 0; }
+    .pay-method { flex: 1 1 auto; flex-direction: column; min-width: 0; min-height: 44px; padding: 4px; gap: 2px; font-size: 11px; line-height: 1.1; white-space: nowrap; }
+    .pay-method > svg { width: 16px; height: 16px; }
+    .pay-method.is-selected { background: var(--green-bg); }
+    .pay-method-mark { display: none; }
+    .pay-left { gap: 6px; padding: 10px 12px 12px; }
+    .pay-keypad, .pay-quick { gap: 6px; }
+    .pay-key { height: 46px; }
+    .pay-quick-btn, .pay-exact { min-height: 40px; }
+    .pay-right { gap: 10px; padding: 10px 12px; padding-bottom: calc(76px + env(safe-area-inset-bottom, 0px)); }
+    .pay-display { min-height: 52px; }
+    .pay-confirm {
+        position: fixed;
+        left: 12px;
+        right: 12px;
+        bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+        z-index: 2;
+        min-height: 56px;
+        margin: 0;
+        box-shadow: 0 0 0 10px var(--surface), 0 -14px 18px 6px var(--surface);
+    }
+    .pay-result { padding: 28px 20px; }
+}
+
+/* Small modal cards keep their desktop width but never exceed the screen. */
+.tpv-fit-card {
+    max-width: calc(100vw - 24px);
+    max-height: calc(100vh - 24px);
+    max-height: calc(100dvh - 24px);
+    overflow-y: auto;
+}
+@media (max-width: 767px) {
+    .tpv-fit-card { padding: 20px !important; }
 }
 
 /* Print agent (docs/prd/agente-impresion.md C1-C4, E1, S3, S4). Text pairs are the
@@ -864,3 +1121,125 @@ html, body, #app {
     font: inherit; font-size: 13px; cursor: pointer;
 }
 .cash-count-modes button.active { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 0 0 1px var(--border); }
+
+/* ── Secondary screens on tablet and phone ───────────────────────────
+   Refunds, labels, cash close, reports and settings. From 1024px these screens keep
+   their layout: the rules below sit in media queries, except the wrapper that lets a
+   report table scroll when it does not fit and the two cash close grids, whose columns
+   moved here from the inline style so the phone can change them. */
+.reports-table-scroll { flex-shrink: 0; overflow-x: auto; }
+.cash-close-grid { grid-template-columns: 1fr 1fr; }
+.cash-close-denoms { grid-template-columns: repeat(3, 1fr); }
+
+/* Tablet and phone. Refunds, labels and cash close keep two columns on a tablet. */
+@media (max-width: 1023px) {
+    /* Only the tables pan sideways, never the whole report. */
+    .reports-body { overflow-x: hidden; }
+    /* Ajustes: its height follows the visible screen, and a size saved on a bigger
+       screen (or in the other orientation) never exceeds this one. */
+    .settings-modal:not(.is-sized) {
+        max-height: 90vh !important;
+        max-height: 90dvh !important;
+    }
+    .settings-modal.is-sized {
+        max-width: calc(100vw - 32px) !important;
+        max-height: calc(100vh - 32px) !important;
+        max-height: calc(100dvh - 32px) !important;
+    }
+}
+
+/* Phone: one column that scrolls. */
+@media (max-width: 767px) {
+    /* Every search button is an icon-only magnifier, like the sale screen search, so the box
+       keeps the row; in refunds «Sin ticket» drops to a row of its own. */
+    .tpv-search-btn { flex: 0 0 48px; min-width: 48px; padding: 0 !important; justify-content: center; }
+    .tpv-search-label { display: none; }
+    input.tpv-input { min-width: 0; font-size: 16px; }
+    .refund-search { flex-wrap: wrap; }
+    .refund-no-ticket { flex: 1 0 100%; justify-content: center; }
+
+    /* Refunds and labels: the lines first, the decisions below them, and the action
+       pinned to the bottom of the screen. */
+    .tpv-split { flex-direction: column; overflow-x: hidden; overflow-y: auto; }
+    .tpv-split-main { width: 100%; flex: none; overflow: visible; padding: 12px; border-right: 0; border-bottom: 1px solid var(--border); }
+    .tpv-split-side { display: contents; } /* its body and foot become rows of the scrolling column */
+    .tpv-split-side-body { flex: none; overflow: visible; padding: 12px; background: var(--surface); }
+    .tpv-split-side-foot {
+        position: sticky;
+        bottom: 0;
+        z-index: 1;
+        flex: none;
+        padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+        background: var(--surface);
+    }
+    .refund-header { gap: 8px !important; padding: 0 10px !important; }
+    /* A long order label is cut with an ellipsis before anything else gives way. */
+    .refund-header > * { flex-shrink: 0; white-space: nowrap; }
+    .refund-header > div { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    .refund-header > div:first-of-type { flex-shrink: 1; }
+    .refund-header-context { flex-shrink: 100; }
+    /* Labels: the quantity controls drop below the product name. */
+    .label-row { flex-wrap: wrap; }
+    .label-row > .tpv-stepper { flex: 1 0 100%; justify-content: flex-end; }
+
+    /* Cash close: the count, then the summary and the actions. */
+    .cash-close-screen { padding: 16px !important; gap: 16px !important; }
+    .cash-close-grid { grid-template-columns: minmax(0, 1fr); gap: 14px !important; }
+    .cash-close-denoms { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .cash-close-card { padding: 16px !important; }
+    .cash-close-notice { flex-wrap: wrap; }
+
+    /* Reports: tighter edges; the first column of a scrolling table stays readable. */
+    .reports-header { padding: 0 10px; gap: 8px; }
+    .reports-body { padding: 12px; }
+    .reports-table-scroll th:first-child,
+    .reports-table-scroll td:first-child { min-width: 120px; }
+
+    /* Ajustes: a full-screen sheet. The saved size and the corner handles do not
+       apply, the sections are a row of tabs that scrolls sideways, and the fields
+       take the whole width. */
+    .settings-backdrop { padding: 0 !important; }
+    .settings-backdrop > .settings-modal { /* outranks the tablet limits above */
+        width: 100vw !important;
+        max-width: 100vw !important;
+        height: 100vh !important;
+        height: 100dvh !important;
+        max-height: none !important;
+        border: 0 !important;
+        border-radius: 0 !important;
+    }
+    .settings-resize { display: none; }
+    .settings-body { flex-direction: column !important; }
+    .settings-nav {
+        width: auto !important;
+        flex-direction: row !important;
+        overflow-x: auto !important;
+        overflow-y: hidden !important;
+        padding: 0 !important;
+        border-right: 0 !important;
+        border-bottom: 1px solid var(--border);
+    }
+    .settings-nav > button { flex: 0 0 auto; white-space: nowrap; }
+    .settings-content { padding: 16px !important; }
+    .settings-content input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]),
+    .settings-content select,
+    .settings-content textarea { width: 100% !important; max-width: none !important; box-sizing: border-box; }
+    .settings-content table { display: block; overflow-x: auto; white-space: nowrap; }
+}
+
+/* Touch: the controls of these screens are at least 44px. */
+@media (pointer: coarse), (max-width: 1023px) {
+    .cash-close-back { width: 44px !important; height: 44px !important; }
+    .cash-close-discard { min-height: 44px; }
+    .cash-close-denoms input { min-height: 44px; }
+    .cash-count-modes button { min-height: 44px; }
+    .reports-chip { min-height: 44px; }
+    .reports-custom .tpv-input,
+    .reports-selects .tpv-input { min-height: 44px; }
+    /* The negative margin keeps the header of the window at its height. */
+    .settings-close { min-width: 44px; min-height: 44px; justify-content: center; margin: -12px -10px -12px 0; }
+}
+
+/* The cash close screen is mounted in an auto-height wrapper, so `height:100%` gave it no
+   height and a tall count could not scroll: it takes the viewport height itself. */
+.cash-close-screen { height: 100vh !important; height: 100dvh !important; }

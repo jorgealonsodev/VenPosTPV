@@ -952,13 +952,13 @@ const RefundScreen = {
     },
     template: `
         <div style="width:100%; height:100%; display:flex; flex-direction:column; overflow:hidden; background:var(--bg);">
-            <header style="height:64px; min-height:64px; background:var(--surface); border-bottom:1px solid var(--border); display:flex; align-items:center; padding:0 16px; gap:14px; flex-shrink:0;">
+            <header class="refund-header" style="height:64px; min-height:64px; background:var(--surface); border-bottom:1px solid var(--border); display:flex; align-items:center; padding:0 16px; gap:14px; flex-shrink:0;">
                 <button class="tpv-btn" @click="$emit('back')">
                     <icon name="arrow_back" :size="18" /> Volver
                 </button>
                 <div style="font-weight:700; font-size:17px; letter-spacing:-0.01em; color:var(--text);">Devoluciones</div>
-                <div v-if="noTicket" style="color:var(--text2); font-size:14px;">· Sin ticket</div>
-                <div v-else-if="selectedOrder" style="color:var(--text2); font-size:14px;">· Pedido {{ orderLabel(selectedOrder) }}<span v-if="exchangeMode"> · Cambio</span></div>
+                <div v-if="noTicket" class="refund-header-context" style="color:var(--text2); font-size:14px;">· Sin ticket</div>
+                <div v-else-if="selectedOrder" class="refund-header-context" style="color:var(--text2); font-size:14px;">· Pedido {{ orderLabel(selectedOrder) }}<span v-if="exchangeMode"> · Cambio</span></div>
                 <div v-if="!session.online" style="margin-left:auto; display:flex; align-items:center; gap:6px; color:var(--red); font-size:14px; font-weight:600; background:var(--red-bg); border:1px solid var(--red); padding:8px 12px; border-radius:10px;">
                     <icon name="wifi_off" :size="16" /> Sin conexión
                 </div>
@@ -990,7 +990,7 @@ const RefundScreen = {
 
                     <div style="display:flex; gap:8px;">
                         <input class="tpv-input" style="flex:1;" v-model="productQuery" @keyup.enter="searchProducts" placeholder="Buscar producto por nombre, referencia o EAN..." />
-                        <button class="tpv-btn tpv-btn-primary" @click="searchProducts" :disabled="loading"><icon name="search" :size="18" /> Buscar</button>
+                        <button class="tpv-btn tpv-btn-primary tpv-search-btn" @click="searchProducts" :disabled="loading" aria-label="Buscar"><icon name="search" :size="18" /> <span class="tpv-search-label">Buscar</span></button>
                     </div>
                     <div v-if="productResults.length" style="display:flex; flex-direction:column; gap:8px; max-height:280px; overflow:auto;">
                         <button v-for="p in productResults" :key="p.id" class="tpv-row" style="min-height:56px; font-family:inherit; text-align:left; color:var(--text);" @click="pickProduct(p)">
@@ -1065,14 +1065,14 @@ const RefundScreen = {
 
             <!-- Ticket search -->
             <div v-else-if="!selectedOrder" style="flex:1; display:flex; flex-direction:column; padding:16px; gap:12px; overflow:auto;">
-                <div style="display:flex; gap:8px;">
+                <div class="refund-search" style="display:flex; gap:8px;">
                     <input class="tpv-input" style="flex:1;" v-model="searchQuery" @keyup.enter="handleSearch" placeholder="Buscar o escanear: nº de pedido o referencia..." />
-                    <button class="tpv-btn tpv-btn-primary" @click="handleSearch" :disabled="loading">
+                    <button class="tpv-btn tpv-btn-primary tpv-search-btn" @click="handleSearch" :disabled="loading" aria-label="Buscar">
                         <icon name="search" :size="18" />
                         <span v-if="loading">...</span>
-                        <span v-else>Buscar</span>
+                        <span v-else class="tpv-search-label">Buscar</span>
                     </button>
-                    <button class="tpv-btn" @click="openNoTicket" :disabled="loading">Sin ticket</button>
+                    <button class="tpv-btn refund-no-ticket" @click="openNoTicket" :disabled="loading">Sin ticket</button>
                 </div>
                 <div v-if="lastExchange && lastExchange.saleReference" class="tpv-banner tpv-banner-ok" style="font-size:15px;">
                     <icon name="check" :size="20" style="color:var(--green);" />
@@ -1180,7 +1180,7 @@ const RefundScreen = {
                         </div>
                         <div style="display:flex; gap:8px;">
                             <input class="tpv-input" style="flex:1;" v-model="productQuery" @keyup.enter="searchProducts" placeholder="Buscar producto por nombre, referencia o EAN..." />
-                            <button class="tpv-btn tpv-btn-primary" @click="searchProducts" :disabled="loading"><icon name="search" :size="18" /> Buscar</button>
+                            <button class="tpv-btn tpv-btn-primary tpv-search-btn" @click="searchProducts" :disabled="loading" aria-label="Buscar"><icon name="search" :size="18" /> <span class="tpv-search-label">Buscar</span></button>
                         </div>
                         <div v-if="productResults.length" style="display:flex; flex-direction:column; gap:8px; max-height:280px; overflow:auto;">
                             <button v-for="p in productResults" :key="p.id" class="tpv-row" style="min-height:56px; font-family:inherit; text-align:left; color:var(--text);" @click="pickProduct(p)">

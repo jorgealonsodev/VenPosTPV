@@ -28,7 +28,7 @@ const TicketPanel = {
         <div style="display:flex; flex-direction:column; height:100%; overflow:hidden;">
             <!-- Customer bar -->
             <div style="border-bottom:1px solid var(--border); padding:10px 14px; display:flex; align-items:center; gap:8px;">
-                <button @click="$emit('showCustomer')"
+                <button @click="$emit('showCustomer')" class="ticket-customer-btn"
                     style="flex:1; display:flex; align-items:center; gap:8px; background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:8px 12px; cursor:pointer; text-align:left; font-family:inherit;">
                     <icon name="user" :size="14" />
                     <span style="font-size:13px; color: cart.customer && !cart.customer.default ? 'var(--text)' : 'var(--text3)'; font-weight: cart.customer && !cart.customer.default ? 500 : 400;">
@@ -66,18 +66,18 @@ const TicketPanel = {
                         </div>
                     </div>
                     <div style="display:flex; align-items:center; gap:6px;">
-                        <button @click="$emit('updateQty', line.id, -1)"
+                        <button @click="$emit('updateQty', line.id, -1)" class="ticket-qty-btn" aria-label="Quitar una unidad"
                             style="width:26px; height:26px; border-radius:6px; border:1px solid var(--border); background:var(--surface); cursor:pointer; color:var(--text2); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
                             <icon name="minus" :size="12" />
                         </button>
                         <span style="font-family:'IBM Plex Mono'; font-size:13px; font-weight:600; min-width:20px; text-align:center; color:var(--text);">{{ line.qty || 1 }}</span>
-                        <button @click="$emit('updateQty', line.id, 1)"
+                        <button @click="$emit('updateQty', line.id, 1)" class="ticket-qty-btn" aria-label="Añadir una unidad"
                             style="width:26px; height:26px; border-radius:6px; border:1px solid var(--border); background:var(--surface); cursor:pointer; color:var(--text2); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
                             <icon name="plus" :size="12" />
                         </button>
                         <span style="color:var(--text3); font-size:11px; font-family:'IBM Plex Mono';">× {{ eur(Number(line.price)) }}</span>
                         <span v-if="line.discount > 0" style="font-size:10px; background:var(--amber-bg); color:var(--amber); padding:2px 5px; border-radius:4px;">-{{ line.discount }}%</span>
-                        <button @click="$emit('remove', line.id)"
+                        <button @click="$emit('remove', line.id)" class="ticket-remove-btn" aria-label="Quitar del ticket"
                             style="margin-left:auto; width:26px; height:26px; border-radius:6px; border:none; background:transparent; cursor:pointer; color:var(--text3); display:flex; align-items:center; justify-content:center;">
                             <icon name="trash" :size="13" />
                         </button>
@@ -107,7 +107,7 @@ const TicketPanel = {
                 <button v-if="freeItemAllowed" @click="$emit('showFreeItem')" class="tpv-btn ticket-free-button">
                     <icon name="plus" :size="14" /> Artículo libre
                 </button>
-                <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px;">
+                <div class="ticket-actions" style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px;">
                     <button @click="$emit('showDiscount')"
                         style="padding:9px 6px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px; display:flex; align-items:center; justify-content:center; gap:5px; transition:all .1s;"
                         @mouseover="$event.currentTarget.style.background='var(--surface2)'" @mouseout="$event.currentTarget.style.background='transparent'">

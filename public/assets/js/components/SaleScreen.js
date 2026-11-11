@@ -324,8 +324,21 @@ const SaleScreen = {
             return !!(session && session.sessionId);
         });
 
+        // Below the width where the header row fits, its actions open from a menu.
+        const showHeaderMenu = Vue.ref(false);
+        // On a phone the catalog and the ticket are shown one at a time.
+        const mobilePane = Vue.ref('catalog');
+        const cartUnits = Vue.computed(() => cart.lines.reduce((sum, line) => sum + (parseInt(line.qty, 10) || 1), 0));
+        const eur = (n) => (Number(n) || 0).toFixed(2).replace('.', ',') + ' €';
+        // The ticket list and a finished order live in the ticket pane; an emptied ticket goes back to the catalog.
+        Vue.watch(() => [showTickets.value, !!shareOrder.value, cart.lines.length], ([tickets, order, lines]) => {
+            if (tickets || order) mobilePane.value = 'ticket';
+            else if (lines === 0) mobilePane.value = 'catalog';
+        });
+
         return {
             brandBase: (window.TPV_BASE || '') + '/assets/img/brand',
+            showHeaderMenu, mobilePane, cartUnits, eur,
             session, cart, catalog,
             showPayment, showDiscount, showCustomer, showCouponCreation, showCouponList, showCashClose, showRefund, showSettings,
             showLogoutConfirm, showSyncPanel, showTickets, showParkModal, parkNote, showVoidConfirm,
@@ -371,38 +384,45 @@ const SaleScreen = {
         </div>
         <div v-else style="width:100%; height:100%; display:flex; flex-direction:column; overflow:hidden; background:var(--bg);">
             <!-- Header -->
-            <header style="height:60px; min-height:60px; background:var(--surface); border-bottom:1px solid var(--border); display:flex; align-items:center; padding:0 16px; gap:14px; flex-shrink:0;">
+            <header class="pos-header">
                 <!-- Without a shop name of its own the header shows the VenPosTPV logo. -->
                 <div v-if="!storeName || storeName === 'VenPosTPV'" style="line-height:0; flex-shrink:0;"><img class="brand-logo--dark" :src="brandBase + '/venpostpv-logo-dark.svg'" alt="VenPosTPV" style="height:28px; width:auto;"><img class="brand-logo--light" :src="brandBase + '/venpostpv-logo.svg'" alt="VenPosTPV" style="height:28px; width:auto;"></div>
                 <template v-else>
                     <img :src="brandBase + '/venpostpv-mark.svg'" alt="" style="width:30px; height:30px; flex-shrink:0;">
-                    <div style="font-weight:700; font-size:15px; letter-spacing:-0.01em; color:var(--text); white-space:nowrap;">{{ storeName }}</div>
+                    <div class="pos-header-store">{{ storeName }}</div>
                 </template>
-                <div style="width:1px; height:22px; background:var(--border);"></div>
-                <div style="display:flex; align-items:center; gap:7px; color:var(--text2); font-size:13px;">
+                <div class="pos-header-meta" style="width:1px; height:22px; background:var(--border);"></div>
+                <div class="pos-header-cashier" style="display:flex; align-items:center; gap:7px; color:var(--text2); font-size:13px; white-space:nowrap;">
                     <icon name="user" :size="14" /> {{ (cashierName || 'Cajero').split(' ')[0] }}
                 </div>
-                <div style="display:flex; align-items:center; gap:6px; color:var(--text3); font-size:12px;">
+                <div class="pos-header-meta" style="display:flex; align-items:center; gap:6px; color:var(--text3); font-size:12px; white-space:nowrap;">
                     <icon name="receipt" :size="13" />
                     <span>Ticket #{{ ticketCount + 1 }}</span>
                 </div>
-                <div style="display:flex; align-items:center; gap:6px; color:var(--text3); font-size:13px; font-family:'IBM Plex Mono';">
+                <div class="pos-header-meta" style="display:flex; align-items:center; gap:6px; color:var(--text3); font-size:13px; font-family:'IBM Plex Mono';">
                     {{ timeStr }}
                 </div>
-                <div style="margin-left:auto; display:flex; align-items:center; gap:10px;">
+                <div v-if="showHeaderMenu" class="pos-header-menu-backdrop" @click="showHeaderMenu = false"></div>
+                <div class="pos-header-right">
                     <sync-status-indicator
                         :state="session.syncState"
                         :data="session.syncData"
                         :outbox="session.outbox"
                         @click="showSyncPanel = true"
                     />
+                    <button type="button" class="pos-header-menu-toggle" @click="showHeaderMenu = !showHeaderMenu"
+                        :aria-expanded="showHeaderMenu ? 'true' : 'false'" aria-controls="pos-header-actions">
+                        <icon name="list" :size="16" /> Menú
+                        <span v-if="parkedCount > 0" class="pos-header-menu-badge">{{ parkedCount }}</span>
+                    </button>
+                    <div id="pos-header-actions" class="pos-header-actions" :class="{ 'is-open': showHeaderMenu }" @click="showHeaderMenu = false">
                     <button @click="handleSyncNow" :disabled="syncingNow" title="Sincronizar ahora con PrestaShop" aria-label="Sincronizar ahora"
                         :class="{ 'tpv-spin': syncingNow }"
                         style="min-height:44px; min-width:44px; background:transparent; border:1px solid var(--border); border-radius:8px; padding:4px 8px; color:var(--text2); cursor:pointer; display:flex; align-items:center; justify-content:center;">
-                        <icon name="refresh" :size="16" />
+                        <icon name="refresh" :size="16" /> <span class="pos-menu-label">Sincronizar</span>
                     </button>
                     <button @click="toggleTheme" style="min-height:44px; background:transparent; border:1px solid var(--border); border-radius:8px; padding:4px 8px; color:var(--text3); font-size:11px; cursor:pointer; font-family:inherit; display:flex; align-items:center; gap:4px;">
-                        <icon :name="session.theme === 'dark' ? 'sun' : 'moon'" :size="13" />
+                        <icon :name="session.theme === 'dark' ? 'sun' : 'moon'" :size="13" /> <span class="pos-menu-label">{{ session.theme === 'dark' ? 'Tema claro' : 'Tema oscuro' }}</span>
                     </button>
                     <button v-if="session.role === 'admin' || session.role === 'cashier'" @click="showCouponCreation = true"
                         title="Crear cupón"
@@ -453,6 +473,7 @@ const SaleScreen = {
                         style="min-height:44px; display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text3); cursor:pointer; font-family:inherit; font-size:12px;">
                         <icon name="logout" :size="13" /> Salir
                     </button>
+                    </div>
                 </div>
             </header>
             <label-pending-prompt :terminal-id="session.terminalId" @notify="handleRefundNotify" />
@@ -463,9 +484,9 @@ const SaleScreen = {
             </div>
 
             <!-- Main -->
-            <div style="flex:1; display:flex; overflow:hidden;">
+            <div class="pos-main" :data-pane="mobilePane">
                 <!-- Catalog -->
-                <div style="width:62%; display:flex; flex-direction:column; overflow:hidden; border-right:1px solid var(--border);">
+                <div class="layout-catalog">
                     <catalog-panel
                         :catalog="catalog"
                         :list-view="listView"
@@ -483,7 +504,10 @@ const SaleScreen = {
                 </div>
 
                 <!-- Ticket -->
-                <div style="width:38%; display:flex; flex-direction:column; overflow:hidden; background:var(--surface);">
+                <div class="layout-ticket">
+                    <button type="button" class="pos-pane-back" @click="mobilePane = 'catalog'">
+                        <span aria-hidden="true">‹</span> Catálogo
+                    </button>
                     <div v-if="shareOrder" style="flex:1; overflow:hidden;">
                         <order-detail-view :order="shareOrder" :start-with-choice="true" @back="shareOrder = null" @notify="notify" />
                     </div>
@@ -508,6 +532,13 @@ const SaleScreen = {
                     />
                 </div>
             </div>
+
+            <!-- Phone: the catalog's bottom bar opens the ticket -->
+            <button v-if="mobilePane === 'catalog'" type="button" class="pos-mobile-bar" @click="mobilePane = 'ticket'">
+                <span class="pos-mobile-bar-count">{{ cartUnits }} {{ cartUnits === 1 ? 'artículo' : 'artículos' }}</span>
+                <span class="pos-mobile-bar-total">{{ eur(cart.total) }}</span>
+                <span class="pos-mobile-bar-open">Ver ticket <span aria-hidden="true">›</span></span>
+            </button>
 
             <!-- Park Ticket Optional Note Modal -->
             <div v-if="showParkModal" style="position:fixed; inset:0; background:rgba(0,0,0,0.55); display:flex; align-items:center; justify-content:center; z-index:1000;">
