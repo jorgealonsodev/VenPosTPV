@@ -990,7 +990,7 @@ const RefundScreen = {
 
                     <div style="display:flex; gap:8px;">
                         <input class="tpv-input" style="flex:1;" v-model="productQuery" @keyup.enter="searchProducts" placeholder="Buscar producto por nombre, referencia o EAN..." />
-                        <button class="tpv-btn tpv-btn-primary" @click="searchProducts" :disabled="loading"><icon name="search" :size="18" /> Buscar</button>
+                        <button class="tpv-btn tpv-btn-primary tpv-search-btn" @click="searchProducts" :disabled="loading" aria-label="Buscar"><icon name="search" :size="18" /> <span class="tpv-search-label">Buscar</span></button>
                     </div>
                     <div v-if="productResults.length" style="display:flex; flex-direction:column; gap:8px; max-height:280px; overflow:auto;">
                         <button v-for="p in productResults" :key="p.id" class="tpv-row" style="min-height:56px; font-family:inherit; text-align:left; color:var(--text);" @click="pickProduct(p)">
@@ -1067,10 +1067,10 @@ const RefundScreen = {
             <div v-else-if="!selectedOrder" style="flex:1; display:flex; flex-direction:column; padding:16px; gap:12px; overflow:auto;">
                 <div class="refund-search" style="display:flex; gap:8px;">
                     <input class="tpv-input" style="flex:1;" v-model="searchQuery" @keyup.enter="handleSearch" placeholder="Buscar o escanear: nº de pedido o referencia..." />
-                    <button class="tpv-btn tpv-btn-primary refund-search-btn" @click="handleSearch" :disabled="loading" aria-label="Buscar">
+                    <button class="tpv-btn tpv-btn-primary tpv-search-btn" @click="handleSearch" :disabled="loading" aria-label="Buscar">
                         <icon name="search" :size="18" />
                         <span v-if="loading">...</span>
-                        <span v-else class="refund-search-label">Buscar</span>
+                        <span v-else class="tpv-search-label">Buscar</span>
                     </button>
                     <button class="tpv-btn refund-no-ticket" @click="openNoTicket" :disabled="loading">Sin ticket</button>
                 </div>
@@ -1180,7 +1180,7 @@ const RefundScreen = {
                         </div>
                         <div style="display:flex; gap:8px;">
                             <input class="tpv-input" style="flex:1;" v-model="productQuery" @keyup.enter="searchProducts" placeholder="Buscar producto por nombre, referencia o EAN..." />
-                            <button class="tpv-btn tpv-btn-primary" @click="searchProducts" :disabled="loading"><icon name="search" :size="18" /> Buscar</button>
+                            <button class="tpv-btn tpv-btn-primary tpv-search-btn" @click="searchProducts" :disabled="loading" aria-label="Buscar"><icon name="search" :size="18" /> <span class="tpv-search-label">Buscar</span></button>
                         </div>
                         <div v-if="productResults.length" style="display:flex; flex-direction:column; gap:8px; max-height:280px; overflow:auto;">
                             <button v-for="p in productResults" :key="p.id" class="tpv-row" style="min-height:56px; font-family:inherit; text-align:left; color:var(--text);" @click="pickProduct(p)">

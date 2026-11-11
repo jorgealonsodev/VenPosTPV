@@ -145,15 +145,26 @@ test('browsers reload the files these rules changed', () => {
     assert.match(page, /\/assets\/css\/app\.css\?v=20261111-responsive-v[4-9]/);
 });
 
-test('on a phone the refund search button is a magnifier, like the sale screen search', () => {
+test('on a phone every search button is a magnifier, like the sale screen search', () => {
+    const labels = component('LabelsScreen.js');
+    const tickets = component('TicketListPanel.js');
+    const count = (source) => (source.match(/class="tpv-btn[^"]* tpv-search-btn"/g) || []).length;
+    assert.equal(count(refund), 3, 'ticket search and both product searches');
+    assert.equal(count(labels), 1);
+    assert.equal(count(tickets), 1);
+    [refund, labels, tickets].forEach((source) => {
+        const buttons = source.match(/<button[^>]*tpv-search-btn[\s\S]*?<\/button>/g) || [];
+        buttons.forEach((button) => {
+            assert.match(button, /aria-label="(Buscar|Añadir)"/, 'the icon-only button keeps a name');
+            assert.match(button, /<span[^>]*class="tpv-search-label">(Buscar|Añadir)<\/span>/, 'the text is in a span the phone rule can hide');
+        });
+    });
     assert.match(refund, /<div class="refund-search" style="display:flex; gap:8px;">/);
-    assert.match(refund, /<button class="tpv-btn tpv-btn-primary refund-search-btn" @click="handleSearch" :disabled="loading" aria-label="Buscar">/);
-    assert.match(refund, /<span v-else class="refund-search-label">Buscar<\/span>/);
     assert.match(refund, /<button class="tpv-btn refund-no-ticket" @click="openNoTicket"/);
 
-    const phone = css.slice(css.lastIndexOf('@media (max-width: 767px) {', css.indexOf('.refund-search-label')));
-    assert.match(phone, /\.refund-search-label\s*\{[^}]*display:\s*none/, 'icon only, so the box keeps the row');
-    assert.match(phone, /\.refund-search-btn\s*\{[^}]*flex:\s*0 0 48px/);
+    const phone = css.slice(css.lastIndexOf('@media (max-width: 767px) {', css.indexOf('.tpv-search-label')));
+    assert.match(phone, /\.tpv-search-label\s*\{[^}]*display:\s*none/, 'icon only, so the box keeps the row');
+    assert.match(phone, /\.tpv-search-btn\s*\{[^}]*flex:\s*0 0 48px/);
     assert.match(phone, /\.refund-no-ticket\s*\{[^}]*flex:\s*1 0 100%/, '«Sin ticket» drops to its own row');
 });
 

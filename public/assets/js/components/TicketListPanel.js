@@ -287,7 +287,7 @@ const TicketListPanel = {
                 <template v-if="activeTab === 'cobrados'">
                     <form @submit.prevent="searchPaid" style="display:flex; gap:8px;">
                         <input class="tpv-input" style="flex:1; min-width:0;" v-model="paidQuery" placeholder="Código del ticket o referencia web" aria-label="Buscar ticket por código" />
-                        <button type="submit" class="tpv-btn" :disabled="loading"><icon name="search" :size="16" /> Buscar</button>
+                        <button type="submit" class="tpv-btn tpv-search-btn" :disabled="loading" aria-label="Buscar"><icon name="search" :size="16" /> <span class="tpv-search-label">Buscar</span></button>
                     </form>
                     <div v-if="loading" style="text-align:center; color:var(--text3); font-size:13px; padding:20px;">Cargando...</div>
                     <div v-else-if="paidOrders.length === 0" style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; color:var(--text3); gap:10px;">

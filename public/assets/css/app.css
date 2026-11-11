@@ -1150,12 +1150,12 @@ html, body, #app {
 
 /* Phone: one column that scrolls. */
 @media (max-width: 767px) {
-    /* The refund search button is a magnifier, like the sale screen search, so the box keeps
-       the row; «Sin ticket» drops to a row of its own. */
+    /* Every search button is an icon-only magnifier, like the sale screen search, so the box
+       keeps the row; in refunds «Sin ticket» drops to a row of its own. */
+    .tpv-search-btn { flex: 0 0 48px; min-width: 48px; padding: 0 !important; justify-content: center; }
+    .tpv-search-label { display: none; }
+    input.tpv-input { min-width: 0; font-size: 16px; }
     .refund-search { flex-wrap: wrap; }
-    .refund-search > input { min-width: 0; font-size: 16px; }
-    .refund-search-btn { flex: 0 0 48px; padding: 0 !important; justify-content: center; }
-    .refund-search-label { display: none; }
     .refund-no-ticket { flex: 1 0 100%; justify-content: center; }
 
     /* Refunds and labels: the lines first, the decisions below them, and the action
