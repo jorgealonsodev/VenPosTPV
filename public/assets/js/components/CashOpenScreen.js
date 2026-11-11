@@ -92,7 +92,7 @@ const CashOpenScreen = {
             </div>
             <!-- Settings Modal -->
             <settings-modal v-if="showSettings" @close="showSettings = false" />
-            <div style="background:var(--surface); border:1px solid var(--border); border-radius:20px; padding:48px; width:420px; display:flex; flex-direction:column; gap:24px;">
+            <div class="tpv-fit-card cash-open-card" style="background:var(--surface); border:1px solid var(--border); border-radius:20px; padding:48px; width:420px; display:flex; flex-direction:column; gap:24px;">
                 <div style="line-height:0;"><img class="brand-logo--dark" :src="brandBase + '/venpostpv-logo-dark.svg'" alt="VenPosTPV" style="height:36px; width:auto;"><img class="brand-logo--light" :src="brandBase + '/venpostpv-logo.svg'" alt="VenPosTPV" style="height:36px; width:auto;"></div>
                 <div>
                     <div style="font-size:11px; color:var(--text3); letter-spacing:0.12em; text-transform:uppercase; margin-bottom:6px;">Apertura de caja</div>

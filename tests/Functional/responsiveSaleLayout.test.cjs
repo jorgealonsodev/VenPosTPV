@@ -105,3 +105,10 @@ test('browsers reload the files the responsive layout changed', () => {
     const cssVersion = /\/assets\/css\/app\.css\?v=(\d{8})-/.exec(page);
     assert.ok(cssVersion && cssVersion[1] >= '20261111', 'app.css has a version from the responsive change or later');
 });
+
+test('the header stays below every modal', () => {
+    const header = css.match(/\.pos-header\s*\{[^}]*z-index:\s*(\d+)/);
+    assert.ok(header, 'the header has a layer of its own for its menu');
+    const backdrop = css.match(/\.modal-backdrop\s*\{[^}]*z-index:\s*(\d+)/);
+    assert.ok(Number(header[1]) < Number(backdrop[1]), 'a modal covers the header, including its buttons');
+});

@@ -105,7 +105,7 @@ const CustomerModal = {
     },
     template: `
         <div class="modal-backdrop" style="backdrop-filter:blur(3px); -webkit-backdrop-filter:blur(3px);">
-            <div style="background:var(--surface); border:1px solid var(--border); border-radius:20px; padding:28px; width:400px; display:flex; flex-direction:column; gap:16px;" @click.stop>
+            <div class="tpv-fit-card" style="background:var(--surface); border:1px solid var(--border); border-radius:20px; padding:28px; width:400px; display:flex; flex-direction:column; gap:16px;" @click.stop>
                 <template v-if="mode === 'search'">
                     <div style="display:flex; align-items:center; justify-content:space-between;">
                         <div style="font-size:16px; font-weight:600;">Seleccionar cliente</div>
