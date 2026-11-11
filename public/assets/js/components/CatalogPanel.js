@@ -299,8 +299,8 @@ const CatalogPanel = {
             />
 
             <!-- Search bar -->
-            <div style="padding:12px 16px; border-bottom:1px solid var(--border); display:flex; gap:10px;">
-                <div style="flex:1; position:relative;">
+            <div class="catalog-toolbar" style="padding:12px 16px; border-bottom:1px solid var(--border); display:flex; gap:10px;">
+                <div class="catalog-search-box" :class="{ 'has-text': !!catalog.search }" style="flex:1; position:relative;">
                     <span style="position:absolute; left:12px; top:50%; transform:translateY(-50%); color:var(--text3); pointer-events:none;">
                         <icon name="search" :size="16" />
                     </span>
@@ -390,7 +390,7 @@ const CatalogPanel = {
                 </div>
 
                 <!-- Grid view -->
-                <div v-if="!listView" style="display:grid; grid-template-columns:repeat(5, 1fr); gap:8px;">
+                <div v-if="!listView" class="catalog-grid">
                     <button v-for="p in catalog.products" :key="p.id"
                         @click="handleProductTap(p)"
                         class="product-card"
