@@ -31,6 +31,42 @@ final class InstallerFinalPageTest extends TestCase
         self::assertStringContainsString('<code>backups/</code>', $this->source);
     }
 
+    public function testTheTaskIsExplainedFieldByFieldAsInPlesk(): void
+    {
+        $section = $this->cronSection();
+
+        self::assertStringContainsString('<tr><th>Campo</th><th>Qué poner</th></tr>', $section);
+        foreach ([
+            'Activa',
+            'Tipo de tarea',
+            'Ruta de acceso del script',
+            'con argumentos (a la derecha de la ruta)',
+            'Usar la versión PHP',
+            'Ejecutar',
+            'Descripción',
+            'Notificar',
+        ] as $field) {
+            self::assertSame(1, substr_count($section, '<tr><td>' . $field . '</td>'), $field);
+        }
+        self::assertStringContainsString("\$cronArgs = 'tpv:cron --env=prod';", $this->source);
+        self::assertStringContainsString('<td><code>\' . h($cronArgs) . \'</code></td>', $section);
+        self::assertStringContainsString('<td><code>\' . h($script) . \'</code></td>', $section);
+        self::assertStringContainsString('<td><strong>\' . h($phpVersion) . \'</strong></td>', $section);
+        self::assertStringContainsString('<strong>Solo errores</strong>', $section);
+        self::assertStringContainsString('Ejecutar ahora', $section);
+        self::assertStringNotContainsString('Con argumentos', $this->source, 'the old one-row table is gone');
+    }
+
+    private function cronSection(): string
+    {
+        $start = strpos($this->source, '<h2>1. Tareas programadas</h2>');
+        $end = strpos($this->source, '<h2>2. PHP del subdominio</h2>');
+        self::assertNotFalse($start);
+        self::assertNotFalse($end);
+
+        return substr($this->source, $start, $end - $start);
+    }
+
     public function testTheFiveOldCommandsAreNoLongerSeparateTasks(): void
     {
         foreach ([
