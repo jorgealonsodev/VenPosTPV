@@ -30,7 +30,7 @@ final class ProvisioningSummary
         }
 
         return $html . '<p>Los pasos pendientes se reintentan solos cada ' . intdiv(ProvisioningRunner::RETRY_AFTER_SECONDS, 60)
-            . ' minutos con la tarea programada de cada minuto (<code>tpv:sync:outbox</code>), o en cuanto ejecutes ' . $manual . '. '
+            . ' minutos con la tarea programada de cada minuto (<code>tpv:cron</code>), o en cuanto ejecutes ' . $manual . '. '
             . 'Es normal que los de PrestaShop sigan pendientes hasta que el módulo TPV Connect esté instalado y configurado (apartado 3). '
             . 'Su estado se ve en Ajustes → Acerca de.</p>';
     }
