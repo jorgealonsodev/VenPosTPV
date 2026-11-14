@@ -134,6 +134,23 @@ test('a saved edit refreshes the product shown in the grid', async () => {
     assert.deepEqual(view.requests, ['/api/catalog/product/1']);
 });
 
+test('after a new price is saved the grid shows it', async () => {
+    const products = [{ ...SHIRT, price: 10, base_price: 8.26, price_ttc: 10, net_price: 8.26, price_basis: 'ttc' }];
+    const view = mountPanel({ products });
+    view.vm.toggleEditMode();
+    Object.assign(products[0], { price: 12.1, base_price: 10, price_ttc: 12.1, net_price: 10 });
+
+    await view.vm.onEditSaved({ id_product: 1, id_product_attribute: 0, price: { price: 12.1, vat_rate: 21 } });
+
+    const shown = view.vm.catalog.products[0];
+    assert.equal(shown.price, 12.1);
+    assert.equal(shown.base_price, 10);
+    assert.equal(shown.price_ttc, 12.1);
+    assert.equal(shown.net_price, 10);
+    assert.equal(shown.stock, 4, 'the stock is still refreshed as before');
+    assert.equal(shown.ean13, SHIRT.ean13);
+});
+
 test('losing the administrator session leaves edit mode', () => {
     const view = mountPanel();
     view.vm.toggleEditMode();
