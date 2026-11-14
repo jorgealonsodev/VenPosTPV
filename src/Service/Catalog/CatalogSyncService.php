@@ -57,6 +57,14 @@ class CatalogSyncService
             }
         }
 
+        // The remote reads above take minutes on a real shop and the connection sat
+        // idle meanwhile: the server may have closed it ("MySQL server has gone
+        // away"). Closing it makes the write start on a new one. A caller that is
+        // inside a transaction keeps its connection.
+        if (!$this->connection->isTransactionActive()) {
+            $this->connection->close();
+        }
+
         $this->connection->beginTransaction();
 
         try {
