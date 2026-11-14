@@ -30,14 +30,15 @@ $sql[] = 'CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . 'order_state_tpvconnect`
 // Shop copy of the TPV's fiscal journal (fiscal-journal D6, JournalStore): one row
 // per journal line, kept apart per journal_id. The unique keys make a resent
 // line a duplicate and, inside one journal, two lines for one position or one
-// document a conflict. Never dropped on uninstall (a module «Reset» would erase
+// document a conflict. series and number compare case-sensitively (utf8mb4_bin):
+// "a26" is another series than "A26". Never dropped on uninstall (a module «Reset» would erase
 // the copy of fiscal documents it exists to protect).
 $sql[] = 'CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . 'tpvconnect_journal` (
     `id_tpvconnect_journal` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     `journal_id` CHAR(36) NOT NULL,
     `seq` BIGINT UNSIGNED NOT NULL,
-    `series` VARCHAR(16) NOT NULL,
-    `number` VARCHAR(60) NOT NULL,
+    `series` VARCHAR(16) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+    `number` VARCHAR(60) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
     `invoice_type` CHAR(2) NOT NULL,
     `hash` CHAR(64) NOT NULL,
     `line_hash` CHAR(64) NOT NULL,

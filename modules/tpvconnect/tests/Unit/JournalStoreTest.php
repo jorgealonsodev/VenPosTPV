@@ -15,7 +15,8 @@ use PHPUnit\Framework\TestCase;
 
 /**
  * In-memory JournalStorage with the table's two unique keys:
- * (journal_id, seq) and (journal_id, hash).
+ * (journal_id, seq) and (journal_id, hash). series and number compare
+ * case-sensitively, as the table's utf8mb4_bin columns do.
  */
 final class InMemoryJournalStorage implements JournalStorage
 {
@@ -66,6 +67,22 @@ final class InMemoryJournalStorage implements JournalStorage
         return $last;
     }
 
+    public function contiguousSeq(string $journalId): int
+    {
+        $stored = [];
+        foreach ($this->rows as $row) {
+            if ($row['journal_id'] === $journalId) {
+                $stored[$row['seq']] = true;
+            }
+        }
+        $n = 0;
+        while (isset($stored[$n + 1])) {
+            ++$n;
+        }
+
+        return $n;
+    }
+
     public function seriesHeads(string $journalId): array
     {
         $heads = [];
@@ -98,9 +115,10 @@ final class JournalStoreTest extends TestCase
         $this->storage = new InMemoryJournalStorage();
     }
 
-    public function test_the_canonical_json_vector_matches_plain_php(): void
+    #[DataProvider('vectors')]
+    public function test_the_canonical_json_vector_matches_plain_php(string $file): void
     {
-        $vector = $this->vector();
+        $vector = $this->vector($file);
         $plain = json_encode(
             self::sortKeys($vector['line_without_hash']),
             JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION
@@ -112,6 +130,71 @@ final class JournalStoreTest extends TestCase
         $decoded = json_decode(json_encode($vector['line_without_hash'], JSON_PRESERVE_ZERO_FRACTION), false);
         self::assertSame($vector['canonical_json'], JournalStore::canonicalJson($decoded));
         self::assertSame($vector['line_hash'], JournalStore::lineHash($decoded));
+        if (array_key_exists('counter', $vector['line_without_hash']) && $vector['line_without_hash']['counter'] === null) {
+            self::assertStringContainsString('"counter":null', JournalStore::canonicalJson($decoded));
+        }
+    }
+
+    public function test_a_coupon_sale_numbered_by_the_shop_is_stored_and_heads_its_ps_series(): void
+    {
+        $coupon = $this->vector('journal-line-vector-coupon.json');
+        $line = $coupon['line_without_hash'] + ['line_hash' => $coupon['line_hash']];
+        $this->post(['journal_id' => self::JOURNAL, 'line' => self::line(1, 'A26', 'A26000001')]);
+        $this->post(['journal_id' => self::JOURNAL, 'line' => self::line(2, 'A26', 'A26000002')]);
+
+        $response = $this->post(['journal_id' => self::JOURNAL, 'line' => $line]);
+
+        self::assertSame([201, ['stored' => true, 'duplicate' => false]], $response);
+        [, $head] = $this->post(['journal_id' => self::JOURNAL, 'action' => 'head']);
+        self::assertSame(['number' => 'XKBKNABJK', 'hash' => $line['fiscal_record']['hash'], 'seq' => 3], ((array) $head['series'])['PS']);
+        self::assertSame(3, $head['contiguous_seq']);
+    }
+
+    public function test_contiguous_seq_of_a_complete_journal_is_its_last_seq(): void
+    {
+        foreach ([1, 2, 3] as $seq) {
+            $this->post(['journal_id' => self::JOURNAL, 'line' => self::line($seq, 'A26', 'A2600000' . $seq)]);
+        }
+
+        [, $head] = $this->post(['journal_id' => self::JOURNAL, 'action' => 'head']);
+
+        self::assertSame(3, $head['last_seq']);
+        self::assertSame(3, $head['contiguous_seq']);
+    }
+
+    public function test_contiguous_seq_stops_before_a_missing_middle_line(): void
+    {
+        foreach ([1, 5, 6] as $seq) {
+            $this->post(['journal_id' => self::JOURNAL, 'line' => self::line($seq, 'A26', 'A2600000' . $seq)]);
+        }
+
+        [, $head] = $this->post(['journal_id' => self::JOURNAL, 'action' => 'head']);
+
+        self::assertSame(6, $head['last_seq']);
+        self::assertSame(1, $head['contiguous_seq']);
+    }
+
+    public function test_contiguous_seq_is_zero_when_seq_1_is_missing(): void
+    {
+        foreach ([2, 3] as $seq) {
+            $this->post(['journal_id' => self::JOURNAL, 'line' => self::line($seq, 'A26', 'A2600000' . $seq)]);
+        }
+
+        [, $head] = $this->post(['journal_id' => self::JOURNAL, 'action' => 'head']);
+
+        self::assertSame(3, $head['last_seq']);
+        self::assertSame(0, $head['contiguous_seq']);
+    }
+
+    public function test_series_and_numbers_that_differ_only_in_case_are_kept_apart(): void
+    {
+        $this->post(['journal_id' => self::JOURNAL, 'line' => self::line(1, 'A26', 'A26000001')]);
+        $this->post(['journal_id' => self::JOURNAL, 'line' => self::line(2, 'a26', 'a26000001')]);
+
+        [, $head] = $this->post(['journal_id' => self::JOURNAL, 'action' => 'head']);
+
+        self::assertSame('A26000001', ((array) $head['series'])['A26']['number']);
+        self::assertSame('a26000001', ((array) $head['series'])['a26']['number']);
     }
 
     public function test_a_new_line_is_stored_with_its_document_columns(): void
@@ -196,7 +279,7 @@ final class JournalStoreTest extends TestCase
 
         self::assertSame(200, $status);
         // What the controller sends: series is {} even with no line.
-        self::assertSame('{"journal_id":"' . self::JOURNAL . '","last_seq":0,"series":{}}', json_encode($body));
+        self::assertSame('{"journal_id":"' . self::JOURNAL . '","last_seq":0,"contiguous_seq":0,"series":{}}', json_encode($body));
     }
 
     public function test_a_second_journal_is_kept_apart_from_the_first(): void
@@ -307,6 +390,9 @@ final class JournalStoreTest extends TestCase
         yield 'seq is zero' => [$with(['seq' => 0]), 'line.seq'];
         yield 'version 2' => [$with(['v' => 2]), 'line.v'];
         yield 'unknown kind' => [$with(['kind' => 'F1']), 'line.kind'];
+        yield 'number with markup' => [$with(['fiscal_record' => ['number' => 'A26<b>1</b>']]), 'line.fiscal_record.number'];
+        yield 'number with a space' => [$with(['fiscal_record' => ['number' => 'A26 0001']]), 'line.fiscal_record.number'];
+        yield 'counter is a string' => [$with(['counter' => 'A']), 'line.counter'];
         yield 'number too long' => [$with(['fiscal_record' => ['number' => str_repeat('9', 61)]]), 'line.fiscal_record.number'];
         yield 'invoice_type too long' => [$with(['fiscal_record' => ['invoice_type' => 'F2X']]), 'line.fiscal_record.invoice_type'];
         yield 'hash not hex' => [$with(['fiscal_record' => ['hash' => str_repeat('Z', 64)]]), 'line.fiscal_record.hash'];
@@ -403,9 +489,16 @@ final class JournalStoreTest extends TestCase
         return $value;
     }
 
-    /** @return array{line_without_hash: array<string, mixed>, canonical_json: string, line_hash: string} */
-    private function vector(): array
+    /** @return iterable<string, array{0: string}> */
+    public static function vectors(): iterable
     {
-        return json_decode((string) file_get_contents(dirname(__DIR__) . '/fixtures/journal-line-vector.json'), true);
+        yield 'ticket F2' => ['journal-line-vector.json'];
+        yield 'coupon sale F2, counter null' => ['journal-line-vector-coupon.json'];
+    }
+
+    /** @return array{line_without_hash: array<string, mixed>, canonical_json: string, line_hash: string} */
+    private function vector(string $file): array
+    {
+        return json_decode((string) file_get_contents(dirname(__DIR__) . '/fixtures/' . $file), true);
     }
 }

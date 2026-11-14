@@ -34,6 +34,9 @@ interface JournalStorage
     /** 0 when the journal has no line. */
     public function lastSeq(string $journalId): int;
 
+    /** The highest N such that every seq 1..N of the journal is stored; 0 without seq 1. */
+    public function contiguousSeq(string $journalId): int;
+
     /** @return array<string, array{number: string, hash: string, seq: int}> the last line of every series */
     public function seriesHeads(string $journalId): array;
 }
@@ -71,7 +74,12 @@ class JournalRequestException extends RuntimeException
  *   TPV lost the old one, or backfills) uploads documents the shop already holds. The line_hash is
  *   verified first (400 when it does not match the line).
  * - {"journal_id", "action": "head"} answers the last stored line of every series:
- *   {"journal_id", "last_seq", "series": {"A26": {"number", "hash", "seq"}, ...}}.
+ *   {"journal_id", "last_seq", "contiguous_seq", "series": {"A26": {"number", "hash", "seq"}, ...}}.
+ *   last_seq is the highest stored seq; contiguous_seq the highest N with every
+ *   seq 1..N stored, so the TPV sees a missing middle line.
+ *
+ * A coupon sale is numbered by the shop: its line has "counter": null and the
+ * series "PS" (fiscal-journal D2, amendment a).
  *
  * line_hash = SHA-256 (lowercase hex) of the canonical JSON of the line without
  * line_hash: object keys sorted by byte order at every depth, list order kept,
@@ -89,7 +97,8 @@ class JournalStore
     private const SHA256 = '/^[0-9a-fA-F]{64}$/D';
     private const SERIES = '/^[A-Za-z0-9_-]{1,16}$/D';
     private const INVOICE_TYPE = '/^[A-Z0-9]{2}$/D';
-    private const MAX_NUMBER_LENGTH = 60;
+    /** Characters of TPV numbers (A26000124, R2026000001, F26000003) and PrestaShop order references. */
+    private const NUMBER = '/^[A-Za-z0-9._\/-]{1,60}$/D';
     private const MAX_JOURNALED_AT_LENGTH = 64;
 
     public function __construct(private readonly JournalStorage $storage)
@@ -231,7 +240,7 @@ class JournalStore
         return null;
     }
 
-    /** @return array{journal_id: string, last_seq: int, series: object} */
+    /** @return array{journal_id: string, last_seq: int, contiguous_seq: int, series: object} */
     private function head(string $journalId): array
     {
         $normalized = strtolower($journalId);
@@ -241,7 +250,12 @@ class JournalStore
         }
 
         // An object even when empty or when a series name looks like a number.
-        return ['journal_id' => $journalId, 'last_seq' => $this->storage->lastSeq($normalized), 'series' => (object) $series];
+        return [
+            'journal_id' => $journalId,
+            'last_seq' => $this->storage->lastSeq($normalized),
+            'contiguous_seq' => $this->storage->contiguousSeq($normalized),
+            'series' => (object) $series,
+        ];
     }
 
     /**
@@ -270,10 +284,12 @@ class JournalStore
         if (!is_string($line['series'] ?? null) || preg_match(self::SERIES, $line['series']) !== 1) {
             $errors['line.series'] = 'Up to 16 letters, digits, "-" or "_"';
         }
-        foreach (['counter', 'rows'] as $key) {
-            if (!is_array($line[$key] ?? null)) {
-                $errors['line.' . $key] = 'Required object';
-            }
+        if (!is_array($line['rows'] ?? null)) {
+            $errors['line.rows'] = 'Required object';
+        }
+        // null for a coupon sale, numbered by the shop.
+        if (!array_key_exists('counter', $line) || ($line['counter'] !== null && !is_array($line['counter']))) {
+            $errors['line.counter'] = 'Object, or null for a document numbered by the shop';
         }
         if (!is_bool($line['backfill'] ?? null)) {
             $errors['line.backfill'] = 'Required boolean';
@@ -291,8 +307,8 @@ class JournalStore
             $errors['line.fiscal_record'] = 'Required object';
         } else {
             $number = $record['number'] ?? null;
-            if (!is_string($number) || $number === '' || mb_strlen($number, 'UTF-8') > self::MAX_NUMBER_LENGTH) {
-                $errors['line.fiscal_record.number'] = 'Required string of up to 60 characters';
+            if (!is_string($number) || preg_match(self::NUMBER, $number) !== 1) {
+                $errors['line.fiscal_record.number'] = 'Up to 60 letters, digits, ".", "_", "/" or "-"';
             }
             if (!is_string($record['invoice_type'] ?? null) || preg_match(self::INVOICE_TYPE, $record['invoice_type']) !== 1) {
                 $errors['line.fiscal_record.invoice_type'] = 'Two capital letters or digits';
@@ -406,6 +422,31 @@ class PsJournalStorage implements JournalStorage
     {
         return (int) Db::getInstance()->getValue(
             'SELECT MAX(`seq`) FROM `' . _DB_PREFIX_ . self::TABLE . "` WHERE `journal_id` = '" . pSQL($journalId) . "'",
+            false
+        );
+    }
+
+    public function contiguousSeq(string $journalId): int
+    {
+        $db = Db::getInstance();
+        $table = '`' . _DB_PREFIX_ . self::TABLE . '`';
+        $journal = "'" . pSQL($journalId) . "'";
+        $totals = $db->getRow('SELECT COUNT(*) AS `lines`, MAX(`seq`) AS `last` FROM ' . $table . ' WHERE `journal_id` = ' . $journal, false);
+        $lines = is_array($totals) ? (int) $totals['lines'] : 0;
+        $last = is_array($totals) ? (int) $totals['last'] : 0;
+        // seq is unique per journal: as many lines as the last seq means no gap.
+        if ($lines === 0 || $lines === $last) {
+            return $last;
+        }
+        if (!$db->getValue('SELECT 1 FROM ' . $table . ' WHERE `journal_id` = ' . $journal . ' AND `seq` = 1', false)) {
+            return 0;
+        }
+
+        // The first stored seq whose successor is missing (index uniq_journal_seq).
+        return (int) $db->getValue(
+            'SELECT MIN(a.`seq`) FROM ' . $table . ' a
+            LEFT JOIN ' . $table . ' b ON b.`journal_id` = a.`journal_id` AND b.`seq` = a.`seq` + 1
+            WHERE a.`journal_id` = ' . $journal . ' AND b.`id_tpvconnect_journal` IS NULL',
             false
         );
     }

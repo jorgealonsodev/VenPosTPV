@@ -61,8 +61,8 @@ class InstallLifecycleTest extends TestCase
         $created = array_values(array_filter(\Db::$executed, static fn (string $sql): bool => str_contains($sql, 'CREATE TABLE IF NOT EXISTS `ps_tpvconnect_journal`')));
         self::assertCount(1, $created);
         foreach ([
-            '`id_tpvconnect_journal`', '`journal_id` CHAR(36) NOT NULL', '`seq` BIGINT UNSIGNED NOT NULL', '`series` VARCHAR(16) NOT NULL',
-            '`number` VARCHAR(60) NOT NULL', '`invoice_type` CHAR(2) NOT NULL', '`hash` CHAR(64) NOT NULL', '`line_hash` CHAR(64) NOT NULL',
+            '`id_tpvconnect_journal`', '`journal_id` CHAR(36) NOT NULL', '`seq` BIGINT UNSIGNED NOT NULL', '`series` VARCHAR(16) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL',
+            '`number` VARCHAR(60) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL', '`invoice_type` CHAR(2) NOT NULL', '`hash` CHAR(64) NOT NULL', '`line_hash` CHAR(64) NOT NULL',
             '`line` MEDIUMTEXT NOT NULL', '`date_add` DATETIME NOT NULL', 'UNIQUE KEY `uniq_journal_seq` (`journal_id`, `seq`)', 'UNIQUE KEY `uniq_journal_hash` (`journal_id`, `hash`)',
         ] as $column) {
             self::assertStringContainsString($column, $created[0]);

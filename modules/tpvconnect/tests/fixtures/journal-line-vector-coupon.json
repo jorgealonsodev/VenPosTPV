@@ -1,0 +1,42 @@
+{
+    "rule": "Coupon sale F2 (numbered by the shop): \"counter\" is null and stays in the canonical JSON as \"counter\":null; same rule as journal-line-vector.json.",
+    "line_without_hash": {
+        "v": 1,
+        "seq": 3,
+        "journaled_at": "2026-11-14T18:05:40+01:00",
+        "kind": "F2",
+        "series": "PS",
+        "counter": null,
+        "fiscal_record": {
+            "id": 931,
+            "invoice_type": "F2",
+            "number": "XKBKNABJK",
+            "hash": "B7E2C4A1D3F5061728394A5B6C7D8E9F0A1B2C3D4E5F60718293A4B5C6D7E8F9",
+            "previous_hash": "9C1E5B0F3A7D2E4C6B8A0F1E3D5C7B9A1F2E4D6C8B0A2F4E6D8C0B2A4F6E8D0C",
+            "generated_at": "2026-11-14T18:05:39+01:00",
+            "total": "30.00",
+            "nif": null
+        },
+        "rows": {
+            "order_meta": {
+                "id": 1502,
+                "ps_order_id": 8812,
+                "payment_breakdown": "{\"coupon\":\"VALE-10\",\"cash\":\"20.00\"}",
+                "discount": 10.0
+            },
+            "movement": [
+                {
+                    "id": 77,
+                    "ps_order_id": 8812,
+                    "concept": "Venta con cupón",
+                    "amount": "20.00"
+                }
+            ],
+            "issued_coupon": null
+        },
+        "backfill": false,
+        "prev": "5d49cad2aaab27a70353937303d5091dce72dc74f24f501096938f55c8a9b74f"
+    },
+    "canonical_json": "{\"backfill\":false,\"counter\":null,\"fiscal_record\":{\"generated_at\":\"2026-11-14T18:05:39+01:00\",\"hash\":\"B7E2C4A1D3F5061728394A5B6C7D8E9F0A1B2C3D4E5F60718293A4B5C6D7E8F9\",\"id\":931,\"invoice_type\":\"F2\",\"nif\":null,\"number\":\"XKBKNABJK\",\"previous_hash\":\"9C1E5B0F3A7D2E4C6B8A0F1E3D5C7B9A1F2E4D6C8B0A2F4E6D8C0B2A4F6E8D0C\",\"total\":\"30.00\"},\"journaled_at\":\"2026-11-14T18:05:40+01:00\",\"kind\":\"F2\",\"prev\":\"5d49cad2aaab27a70353937303d5091dce72dc74f24f501096938f55c8a9b74f\",\"rows\":{\"issued_coupon\":null,\"movement\":[{\"amount\":\"20.00\",\"concept\":\"Venta con cupón\",\"id\":77,\"ps_order_id\":8812}],\"order_meta\":{\"discount\":10.0,\"id\":1502,\"payment_breakdown\":\"{\\\"coupon\\\":\\\"VALE-10\\\",\\\"cash\\\":\\\"20.00\\\"}\",\"ps_order_id\":8812}},\"seq\":3,\"series\":\"PS\",\"v\":1}",
+    "line_hash": "6a1ef5b321a4f188e6f89d57bd02ec45cb1bca63b06e7aa8bbe69f8b309742f9"
+}
