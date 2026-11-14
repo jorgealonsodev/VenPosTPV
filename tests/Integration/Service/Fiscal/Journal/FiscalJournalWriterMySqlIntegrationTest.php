@@ -104,15 +104,21 @@ final class FiscalJournalWriterMySqlIntegrationTest extends TestCase
 
     public function testATornLastLineIsQuarantinedAndRewrittenFromTheDatabase(): void
     {
-        foreach (range(1, 3) as $ignored) {
+        $headFile = $this->journal->root . '/backups/fiscal-journal/head.json';
+        foreach (range(1, 3) as $n) {
             $this->issue();
             $this->journal->writer->flushAfterIssue();
+            if ($n === 2) {
+                $headBeforeThird = (string) file_get_contents($headFile);
+            }
         }
         $file = $this->journal->primary()->journalFiles()[0];
         $content = (string) file_get_contents($file);
         $lines = explode("\n", rtrim($content, "\n"));
         $torn = substr($lines[2], 0, (int) (\strlen($lines[2]) / 2));
+        // Killed half-way through the third line, so before head.json recorded it.
         file_put_contents($file, $lines[0] . "\n" . $lines[1] . "\n" . $torn);
+        file_put_contents($headFile, $headBeforeThird);
 
         $result = $this->journal->anotherProcess()->writer->flush();
 
@@ -201,7 +207,7 @@ final class FiscalJournalWriterMySqlIntegrationTest extends TestCase
     {
         $locations = new FiscalJournalLocations($this->journal->root . '/backups/fiscal-journal', $this->journal->root . '/var/fiscal-journal');
         $failing = new class($locations) extends FiscalJournalIntents {
-            public function prepared(array $record): void
+            public function prepared(array $record, ?Connection $connection = null): void
             {
                 throw new \RuntimeException('disk on fire');
             }

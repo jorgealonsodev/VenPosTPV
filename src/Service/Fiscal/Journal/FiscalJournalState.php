@@ -25,6 +25,8 @@ final class FiscalJournalState
     public const BLOCKED = 'blocked';
     /** The journal's last document is not in the database (a restore): the guard's case (D7). */
     public const HEAD_MISSING = 'head_missing';
+    /** The primary folder lost its journal.id while the secondary has one: never recreated (D7, the guard's case). */
+    public const JOURNAL_MISSING = 'journal_missing';
 
     /*
      * Exit codes of tpv:fiscal:journal. An incident (damaged, blocked, no folder

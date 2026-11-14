@@ -6,6 +6,7 @@ namespace VenPosTPV\Service\Fiscal\Journal;
 
 use Doctrine\DBAL\Connection;
 use Psr\Log\LoggerInterface;
+use Psr\Log\LogLevel;
 use VenPosTPV\Service\Fiscal\FiscalRecorder;
 
 /**
@@ -13,19 +14,26 @@ use VenPosTPV\Service\Fiscal\FiscalRecorder;
  * issued, inside its transaction, `intents/<hash>.json` records the fiscal record
  * about to be inserted, in the primary location or else the secondary. It is what
  * this process issued, so the flush after the response knows it has documents to
- * journal, and it carries what the database cannot tell afterwards (the id of a
- * refund's cash movement, which has no refund_id).
+ * journal, and it carries what the database cannot tell afterwards: the id of a
+ * refund's cash movement (which has no refund_id) and the rows that later
+ * statements change, as they were inside the issuing transaction
+ * (FiscalDocumentSnapshot::issueRows, refundedAmountOf).
  *
  * Nothing here ever throws to the caller: a journal that cannot be written never
- * stops a sale (S2).
+ * stops a sale (S2). Nothing here takes journal.lock: an intent is written under the
+ * fiscal_chain lock and must never wait for a flush. A folder that cannot be written
+ * is logged at warning level once per process, then at debug level.
  */
 class FiscalJournalIntents
 {
     public const STATE_PREPARED = 'prepared';
     public const STATE_CONFIRMED = 'confirmed';
 
-    /** @var array<string, array{number: string, refund_id: ?int, movement_id: ?int}> hash => what this process issued */
+    /** @var array<string, array{number: string, refund_id: ?int, movement_id: ?int, rows: array<string, mixed>, refunded_amount?: ?array<string, mixed>}> hash => what this process issued */
     private array $own = [];
+
+    /** @var array<string, true> conditions this process already logged at warning level */
+    private array $warned = [];
 
     private bool $issued = false;
 
@@ -43,24 +51,28 @@ class FiscalJournalIntents
      * Records the intent of a fiscal record about to be inserted.
      *
      * @param array<string, mixed> $record the fiscal_record row as it will be inserted (no id yet)
+     * @param Connection|null $connection the issuing transaction's, to capture the document's rows as issued
      */
-    public function prepared(array $record): void
+    public function prepared(array $record, ?Connection $connection = null): void
     {
         $this->issued = true;
         try {
             $hash = (string) $record['hash'];
+            $rows = $connection !== null ? FiscalDocumentSnapshot::issueRows($connection, $record) : [];
             $this->own[$hash] = [
                 'number' => (string) $record['number'],
                 'refund_id' => isset($record['refund_id']) ? (int) $record['refund_id'] : null,
                 'movement_id' => null,
+                'rows' => $rows,
             ];
             $this->write($hash, [
                 'fiscal_record' => $record,
                 'created_at' => (new \DateTimeImmutable('now', new \DateTimeZone(FiscalRecorder::TIME_ZONE)))->format(\DATE_ATOM),
                 'state' => self::STATE_PREPARED,
+                'rows' => $rows,
             ]);
         } catch (\Throwable $e) {
-            $this->logger?->error('Fiscal journal intent not written: {message}', ['message' => $e->getMessage()]);
+            $this->warn('write', 'Fiscal journal intent not written: {message}', ['message' => $e->getMessage()]);
         }
     }
 
@@ -76,15 +88,31 @@ class FiscalJournalIntents
                     continue;
                 }
                 $this->own[$hash]['movement_id'] = $movementId;
-                foreach ($this->locations() as $location) {
-                    $data = $location->readIntent($hash);
-                    if ($data !== null) {
-                        $location->writeIntent($hash, ['movement_id' => $movementId] + $data);
-                    }
-                }
+                $this->update($hash, ['movement_id' => $movementId]);
             }
         } catch (\Throwable $e) {
-            $this->logger?->error('Fiscal journal intent not updated: {message}', ['message' => $e->getMessage()]);
+            $this->warn('update', 'Fiscal journal intent not updated: {message}', ['message' => $e->getMessage()]);
+        }
+    }
+
+    /**
+     * Notes, inside the issuing transaction and right after the sale's refunded
+     * amount was updated, that amount as this credit note leaves it (D2, R5): later
+     * refunds of the same sale change it again.
+     */
+    public function captureRefundedAmount(int $refundId, Connection $connection): void
+    {
+        try {
+            foreach ($this->own as $hash => $intent) {
+                if ($intent['refund_id'] !== $refundId) {
+                    continue;
+                }
+                $value = FiscalDocumentSnapshot::refundedAmountOf($connection, $refundId);
+                $this->own[$hash]['refunded_amount'] = $value;
+                $this->update($hash, ['order_meta_refunded_amount' => $value]);
+            }
+        } catch (\Throwable $e) {
+            $this->warn('update', 'Fiscal journal intent not updated: {message}', ['message' => $e->getMessage()]);
         }
     }
 
@@ -100,21 +128,47 @@ class FiscalJournalIntents
      */
     public function movementFor(string $hash): ?int
     {
-        if (isset($this->own[$hash]) && $this->own[$hash]['movement_id'] !== null) {
-            return $this->own[$hash]['movement_id'];
-        }
+        $movementId = $this->capturedFor($hash)['movement_id'] ?? null;
+
+        return \is_int($movementId) ? $movementId : null;
+    }
+
+    /**
+     * What was captured while the document with this hash was issued, by this process
+     * or by the one that wrote the intent (FiscalDocumentSnapshot::document).
+     *
+     * @return array{rows?: array<string, mixed>, movement_id?: ?int, order_meta_refunded_amount?: ?array<string, mixed>}
+     */
+    public function capturedFor(string $hash): array
+    {
+        $own = $this->own[$hash] ?? null;
+        $data = null;
         foreach ($this->locations() as $location) {
             try {
                 $data = $location->readIntent($hash);
             } catch (\Throwable) {
                 $data = null;
             }
-            if (\is_int($data['movement_id'] ?? null)) {
-                return $data['movement_id'];
+            if ($data !== null) {
+                break;
             }
         }
+        $captured = [];
+        $rows = $own['rows'] ?? $data['rows'] ?? null;
+        if (\is_array($rows)) {
+            $captured['rows'] = $rows;
+        }
+        $movementId = $own['movement_id'] ?? $data['movement_id'] ?? null;
+        if (\is_int($movementId)) {
+            $captured['movement_id'] = $movementId;
+        }
+        if ($own !== null && \array_key_exists('refunded_amount', $own)) {
+            $captured['order_meta_refunded_amount'] = $own['refunded_amount'];
+        } elseif (\is_array($data) && \array_key_exists('order_meta_refunded_amount', $data)) {
+            $captured['order_meta_refunded_amount'] = $data['order_meta_refunded_amount'];
+        }
 
-        return null;
+        return $captured;
     }
 
     /**
@@ -179,7 +233,7 @@ class FiscalJournalIntents
             }
         }
         if ($this->target === null) {
-            $this->logger?->error('Fiscal journal intent {number} not written: neither journal folder can be written', ['number' => $data['fiscal_record']['number'] ?? '']);
+            $this->warn('unwritable', 'Fiscal journal intent {number} not written: neither journal folder can be written', ['number' => $data['fiscal_record']['number'] ?? '']);
 
             return;
         }
@@ -197,6 +251,29 @@ class FiscalJournalIntents
 
             throw $e;
         }
+    }
+
+    /**
+     * Adds $fields to the intent of $hash wherever it was written.
+     *
+     * @param array<string, mixed> $fields
+     */
+    private function update(string $hash, array $fields): void
+    {
+        foreach ($this->locations() as $location) {
+            $data = $location->readIntent($hash);
+            if ($data !== null) {
+                $location->writeIntent($hash, $fields + $data);
+            }
+        }
+    }
+
+    /** @param array<string, mixed> $context */
+    private function warn(string $condition, string $message, array $context): void
+    {
+        $level = isset($this->warned[$condition]) ? LogLevel::DEBUG : LogLevel::WARNING;
+        $this->warned[$condition] = true;
+        $this->logger?->log($level, $message, $context);
     }
 
     /** @return list<JournalLocation> */

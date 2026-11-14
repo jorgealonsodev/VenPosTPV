@@ -41,12 +41,7 @@ final class OutboxSyncListener
             return;
         }
 
-        $response = $event->getResponse();
-        $content = $response->getContent();
-        if (\is_string($content) && !$response->headers->has('Content-Length') && !$response->headers->has('Transfer-Encoding')) {
-            $response->headers->set('Content-Length', (string) \strlen($content));
-        }
-        $response->headers->set('Connection', 'close');
+        AfterResponse::closeConnection($event->getResponse());
     }
 
     #[AsEventListener(event: KernelEvents::TERMINATE)]

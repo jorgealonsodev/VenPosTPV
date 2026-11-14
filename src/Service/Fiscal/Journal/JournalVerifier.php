@@ -11,7 +11,8 @@ use VenPosTPV\Service\Fiscal\FiscalHash;
  * line_hash, `seq` one more than the previous line and `prev` equal to its
  * line_hash, and the fiscal record's own `hash` recomputed from its fields (a line
  * whose line_hash was recomputed after a change is caught there). It also checks
- * that `head.json` matches the last line, and that nothing verified before has
+ * `head.json` against the last line (JournalLocation::headFinding, the writer's
+ * rule), and that nothing verified before has
  * gone: the checkpoint (the last line verified: file, byte offset, seq, line_hash)
  * must still be there, and the journal must not hold fewer lines than it said.
  *
@@ -98,12 +99,11 @@ final class JournalVerifier
             return ['damaged' => ['file' => $checkpoint['file'], 'line' => $checkpoint['line'], 'reason' => self::REMOVED], 'checkpoint' => $checkpoint];
         }
 
-        $head = $location->readHead();
-        $headAgrees = $previous === null
-            ? $head === null
-            : \is_array($head) && ($head['seq'] ?? null) === $previous['seq'] && ($head['line_hash'] ?? null) === $previous['line_hash'];
-        if (!$headAgrees) {
-            return ['damaged' => ['file' => 'head.json', 'line' => null, 'reason' => self::HEAD], 'checkpoint' => $checkpoint];
+        // The same rule as the writer's (JournalLocation::headFinding): a missing head.json, or one a
+        // killed flush left behind, is not damage (the writer rebuilds it); fewer lines than it records is.
+        $finding = $location->headFinding($previous);
+        if ($finding !== null) {
+            return ['damaged' => ['file' => 'head.json', 'line' => null, 'reason' => $finding], 'checkpoint' => $checkpoint];
         }
 
         return ['damaged' => null, 'checkpoint' => $lastGood];

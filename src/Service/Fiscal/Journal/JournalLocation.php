@@ -12,17 +12,27 @@ namespace VenPosTPV\Service\Fiscal\Journal;
  * database backups (DatabaseBackup::prepareDirectory).
  *
  * Lines are only ever appended, each with one write followed by fflush and fsync.
- * A process killed in the middle leaves a torn last line: repairTail() cuts it off
- * and keeps the fragment in `quarantine/`, so the flush writes that document again
- * from the database. A line that fails its checks and is not the last one is
- * damage, which is never rewritten here.
+ * A process killed in the middle (or a write that failed half-way) leaves a torn
+ * last line: one without its terminating newline, or one that is not JSON. Only
+ * that is repaired: repairTail() cuts it off and keeps the fragment in
+ * `quarantine/`, so the flush writes that document again from the database. A
+ * complete last line that fails its line_hash, `prev` or `seq`, a line before the
+ * last that fails its checks, or files holding fewer lines than `head.json`
+ * records, is damage, which is never rewritten here (fiscal-journal D4, T1b).
+ *
+ * Every failure to lock, open, write or sync throws JournalWriteException, so the
+ * writer can continue in the other folder.
  */
 final class JournalLocation
 {
     public const TAIL_OK = 'ok';
     public const TAIL_REPAIRED = 'repaired';
-    /** A line before the last one fails its checks: nothing is cut. */
+    /** A line before the last one fails its checks: nothing is cut, appends go on after the last line. */
     public const TAIL_DAMAGED = 'damaged';
+    /** The complete last line fails its JSON or line_hash: damage, nothing is cut or appended. */
+    public const TAIL_BAD_LAST = JournalVerifier::BAD_LINE;
+    /** The complete last line does not follow the line before it (`prev`, `seq`): damage. */
+    public const TAIL_BROKEN_LAST = JournalVerifier::CHAIN_BREAK;
 
     private const FILE_PATTERN = '/\Ajournal-\d{4}-\d{2}\.jsonl\z/D';
     private const LINE_FLAGS = \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES | \JSON_PRESERVE_ZERO_FRACTION | \JSON_THROW_ON_ERROR;
@@ -111,32 +121,44 @@ final class JournalLocation
     }
 
     /**
+     * The bytes of one line as stored (D2 key order, `\n` terminated).
+     *
+     * @param array<string, mixed> $line
+     *
+     * @throws \JsonException when the line cannot be encoded
+     */
+    public static function encode(array $line): string
+    {
+        return json_encode($line, self::LINE_FLAGS) . "\n";
+    }
+
+    /**
      * Appends one line (with its line_hash) to the file of its month, in one write.
      *
      * @param array<string, mixed> $line
      *
-     * @throws \RuntimeException when it cannot be written completely
+     * @throws JournalWriteException when it cannot be written completely
      */
     public function append(array $line): void
     {
         $month = (new \DateTimeImmutable((string) $line['journaled_at']))->format('Y-m');
         $file = $this->directory . '/journal-' . $month . '.jsonl';
-        $bytes = json_encode($line, self::LINE_FLAGS) . "\n";
+        $bytes = self::encode($line);
         $existed = is_file($file);
         $handle = @fopen($file, 'ab');
         if ($handle === false) {
-            throw new \RuntimeException(sprintf('Cannot open the fiscal journal file %s', $file));
+            throw new JournalWriteException(sprintf('Cannot open the fiscal journal file %s', $file));
         }
         try {
             if (!$existed) {
                 @chmod($file, 0600);
             }
-            $written = fwrite($handle, $bytes);
-            if ($written !== \strlen($bytes) || !fflush($handle) || !fsync($handle)) {
-                throw new \RuntimeException(sprintf('Cannot write the fiscal journal file %s', $file));
+            $written = @fwrite($handle, $bytes);
+            if ($written !== \strlen($bytes) || !@fflush($handle) || !@fsync($handle)) {
+                throw new JournalWriteException(sprintf('Cannot write the fiscal journal file %s', $file));
             }
         } finally {
-            fclose($handle);
+            @fclose($handle);
         }
     }
 
@@ -154,10 +176,52 @@ final class JournalLocation
         ], self::LINE_FLAGS));
     }
 
-    /** @return array<string, mixed>|null */
+    /**
+     * `head.json`, when it can be read and holds a position (seq, line_hash).
+     *
+     * @return array<string, mixed>|null
+     */
     public function readHead(): ?array
     {
-        return $this->readJson($this->directory . '/head.json');
+        $head = $this->readJson($this->directory . '/head.json');
+
+        return \is_int($head['seq'] ?? null) && \is_string($head['line_hash'] ?? null) ? $head : null;
+    }
+
+    /**
+     * How `head.json` relates to the last complete line of the files (fiscal-journal
+     * D4 as amended by T1b; the one rule of the writer and of JournalVerifier):
+     * - they agree, or `head.json` is missing (it is rebuilt from the files), or it is
+     *   behind and the line at its seq is the one it records (a process killed after
+     *   appending and before updating it): null, nothing wrong;
+     * - the files hold fewer lines than it records, or none: JournalVerifier::REMOVED;
+     * - anything else: JournalVerifier::HEAD.
+     *
+     * @param array<string, mixed>|null $last the last complete line (at least seq and line_hash), null when there is none
+     */
+    public function headFinding(?array $last): ?string
+    {
+        $head = $this->readHead();
+        if ($head === null) {
+            return null;
+        }
+        if ($last === null) {
+            return $head['seq'] > 0 ? JournalVerifier::REMOVED : null;
+        }
+        $seq = (int) $last['seq'];
+        if ($seq < $head['seq']) {
+            return JournalVerifier::REMOVED;
+        }
+        if ($seq === $head['seq']) {
+            return $last['line_hash'] === $head['line_hash'] ? null : JournalVerifier::HEAD;
+        }
+        foreach ($this->tail($seq - $head['seq'] + 2) as $entry) {
+            if (\is_array($entry['line']) && $entry['terminated'] && ($entry['line']['seq'] ?? null) === $head['seq']) {
+                return ($entry['line']['line_hash'] ?? null) === $head['line_hash'] ? null : JournalVerifier::HEAD;
+            }
+        }
+
+        return JournalVerifier::HEAD;
     }
 
     /**
@@ -227,9 +291,13 @@ final class JournalLocation
     }
 
     /**
-     * Checks the last line (terminated, JSON, line_hash, `prev` and `seq` against
-     * the line before it). A failing last line is cut off and kept in quarantine/;
-     * a failing line before it is reported and nothing is cut. Call under the lock.
+     * Checks the last line. A torn write (no terminating newline, or not JSON) is cut
+     * off and kept in quarantine/; a complete last line that fails its line_hash
+     * (TAIL_BAD_LAST) or does not follow the line before it (TAIL_BROKEN_LAST), and a
+     * failing line before it (TAIL_DAMAGED), are damage: nothing is cut. Call under
+     * the lock.
+     *
+     * @throws JournalWriteException when a torn line cannot be cut
      */
     public function repairTail(): string
     {
@@ -240,34 +308,48 @@ final class JournalLocation
         $last = $tail[\count($tail) - 1];
         $previous = $tail[\count($tail) - 2] ?? null;
         $previousValid = $previous === null || self::selfValid($previous['line']);
-        $lastValid = $last['terminated'] && self::selfValid($last['line'])
-            && ($previous === null || self::follows($last['line'], $previous['line']));
+        $torn = !$last['terminated'] || $last['line'] === null;
 
-        if ($lastValid) {
-            return $previousValid ? self::TAIL_OK : self::TAIL_DAMAGED;
+        if (!$torn) {
+            if (!$previousValid) {
+                return self::TAIL_DAMAGED;
+            }
+            if (!self::selfValid($last['line'])) {
+                return self::TAIL_BAD_LAST;
+            }
+
+            return $previous === null || self::follows($last['line'], $previous['line']) ? self::TAIL_OK : self::TAIL_BROKEN_LAST;
         }
         if (!$previousValid) {
             return self::TAIL_DAMAGED;
         }
+        $head = $this->readHead();
+        if ($head !== null && (int) ($previous['line']['seq'] ?? 0) < $head['seq']) {
+            // head.json records this line: it was complete once, so it was not torn by a write.
+            return self::TAIL_BAD_LAST;
+        }
 
-        $fragment = (string) @file_get_contents($last['file'], false, null, $last['offset']);
-        $quarantine = sprintf('%s/quarantine/%s-%s-%s.part', $this->directory, basename($last['file'], '.jsonl'), date('Ymd-His'), bin2hex(random_bytes(4)));
-        if (!is_dir(\dirname($quarantine))) {
-            @mkdir(\dirname($quarantine), 0700, true);
-        }
-        if (@file_put_contents($quarantine, $fragment) === false) {
-            throw new \RuntimeException('Cannot keep the torn fiscal journal line in quarantine');
-        }
-        @chmod($quarantine, 0600);
+        // Opened first: a file that cannot be cut leaves nothing in quarantine/.
         $handle = @fopen($last['file'], 'r+b');
-        if ($handle === false || !ftruncate($handle, $last['offset']) || !fsync($handle)) {
-            if ($handle !== false) {
-                fclose($handle);
-            }
-
-            throw new \RuntimeException(sprintf('Cannot cut the torn line of %s', $last['file']));
+        if ($handle === false) {
+            throw new JournalWriteException(sprintf('Cannot cut the torn line of %s', $last['file']));
         }
-        fclose($handle);
+        try {
+            $fragment = (string) @file_get_contents($last['file'], false, null, $last['offset']);
+            $quarantine = sprintf('%s/quarantine/%s-%s-%s.part', $this->directory, basename($last['file'], '.jsonl'), date('Ymd-His'), bin2hex(random_bytes(4)));
+            if (!is_dir(\dirname($quarantine))) {
+                @mkdir(\dirname($quarantine), 0700, true);
+            }
+            if (@file_put_contents($quarantine, $fragment) === false) {
+                throw new JournalWriteException('Cannot keep the torn fiscal journal line in quarantine');
+            }
+            @chmod($quarantine, 0600);
+            if (!@ftruncate($handle, $last['offset']) || !@fsync($handle)) {
+                throw new JournalWriteException(sprintf('Cannot cut the torn line of %s', $last['file']));
+            }
+        } finally {
+            @fclose($handle);
+        }
         if ($last['offset'] === 0) {
             @unlink($last['file']);
         }
@@ -361,25 +443,45 @@ final class JournalLocation
     }
 
     /**
-     * Opens and locks `journal.lock` (exclusive, blocking).
+     * Opens and locks `journal.lock` (exclusive). Without a deadline it waits as long
+     * as it takes; with one (microtime(true) value) it retries every 50 ms until then.
      *
-     * @return resource
+     * @return resource|null null when the deadline passed while another process held it
+     *
+     * @throws JournalWriteException when the lock cannot be opened or taken
      */
-    public function lock()
+    public function lock(?float $deadline = null)
     {
         $path = $this->directory . '/journal.lock';
         $existed = is_file($path);
         $handle = @fopen($path, 'c');
         if ($handle === false) {
-            throw new \RuntimeException(sprintf('Cannot open the fiscal journal lock %s', $path));
+            throw new JournalWriteException(sprintf('Cannot open the fiscal journal lock %s', $path));
         }
         if (!$existed) {
             @chmod($path, 0600);
         }
-        if (!flock($handle, \LOCK_EX)) {
-            fclose($handle);
+        if ($deadline === null) {
+            if (!flock($handle, \LOCK_EX)) {
+                fclose($handle);
 
-            throw new \RuntimeException(sprintf('Cannot lock the fiscal journal %s', $path));
+                throw new JournalWriteException(sprintf('Cannot lock the fiscal journal %s', $path));
+            }
+
+            return $handle;
+        }
+        while (!flock($handle, \LOCK_EX | \LOCK_NB, $wouldBlock)) {
+            if (!$wouldBlock) {
+                fclose($handle);
+
+                throw new JournalWriteException(sprintf('Cannot lock the fiscal journal %s', $path));
+            }
+            if (microtime(true) >= $deadline) {
+                fclose($handle);
+
+                return null;
+            }
+            usleep(50_000);
         }
 
         return $handle;
@@ -532,14 +634,16 @@ final class JournalLocation
     private function writeAtomically(string $path, string $content): void
     {
         $temporary = $path . '.' . bin2hex(random_bytes(4)) . '.tmp';
-        if (@file_put_contents($temporary, $content) === false) {
-            throw new \RuntimeException(sprintf('Cannot write %s', $path));
+        if (@file_put_contents($temporary, $content) !== \strlen($content)) {
+            @unlink($temporary);
+
+            throw new JournalWriteException(sprintf('Cannot write %s', $path));
         }
         @chmod($temporary, 0600);
         if (!@rename($temporary, $path)) {
             @unlink($temporary);
 
-            throw new \RuntimeException(sprintf('Cannot write %s', $path));
+            throw new JournalWriteException(sprintf('Cannot write %s', $path));
         }
     }
 }

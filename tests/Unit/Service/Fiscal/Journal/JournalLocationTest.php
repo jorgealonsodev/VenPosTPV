@@ -106,7 +106,7 @@ final class JournalLocationTest extends TestCase
         $this->assertSame(JournalLocation::TAIL_OK, $location->repairTail(), 'nothing left to repair');
     }
 
-    public function testACompleteLastLineThatFailsItsHashIsATornTail(): void
+    public function testACompleteLastLineThatFailsItsHashIsDamageNotATornWrite(): void
     {
         $location = $this->location();
         $location->prepare();
@@ -115,9 +115,58 @@ final class JournalLocationTest extends TestCase
         $bad = $two;
         $bad['fiscal_record']['number'] = 'A26999999';
         file_put_contents($location->journalFiles()[0], json_encode($bad) . "\n", FILE_APPEND);
+        $content = file_get_contents($location->journalFiles()[0]);
+
+        $this->assertSame(JournalLocation::TAIL_BAD_LAST, $location->repairTail());
+        $this->assertSame($content, file_get_contents($location->journalFiles()[0]), 'nothing is cut');
+        $this->assertSame([], glob($this->root . '/backups/fiscal-journal/quarantine/*') ?: []);
+    }
+
+    public function testACompleteLastLineThatDoesNotFollowThePreviousIsDamage(): void
+    {
+        $location = $this->location();
+        $location->prepare();
+        [$one] = JournalLines::chain(1, 1);
+        [$three] = JournalLines::chain(3, 3, $one);
+        $location->append($one);
+        $location->append($three);
+
+        $this->assertSame(JournalLocation::TAIL_BROKEN_LAST, $location->repairTail());
+        $this->assertCount(2, iterator_to_array($location->lines(), false));
+    }
+
+    public function testATerminatedLastLineThatIsNotJsonIsATornWrite(): void
+    {
+        $location = $this->location();
+        $location->prepare();
+        [$one] = JournalLines::chain(1, 1);
+        $location->append($one);
+        file_put_contents($location->journalFiles()[0], '{"v":1,"seq":2,' . "\n", FILE_APPEND);
 
         $this->assertSame(JournalLocation::TAIL_REPAIRED, $location->repairTail());
-        $this->assertSame($one, $location->lastValidLine());
+        $this->assertSame([$one], iterator_to_array($location->lines(), false));
+    }
+
+    public function testATornTailInAReadOnlyFileIsNotQuarantinedUntilItCanBeCut(): void
+    {
+        $location = $this->location();
+        $location->prepare();
+        [$one] = JournalLines::chain(1, 1);
+        $location->append($one);
+        $file = $location->journalFiles()[0];
+        file_put_contents($file, '{"v":1,"se', FILE_APPEND);
+        chmod($file, 0400);
+        try {
+            $location->repairTail();
+            $this->fail('a tail that cannot be cut is a write failure');
+        } catch (\RuntimeException) {
+        } finally {
+            chmod($file, 0600);
+        }
+
+        $this->assertSame([], glob($this->root . '/backups/fiscal-journal/quarantine/*') ?: []);
+        $this->assertSame(JournalLocation::TAIL_REPAIRED, $location->repairTail());
+        $this->assertCount(1, glob($this->root . '/backups/fiscal-journal/quarantine/*') ?: []);
     }
 
     public function testADamagedLineBeforeTheLastIsNeverRewritten(): void

@@ -167,11 +167,12 @@ class FiscalRecorder
             'generated_at' => $generatedAt,
             'created_at' => $issuedAt->format('Y-m-d H:i:s'),
         ];
-        // The fiscal journal's intent (fiscal-journal D3.1); it never stops the issue.
+        // The fiscal journal's intent (fiscal-journal D3.1), with the document's rows as
+        // issued (read in this transaction); it never stops the issue.
         try {
-            $this->journal?->prepared($row);
+            $this->journal?->prepared($row, $this->connection);
         } catch (\Throwable $e) {
-            $this->logger->error('Fiscal journal intent of {number} failed: {message}', ['number' => $record['number'], 'message' => $e->getMessage()]);
+            $this->logger->warning('Fiscal journal intent of {number} failed: {message}', ['number' => $record['number'], 'message' => $e->getMessage()]);
         }
         $this->connection->insert('fiscal_record', $row);
         $this->connection->update('fiscal_chain', [

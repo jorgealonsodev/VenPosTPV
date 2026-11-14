@@ -742,6 +742,8 @@ class RefundService
         $outbox = $this->outbox ?? new Outbox($this->conn);
         if ($orderId !== null) {
             $this->conn->executeStatement('UPDATE order_meta SET refunded_amount = refunded_amount + ? WHERE id = ?', [$total, $orderId]);
+            // The credit note's journal line stores the amount as this refund leaves it (fiscal-journal D2).
+            $this->journalIntents?->captureRefundedAmount($refundId, $this->conn);
             // Behind the sale (PRD S2): its PrestaShop order id is read when it is sent.
             $outbox->enqueueAfter(Outbox::TYPE_REFUND, $orderId, [
                 'request_id' => $requestId,
@@ -1218,6 +1220,7 @@ class RefundService
                         'UPDATE order_meta SET refunded_amount = refunded_amount + ? WHERE ps_order_id = ?',
                         [$total, $psOrderId]
                     );
+                    $this->journalIntents?->captureRefundedAmount($refundId, $this->conn);
                 }
             });
         } catch (\Throwable $e) {

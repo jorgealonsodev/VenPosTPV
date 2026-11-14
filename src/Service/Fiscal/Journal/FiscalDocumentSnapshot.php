@@ -14,13 +14,44 @@ use VenPosTPV\Service\Sale\TicketNumberer;
 /**
  * What the fiscal journal stores of one issued document besides its fiscal record
  * (fiscal-journal D2): its series, the counter that numbered it and the full rows
- * needed to rebuild it, read from the database after commit with their original
- * ids. Only committed rows are ever read here.
+ * needed to rebuild it, with their original ids. Only committed rows are ever read
+ * here.
+ *
+ * The rows must be those of the document as issued (T1b). The flush runs after the
+ * commit, so a row that later statements change is captured in the intent inside
+ * the issuing transaction (issueRows(), refundedAmountOf()) and used here instead
+ * of the row read at flush time. The rows that cannot be captured that way are read
+ * at flush time and named in the line's `as_of_flush`: the replay must not trust
+ * them as the state at issue. By kind (CHANGED_AFTER_ISSUE):
+ *
+ * - captured at issue: F2 `order_meta` (printed*, ps_order_id, ps_reference and
+ *   synced are set by the print and the upload, refunded_amount by later refunds);
+ *   R5 `refund` (ps_order_slip_id, ps_order_id set by the upload) and
+ *   `order_meta_refunded_amount` (the sale's total refunded right after this credit
+ *   note, later ones add to it); the R5 movement's identity (`movement_id`);
+ *   F3 `invoice` (email_consent_at).
+ * - as of flush: F2 `movement` (ps_order_id set by the upload), `transfer_payment`
+ *   (received later), `outbox` (upload state), `session` (closed later), `exchange`
+ *   (linked to the sale by ExchangeService after the sale's commit, so a flush in
+ *   between finds none); R5 `refund_line` (restocked set after the record in the
+ *   same transaction and by the upload), `movement` columns (ps_order_slip_id,
+ *   ps_order_id set by the upload), `outbox`, `session`, `exchange` (status and
+ *   voucher fields change until the exchange ends).
+ * - never changed after the commit: `sale_line`, `issued_coupon`.
+ * Without its intent (a journal that could not be written while issuing, or a
+ * backfill) the captured rows are read at flush time too, and listed as such.
  */
 class FiscalDocumentSnapshot
 {
     /** The series of a coupon sale: numbered by the shop (its order reference), no local counter. */
     public const SHOP_SERIES = 'PS';
+
+    /** @var array<string, list<string>> kind => rows that statements after the issue may change */
+    public const CHANGED_AFTER_ISSUE = [
+        FiscalRecorder::SALE => ['order_meta', 'movement', 'transfer_payment', 'outbox', 'session', 'exchange'],
+        FiscalRecorder::CREDIT_NOTE => ['refund', 'refund_line', 'movement', 'outbox', 'session', 'exchange', 'order_meta_refunded_amount'],
+        FiscalRecorder::INVOICE_REPLACING_TICKET => ['invoice'],
+    ];
 
     private const TICKET = '/\A([A-Z])(\d{2})(\d{6})\z/D';
     private const CREDIT_NOTE = '/\AR(\d{4})-(\d{6})\z/D';
@@ -32,6 +63,104 @@ class FiscalDocumentSnapshot
         private readonly Connection $connection,
         private readonly ?LoggerInterface $logger = null,
     ) {
+    }
+
+    /**
+     * The document of a journal line: build() with the values captured at issue in
+     * place of those read now, and the list of rows that stay as of the flush.
+     *
+     * @param array<string, mixed> $record the committed fiscal_record row
+     * @param array{rows?: array<string, mixed>, movement_id?: ?int, order_meta_refunded_amount?: ?array<string, mixed>} $captured from the intent (FiscalJournalIntents::capturedFor)
+     *
+     * @return array{kind: string, series: string, counter: ?array<string, mixed>, rows: array<string, mixed>, as_of_flush: list<string>}
+     */
+    public function document(array $record, array $captured = []): array
+    {
+        $document = $this->build($record, \is_int($captured['movement_id'] ?? null) ? $captured['movement_id'] : null);
+        $rows = $document['rows'];
+        $issued = [];
+        $values = \is_array($captured['rows'] ?? null) ? $captured['rows'] : [];
+        if (\array_key_exists('order_meta_refunded_amount', $captured)) {
+            $values['order_meta_refunded_amount'] = $captured['order_meta_refunded_amount'];
+        }
+        foreach ($values as $key => $value) {
+            if (\array_key_exists($key, $rows) && ($value === null || \is_array($value))) {
+                $rows[$key] = $value;
+                $issued[] = $key;
+            }
+        }
+        $changing = self::CHANGED_AFTER_ISSUE[(string) $record['invoice_type']] ?? [];
+        $document['rows'] = $rows;
+        $document['as_of_flush'] = array_values(array_filter(
+            array_keys($rows),
+            static fn (string $key): bool => \in_array($key, $changing, true) && !\in_array($key, $issued, true),
+        ));
+
+        return $document;
+    }
+
+    /**
+     * The rows of a document that exist when its fiscal record is appended and that
+     * later statements change (the order of a sale, the refund of a credit note, the
+     * invoice), read inside the issuing transaction for its intent. Never throws: a
+     * row that cannot be read is simply not captured (the line says it).
+     *
+     * @param array<string, mixed> $record the fiscal_record row about to be inserted
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    public static function issueRows(Connection $connection, array $record): array
+    {
+        $queries = [
+            'order_meta' => ['SELECT * FROM order_meta WHERE id = ?', $record['order_id'] ?? null],
+            'refund' => ['SELECT * FROM refund WHERE id = ?', $record['refund_id'] ?? null],
+            'invoice' => ['SELECT * FROM invoice WHERE id = ?', $record['invoice_id'] ?? null],
+        ];
+        $rows = [];
+        foreach ($queries as $key => [$sql, $id]) {
+            if ($id === null) {
+                continue;
+            }
+            try {
+                $row = $connection->fetchAssociative($sql, [(int) $id]);
+            } catch (\Throwable) {
+                continue;
+            }
+            if ($row !== false) {
+                $rows[$key] = $row;
+            }
+        }
+
+        return $rows;
+    }
+
+    /**
+     * The `order_meta_refunded_amount` of a credit note (D2): the refunded amount of
+     * the sale it refunds, found by the refund's order_id or else its ps_order_id.
+     * Called inside the issuing transaction right after the amount is updated, and
+     * at flush time when that was not captured.
+     *
+     * @return array{order_meta_id: mixed, value: mixed}|null null when the refund has no local sale
+     */
+    public static function refundedAmountOf(Connection $connection, int $refundId): ?array
+    {
+        $refund = $connection->fetchAssociative('SELECT order_id, ps_order_id FROM refund WHERE id = ?', [$refundId]);
+
+        return $refund === false ? null : self::refundedAmount($connection, $refund);
+    }
+
+    /**
+     * @param array<string, mixed> $refund at least order_id and ps_order_id
+     *
+     * @return array{order_meta_id: mixed, value: mixed}|null
+     */
+    private static function refundedAmount(Connection $connection, array $refund): ?array
+    {
+        $sale = $refund['order_id'] !== null
+            ? $connection->fetchAssociative('SELECT id, refunded_amount FROM order_meta WHERE id = ?', [(int) $refund['order_id']])
+            : ($refund['ps_order_id'] !== null ? $connection->fetchAssociative('SELECT id, refunded_amount FROM order_meta WHERE ps_order_id = ? ORDER BY id LIMIT 1', [(int) $refund['ps_order_id']]) : false);
+
+        return $sale !== false ? ['order_meta_id' => $sale['id'], 'value' => $sale['refunded_amount']] : null;
     }
 
     /**
@@ -106,15 +235,7 @@ class FiscalDocumentSnapshot
         $refundId = $record['refund_id'] !== null ? (int) $record['refund_id'] : null;
         $refund = $refundId !== null ? $this->row('SELECT * FROM refund WHERE id = ?', [$refundId]) : null;
 
-        $refundedAmount = null;
-        if ($refund !== null) {
-            $sale = $refund['order_id'] !== null
-                ? $this->row('SELECT id, refunded_amount FROM order_meta WHERE id = ?', [(int) $refund['order_id']])
-                : ($refund['ps_order_id'] !== null ? $this->row('SELECT id, refunded_amount FROM order_meta WHERE ps_order_id = ? ORDER BY id LIMIT 1', [(int) $refund['ps_order_id']]) : null);
-            if ($sale !== null) {
-                $refundedAmount = ['order_meta_id' => $sale['id'], 'value' => $sale['refunded_amount']];
-            }
-        }
+        $refundedAmount = $refund !== null ? self::refundedAmount($this->connection, $refund) : null;
 
         return [
             'kind' => FiscalRecorder::CREDIT_NOTE,

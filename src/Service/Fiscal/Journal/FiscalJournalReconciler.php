@@ -29,7 +29,10 @@ use VenPosTPV\Service\Fiscal\FiscalRecorder;
  *    more than 5 minutes, is damaged, or a document cannot be journaled.
  *
  * A document the writer cannot turn into a line stops the flush at it (order and
- * seq stay gapless): it is reported as blocked, never skipped.
+ * seq stay gapless): the writer's BLOCKED result names it and it is reported as
+ * blocked, never skipped. A damaged journal (FiscalJournalFlushResult::DAMAGED, or
+ * what JournalVerifier finds) and a primary that lost its journal.id
+ * (JOURNAL_MISSING, for the guard) are never rewritten from the database.
  *
  * An incident (damaged, blocked, no folder writable) is reported as a failure of
  * the job, with its log messages, only on the run that first detects it and once a
@@ -71,20 +74,20 @@ class FiscalJournalReconciler
         $log = new IncidentLogBuffer($this->logger);
         $writer = new FiscalJournalWriter($this->connection, $this->locations, $this->intents, $log, $this->snapshot ?? new FiscalDocumentSnapshot($this->connection, $log));
 
-        $blockedBy = null;
         try {
             $flush = $writer->flush();
         } catch (\Throwable $e) {
+            // The writer reports its own failures in its result; this is the database.
             $log->error('Fiscal journal flush failed: {message}', ['message' => $e->getMessage()]);
             $flush = new FiscalJournalFlushResult(FiscalJournalFlushResult::UNWRITABLE);
-            if ($this->locations->primary()->isWritable() || $this->locations->secondary()->isWritable()) {
-                // A folder can be written: the document the flush stopped at is the cause.
-                $flush = new FiscalJournalFlushResult(FiscalJournalFlushResult::OK);
-                $blockedBy = $e->getMessage() !== '' ? $e->getMessage() : $e::class;
-            }
         }
         $unwritable = $flush->status === FiscalJournalFlushResult::UNWRITABLE;
+        if ($unwritable) {
+            // Held by the buffer: it goes out as an error only on the run that reports the incident.
+            $log->error('Fiscal journal: no folder can be written; the documents wait in the database');
+        }
         $headMissing = $flush->status === FiscalJournalFlushResult::HEAD_MISSING;
+        $journalMissing = $flush->status === FiscalJournalFlushResult::JOURNAL_MISSING;
 
         $previous = $this->storedState();
         $lastFull = self::date($previous['full_verified_at'] ?? null);
@@ -96,7 +99,12 @@ class FiscalJournalReconciler
         $verification = $this->verify(\is_array($previous['verified'] ?? null) ? $previous['verified'] : [], $full);
         $damaged = $verification['damaged'];
         if ($damaged === null && ($flush->damaged || $flush->status === FiscalJournalFlushResult::DAMAGED)) {
-            $damaged = ['folder' => null, 'file' => null, 'line' => null, 'reason' => JournalVerifier::BAD_LINE];
+            $folder = match ($flush->directory) {
+                $this->locations->primary()->directory() => 'primary',
+                $this->locations->secondary()->directory() => 'secondary',
+                default => null,
+            };
+            $damaged = ['folder' => $folder, 'file' => null, 'line' => null, 'reason' => $flush->reason ?? JournalVerifier::BAD_LINE];
         }
 
         $head = $this->head();
@@ -104,11 +112,14 @@ class FiscalJournalReconciler
         $intents = $this->resolveIntents($now, $headMissing ? null : $journaledId, $log);
 
         $pending = $headMissing ? self::noPending() : $this->pending($journaledId);
-        $blocked = $blockedBy !== null && $pending['count'] > 0 ? ['number' => (string) $pending['oldest_number'], 'reason' => $blockedBy] : null;
-        $status = $this->status($damaged, $headMissing, $blocked, $pending, $now);
+        $blocked = $flush->status === FiscalJournalFlushResult::BLOCKED && $pending['count'] > 0
+            ? ['number' => (string) $flush->number, 'reason' => (string) $flush->reason]
+            : null;
+        $status = $journalMissing && $damaged === null ? FiscalJournalState::JOURNAL_MISSING : $this->status($damaged, $headMissing, $blocked, $pending, $now);
 
         $incident = match (true) {
             $damaged !== null => sprintf('damaged:%s:%s:%s:%s', $damaged['folder'] ?? '', $damaged['file'] ?? '', $damaged['line'] ?? '', $damaged['reason']),
+            $journalMissing => 'journal_missing',
             $blocked !== null => 'blocked:' . $blocked['number'],
             $unwritable => 'unwritable',
             default => null,
@@ -137,7 +148,7 @@ class FiscalJournalReconciler
 
         $exitCode = match (true) {
             !$reported => FiscalJournalState::EXIT_OK,
-            $damaged !== null => FiscalJournalState::EXIT_DAMAGED,
+            $damaged !== null, $journalMissing => FiscalJournalState::EXIT_DAMAGED,
             default => FiscalJournalState::EXIT_UNWRITABLE,
         };
 
@@ -430,7 +441,9 @@ class FiscalJournalReconciler
     public static function damagedText(array $damaged): string
     {
         if ($damaged['reason'] === JournalVerifier::REMOVED) {
-            return sprintf('Faltan líneas o archivos del diario fiscal (desde %s, línea %d). Ejecuta tpv:fiscal:journal --verify-all.', $damaged['file'], $damaged['line']);
+            return $damaged['file'] !== null && $damaged['line'] !== null
+                ? sprintf('Faltan líneas o archivos del diario fiscal (desde %s, línea %d). Ejecuta tpv:fiscal:journal --verify-all.', $damaged['file'], $damaged['line'])
+                : 'Faltan líneas o archivos del diario fiscal. Ejecuta tpv:fiscal:journal --verify-all.';
         }
         if ($damaged['file'] !== null && $damaged['line'] !== null) {
             return sprintf('El diario fiscal tiene una línea dañada en %s (línea %d). Ejecuta tpv:fiscal:journal --verify-all.', $damaged['file'], $damaged['line']);
