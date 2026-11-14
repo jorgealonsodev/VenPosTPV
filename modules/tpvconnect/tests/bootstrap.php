@@ -141,7 +141,9 @@ if (!class_exists('Db', false)) {
     {
         private static ?self $instance = null;
         public static function getInstance(): self { return self::$instance ??= new self(); }
-        public function execute(string $sql): bool { return true; }
+        /** @var list<string> statements execute() received, in order */
+        public static array $executed = [];
+        public function execute(string $sql, bool $useCache = true): bool { self::$executed[] = $sql; return true; }
         public function executeS(string $sql, bool $array = true, bool $useCache = true): array|false
         {
             if (preg_match("/(GET_LOCK|RELEASE_LOCK)\\('([^']+)'/", $sql, $matches)) {
@@ -508,7 +510,7 @@ if (is_file(__DIR__ . '/../classes/RestockProcessor.php')) {
 if (is_file(__DIR__ . '/../classes/ReferencedOrderCreator.php')) {
     require_once __DIR__ . '/../classes/ReferencedOrderCreator.php';
 }
-foreach (['FreeItemOrderLines', 'FreeItemProductSetup', 'LeftoverVoucher', 'TpvPairing', 'PriceProcessor', 'ProductCodesProcessor'] as $class) {
+foreach (['FreeItemOrderLines', 'FreeItemProductSetup', 'LeftoverVoucher', 'TpvPairing', 'PriceProcessor', 'ProductCodesProcessor', 'JournalStore'] as $class) {
     if (is_file(__DIR__ . '/../classes/' . $class . '.php')) {
         require_once __DIR__ . '/../classes/' . $class . '.php';
     }

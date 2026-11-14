@@ -1,6 +1,6 @@
 # TPV Connect
 
-Módulo de PrestaShop (1.7.7 a 9) que une la tienda con el TPV VenPosTPV: clave del webservice, inicio de sesión único (SSO) desde el back office, pedidos, devoluciones, cupones, artículos libres y el modo edición del catálogo del TPV. Versión actual: **0.8.4**. Historial de cambios: [CHANGELOG.md](CHANGELOG.md). En la lista de módulos sale con el logo de VenPosTPV.
+Módulo de PrestaShop (1.7.7 a 9) que une la tienda con el TPV VenPosTPV: clave del webservice, inicio de sesión único (SSO) desde el back office, pedidos, devoluciones, cupones, artículos libres y el modo edición del catálogo del TPV. Versión actual: **0.9.0**. Historial de cambios: [CHANGELOG.md](CHANGELOG.md). En la lista de módulos sale con el logo de VenPosTPV.
 
 ## Instalar y emparejar con el TPV
 
@@ -34,8 +34,13 @@ Si no se puede emparejar, el apartado **Configuración manual** de la configurac
 | `POST /module/tpvconnect/refunds`, `restock`, `orderlookup`, `freeitem` | Devoluciones, reposición de stock, búsqueda de pedidos y artículo libre | — |
 | `POST /module/tpvconnect/price` | Precio con IVA y tipo de IVA del [modo edición](../../docs/modo-edicion.md) | 0.8.3 |
 | `POST /module/tpvconnect/codes` | EAN y referencia del modo edición; vacío los borra | 0.8.4 |
+| `POST /module/tpvconnect/journal` | Copia en la tienda del diario fiscal del TPV y último documento de cada serie | 0.9.0 |
 
 `price` y `codes` escriben solo esas columnas del producto o de la combinación, no el `Product` entero (PrestaShop validaría todos sus campos y un producto con algún campo fuera de límite no se podría guardar), y después lanzan `actionProductUpdate`. No tocan los precios específicos (reducciones).
+
+### Copia del diario fiscal (0.9.0)
+
+Cada ticket, abono o factura que emite el TPV se guarda también en la tienda, en la tabla `PREFIX_tpvconnect_journal`: el TPV envía cada línea de su diario fiscal a `journal` y la tienda comprueba su huella (`line_hash`) antes de guardarla. Reenviar la misma línea no la duplica; una línea distinta en la misma posición, o el mismo documento en otra posición del mismo diario, se rechaza (`409`); un diario nuevo puede volver a subir documentos que la tienda ya tiene de un diario anterior. Con `{"journal_id", "action": "head"}` el TPV pregunta el último documento guardado de cada serie, así no repite números aunque pierda su propio diario. La tabla se crea al instalar o al actualizar a 0.9.0; el diario fiscal guardado en la tienda no se borra al desinstalar ni al reiniciar el módulo. El registro de la tienda nunca guarda el contenido de los documentos.
 
 La clave del webservice del TPV recibe los permisos que necesita al emparejar o al actualizar el módulo; desde 0.8.2 incluye `GET` en `addresses`, de donde el TPV saca el teléfono de los clientes.
 
@@ -45,4 +50,4 @@ Mientras se crea un pedido de la caja, el hook `actionEmailSendBefore` impide lo
 
 ### Actualizar
 
-Sube el `tpvconnect.zip` nuevo en **Módulos → Gestor de módulos → Subir un módulo**. Los scripts de `upgrade/` hacen lo necesario (por ejemplo, registrar el hook de 0.8.1 o dar el permiso de direcciones de 0.8.2); 0.8.3 y 0.8.4 no cambian nada en la tienda.
+Sube el `tpvconnect.zip` nuevo en **Módulos → Gestor de módulos → Subir un módulo**. Los scripts de `upgrade/` hacen lo necesario (por ejemplo, registrar el hook de 0.8.1 o dar el permiso de direcciones de 0.8.2); 0.8.3 y 0.8.4 no cambian nada en la tienda; 0.9.0 crea la tabla del diario fiscal.
