@@ -51,7 +51,7 @@ final class CronCommandTest extends TestCase
         $runner = new CronRunner(new CronStateStore($connection), new CronLock($this->lockDir), 'Europe/Madrid');
 
         $application = new Application();
-        foreach (['tpv:sync:outbox', 'tpv:catalog:sync', 'tpv:customers:sync', 'tpv:backup:database'] as $name) {
+        foreach (['tpv:fiscal:journal', 'tpv:sync:outbox', 'tpv:catalog:sync', 'tpv:customers:sync', 'tpv:backup:database'] as $name) {
             if (!\in_array($name, $missing, true)) {
                 $application->add($this->fakeCommand($name, $exitCodes[$name] ?? 0));
             }
@@ -88,6 +88,7 @@ final class CronCommandTest extends TestCase
 
         self::assertSame(Command::SUCCESS, $tester->getStatusCode());
         self::assertSame([
+            'tpv:fiscal:journal',
             'tpv:sync:outbox',
             'tpv:catalog:sync --stock-only',
             'tpv:catalog:sync --full',
@@ -95,7 +96,7 @@ final class CronCommandTest extends TestCase
             'tpv:backup:database',
         ], $this->calls);
         $display = $tester->getDisplay();
-        foreach (['tpv:sync:outbox', 'tpv:catalog:sync', 'tpv:customers:sync', 'tpv:backup:database'] as $name) {
+        foreach (['tpv:fiscal:journal', 'tpv:sync:outbox', 'tpv:catalog:sync', 'tpv:customers:sync', 'tpv:backup:database'] as $name) {
             self::assertStringContainsString("{$name} says hello", $display);
         }
     }
@@ -107,7 +108,7 @@ final class CronCommandTest extends TestCase
         $tester->execute([]);
 
         self::assertSame(Command::FAILURE, $tester->getStatusCode());
-        self::assertCount(5, $this->calls);
+        self::assertCount(6, $this->calls);
         self::assertStringContainsString('tpv:sync:outbox failed: shop unreachable', $tester->getDisplay());
     }
 
@@ -165,7 +166,7 @@ final class CronCommandTest extends TestCase
         $tester->execute([], ['capture_stderr_separately' => true]);
 
         self::assertSame(Command::FAILURE, $tester->getStatusCode());
-        self::assertSame(['tpv:sync:outbox', 'tpv:catalog:sync --stock-only', 'tpv:catalog:sync --full', 'tpv:backup:database'], $this->calls);
+        self::assertSame(['tpv:fiscal:journal', 'tpv:sync:outbox', 'tpv:catalog:sync --stock-only', 'tpv:catalog:sync --full', 'tpv:backup:database'], $this->calls);
         self::assertStringContainsString('tpv:cron: customers (tpv:customers:sync) failed: ', $tester->getErrorOutput());
         self::assertStringContainsString('tpv:customers:sync', $tester->getDisplay());
     }

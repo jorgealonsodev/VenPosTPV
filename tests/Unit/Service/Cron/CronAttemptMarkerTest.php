@@ -77,7 +77,7 @@ final class CronAttemptMarkerTest extends TestCase
      */
     private function simulate(string $from, int $runs, array $results): array
     {
-        $counts = ['outbox' => 0, 'stock' => 0, 'catalog' => 0, 'customers' => 0, 'backup' => 0];
+        $counts = ['journal' => 0, 'outbox' => 0, 'stock' => 0, 'catalog' => 0, 'customers' => 0, 'backup' => 0];
         $at = self::at($from);
         for ($i = 0; $i < $runs; ++$i) {
             foreach ($this->launchedAt($at->format('Y-m-d H:i:s'), $results) as $id) {
@@ -103,7 +103,7 @@ final class CronAttemptMarkerTest extends TestCase
         // 03:00 to 06:00, one run a minute, the full catalog always failing.
         $counts = $this->simulate('2026-11-15 03:00:10', 181, ['catalog' => 1]);
 
-        self::assertSame(['outbox' => 181, 'stock' => 181, 'catalog' => 3, 'customers' => 1, 'backup' => 1], $counts);
+        self::assertSame(['journal' => 181, 'outbox' => 181, 'stock' => 181, 'catalog' => 3, 'customers' => 1, 'backup' => 1], $counts);
     }
 
     public function testWithOnlyTheCatalogStateRefusedTheCatalogRunsThreeTimes(): void
@@ -149,10 +149,10 @@ final class CronAttemptMarkerTest extends TestCase
         }, self::at('2026-11-15 03:00:10'));
 
         // The marker still knows the nightly jobs ran yesterday: only the catalog is due.
-        self::assertSame(['outbox', 'stock', 'catalog'], $launched);
+        self::assertSame(['journal', 'outbox', 'stock', 'catalog'], $launched);
         self::assertSame([], $report->failures());
         self::assertFalse($report->failed());
-        self::assertSame(['outbox', 'stock'], $this->launchedAt('2026-11-15 03:01:10', [], $this->runner($store)), 'the marker keeps it once a night');
+        self::assertSame(['journal', 'outbox', 'stock'], $this->launchedAt('2026-11-15 03:01:10', [], $this->runner($store)), 'the marker keeps it once a night');
     }
 
     public function testWithoutAnyStateReadableEveryJobRuns(): void
@@ -164,7 +164,7 @@ final class CronAttemptMarkerTest extends TestCase
             }
         };
 
-        self::assertSame(['outbox', 'stock', 'catalog', 'customers', 'backup'], $this->launchedAt('2026-11-14 12:00:10', [], $this->runner($store)));
+        self::assertSame(['journal', 'outbox', 'stock', 'catalog', 'customers', 'backup'], $this->launchedAt('2026-11-14 12:00:10', [], $this->runner($store)));
     }
 
     public function testACorruptMarkerIsIgnoredAndTheDatabaseDecides(): void
@@ -174,8 +174,8 @@ final class CronAttemptMarkerTest extends TestCase
         file_put_contents($this->lockDir . '/cron-customers.state', '["slot", 3]');
         file_put_contents($this->lockDir . '/cron-backup.state', '{"slot": 7, "attempts": [], "last_attempt_at": false, "succeeded": "yes"}');
 
-        self::assertSame(['outbox', 'stock', 'catalog', 'customers', 'backup'], $this->launchedAt('2026-11-15 09:00:10'));
-        self::assertSame(['outbox', 'stock'], $this->launchedAt('2026-11-15 09:01:10'));
+        self::assertSame(['journal', 'outbox', 'stock', 'catalog', 'customers', 'backup'], $this->launchedAt('2026-11-15 09:00:10'));
+        self::assertSame(['journal', 'outbox', 'stock'], $this->launchedAt('2026-11-15 09:01:10'));
     }
 
     public function testAnUnwritableMarkerDirectoryDoesNotBlockTheJobs(): void
@@ -186,9 +186,9 @@ final class CronAttemptMarkerTest extends TestCase
         $marker = new CronAttemptMarker($notADirectory . '/var');
         $runner = $this->runner(null, $marker);
 
-        self::assertSame(['outbox', 'stock', 'catalog', 'customers', 'backup'], $this->launchedAt('2026-11-14 12:00:10', [], $runner));
-        self::assertSame(['outbox', 'stock'], $this->launchedAt('2026-11-14 12:01:10', [], $runner), 'the database alone decides');
-        self::assertSame(['outbox', 'stock', 'catalog'], $this->launchedAt('2026-11-15 03:00:10', [], $runner));
+        self::assertSame(['journal', 'outbox', 'stock', 'catalog', 'customers', 'backup'], $this->launchedAt('2026-11-14 12:00:10', [], $runner));
+        self::assertSame(['journal', 'outbox', 'stock'], $this->launchedAt('2026-11-14 12:01:10', [], $runner), 'the database alone decides');
+        self::assertSame(['journal', 'outbox', 'stock', 'catalog'], $this->launchedAt('2026-11-15 03:00:10', [], $runner));
     }
 
     public function testAnAttemptLeftByAKilledProcessCountsAsAnAttempt(): void
@@ -255,8 +255,8 @@ final class CronAttemptMarkerTest extends TestCase
         $store->saveJob('customers', ['last_attempt_at' => '2026-11-15T03:30:10+01:00', 'last_success_at' => '2026-11-15T03:30:10+01:00', 'last_error' => null]);
         $store->saveJob('backup', ['last_attempt_at' => '2026-11-14T04:00:10+01:00', 'last_success_at' => '2026-11-14T04:00:10+01:00', 'last_error' => null]);
 
-        self::assertSame(['outbox', 'stock'], $this->launchedAt('2026-11-15 03:59:10', ['catalog' => 1]));
-        self::assertSame(['outbox', 'stock', 'catalog', 'backup'], $this->launchedAt('2026-11-15 04:00:10', ['catalog' => 1]), 'third try');
-        self::assertSame(['outbox', 'stock'], $this->launchedAt('2026-11-15 04:30:10', ['catalog' => 1]), 'no fourth try');
+        self::assertSame(['journal', 'outbox', 'stock'], $this->launchedAt('2026-11-15 03:59:10', ['catalog' => 1]));
+        self::assertSame(['journal', 'outbox', 'stock', 'catalog', 'backup'], $this->launchedAt('2026-11-15 04:00:10', ['catalog' => 1]), 'third try');
+        self::assertSame(['journal', 'outbox', 'stock'], $this->launchedAt('2026-11-15 04:30:10', ['catalog' => 1]), 'no fourth try');
     }
 }

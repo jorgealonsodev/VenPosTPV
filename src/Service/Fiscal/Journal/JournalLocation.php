@@ -305,6 +305,62 @@ final class JournalLocation
     }
 
     /**
+     * Every intent left in this folder, by record hash (fiscal-journal D3.5).
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    public function intents(): array
+    {
+        $intents = [];
+        foreach (@scandir($this->directory . '/intents') ?: [] as $entry) {
+            if (preg_match('/\A([0-9A-Fa-f]{64})\.json\z/D', $entry, $match) !== 1) {
+                continue;
+            }
+            $data = $this->readJson($this->directory . '/intents/' . $entry);
+            if ($data !== null) {
+                $intents[$match[1]] = $data;
+            }
+        }
+
+        return $intents;
+    }
+
+    /**
+     * Moves the intent of a document that was never issued to `intents/discarded/`
+     * (kept, never deleted, so what happened can still be read).
+     */
+    public function discardIntent(string $hash): void
+    {
+        $path = $this->intentPath($hash);
+        if (!is_file($path)) {
+            return;
+        }
+        $folder = $this->directory . '/intents/discarded';
+        if (!is_dir($folder) && !@mkdir($folder, 0700) && !is_dir($folder)) {
+            throw new \RuntimeException(sprintf('Cannot create %s', $folder));
+        }
+        if (!@rename($path, $folder . '/' . $hash . '.json')) {
+            throw new \RuntimeException(sprintf('Cannot move the intent %s', $hash));
+        }
+    }
+
+    /**
+     * Writes `state.json` (fiscal-journal D9) atomically.
+     *
+     * @param array<string, mixed> $state
+     */
+    public function writeState(array $state): void
+    {
+        $this->writeAtomically($this->directory . '/state.json', json_encode($state, self::LINE_FLAGS));
+    }
+
+    /** @return array<string, mixed>|null null when missing or not valid JSON */
+    public function readState(): ?array
+    {
+        return $this->readJson($this->directory . '/state.json');
+    }
+
+    /**
      * Opens and locks `journal.lock` (exclusive, blocking).
      *
      * @return resource

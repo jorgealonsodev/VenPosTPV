@@ -47,7 +47,9 @@ class CronRunner
     public static function jobs(): array
     {
         return [
-            new CronJob('outbox', 'Subida de ventas', 'tpv:sync:outbox'),
+            // First, so the upload that follows finds the journal lines (fiscal-journal D9).
+            new CronJob('journal', 'Diario fiscal', 'tpv:fiscal:journal'),
+            new CronJob('outbox','Subida de ventas', 'tpv:sync:outbox'),
             new CronJob('stock', 'Stock', 'tpv:catalog:sync', ['--stock-only' => true]),
             new CronJob('catalog', 'Catálogo completo', 'tpv:catalog:sync', ['--full' => true], '03:00'),
             new CronJob('customers', 'Clientes', 'tpv:customers:sync', [], '03:30'),

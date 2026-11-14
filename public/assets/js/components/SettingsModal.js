@@ -68,6 +68,7 @@ const SettingsModal = {
         async function loadProvisioning() {
             provisioningLoading.value = true;
             provisioningError.value = '';
+            loadFiscalJournal();
             try {
                 const resp = await ApiClient.get('/api/settings/provisioning');
                 provisioning.value = resp?.data || null;
@@ -726,6 +727,7 @@ const SettingsModal = {
 
         async function loadVerifactu() {
             verifactu.error = '';
+            loadFiscalJournal();
             try {
                 const resp = await ApiClient.get('/api/fiscal/settings');
                 verifactu.enabled = !!(resp.data && resp.data.enabled);
@@ -762,6 +764,62 @@ const SettingsModal = {
             } finally {
                 verifactu.checking = false;
             }
+        }
+
+        // Ajustes → VERI*FACTU → «Diario fiscal» and its summary in «Estado de la
+        // instalación» (GET /api/fiscal/journal, admins only, read-only).
+        const fiscalJournal = Vue.reactive({ data: null, error: '' });
+
+        async function loadFiscalJournal() {
+            fiscalJournal.error = '';
+            try {
+                const resp = await ApiClient.get('/api/fiscal/journal');
+                fiscalJournal.data = (resp && resp.data) || null;
+            } catch (e) {
+                fiscalJournal.data = null;
+                fiscalJournal.error = errorText(e, 'No se pudo cargar el estado del diario fiscal');
+            }
+        }
+
+        // The line shown for the journal state; null when another part of Ajustes speaks for it.
+        function fiscalJournalMessage(state) {
+            if (!state) return null;
+            if (state.status === 'not_started') return { tone: 'muted', text: 'Diario fiscal sin iniciar' };
+            if (state.status === 'ok') {
+                const last = state.last_document;
+                return { tone: 'ok', text: last ? 'Diario fiscal al día: último documento ' + last.number + ' (' + formatDateTime(last.generated_at) + ').' : 'Diario fiscal al día.' };
+            }
+            if (state.status === 'pending') {
+                const count = (state.pending && state.pending.count) || 0;
+                return { tone: 'muted', text: 'Diario fiscal con ' + count + ' documentos pendientes de anotar; se anotan solos cada minuto.' };
+            }
+            if (state.status === 'lagging') return { tone: 'error', text: 'El diario fiscal lleva más de 5 minutos sin poder anotarse. Revisa los permisos de la carpeta backups/fiscal-journal.' };
+            if (state.status === 'damaged') {
+                const damaged = state.damaged || {};
+                const check = ' Ejecuta tpv:fiscal:journal --verify-all.';
+                if (damaged.reason === 'removed') return { tone: 'error', text: 'Faltan líneas o archivos del diario fiscal (desde ' + damaged.file + ', línea ' + damaged.line + ').' + check };
+                if (damaged.file && damaged.line) return { tone: 'error', text: 'El diario fiscal tiene una línea dañada en ' + damaged.file + ' (línea ' + damaged.line + ').' + check };
+                if (damaged.file) return { tone: 'error', text: 'El diario fiscal está dañado (' + damaged.file + ').' + check };
+                return { tone: 'error', text: 'El diario fiscal tiene una línea dañada.' + check };
+            }
+            if (state.status === 'blocked') {
+                const blocked = state.blocked || {};
+                const count = (state.pending && state.pending.count) || 0;
+                return { tone: 'error', text: 'El diario fiscal no puede anotar el documento ' + blocked.number + ' (' + blocked.reason + '); los ' + count + ' documentos pendientes esperan en orden hasta que se resuelva.' };
+            }
+            return null;
+        }
+
+        // Documents prepared more than 10 minutes ago and not found in the database (fiscal-journal D3.5).
+        function fiscalJournalUnconfirmed(state) {
+            const count = (state && state.unconfirmed_intents && state.unconfirmed_intents.length) || 0;
+            return count ? count + ' documentos preparados hace más de 10 minutos sin confirmar; no bloquean la venta y se revisan solos cada minuto.' : '';
+        }
+
+        function fiscalJournalTone(message) {
+            if (!message) return '';
+            if (message.tone === 'ok') return 'color:var(--green);';
+            return message.tone === 'error' ? 'color:var(--red); font-weight:600;' : 'color:var(--text3);';
         }
 
         // Ajustes → Cierres de caja: the last 50 closes of the shop, each Z printable again.
@@ -929,6 +987,7 @@ const SettingsModal = {
             saveSyncInterval, saveSyncPushInterval, syncNow,
             INPUT_STYLE, mail, mailSaving, mailError, mailTestTo, mailTestStatus, saveMail, sendMailTest, loadMail,
             verifactu, loadVerifactu, saveVerifactu, checkChain,
+            fiscalJournal, loadFiscalJournal, fiscalJournalMessage, fiscalJournalUnconfirmed, fiscalJournalTone,
             numbering, loadNumbering, tillNumbering, startNumberingChange, cancelNumberingChange, saveNumberingChange,
             cashCloses, loadCashCloses, printClose, pdfClose, formatMoney, formatDateTime,
             provisioning, provisioningLoading, provisioningError, loadProvisioning, provisioningLabel, cronState, cronSchedule,
@@ -1523,6 +1582,11 @@ const SettingsModal = {
                                 <div v-else style="color:var(--red);">{{ verifactu.chain.reason }}<span v-if="verifactu.chain.broken_id"> (registro {{ verifactu.chain.broken_id }})</span></div>
                                 <div style="color:var(--text3); margin-top:4px;">{{ verifactu.chain.protected ? 'La base de datos también impide modificar o borrar registros.' : 'El servidor no permite bloquear los registros en la base de datos; la aplicación no los modifica y esta comprobación detecta cualquier cambio.' }}</div>
                             </div>
+                            <div style="font-size:13px; font-weight:600; color:var(--text); margin:24px 0 6px;">Diario fiscal</div>
+                            <div style="font-size:12px; color:var(--text3); margin-bottom:12px;">Cada documento emitido se anota también en un diario fuera de la base de datos (carpeta backups/fiscal-journal del servidor), para que una restauración no pueda perder ni repetir un número.</div>
+                            <div v-if="fiscalJournal.error" data-fiscal-journal="error" style="color:var(--red); font-size:13px;">{{ fiscalJournal.error }}</div>
+                            <div v-else-if="fiscalJournalMessage(fiscalJournal.data)" data-fiscal-journal="state" :style="fiscalJournalTone(fiscalJournalMessage(fiscalJournal.data))" style="font-size:13px; overflow-wrap:anywhere;">{{ fiscalJournalMessage(fiscalJournal.data).text }}</div>
+                            <div v-if="fiscalJournalUnconfirmed(fiscalJournal.data)" data-fiscal-journal="unconfirmed" style="margin-top:6px; font-size:12px; color:var(--text3);">{{ fiscalJournalUnconfirmed(fiscalJournal.data) }}</div>
                         </div>
 
                         <!-- ==================== CIERRES DE CAJA ==================== -->
@@ -1751,6 +1815,7 @@ const SettingsModal = {
                                     </div>
                                 </div>
                             </div>
+                            <div v-if="fiscalJournalMessage(fiscalJournal.data)" data-fiscal-journal="summary" :style="fiscalJournalTone(fiscalJournalMessage(fiscalJournal.data))" style="margin-top:10px; font-size:12px; max-width:480px; overflow-wrap:anywhere;">{{ fiscalJournalMessage(fiscalJournal.data).text }}</div>
 
                             <div style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; color:var(--text); margin:24px 0 6px;">
                                 <icon name="sync" :size="16"></icon> Tienda PrestaShop
