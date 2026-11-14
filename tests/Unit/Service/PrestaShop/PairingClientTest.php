@@ -42,6 +42,24 @@ final class PairingClientTest extends TestCase
         self::fail('A PairingException was expected.');
     }
 
+    /**
+     * The module shows the code as "024 261": pasted, it may bring a space or a
+     * line break around it, a no-break space in the middle, or a dash.
+     */
+    public function testACodePastedWithAnySpacingIsReadAsItsSixDigits(): void
+    {
+        foreach (['024261', '024 261', ' 024 261', "024 261\n", "024\u{00A0}261", "024\u{202F}261", "\t024 - 261 ", "024\u{2013}261", "\u{FEFF}024261"] as $pasted) {
+            self::assertSame('024261', PairingClient::normalizeCode($pasted), json_encode($pasted, JSON_THROW_ON_ERROR));
+        }
+    }
+
+    public function testACodeThatIsNotSixDigitsIsStillRefused(): void
+    {
+        foreach (['', '02426', '0242611', '024 26a', 'abc024261', '024.261', "\xC2024261"] as $bad) {
+            self::assertNull(PairingClient::normalizeCode($bad), bin2hex($bad));
+        }
+    }
+
     public function testItPostsTheCodeAndTheTpvAddressAndReturnsTheEnvValues(): void
     {
         $requests = [];

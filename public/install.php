@@ -146,6 +146,12 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     foreach (['tpv_url', 'db_host', 'db_port', 'db_name', 'db_user', 'admin_user', 'store_name', 'store_address', 'ps_url', 'ps_api_key', 'sso_secret', 'ps_currency', 'ps_shop', 'timezone', 'pair_code'] as $k) {
         $form[$k] = (string) ($_POST[$k] ?? '');
     }
+    // Also the key and the passwords: a failed submit shows them again, so only
+    // the wrong field has to be retyped. They go back only to whoever just sent
+    // them, escaped, on a page that is never cached.
+    foreach (['install_key', 'db_password', 'admin_password'] as $k) {
+        $form[$k] = \is_string($_POST[$k] ?? null) ? $_POST[$k] : '';
+    }
     $form['ps_mode'] = ($_POST['ps_mode'] ?? '') === 'manual' ? 'manual' : 'pair';
     $_POST['ps_mode'] = $form['ps_mode'];
 
@@ -221,17 +227,17 @@ $errHtml = $errors === [] ? '' : '<div class="err"><strong>Revisa esto:</strong>
 page('Instalación del TPV', $errHtml . '<form method="post" autocomplete="off">'
     . '<h2>Clave de instalación</h2>'
     . '<label>Clave <small>— está en el archivo <code>INSTALL_KEY</code> de la carpeta del subdominio (administrador de archivos del panel o FTP)</small></label>'
-    . '<input name="install_key" required>'
+    . '<input name="install_key" value="' . $v('install_key') . '" required>'
     . '<h2>Base de datos del TPV</h2><p><small>Créala vacía en el panel del hosting. No uses la de PrestaShop.</small></p>'
     . '<div class="row"><div><label>Servidor</label><input name="db_host" value="' . $v('db_host') . '" required></div>'
     . '<div class="narrow"><label>Puerto</label><input name="db_port" value="' . $v('db_port') . '" required></div></div>'
     . '<label>Nombre de la base de datos</label><input name="db_name" value="' . $v('db_name') . '" required>'
     . '<div class="row"><div><label>Usuario</label><input name="db_user" value="' . $v('db_user') . '" required></div>'
-    . '<div><label>Contraseña</label><input type="password" name="db_password"></div></div>'
+    . '<div><label>Contraseña</label><input type="password" name="db_password" value="' . $v('db_password') . '"></div></div>'
     . '<h2>TPV</h2>'
     . '<label>Dirección del TPV</label><input name="tpv_url" value="' . $v('tpv_url') . '" required>'
     . '<div class="row"><div><label>Usuario administrador</label><input name="admin_user" value="' . $v('admin_user') . '" required></div>'
-    . '<div><label>Contraseña <small>(mín. 12)</small></label><input type="password" name="admin_password" minlength="12" required></div></div>'
+    . '<div><label>Contraseña <small>(mín. 12)</small></label><input type="password" name="admin_password" value="' . $v('admin_password') . '" minlength="12" required></div></div>'
     . '<label>Nombre de la tienda <small>(sale en los tickets)</small></label><input name="store_name" value="' . $v('store_name') . '" required>'
     . '<label>Dirección postal <small>(sale en los tickets)</small></label><input name="store_address" value="' . $v('store_address') . '">'
     . '<h2>PrestaShop</h2>'
@@ -242,7 +248,7 @@ page('Instalación del TPV', $errHtml . '<form method="post" autocomplete="off">
     . '<label for="ps_url">Dirección de la tienda <small>— la de tu PrestaShop, la que sale en el módulo TPV Connect</small></label><input id="ps_url" name="ps_url" value="' . $v('ps_url') . '" placeholder="https://tutienda.com" required>'
     . '<div class="ps-pair">'
     . '<label for="pair_code">Código de emparejamiento <small>— en PrestaShop, módulo TPV Connect → «Emparejar con un TPV» (vale 10 minutos)</small></label>'
-    . '<input id="pair_code" name="pair_code" value="' . $v('pair_code') . '" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="123456">'
+    . '<input id="pair_code" name="pair_code" value="' . $v('pair_code') . '" inputmode="numeric" autocomplete="one-time-code" placeholder="123456">'
     . '<p><small>El TPV pide a la tienda sus claves con este código y le da la dirección del TPV. No hay que copiar nada más.</small></p>'
     . '<p><label for="ps-mode-manual" class="link">Introducir las claves a mano</label></p>'
     . '</div>'

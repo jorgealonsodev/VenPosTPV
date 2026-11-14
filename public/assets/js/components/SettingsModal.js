@@ -103,7 +103,7 @@ const SettingsModal = {
         }
 
         async function runPairing() {
-            const code = String(pairing.code || '').replace(/[\s-]+/g, '');
+            const code = String(pairing.code || '').replace(/[\s\p{Pd}\u200B]+/gu, '');
             pairing.error = '';
             if (!/^\d{6}$/.test(code)) {
                 pairing.error = 'El código de emparejamiento tiene 6 cifras.';
@@ -1743,7 +1743,7 @@ const SettingsModal = {
                                 <label style="font-size:12px; color:var(--text3);">Dirección de la tienda</label>
                                 <input v-model="pairing.shopUrl" type="url" placeholder="https://tutienda.com" autocomplete="off" :style="INPUT_STYLE">
                                 <label style="font-size:12px; color:var(--text3);">Código de emparejamiento</label>
-                                <input v-model="pairing.code" inputmode="numeric" maxlength="7" placeholder="123456" autocomplete="one-time-code" :style="INPUT_STYLE" @keyup.enter="runPairing()">
+                                <input v-model="pairing.code" inputmode="numeric" placeholder="123456" autocomplete="one-time-code" :style="INPUT_STYLE" @keyup.enter="runPairing()">
                                 <div v-if="pairing.error" style="font-size:12px; color:var(--red); overflow-wrap:anywhere;">{{ pairing.error }}</div>
                                 <div style="display:flex; gap:8px; margin-top:4px;">
                                     <button @click="runPairing()" :disabled="pairing.running"
