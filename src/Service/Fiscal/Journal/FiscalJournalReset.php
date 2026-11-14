@@ -57,6 +57,10 @@ class FiscalJournalReset
     public const SHOP_CONFIRMED = 'confirmed';
     /** audit_log `shop.path`: the shop could not be asked and the administrator passed --shop-unavailable. */
     public const SHOP_UNAVAILABLE = 'shop_unavailable';
+    /** audit_log `origin`: tpv:fiscal:journal:reset. */
+    public const ORIGIN_COMMAND = 'command';
+    /** audit_log `origin`: the installer's «Empezar de cero» (FiscalJournalFreshStart). */
+    public const ORIGIN_INSTALLER = 'installer';
     private const LOCK_WAIT_SECONDS = 10.0;
     private const BACKFILL_LOCK_WAIT_SECONDS = 5.0;
     private const STAYS = ['.', '..', '.htaccess', 'journal.lock', 'archive'];
@@ -83,8 +87,9 @@ class FiscalJournalReset
      * @param bool $shopUnavailable go on when the shop cannot be asked (--shop-unavailable)
      * @param bool $acceptShopAhead go on although the shop holds documents the database lacks, retiring the
      *                              journals the shop holds (--accept-shop-ahead: a deliberate fresh start only)
+     * @param string $origin          who asked for it, kept in audit_log (ORIGIN_COMMAND or ORIGIN_INSTALLER)
      */
-    public function run(string $reason, ?\DateTimeImmutable $now = null, bool $shopUnavailable = false, bool $acceptShopAhead = false): FiscalJournalResetResult
+    public function run(string $reason, ?\DateTimeImmutable $now = null, bool $shopUnavailable = false, bool $acceptShopAhead = false, string $origin = self::ORIGIN_COMMAND): FiscalJournalResetResult
     {
         $reason = trim($reason);
         if ($reason === '') {
@@ -128,7 +133,7 @@ class FiscalJournalReset
             if ($refusal !== null) {
                 return $refusal;
             }
-            $started = $this->resetLocked($reason, $now, $shop, $acceptShopAhead);
+            $started = $this->resetLocked($reason, $now, $shop, $acceptShopAhead, $origin);
             if (!\is_array($started)) {
                 return $started;
             }
@@ -291,7 +296,7 @@ class FiscalJournalReset
      *
      * @return array{journal_id: string, backfill_until: int, archived: list<string>}|FiscalJournalResetResult
      */
-    private function resetLocked(string $reason, \DateTimeImmutable $now, array $shop, bool $acceptShopAhead): array|FiscalJournalResetResult
+    private function resetLocked(string $reason, \DateTimeImmutable $now, array $shop, bool $acceptShopAhead, string $origin): array|FiscalJournalResetResult
     {
         $locations = [$this->locations->primary(), $this->locations->secondary()];
         $locks = [];
@@ -330,7 +335,7 @@ class FiscalJournalReset
                         }
                     }
                 },
-                function (string $journalId, int $until) use ($reason, $previous, $guard, $damaged, $shop, $retire, $assessment, &$archived, $now): void {
+                function (string $journalId, int $until) use ($reason, $origin, $previous, $guard, $damaged, $shop, $retire, $assessment, &$archived, $now): void {
                     if ($retire !== []) {
                         $this->identity->retire($retire);
                     }
@@ -341,6 +346,7 @@ class FiscalJournalReset
                         'target' => $journalId,
                         'payload' => json_encode([
                             'reason' => $reason,
+                            'origin' => $origin,
                             'previous_journal_id' => $previous,
                             'guard' => $guard['state'],
                             'damaged' => $damaged,

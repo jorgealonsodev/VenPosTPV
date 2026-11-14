@@ -7,9 +7,11 @@ declare(strict_types=1);
  *
  * Asks for the database and shop settings, runs the migrations, writes ../.env
  * and runs the provisioning steps (docs/provisioning.md); a step that needs the
- * shop may stay pending there and is listed on the last page. It only runs while ../.env does not exist, needs the one-time key
- * from ../INSTALL_KEY and, when it finishes, locks itself and tries to
- * delete this file.
+ * shop may stay pending there and is listed on the last page. When the shop already
+ * holds fiscal documents this database lacks, it first asks whether a backup will be
+ * restored or the journal starts over (JournalDecisionPage, docs/diario-fiscal.md).
+ * It only runs while ../.env does not exist, needs the one-time key from
+ * ../INSTALL_KEY and, when it finishes, locks itself and tries to delete this file.
  */
 
 header('Cache-Control: no-store');
@@ -164,6 +166,9 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         if ($errors === []) {
             set_time_limit(300);
             $executed = 0;
+            // The decision page sends the install again with the keys pairing gave (manual mode).
+            $paired = $result['pairing'] !== null || ($_POST['paired'] ?? '') === '1';
+            $journalDecision = null;
             try {
                 $conn = $installer->connect($result['values']);
                 $installer->assertDatabaseUsable($conn);
@@ -171,7 +176,43 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 if ($result['pairing'] !== null) {
                     $result['values'] = $installer->pair($result['values'], $result['pairing'], new \VenPosTPV\Service\PrestaShop\PairingClient(\Symfony\Component\HttpClient\HttpClient::create()));
                 }
-                $executed = $installer->migrate($conn);
+                $executed = $installer->migrate($conn) + max(0, (int) ($_POST['migrated'] ?? 0));
+                // A shop that already holds fiscal documents this database lacks: restoring a
+                // backup or starting over cannot be told apart, so the person chooses
+                // (JournalDecisionPage). Nothing is written before the choice but the migrations.
+                $submitted = \VenPosTPV\Service\Install\JournalDecisionPage::read($_POST);
+                if ($result['values']['SSO_SHARED_SECRET'] !== '') {
+                    $check = $installer->shopJournalCheck($conn, new \VenPosTPV\Service\PrestaShop\PsJournalClient(
+                        $result['values']['PS_SHOP_URL'],
+                        $result['values']['SSO_SHARED_SECRET'],
+                        \Symfony\Component\HttpClient\HttpClient::create(),
+                    ));
+                } else {
+                    // Without the secret the shop is never asked; only a sent choice makes that matter.
+                    $check = ['state' => \VenPosTPV\Service\Install\WebInstaller::SHOP_UNREACHABLE, 'ahead' => null];
+                }
+                $ahead = $check['ahead'];
+                $values = $result['values'];
+                $hidden = [
+                    'install_key' => $form['install_key'], 'db_host' => $form['db_host'], 'db_port' => $form['db_port'], 'db_name' => $form['db_name'],
+                    'db_user' => $form['db_user'], 'db_password' => $form['db_password'], 'tpv_url' => $form['tpv_url'], 'admin_user' => $form['admin_user'],
+                    'admin_password' => $form['admin_password'], 'store_name' => $form['store_name'], 'store_address' => $form['store_address'],
+                    'ps_mode' => 'manual', 'ps_url' => $values['PS_SHOP_URL'], 'ps_api_key' => $values['PS_API_KEY'], 'sso_secret' => $values['SSO_SHARED_SECRET'],
+                    'ps_currency' => $values['PS_DEFAULT_CURRENCY'], 'ps_shop' => $values['PS_DEFAULT_SHOP'], 'timezone' => $values['PS_SHOP_TIMEZONE'],
+                    'paired' => $paired ? '1' : '', 'migrated' => (string) $executed,
+                ];
+                if ($ahead !== null) {
+                    $journalDecision = $submitted;
+                    if ($journalDecision['choice'] === null || $journalDecision['errors'] !== []) {
+                        page(\VenPosTPV\Service\Install\JournalDecisionPage::TITLE, \VenPosTPV\Service\Install\JournalDecisionPage::html($ahead, $values['PS_SHOP_URL'], $hidden, $journalDecision));
+                    }
+                } elseif ($submitted['choice'] !== null && $check['state'] === \VenPosTPV\Service\Install\WebInstaller::SHOP_UNREACHABLE) {
+                    // A choice made on the decision page is never dropped because the shop
+                    // cannot be asked now: going on would start a journal (RESTORE) or start
+                    // one without retiring the shop's (FRESH). Nothing is written; retry.
+                    page(\VenPosTPV\Service\Install\JournalDecisionPage::TITLE, \VenPosTPV\Service\Install\JournalDecisionPage::unreachable($values['PS_SHOP_URL'], $hidden, $submitted));
+                }
+                // Creates .env or fails: of two submits of the same choice only one goes on.
                 $installer->finish($result['values']);
             } catch (\Doctrine\DBAL\Exception\ConnectionException $e) {
                 $errors[] = 'No se pudo conectar con la base de datos: revisa servidor, puerto, nombre, usuario y contraseña.';
@@ -184,6 +225,10 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             }
 
             if ($errors === []) {
+                // «Empezar de cero»: before the steps, so the journal step finds the new journal.
+                $journalStart = $journalDecision !== null && $journalDecision['choice'] === \VenPosTPV\Service\Install\JournalDecisionPage::FRESH
+                    ? $installer->startJournalAfresh($journalDecision['reason'])
+                    : null;
                 // Never fails the install: pending steps are listed with their reason.
                 $provisioning = $installer->provision();
                 $deleted = @unlink(__FILE__);
@@ -198,6 +243,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 $tpvUrl = $result['values']['TPV_URL'];
                 page('TPV instalado', '<p class="ok">Base de datos preparada (' . (int) $executed . ' migraciones aplicadas) y configuración guardada en <code>.env</code>.</p>'
                     . \VenPosTPV\Service\Install\ProvisioningSummary::html($provisioning)
+                    . ($journalDecision !== null && $journalDecision['choice'] !== null ? \VenPosTPV\Service\Install\JournalDecisionPage::outcome($journalDecision['choice'], $journalStart) : '')
                     . ($deleted ? '' : '<p class="err">No se pudo borrar <code>public/install.php</code>. Bórralo a mano; de todas formas ya está bloqueado.</p>')
                     . '<h2>1. Tareas programadas</h2><p>Crea <strong>una</strong> tarea programada en el panel del hosting (en Plesk: <strong>Sitios web y dominios →</strong> el subdominio <strong>→ Tareas programadas → Añadir tarea</strong>) y rellénala así:</p>'
                     . '<div class="table"><table class="fields"><tr><th>Campo</th><th>Qué poner</th></tr>'
@@ -216,7 +262,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                     . 'La copia se guarda en <code>backups/</code> (las 7 más recientes) y el diario fiscal, en <code>backups/fiscal-journal/</code> y <code>var/fiscal-journal/</code>: no borres esas carpetas. Descarga de vez en cuando una copia, el diario fiscal y el archivo <code>.env</code> fuera del servidor.</p>'
                     . '<h2>2. PHP del subdominio</h2><p><code>max_execution_time</code> = 35 como mínimo y <code>pm.max_children</code> ≥ número de cajas + 6.</p>'
                     . '<h2>3. PrestaShop</h2>'
-                    . ($result['pairing'] !== null
+                    . ($paired
                         ? '<p>El TPV y la tienda <code>' . h($result['values']['PS_SHOP_URL']) . '</code> ya están emparejados: el módulo <strong>TPV Connect</strong> tiene la dirección del TPV y el TPV, las claves de la tienda. No hay que copiar nada.</p>'
                         : '<p>Para unir el módulo <strong>TPV Connect</strong> con el TPV sin copiar nada: en el módulo pulsa <strong>Emparejar con un TPV</strong> y escribe el código en el TPV, en <strong>Ajustes → Acerca de → Volver a emparejar con la tienda</strong>.</p>')
                     . '<h2>4. Entrar</h2><p><a href="' . h($tpvUrl) . '/app/login">' . h($tpvUrl) . '/app/login</a> con el usuario administrador que acabas de crear.</p>'

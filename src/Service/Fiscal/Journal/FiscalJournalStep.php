@@ -143,15 +143,11 @@ final class FiscalJournalStep implements ProvisioningStep
             return;
         }
         $answer = $this->shop->askHeads();
-        if ($answer['status'] !== PsJournalClient::OK || !\is_array($answer['journals'] ?? null) || $answer['journals'] === []) {
+        $ahead = self::shopAhead($answer, $this->identity, $this->guard);
+        if ($ahead === null) {
             return;
         }
-        $retired = $this->identity->retired();
-        $heads = array_filter($answer['journals'], static fn ($id): bool => !\in_array(strtolower((string) $id), $retired, true), \ARRAY_FILTER_USE_KEY);
-        $missing = $this->guard->missingFromShop($heads);
-        if ($missing === null) {
-            return;
-        }
+        $missing = $ahead['missing'];
         $this->shop->remember($answer, new \DateTimeImmutable(), true);
 
         throw new ProvisioningException(sprintf(
@@ -161,6 +157,29 @@ final class FiscalJournalStep implements ProvisioningStep
             . 'php bin/console tpv:fiscal:journal:reset --confirm "<motivo>" --accept-shop-ahead --env=prod (sus números se pueden volver a emitir).',
             $missing['number'],
         ));
+    }
+
+    /**
+     * Whether a heads answer (PsJournalClient::heads()) holds, under any journal but
+     * the retired ones, a document this database lacks: the first one missing and the
+     * heads of the journals that count. Null when it does not, and when the shop could
+     * not answer for every journal. Also used by the installer before it starts the
+     * journal (WebInstaller::shopJournalAhead), so both decide the same way.
+     *
+     * @param array<string, mixed> $answer
+     *
+     * @return array{missing: array{number: string, invoice_type: string}, heads: array<string, array<string, mixed>>}|null
+     */
+    public static function shopAhead(array $answer, FiscalJournalIdentity $identity, FiscalJournalGuard $guard): ?array
+    {
+        if (($answer['status'] ?? null) !== PsJournalClient::OK || !\is_array($answer['journals'] ?? null) || $answer['journals'] === []) {
+            return null;
+        }
+        $retired = $identity->retired();
+        $heads = array_filter($answer['journals'], static fn ($id): bool => !\in_array(strtolower((string) $id), $retired, true), \ARRAY_FILTER_USE_KEY);
+        $missing = $guard->missingFromShop($heads);
+
+        return $missing === null ? null : ['missing' => $missing, 'heads' => $heads];
     }
 
     private static function lost(string $what): string

@@ -654,4 +654,16 @@ final class FiscalJournalResetTest extends TestCase
         $this->assertCount(2, $archives);
         $this->assertCount(2, $this->audit());
     }
+
+    /** The audit record says who started the journal: the console command, or the installer's «Empezar de cero». */
+    public function testTheAuditRecordNamesWhereTheResetCameFrom(): void
+    {
+        $this->journaled(1);
+        $this->assertSame(FiscalJournalResetResult::DONE, $this->reset()->run('Desde la consola')->status);
+        $this->assertSame(FiscalJournalResetResult::DONE, $this->reset()->run('Desde el instalador', null, false, false, FiscalJournalReset::ORIGIN_INSTALLER)->status);
+
+        $origins = array_map(static fn (array $row): ?string => json_decode((string) $row['payload'], true)['origin'] ?? null, $this->audit());
+        $this->assertSame([FiscalJournalReset::ORIGIN_COMMAND, FiscalJournalReset::ORIGIN_INSTALLER], $origins);
+        $this->assertSame(['command', 'installer'], $origins);
+    }
 }

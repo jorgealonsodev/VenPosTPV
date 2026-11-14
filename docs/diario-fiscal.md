@@ -33,13 +33,24 @@ No hay ningún paso a mano. El paso de instalación **«Diario fiscal preparado�
 - crea las dos carpetas con sus protecciones (y las vuelve a cerrar si alguien cambió los permisos);
 - la primera vez, empieza el diario y anota en él los tickets y facturas que la tienda ya había emitido antes de esta versión, marcados como anteriores al diario y con sus números de siempre. Si hay muchos, la actualización anota los primeros 500 y la tarea de cada minuto termina el resto sin parar la venta.
 
-Antes de empezar el diario, el paso pregunta a la tienda por **todos** los diarios que guarda. Si la tienda tiene un documento que esta base de datos no tiene (bajo cualquier diario), no empieza ninguno, porque el siguiente ticket repetiría su número, y la caja queda bloqueada. Pasa al restaurar una base de datos anterior al diario, y también, **a propósito**, al instalar desde cero con la base de datos vacía contra una tienda que ya tiene el diario de una instalación anterior: el TPV no puede distinguir una cosa de la otra. Si de verdad se empieza de cero (una reinstalación, nunca después de restaurar una copia), el administrador empieza el diario con:
+Antes de empezar el diario, el paso pregunta a la tienda por **todos** los diarios que guarda. Si la tienda tiene un documento que esta base de datos no tiene (bajo cualquier diario), no empieza ninguno, porque el siguiente ticket repetiría su número, y la caja queda bloqueada. Pasa al restaurar una base de datos anterior al diario, y también, **a propósito**, al instalar desde cero con la base de datos vacía contra una tienda que ya tiene el diario de una instalación anterior: el TPV no puede distinguir una cosa de la otra.
+
+### Reinstalar contra una tienda que ya tiene documentos
+
+El instalador web (`https://tpv.tutienda.com/install.php`) hace esa misma pregunta a la tienda justo después de preparar la base de datos y antes de guardar la configuración. Si la tienda tiene documentos fiscales que la base de datos nueva no tiene, no termina: muestra la página **«La tienda ya tiene documentos fiscales»** con cuántos documentos guarda la tienda y el último número de cada serie (solo números, ningún dato de clientes). Hasta que se elige no se guarda nada más que las tablas: ni `.env` ni el diario. Hay dos salidas:
+
+- **«Voy a restaurar una copia de seguridad»**: la instalación termina, pero **no empieza el diario**. El paso «Diario fiscal preparado» queda pendiente y la caja no deja vender hasta que restaures la copia de la base de datos (y, si las tienes, las carpetas del diario) y, si Ajustes lo pide, pulses **Recuperar documentos**: así no se repite ningún número. Los pasos están en «Restaurar una copia de seguridad», más abajo.
+- **«Empezar de cero»**: solo para una reinstalación de verdad, nunca después de restaurar una copia. Hay que marcar la casilla «Entiendo que la numeración empieza otra vez en 1 y repetirá números, y no estoy restaurando una copia de seguridad» y escribir el motivo (como mucho 500 caracteres); sin las dos cosas la página no sigue y lo vuelve a pedir sin perder lo escrito. Al terminar, el instalador hace lo mismo que `tpv:fiscal:journal:reset --accept-shop-ahead`: los diarios que la tienda guarda en ese momento quedan **retirados** (no vuelven a bloquear la caja), empieza un diario nuevo y queda anotado en el registro de auditoría (`audit_log`, acción `fiscal_journal_reset`) con el motivo, los diarios retirados y el origen `installer`. La numeración de tickets, abonos y facturas **empieza otra vez en 1** y repetirá números que ya emitió la instalación anterior: antes de la primera venta ajusta en **Ajustes → Cajas** el próximo número de cada serie o usa una letra de caja distinta («Continuar la numeración a mano» en [despliegue-plesk.md](despliegue-plesk.md#copias-de-seguridad-y-restauración)).
+
+Si al enviar la elección no se puede preguntar a la tienda (caída, un módulo anterior a 0.9.0, un error), el instalador no sigue con la elección a ciegas: dice que no ha podido preguntar a la tienda, no guarda nada y ofrece **Volver a intentarlo** con la misma elección.
+
+Después de la instalación, la página ya no aparece. Si se eligió restaurar y al final se decide empezar de cero, o si «Empezar de cero» no pudo terminar (la última página del instalador lo dice), el camino es la orden de consola:
 
 ```bash
 php bin/console tpv:fiscal:journal:reset --confirm "Reinstalación desde cero" --accept-shop-ahead --env=prod
 ```
 
-Una tienda caída, sin el módulo o con un error no frena nunca la instalación ni la venta; una tienda que todavía no tiene ninguna línea del diario (lo normal al actualizar una instalación en uso) tampoco.
+Sin haber llegado a elegir nada, una tienda caída, sin el módulo o con un error no frena nunca la instalación ni la venta; una tienda que todavía no tiene ninguna línea del diario (lo normal al actualizar una instalación en uso) tampoco.
 
 Si el paso queda «Pendiente», el motivo dice qué hacer (normalmente, los permisos de la carpeta del TPV).
 

@@ -64,7 +64,12 @@ Cómo emparejar más tarde, cambiar de impresora o resolver problemas: [Agente d
 
 ### Reinstalación
 
-Si instalas el TPV de nuevo desde cero (base de datos vacía) contra una tienda que ya tiene el diario fiscal de la instalación anterior, el paso «Diario fiscal preparado» queda pendiente y la caja no deja vender: para el TPV es lo mismo que haber restaurado una copia antigua, y el siguiente ticket repetiría un número que la tienda ya tiene. Si de verdad empiezas de cero, un administrador empieza el diario con `php bin/console tpv:fiscal:journal:reset --confirm "Reinstalación desde cero" --accept-shop-ahead --env=prod`. Nunca lo hagas después de restaurar una copia de seguridad. Detalles en [Diario fiscal](diario-fiscal.md#instalación-y-actualización).
+Si instalas el TPV de nuevo con una base de datos vacía contra una tienda que ya tiene el diario fiscal de la instalación anterior, para el TPV es lo mismo que haber restaurado una copia antigua: el siguiente ticket repetiría un número que la tienda ya tiene. Por eso el instalador, antes de guardar la configuración, se para en la página **«La tienda ya tiene documentos fiscales»** (con el último número de cada serie que guarda la tienda) y pide elegir:
+
+- **«Voy a restaurar una copia de seguridad»**: la instalación termina sin empezar el diario fiscal. El paso «Diario fiscal preparado» queda pendiente y la caja no deja vender hasta que restaures la copia de la base de datos y, si Ajustes lo pide, pulses **Recuperar documentos**.
+- **«Empezar de cero»**: pide marcar una casilla de confirmación y escribir el motivo. Los diarios que guarda la tienda quedan retirados, empieza un diario nuevo y queda anotado en el registro de auditoría con el motivo y el origen `installer`. La numeración empieza otra vez en 1: antes de la primera venta ajusta en **Ajustes → Cajas** el próximo número de cada serie o usa otra letra de caja. Nunca la elijas si vas a restaurar una copia de seguridad.
+
+Si en ese momento no se puede preguntar a la tienda, el instalador no guarda nada y ofrece volver a intentarlo. Una vez instalado, el camino es la orden de consola `php bin/console tpv:fiscal:journal:reset --confirm "Reinstalación desde cero" --accept-shop-ahead --env=prod`. Detalles en [Diario fiscal](diario-fiscal.md#reinstalar-contra-una-tienda-que-ya-tiene-documentos).
 
 ## Actualizar
 
