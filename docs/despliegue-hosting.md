@@ -57,10 +57,11 @@ Sin emparejar, el enlace **Introducir las claves a mano** del instalador pide la
 
 ## Actualizar el TPV
 
-1. Si puedes, hazlo fuera del horario de venta. Sube el nuevo `venpostpv-hosting.zip` a la carpeta del subdominio y extráelo **encima**, sustituyendo los archivos. No borres `.env`, `var/install.lock` ni la carpeta `backups/`.
+1. Si puedes, hazlo fuera del horario de venta. Sube el nuevo `venpostpv-hosting.zip` a la carpeta del subdominio y extráelo **encima**, sustituyendo los archivos. No borres `.env`, `var/install.lock`, la carpeta `backups/` (con `backups/fiscal-journal/`) ni `var/fiscal-journal/`: son la copia de la base de datos y el diario fiscal.
 2. Borra la carpeta `var/cache/prod` (o ejecuta `php bin/console cache:clear --env=prod`), para que la aplicación use el código nuevo.
 3. Ya está: la tarea `tpv:cron` de cada minuto (con `tpv:sync:outbox`) aplica en su siguiente ejecución todo lo que la nueva versión necesita, en orden, y solo cuando falta algo:
    - **las migraciones de la base de datos**, siempre después de una copia de seguridad automática `backups/venpostpv-premigrate-<fecha>-<hora>.sql.gz` (aparte de las 7 copias diarias, que nunca la borran; se guardan las 3 últimas). Si la copia no se puede escribir, **no migra** y lo reintenta cada 15 minutos. Dos ejecuciones nunca migran a la vez;
+   - **el diario fiscal** (paso «Diario fiscal preparado»): crea `backups/fiscal-journal/` y `var/fiscal-journal/` y, la primera vez, anota en él los tickets y facturas ya emitidos. Con muchos documentos anota 500 en esa ejecución y el resto lo termina la tarea de cada minuto, sin parar la venta ([Diario fiscal](diario-fiscal.md));
    - **lo que haya que preparar en PrestaShop** (por ejemplo, los productos genéricos del artículo libre). Si la tienda no responde, lo reintenta cada 15 minutos.
 
    Para no esperar al minuto siguiente, o para ver el detalle, ejecuta `php bin/console tpv:provision --env=prod` (en Plesk, una tarea «Ejecutar un script PHP» con esos argumentos y **Ejecutar ahora**). Con `--status` solo informa.

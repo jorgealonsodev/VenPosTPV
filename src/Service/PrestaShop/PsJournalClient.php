@@ -33,7 +33,9 @@ class PsJournalClient
     public const CONFLICT = 'conflict';
     /** The module refused this line for good (400 line_hash, 413 too large, 422 invalid). */
     public const REJECTED = 'rejected';
-    /** Network, timeouts, 401, 429, 5xx: the outcome is unknown, sending again is safe (the module dedupes). */
+    /** The shop does not accept the signature (401, a wrong shared secret): retried, then an incident. */
+    public const UNAUTHORIZED = 'unauthorized';
+    /** Network, timeouts, 429, 5xx: the outcome is unknown, sending again is safe (the module dedupes). */
     public const RETRY = 'retry';
     /** head(): the answer. */
     public const OK = 'ok';
@@ -75,6 +77,10 @@ class PsJournalClient
         [$status, $content, $error] = $this->post($body);
         if ($status === null) {
             return ['status' => self::RETRY, 'http' => null, 'error' => $error];
+        }
+        if ($status === 401) {
+            // Never the secret nor the signature in the error: it reaches the incidents screen.
+            return ['status' => self::UNAUTHORIZED, 'http' => 401, 'error' => 'The shop refused the signature (HTTP 401): the shared secret of the TPV and of TPV Connect differ'];
         }
         $data = json_decode($content, true);
         if ($status === 404 || !\is_array($data)) {

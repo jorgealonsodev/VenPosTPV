@@ -16,6 +16,7 @@ use VenPosTPV\Command\CronCommand;
 use VenPosTPV\Service\Cron\CronLock;
 use VenPosTPV\Service\Cron\CronRunner;
 use VenPosTPV\Service\Cron\CronStateStore;
+use VenPosTPV\Service\Fiscal\Journal\FiscalJournalGuardCache;
 
 /** tpv:cron runs the existing commands that are due (odd/tasks/single-cron-task.md). */
 final class CronCommandTest extends TestCase
@@ -43,12 +44,12 @@ final class CronCommandTest extends TestCase
      * @param array<string, int> $exitCodes per command name; 0 when absent
      * @param list<string>       $missing   commands the application does not have
      */
-    private function tester(array $exitCodes = [], array $missing = []): CommandTester
+    private function tester(array $exitCodes = [], array $missing = [], ?FiscalJournalGuardCache $journalGuard = null): CommandTester
     {
         // A file, not ':memory:': the runner closes the connection between jobs.
         $connection = DriverManager::getConnection(['driver' => 'pdo_sqlite', 'path' => $this->lockDir . '/state-' . bin2hex(random_bytes(4)) . '.sqlite']);
         $connection->executeStatement('CREATE TABLE app_setting (name VARCHAR(64) PRIMARY KEY, value TEXT)');
-        $runner = new CronRunner(new CronStateStore($connection), new CronLock($this->lockDir), 'Europe/Madrid');
+        $runner = new CronRunner(new CronStateStore($connection), new CronLock($this->lockDir), 'Europe/Madrid', journalGuard: $journalGuard);
 
         $application = new Application();
         foreach (['tpv:fiscal:journal', 'tpv:sync:outbox', 'tpv:catalog:sync', 'tpv:customers:sync', 'tpv:backup:database'] as $name) {
@@ -131,6 +132,22 @@ final class CronCommandTest extends TestCase
             fclose($held);
         }
         self::assertNotContains('tpv:catalog:sync --stock-only', $this->calls);
+    }
+
+    public function testAJobHeldBackByTheFiscalJournalGuardSaysSoInVerboseModeNotThatItIsStillRunning(): void
+    {
+        $guard = $this->createMock(FiscalJournalGuardCache::class);
+        $guard->method('blocks')->willReturn(true);
+        $tester = $this->tester([], [], $guard);
+
+        $tester->execute([], ['verbosity' => OutputInterface::VERBOSITY_VERBOSE]);
+
+        $display = $tester->getDisplay();
+        self::assertSame(Command::SUCCESS, $tester->getStatusCode());
+        self::assertStringContainsString('Skipped customers: ' . CronRunner::BLOCKED_BY_FISCAL_JOURNAL, $display);
+        self::assertStringNotContainsString('Skipped customers: still running', $display);
+        self::assertNotContains('tpv:customers:sync', $this->calls);
+        self::assertContains('tpv:sync:outbox', $this->calls, 'the jobs that are safe while blocked still run');
     }
 
     public function testEachFailedJobIsWrittenToTheErrorOutputForThePanelsErrorMail(): void

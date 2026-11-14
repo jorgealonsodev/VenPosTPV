@@ -213,7 +213,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                     . '<p>Antes de aceptar, pulsa <strong>Ejecutar ahora</strong> para comprobarla: la primera vez carga el catálogo y tarda unos minutos.</p>'
                     . '<p>La tarea lo hace todo sola: cada minuto sube las ventas y sincroniza el stock, y cada noche carga el catálogo completo, los clientes y la copia de la base de datos. '
                     . 'Los productos se cargan solos en los primeros minutos. Si la tarea funciona y cómo acabó cada trabajo se ve en <strong>Ajustes → Acerca de</strong>. '
-                    . 'La copia se guarda en <code>backups/</code> (las 7 más recientes); descarga de vez en cuando una copia y el archivo <code>.env</code> fuera del servidor.</p>'
+                    . 'La copia se guarda en <code>backups/</code> (las 7 más recientes) y el diario fiscal, en <code>backups/fiscal-journal/</code> y <code>var/fiscal-journal/</code>: no borres esas carpetas. Descarga de vez en cuando una copia, el diario fiscal y el archivo <code>.env</code> fuera del servidor.</p>'
                     . '<h2>2. PHP del subdominio</h2><p><code>max_execution_time</code> = 35 como mínimo y <code>pm.max_children</code> ≥ número de cajas + 6.</p>'
                     . '<h2>3. PrestaShop</h2>'
                     . ($result['pairing'] !== null

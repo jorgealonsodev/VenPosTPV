@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace VenPosTPV\Service\Incident;
 
 use Doctrine\DBAL\Connection;
+use VenPosTPV\Service\Sync\OutboxSync;
 
 /**
  * What the sync indicator and the incidents screen read from the outbox (PRD I1,
@@ -42,14 +43,17 @@ class OutboxIncidents
     /**
      * @return array{pending: int, incidents: int, blocked: int} pending also counts the rows being
      *         uploaded now; blocked is the part of pending that waits for an incident (behind it in
-     *         its sale, or for a customer in incident) and does not upload until it is retried
+     *         its sale, or for a customer in incident) and does not upload until it is retried.
+     *         Fiscal journal lines waiting for the shop's module upgrade (fiscal-journal S9) are not
+     *         pending: they wait for the administrator, not for the upload, and Ajustes says so
      */
     public function counts(): array
     {
         $row = $this->connection->fetchAssociative(
-            "SELECT COALESCE(SUM(status IN ('pending', 'processing')), 0) AS pending,
+            "SELECT COALESCE(SUM(status IN ('pending', 'processing') AND NOT (type = 'journal' AND status = 'pending' AND last_error <=> ?)), 0) AS pending,
                     COALESCE(SUM(status = 'incident'), 0) AS incidents
-             FROM outbox WHERE status IN ('pending', 'processing', 'incident')"
+             FROM outbox WHERE status IN ('pending', 'processing', 'incident')",
+            [OutboxSync::JOURNAL_MODULE_UNAVAILABLE]
         );
         $blocked = $this->connection->fetchOne(
             "SELECT COUNT(*) FROM outbox w

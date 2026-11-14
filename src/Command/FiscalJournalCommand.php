@@ -64,7 +64,7 @@ final class FiscalJournalCommand extends Command
         $data = $state->data;
 
         $message = match ($state->status()) {
-            FiscalJournalState::NOT_STARTED => 'Fiscal journal not started yet: nothing to do.',
+            FiscalJournalState::NOT_STARTED => 'Fiscal journal not started yet: nothing to do (the installation step «fiscal-journal» starts it: tpv:provision).',
             FiscalJournalState::OK => 'Fiscal journal up to date.',
             FiscalJournalState::PENDING => sprintf('Fiscal journal: %d documents pending.', $data['pending']['count']),
             FiscalJournalState::LAGGING => sprintf('Fiscal journal: %d documents pending for more than 5 minutes (first %s).', $data['pending']['count'], $data['pending']['oldest_number']),

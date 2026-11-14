@@ -101,9 +101,26 @@ final class JournalLocation
         return \is_string($id) && $id !== '' ? $id : null;
     }
 
-    public function writeJournalId(string $journalId, \DateTimeImmutable $at): void
+    /**
+     * @param int|null $backfillUntil the last fiscal_record id issued before this journal
+     *                                existed: its lines are marked `backfill` (D11), whoever
+     *                                writes them (null: none)
+     */
+    public function writeJournalId(string $journalId, \DateTimeImmutable $at, ?int $backfillUntil = null): void
     {
-        $this->writeAtomically($this->directory . '/journal.id', json_encode(['journal_id' => $journalId, 'created_at' => $at->format(\DATE_ATOM)], self::LINE_FLAGS));
+        $data = ['journal_id' => $journalId, 'created_at' => $at->format(\DATE_ATOM)];
+        if ($backfillUntil !== null) {
+            $data['backfill_until'] = $backfillUntil;
+        }
+        $this->writeAtomically($this->directory . '/journal.id', json_encode($data, self::LINE_FLAGS));
+    }
+
+    /** The `backfill_until` of journal.id (null when the file or the field is missing). */
+    public function backfillUntil(): ?int
+    {
+        $value = $this->readJson($this->directory . '/journal.id')['backfill_until'] ?? null;
+
+        return \is_int($value) && $value >= 0 ? $value : null;
     }
 
     /** @return list<string> the monthly journal files, oldest first */

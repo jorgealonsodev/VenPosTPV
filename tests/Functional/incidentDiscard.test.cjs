@@ -161,8 +161,22 @@ function testApiClientPostsTheDiscardAsJsonAndNeverQueuesIt() {
     assert.ok(hasCacheVersionSince(page, 'components/IncidentsScreen.js', '20261103'), 'IncidentsScreen.js');
 }
 
+// fiscal-journal S8: the shop copy of a journal line the module refused is an incident
+// of its own type; it is shown and discarded in Spanish like the others.
+async function testAJournalCopyIncidentHasASpanishLabel() {
+    const JOURNAL = { id: 30, type: 'journal', order_id: null, sequence: 7, attempts: 1, dependants: 0, waiting_behind: 0,
+        last_error: 'HTTP 409: another line with this seq', created_at: '2026-11-14 09:00:00' };
+    const { state } = await mount(api([JOURNAL]));
+    assert.equal(state.typeLabel(JOURNAL), 'Copia del diario fiscal');
+    state.askDiscard(JOURNAL);
+    assert.equal(state.confirmText.value, '¿Descartar esta incidencia? El documento queda en el diario fiscal del TPV pero no se subirá a PrestaShop.');
+    const page = fs.readFileSync(path.join(ROOT, 'templates/pos.html.twig'), 'utf8');
+    assert.ok(hasCacheVersionSince(page, 'components/IncidentsScreen.js', '20261114'), 'IncidentsScreen.js');
+}
+
 (async () => {
     testHeadlinesInPlainSpanish();
+    await testAJournalCopyIncidentHasASpanishLabel();
     testTheRawErrorStaysBelowTheHeadlineInSmallMutedMonospace();
     await testDiscardAsksFirstNamingWhatStaysAndWhatGoesWithIt();
     await testAnEmptyReasonIsSentAsNone();
@@ -170,5 +184,5 @@ function testApiClientPostsTheDiscardAsJsonAndNeverQueuesIt() {
     await testRecentlyDiscardedAreListedReadOnlyWithWhoWhenAndWhy();
     await testRetryIsUnchanged();
     testApiClientPostsTheDiscardAsJsonAndNeverQueuesIt();
-    console.log('incidentDiscard: 8 tests OK');
+    console.log('incidentDiscard: 9 tests OK');
 })().catch((error) => { console.error(error); process.exitCode = 1; });

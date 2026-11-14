@@ -18,6 +18,9 @@ use VenPosTPV\Service\Fiscal\Journal\FiscalJournalState;
 use VenPosTPV\Service\Mail\BackupAlertMailer;
 use VenPosTPV\Service\Sync\Outbox;
 use VenPosTPV\Service\Sync\OutboxSync;
+use Symfony\Component\HttpClient\MockHttpClient;
+use Symfony\Component\HttpClient\Response\MockResponse;
+use VenPosTPV\Service\PrestaShop\PsJournalClient;
 use VenPosTPV\Tests\Support\TestDatabase;
 
 /**
@@ -36,6 +39,8 @@ final class FiscalJournalShopCopyMySqlIntegrationTest extends TestCase
     private \DateTimeImmutable $clock;
     /** @var list<string> databases to drop */
     private array $restored = [];
+    /** Lines FiscalJournalShopSync queues per run (small in the tests that need several runs). */
+    private int $enqueueLimit = FiscalJournalShopSync::ENQUEUE_LIMIT;
 
     protected function setUp(): void
     {
@@ -88,7 +93,7 @@ final class FiscalJournalShopCopyMySqlIntegrationTest extends TestCase
             new FiscalJournalAlerts($connection, $mailer),
             null,
             null,
-            new FiscalJournalShopSync($connection, $process->locations, $this->shop->client()),
+            new FiscalJournalShopSync($connection, $process->locations, $this->shop->client(), enqueueLimit: $this->enqueueLimit),
         );
     }
 
@@ -128,6 +133,26 @@ final class FiscalJournalShopCopyMySqlIntegrationTest extends TestCase
     private function later(int $minutes): void
     {
         $this->clock = $this->clock->modify(sprintf('+%d minutes', $minutes));
+    }
+
+    private function guardState(?Connection $connection = null): string
+    {
+        return (new FiscalJournalGuard($connection ?? $this->connection, $this->journal->anotherProcess()->locations))->check()['state'];
+    }
+
+    /** @return array{0: int, 1: int} the shop's last_seq and contiguous_seq of this journal */
+    private function shopPositions(): array
+    {
+        $head = $this->shop->client()->head($this->journalId)['head'];
+
+        return [$head['last_seq'], $head['contiguous_seq']];
+    }
+
+    private function shopHeadAnswering(int $status, string $body): FiscalJournalShopSync
+    {
+        $client = new PsJournalClient('https://tienda.tutienda.com', 'x', new MockHttpClient(new MockResponse($body, ['http_code' => $status])));
+
+        return new FiscalJournalShopSync($this->connection, $this->journal->anotherProcess()->locations, $client);
     }
 
     public function testOneCronMinuteGetsEveryLineToTheShopOnceInSeqOrderAndTheShopHeadMatchesTheJournal(): void
@@ -355,5 +380,270 @@ final class FiscalJournalShopCopyMySqlIntegrationTest extends TestCase
         $live = new FiscalJournalGuard($this->connection, $this->journal->locations);
         $live->assertCanIssue();
         $restored->close();
+    }
+
+    public function testAWrongSecretRetriesThroughTheBackoffLadderThenIsAnIncidentWhileLaterLinesGoOnOnceItIsFixed(): void
+    {
+        $this->issue(2);
+        $this->reconciler()->run($this->clock);
+        $this->shop->requests = [];
+        // Every line is refused while the secret is wrong: the ladder of line 1, then line 2 once.
+        $this->shop->failNext = array_fill(0, \count(OutboxSync::BACKOFF_MINUTES) + 1, 401);
+        $waits = [];
+
+        foreach (OutboxSync::BACKOFF_MINUTES as $ignored) {
+            $this->upload();
+            $first = $this->journalRows()[0];
+            if ($first['status'] === 'pending') {
+                $waits[] = (int) round((strtotime((string) $first['next_attempt_at']) - $this->clock->getTimestamp()) / 60);
+                $this->clock = new \DateTimeImmutable($first['next_attempt_at'] . ' +1 second');
+            }
+        }
+
+        $rows = $this->journalRows();
+        $this->assertSame(\array_slice(OutboxSync::BACKOFF_MINUTES, 0, -1), $waits, 'the usual backoff ladder first');
+        $this->assertSame(['incident', 'pending'], array_column($rows, 'status'), 'then the administrator sees it');
+        $this->assertSame(\count(OutboxSync::BACKOFF_MINUTES), (int) $rows[0]['attempts']);
+        $this->assertStringContainsString('401', (string) $rows[0]['last_error']);
+        $this->assertStringContainsString('clave', (string) $rows[0]['last_error']);
+        $this->assertStringNotContainsString(FakeJournalShop::SECRET, (string) $rows[0]['last_error']);
+        $this->assertSame([1, 1, 1, 1, 1, 1, 2], $this->shop->sentSeqs(), 'seq 2 waited behind seq 1 while it was retried');
+        $this->assertSame(1, (int) $rows[1]['attempts'], 'line 2 starts its own ladder');
+
+        // The secret is fixed: the later line goes on by itself.
+        $this->later(1);
+        $this->shop->requests = [];
+        $this->cron();
+        $this->assertSame([2], $this->shop->sentSeqs());
+        $this->assertSame(['incident', 'done'], array_column($this->journalRows(), 'status'));
+    }
+
+    public function testAfterARestoreOfTheDatabaseNothingTheShopHoldsIsSentAgain(): void
+    {
+        $this->issue(3);
+        $this->cron();
+        $this->later(1);
+        $this->cron();
+        $this->assertCount(3, $this->shop->rows());
+        // The database comes back from a backup taken after the first line was queued.
+        $this->connection->executeStatement("DELETE FROM outbox WHERE type = 'journal' AND sequence > 1");
+        $this->issue(1);
+
+        // The shop cannot be asked this minute: its head stored a minute ago is used.
+        $this->later(1);
+        $this->shop->mode = FakeJournalShop::DOWN;
+        $this->shop->requests = [];
+        $this->reconciler()->run($this->clock);
+        $this->assertSame([1, 4], array_map('intval', array_column($this->journalRows(), 'sequence')), 'only the line the shop lacks is queued');
+
+        $this->shop->mode = FakeJournalShop::MODULE;
+        $this->later(1);
+        $this->shop->requests = [];
+        $this->cron();
+        $this->later(1);
+        $this->cron();
+
+        $this->assertSame([4], $this->shop->sentSeqs(), 'nothing the shop holds is sent again');
+        $this->assertSame([1, 2, 3, 4], array_column($this->shop->rows(), 'seq'));
+        $this->assertSame(['done', 'done'], array_column($this->journalRows(), 'status'));
+    }
+
+    public function testAStaleStoredShopHeadIsNotTrustedAfterARestoreOfTheDatabase(): void
+    {
+        $this->issue(2);
+        $this->cron();
+        $this->connection->executeStatement("DELETE FROM outbox WHERE type = 'journal'");
+        $this->later(FiscalJournalShopSync::HEAD_FRESH_SECONDS / 60 + 5);
+        $this->shop->mode = FakeJournalShop::DOWN;
+
+        $this->reconciler()->run($this->clock);
+
+        $this->assertSame([1, 2], array_map('intval', array_column($this->journalRows(), 'sequence')), 'an old head may no longer hold: queued again, the shop dedupes');
+    }
+
+    public function testAShopRestoredFarBehindAnIncidentGapGetsEveryLineBackOverLaterRunsAndThenNothingLoops(): void
+    {
+        $this->enqueueLimit = 2;
+        $this->issue(1);
+        $this->cron();
+        $this->issue(6);
+        // Line 2 is refused for good: the shop's contiguous_seq stays at 1.
+        $this->reconciler()->run($this->clock);
+        $this->shop->failNext = [422];
+        $this->upload();
+        for ($minute = 0; $minute < 3; ++$minute) {
+            $this->later(1);
+            $this->cron();
+        }
+        $this->assertSame([1, 3, 4, 5, 6, 7], array_column($this->shop->rows(), 'seq'));
+        $this->assertSame('incident', $this->journalRows()[1]['status']);
+
+        // The shop comes back from its own backup holding only line 1.
+        $this->shop->setRows(\array_slice($this->shop->rows(), 0, 1));
+        $this->shop->requests = [];
+        for ($minute = 0; $minute < 6; ++$minute) {
+            $this->later(1);
+            $this->cron();
+        }
+
+        $this->assertSame([1, 3, 4, 5, 6, 7], array_column($this->shop->rows(), 'seq'), 'every line past the gap is back, two queued per run');
+        $this->assertSame([3, 4, 5, 6, 7], $this->shop->sentSeqs(), 'each once, the refused line never');
+
+        // From now on: nothing re-queued, nothing re-sent, the incident stays visible.
+        $rows = \count($this->journalRows());
+        $this->shop->requests = [];
+        for ($minute = 0; $minute < 10; ++$minute) {
+            $this->later(7);
+            $state = $this->cron();
+        }
+        $this->assertSame([], $this->shop->sentSeqs());
+        $this->assertSame($rows, \count($this->journalRows()), 'the outbox does not grow');
+        $this->assertSame(FiscalJournalShopSync::INCIDENTS, $state->data['shop']['status']);
+        $this->assertSame(1, $state->data['shop']['contiguous_seq']);
+
+        $this->issue(1);
+        $this->later(1);
+        $this->cron();
+        $this->assertSame([8], $this->shop->sentSeqs(), 'later lines keep flowing');
+    }
+
+    public function testAfterARestoreOfTheDatabaseBehindAnIncidentGapTheRefusedLineIsTriedOnceAndNothingLoops(): void
+    {
+        $this->issue(1);
+        $this->cron();
+        $this->issue(3);
+        $this->reconciler()->run($this->clock);
+        $this->shop->failNext = [422];
+        $this->upload();
+        $this->later(1);
+        $this->cron();
+        $this->assertSame(['done', 'incident', 'done', 'done'], array_column($this->journalRows(), 'status'));
+        // The database comes back from a backup holding only the first row.
+        $this->connection->executeStatement("DELETE FROM outbox WHERE type = 'journal' AND sequence > 1");
+        $this->shop->requests = [];
+
+        for ($minute = 0; $minute < 10; ++$minute) {
+            $this->later(3);
+            $this->reconciler()->run($this->clock);
+            // The shop still refuses line 2 when it is sent again.
+            $this->shop->failNext = $minute === 0 ? [422] : [];
+            $this->upload();
+        }
+
+        $this->assertSame([2], array_map('intval', array_column(array_filter($this->journalRows(), static fn (array $r): bool => $r['status'] === 'incident'), 'sequence')), 'the incident is visible again');
+        $this->assertSame([2, 3, 4], $this->shop->sentSeqs(), 'the refused line is tried once again and the shop dedupes the rest, never in a loop');
+        $this->assertSame(4, \count($this->journalRows()), 'one row per line, the outbox does not grow');
+        $this->assertSame([1, 3, 4], array_column($this->shop->rows(), 'seq'));
+    }
+
+    public function testAShopHeadOfThisJournalThatCannotBeUsedNeverBlocks(): void
+    {
+        $this->issue(2);
+        $this->cron();
+        $this->assertSame(FiscalJournalGuard::OK, $this->guardState());
+        $foreign = '11111111-2222-4333-8444-555555555555';
+        $foreignHead = ['journal_id' => $foreign, 'fetched_at' => '2099-01-01T00:00:00+00:00', 'last_seq' => 9, 'contiguous_seq' => 9, 'series' => ['J26' => ['number' => 'J26999999', 'hash' => str_repeat('A', 64), 'seq' => 9]]];
+        $stored = [
+            'not JSON' => '{not json',
+            'only another journal' => json_encode(['v' => 1, 'heads' => [$foreign => $foreignHead]]),
+            'another shape' => json_encode(['v' => 1, 'heads' => [$this->journalId => ['series' => 'x']]]),
+            'empty' => '',
+        ];
+        foreach ($stored as $why => $content) {
+            foreach (['backups', 'var'] as $base) {
+                file_put_contents($this->journal->root . '/' . $base . '/fiscal-journal/shop-head.json', (string) $content);
+            }
+            $this->assertSame(FiscalJournalGuard::OK, $this->guardState(), $why);
+        }
+        foreach (['backups', 'var'] as $base) {
+            @unlink($this->journal->root . '/' . $base . '/fiscal-journal/shop-head.json');
+        }
+        $this->assertSame(FiscalJournalGuard::OK, $this->guardState(), 'no stored head');
+
+        // A shop paired with another installation answers for another journal.
+        $this->shopHeadAnswering(200, (string) json_encode($foreignHead))->run($this->clock);
+        $this->assertSame(FiscalJournalGuard::OK, $this->guardState(), 'another journal id');
+        foreach ([500, 503, 401, 404, 302] as $status) {
+            $this->shopHeadAnswering($status, '{"error":"x"}')->run($this->clock);
+            $this->assertSame(FiscalJournalGuard::OK, $this->guardState(), 'head answered ' . $status);
+        }
+
+        // A head of this journal naming a document the database lacks is evidence: it blocks.
+        $this->shopHeadAnswering(200, (string) json_encode(['journal_id' => strtoupper($this->journalId), 'last_seq' => 3, 'contiguous_seq' => 3, 'series' => ['J26' => ['number' => 'J26999999', 'hash' => str_repeat('a', 64), 'seq' => 3]]]))->run($this->clock);
+        $this->assertSame(FiscalJournalGuard::BEHIND_SHOP, $this->guardState());
+    }
+
+    public function testADocumentCommittedAfterAnotherConnectionsSnapshotNeverBlocksIt(): void
+    {
+        $this->issue(1);
+        $this->cron();
+        $other = TestDatabase::connection();
+        $this->assertNotNull($other);
+        $other->beginTransaction();
+        try {
+            $other->fetchOne('SELECT COUNT(*) FROM fiscal_record');
+            $this->issue(1);
+            $this->cron();
+            $this->assertSame([2, 2], $this->shopPositions());
+
+            $this->assertSame(FiscalJournalGuard::OK, (new FiscalJournalGuard($other, $this->journal->anotherProcess()->locations))->check()['state']);
+        } finally {
+            $other->rollBack();
+            $other->close();
+        }
+    }
+
+    public function testAShopRestoredBehindNeverBlocksAndGetsItsLinesBack(): void
+    {
+        $this->issue(5);
+        $this->cron();
+        $this->assertSame([5, 5], $this->shopPositions());
+
+        $this->shop->setRows(\array_slice($this->shop->rows(), 0, 2));
+        $this->later(1);
+        $this->assertSame(FiscalJournalGuard::OK, $this->guardState());
+        $this->cron();
+        $this->assertSame(FiscalJournalGuard::OK, $this->guardState());
+        $this->later(1);
+        $this->cron();
+        $this->assertSame([5, 5], $this->shopPositions());
+
+        // Restored to an empty table.
+        $this->shop->setRows([]);
+        $this->later(1);
+        $this->cron();
+        $this->later(1);
+        $this->cron();
+        $this->assertSame([5, 5], $this->shopPositions(), 'an empty shop is filled again');
+    }
+
+    public function testTheStoredHeadOfTheOldJournalIsIgnoredAfterAJournalReset(): void
+    {
+        (new FiscalJournalIdentity($this->connection))->store($this->journalId);
+        $this->issue(2);
+        $this->cron();
+        $old = $this->journalId;
+        // The stored head of the old journal names a document the database lacks.
+        foreach (['backups', 'var'] as $base) {
+            $file = $this->journal->root . '/' . $base . '/fiscal-journal/shop-head.json';
+            $head = json_decode((string) file_get_contents($file), true);
+            $head['heads'][$old]['series']['ZZ'] = ['number' => 'Z26000001', 'hash' => str_repeat('b', 64), 'seq' => 99];
+            file_put_contents($file, (string) json_encode($head));
+        }
+        $this->assertSame(FiscalJournalGuard::BEHIND_SHOP, $this->guardState(), 'while it is this journal it blocks');
+
+        // The reset: the journal files archived, a new journal id in the folders and the setting.
+        foreach (['backups', 'var'] as $base) {
+            $dir = $this->journal->root . '/' . $base . '/fiscal-journal';
+            @mkdir($dir . '/archive/x', 0700, true);
+            foreach (glob($dir . '/{journal*,head.json}', \GLOB_BRACE) ?: [] as $file) {
+                rename($file, $dir . '/archive/x/' . basename($file));
+            }
+        }
+        $fresh = (new JournalHarness($this->connection, $this->journal->root))->writer->createJournal();
+        (new FiscalJournalIdentity($this->connection))->store($fresh);
+
+        $this->assertNotSame($old, $fresh);
+        $this->assertSame(FiscalJournalGuard::OK, $this->guardState());
     }
 }

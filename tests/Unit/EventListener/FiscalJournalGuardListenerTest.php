@@ -18,6 +18,7 @@ use Symfony\Component\HttpKernel\KernelEvents;
 use VenPosTPV\EventListener\FiscalJournalGuardListener;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalBehindException;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalGuard;
+use VenPosTPV\Service\Fiscal\Journal\FiscalJournalGuardCache;
 
 /**
  * fiscal-journal S5, D7: while the database is behind the fiscal journal, every
@@ -43,10 +44,11 @@ final class FiscalJournalGuardListenerTest extends TestCase
     }
 
     /** Runs a request through the kernel with the listener, the route already resolved to $controller. */
-    private function handle(FiscalJournalGuard $guard, string $method, string $path, string $controller, bool $loggedIn = true, ?\Closure $action = null): Response
+    private function handle(FiscalJournalGuard $guard, string $method, string $path, string $controller, bool $loggedIn = true, ?\Closure $action = null, ?FiscalJournalGuardCache $cache = null): Response
     {
-        $listener = new FiscalJournalGuardListener($guard);
+        $listener = new FiscalJournalGuardListener($guard, $cache);
         $dispatcher = new EventDispatcher();
+        $dispatcher->addListener(KernelEvents::REQUEST, $listener->onRequest(...));
         $dispatcher->addListener(KernelEvents::CONTROLLER, $listener->onController(...));
         $dispatcher->addListener(KernelEvents::EXCEPTION, $listener->onException(...));
         $dispatcher->addListener(KernelEvents::RESPONSE, $listener->onResponse(...));
@@ -116,19 +118,106 @@ final class FiscalJournalGuardListenerTest extends TestCase
         }
     }
 
-    public function testEverythingElseKeepsWorkingWhileBehind(): void
+    /** The broad guard's state: blocking or not; $asked counts the calls. */
+    private function cache(bool $blocks, int &$asked = 0): FiscalJournalGuardCache
     {
-        $other = [
+        $cache = $this->createMock(FiscalJournalGuardCache::class);
+        $cache->method('blocks')->willReturnCallback(static function () use ($blocks, &$asked): bool {
+            ++$asked;
+
+            return $blocks;
+        });
+
+        return $cache;
+    }
+
+    public function testReadingKeepsWorkingWhileBehind(): void
+    {
+        $reads = [
             ['GET', '/api/fiscal/journal', 'VenPosTPV\Controller\Api\FiscalJournalController::status'],
-            ['POST', '/api/checkout/coupon-preview', 'VenPosTPV\Controller\Api\CheckoutController::couponPreview'],
             ['GET', '/api/invoices/from-sale/12/preview', 'VenPosTPV\Controller\Api\InvoiceController::preview'],
-            ['POST', '/api/exchange/4/voucher', 'VenPosTPV\Controller\Api\ExchangeController::closeWithVoucher'],
             ['GET', '/api/refund/4/pdf', 'VenPosTPV\Controller\Api\RefundController::creditNotePdf'],
+            ['HEAD', '/api/cash/current', 'VenPosTPV\Controller\Api\CashCurrentController'],
+            ['OPTIONS', '/api/cash/movement', 'VenPosTPV\Controller\Api\CashMovementController'],
         ];
-        foreach ($other as [$method, $path, $controller]) {
-            $this->assertSame(200, $this->handle($this->guard(true), $method, $path, $controller)->getStatusCode(), $path);
+        $asked = 0;
+        foreach ($reads as [$method, $path, $controller]) {
+            $this->assertSame(200, $this->handle($this->guard(true), $method, $path, $controller, cache: $this->cache(true, $asked))->getStatusCode(), $path);
         }
-        $this->assertSame(array_column($other, 2), $this->ran);
+        $this->assertSame(array_column($reads, 2), $this->ran);
+        $this->assertSame(0, $asked, 'a read never pays for the check');
+    }
+
+    /**
+     * Deny by default: any other request that changes something (a cash movement, a
+     * till opening, a coupon, a parked ticket, an endpoint added later) takes ids the
+     * recovery needs, so it is refused with the same 423 before its controller runs.
+     */
+    public function testEveryOtherStateChangingApiRequestIsRefusedWhileBehind(): void
+    {
+        $writes = [
+            ['POST', '/api/cash/movement', 'VenPosTPV\Controller\Api\CashMovementController'],
+            ['POST', '/api/cash/open', 'VenPosTPV\Controller\Api\CashOpenController'],
+            ['POST', '/api/cash/close', 'VenPosTPV\Controller\Api\CashCloseController'],
+            ['POST', '/api/checkout/coupon-preview', 'VenPosTPV\Controller\Api\CheckoutController::couponPreview'],
+            ['POST', '/api/exchange/4/voucher', 'VenPosTPV\Controller\Api\ExchangeController::closeWithVoucher'],
+            ['POST', '/api/sync/now', 'VenPosTPV\Controller\Api\SyncStatusController::syncNow'],
+            ['PUT', '/api/customers/3', 'VenPosTPV\Controller\Api\CustomerController::update'],
+            ['DELETE', '/api/parked-tickets/x', 'VenPosTPV\Controller\Api\ParkedTicketController::delete'],
+            ['PATCH', '/api/some/new/endpoint', 'VenPosTPV\Controller\Api\NewController::change'],
+            ['POST', '/api/agent/v1/jobs/3/result', 'VenPosTPV\Controller\Api\AgentApiController::result'],
+        ];
+        foreach ($writes as [$method, $path, $controller]) {
+            $this->assertLocked($this->handle($this->createMock(FiscalJournalGuard::class), $method, $path, $controller, cache: $this->cache(true)));
+        }
+        $this->assertSame([], $this->ran, 'no controller ran');
+    }
+
+    public function testTheRefusalDoesNotDependOnTheSession(): void
+    {
+        $this->assertLocked($this->handle($this->createMock(FiscalJournalGuard::class), 'POST', '/api/cash/movement', 'VenPosTPV\Controller\Api\CashMovementController', false, cache: $this->cache(true)));
+    }
+
+    public function testTheWayOutOfTheBlockStaysOpen(): void
+    {
+        $allowed = [
+            ['POST', '/api/auth/login', 'VenPosTPV\Controller\Api\AuthController::login'],
+            ['POST', '/api/auth/logout', 'VenPosTPV\Controller\Api\AuthController::logout'],
+            ['POST', '/api/auth/employee-lookup', 'VenPosTPV\Controller\Api\AuthController::employeeLookup'],
+            ['POST', '/api/device/link', 'VenPosTPV\Controller\Api\DeviceController::link'],
+            ['POST', '/api/device/restore', 'VenPosTPV\Controller\Api\DeviceController::restore'],
+            ['POST', '/api/fiscal/journal/replay', 'VenPosTPV\Controller\Api\FiscalJournalController::replay'],
+        ];
+        $this->assertSame(array_column($allowed, 2), FiscalJournalGuardListener::ALLOWED_WHILE_BLOCKED);
+        foreach ($allowed as [$method, $path, $controller]) {
+            $this->assertSame(200, $this->handle($this->guard(true), $method, $path, $controller, cache: $this->cache(true))->getStatusCode(), $path);
+        }
+        $this->assertSame(array_column($allowed, 2), $this->ran);
+    }
+
+    public function testTheAllowListNamesRealControllerActions(): void
+    {
+        foreach (FiscalJournalGuardListener::ALLOWED_WHILE_BLOCKED as $controller) {
+            [$class, $method] = explode('::', $controller);
+            $this->assertTrue(method_exists($class, $method), $controller . ' does not exist');
+        }
+    }
+
+    public function testPagesOutsideTheApiAreLeftAlone(): void
+    {
+        $this->assertSame(200, $this->handle($this->guard(true), 'POST', '/app/dev-login', 'VenPosTPV\Controller\AppController::devLogin', cache: $this->cache(true))->getStatusCode());
+    }
+
+    public function testNothingIsRefusedWhileNotBlocked(): void
+    {
+        $asked = 0;
+        $guard = $this->createMock(FiscalJournalGuard::class);
+        foreach ([['POST', '/api/cash/movement', 'VenPosTPV\Controller\Api\CashMovementController'], ['PUT', '/api/customers/3', 'VenPosTPV\Controller\Api\CustomerController::update']] as [$method, $path, $controller]) {
+            $this->assertSame(200, $this->handle($guard, $method, $path, $controller, cache: $this->cache(false, $asked))->getStatusCode());
+        }
+        $this->assertSame(2, $asked);
+        $this->assertSame(200, $this->handle($guard, 'POST', '/api/auth/login', 'VenPosTPV\Controller\Api\AuthController::login', cache: $this->cache(false, $asked))->getStatusCode());
+        $this->assertSame(2, $asked, 'the allowed requests do not pay for the check');
     }
 
     public function testAnUpToDateDatabaseIssuesNormally(): void

@@ -54,18 +54,23 @@ class FiscalJournalWriter
 
     /**
      * Writes the journal identity (`journal.id`) to every location that can be
-     * written. The provisioning step (D11) decides when a journal is created.
+     * written. The provisioning step (D11) and tpv:fiscal:journal:reset decide when a
+     * journal is created (FiscalJournalStarter).
+     *
+     * @param int|null $backfillUntil the documents up to this fiscal_record id were issued
+     *                                before the journal: their lines are marked `backfill`
+     *                                whichever flush writes them
      *
      * @throws \RuntimeException when no location can be written
      */
-    public function createJournal(?string $journalId = null, ?\DateTimeImmutable $at = null): string
+    public function createJournal(?string $journalId = null, ?\DateTimeImmutable $at = null, ?int $backfillUntil = null): string
     {
         $journalId ??= self::uuid();
         $at ??= new \DateTimeImmutable('now', new \DateTimeZone(FiscalRecorder::TIME_ZONE));
         $written = false;
         foreach ([$this->locations->primary(), $this->locations->secondary()] as $location) {
             if ($location->prepare()) {
-                $location->writeJournalId($journalId, $at);
+                $location->writeJournalId($journalId, $at, $backfillUntil);
                 $written = true;
             }
         }
@@ -225,7 +230,7 @@ class FiscalJournalWriter
     {
         if ($secondary->journalId() === null) {
             // The secondary only buffers lines for the primary: it may take the identity.
-            $secondary->writeJournalId($journalId, new \DateTimeImmutable('now', new \DateTimeZone(FiscalRecorder::TIME_ZONE)));
+            $secondary->writeJournalId($journalId, new \DateTimeImmutable('now', new \DateTimeZone(FiscalRecorder::TIME_ZONE)), $primary->backfillUntil());
         }
         $tail = $secondary->repairTail();
         if ($tail === JournalLocation::TAIL_BAD_LAST || $tail === JournalLocation::TAIL_BROKEN_LAST || $tail === JournalLocation::TAIL_DAMAGED) {
@@ -295,6 +300,7 @@ class FiscalJournalWriter
     private function append(JournalLocation $target, ?array $head, bool $backfill, ?int $limit, int &$written, bool $damaged): FiscalJournalFlushResult
     {
         $afterId = $head['fiscal_record_id'] ?? 0;
+        $backfillUntil = $this->backfillUntil();
         $last = null;
         $zone = new \DateTimeZone(FiscalRecorder::TIME_ZONE);
         try {
@@ -306,7 +312,7 @@ class FiscalJournalWriter
                 );
                 foreach ($records as $record) {
                     try {
-                        $line = $this->line($record, $head, $backfill, $zone);
+                        $line = $this->line($record, $head, $backfill || ($backfillUntil !== null && (int) $record['id'] <= $backfillUntil), $zone);
                     } catch (\Throwable $e) {
                         $reason = $e->getMessage() !== '' ? $e->getMessage() : $e::class;
                         $this->warn('blocked', 'Fiscal journal: document {number} cannot be journaled ({reason}); the flush stops at it', ['number' => (string) $record['number'], 'reason' => $reason]);
@@ -364,6 +370,12 @@ class FiscalJournalWriter
         JournalLocation::encode($line);
 
         return $line;
+    }
+
+    /** The last document issued before the journal existed (journal.id of the primary, else the secondary). */
+    private function backfillUntil(): ?int
+    {
+        return $this->locations->primary()->backfillUntil() ?? $this->locations->secondary()->backfillUntil();
     }
 
     /**

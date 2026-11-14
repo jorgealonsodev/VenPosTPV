@@ -63,6 +63,14 @@ use VenPosTPV\Service\Refund\PsRestockClient;
  *   (the shop holds another line at that position) and a refused line are
  *   incidents, never retried by themselves and never overwritten; a number the
  *   module cannot store (open point O6) is an incident before anything is sent.
+ *   A 401 (the shop does not accept the shared secret) follows the usual backoff
+ *   and, once the ladder is used up, becomes an incident like any other upload the
+ *   shop refuses to authenticate.
+ * - Deadlocks: the seq gate puts every concurrent worker on the same journal row,
+ *   and MySQL may pick one of them as a deadlock victim (1213) or time a lock wait
+ *   out. A statement that changes rows outside a transaction, and the transaction
+ *   that closes a row, are tried again DEADLOCK_TRIES times (nothing was written
+ *   then); recovering stuck rows never fails the run (a later run recovers them).
  */
 class OutboxSync
 {
@@ -71,6 +79,9 @@ class OutboxSync
 
     /** Linking a created order is retried this many times after a deadlock. */
     private const LINK_TRIES = 3;
+
+    /** A statement, or the transaction closing a row, is tried this many times after a deadlock. */
+    private const DEADLOCK_TRIES = 3;
 
     /** Consecutive failures recording PrestaShop's answer before the row is an incident. */
     public const MAX_RECORD_FAILURES = 5;
@@ -143,16 +154,57 @@ class OutboxSync
         return ($this->clock)()->format('Y-m-d H:i:s');
     }
 
+    /**
+     * Rows left in processing by a dead worker go back to pending, one by one by
+     * primary key, in id order: a range UPDATE through the status index locks gaps
+     * that concurrent claims also lock, and deadlocks with them.
+     */
     private function recoverStuck(): int
     {
         $now = ($this->clock)();
+        $at = $now->format('Y-m-d H:i:s');
+        $before = $now->modify(sprintf('-%d seconds', self::STUCK_AFTER_SECONDS))->format('Y-m-d H:i:s');
+        $recovered = 0;
+        try {
+            $ids = $this->connection->fetchFirstColumn(
+                "SELECT id FROM outbox WHERE status = 'processing' AND claimed_at < ? ORDER BY id",
+                [$before]
+            );
+            foreach ($ids as $id) {
+                // Conditional: a row its worker closed meanwhile is left alone.
+                $recovered += $this->statement(
+                    "UPDATE outbox SET status = 'pending', claim_token = NULL, claimed_at = NULL, next_attempt_at = ?, updated_at = ?,
+                         last_error = 'The upload was interrupted; it is tried again'
+                     WHERE id = ? AND status = 'processing' AND claimed_at < ?",
+                    [$at, $at, (int) $id, $before]
+                );
+            }
+        } catch (RetryableException $e) {
+            $this->logger?->warning('Outbox: stuck rows not recovered this run: {message}', ['message' => $e->getMessage()]);
+        }
 
-        return (int) $this->connection->executeStatement(
-            "UPDATE outbox SET status = 'pending', claim_token = NULL, claimed_at = NULL, next_attempt_at = ?, updated_at = ?,
-                 last_error = 'The upload was interrupted; it is tried again'
-             WHERE status = 'processing' AND claimed_at < ?",
-            [$now->format('Y-m-d H:i:s'), $now->format('Y-m-d H:i:s'), $now->modify(sprintf('-%d seconds', self::STUCK_AFTER_SECONDS))->format('Y-m-d H:i:s')]
-        );
+        return $recovered;
+    }
+
+    /**
+     * Runs one statement that is not part of a transaction, again after a deadlock
+     * or a lock wait timeout (MySQL rolled it back: nothing was written).
+     *
+     * @param list<mixed> $params
+     */
+    private function statement(string $sql, array $params): int
+    {
+        for ($try = 1; ; ++$try) {
+            try {
+                return (int) $this->connection->executeStatement($sql, $params);
+            } catch (RetryableException $e) {
+                // Inside a transaction the whole transaction is gone: its owner retries it.
+                if ($try >= self::DEADLOCK_TRIES || $this->connection->isTransactionActive()) {
+                    throw $e;
+                }
+                usleep(random_int(5000, 50000));
+            }
+        }
     }
 
     /**
@@ -184,7 +236,7 @@ class OutboxSync
         $moved = 0;
         foreach ($ids as $id) {
             // Conditional: a row another worker already claimed or changed is left alone.
-            $changed = $this->connection->executeStatement(
+            $changed = $this->statement(
                 "UPDATE outbox SET status = 'incident', last_error = ?, updated_at = ? WHERE id = ? AND status = 'pending'",
                 [self::BEHIND_DISCARDED_ERROR, $this->now(), (int) $id]
             );
@@ -217,11 +269,16 @@ class OutboxSync
         foreach ($candidates as $id) {
             $token = bin2hex(random_bytes(16));
             // Only one worker can move the row out of pending.
-            $claimed = $this->connection->executeStatement(
-                "UPDATE outbox SET status = 'processing', claim_token = ?, claimed_at = ?, attempts = attempts + 1, updated_at = ?
-                 WHERE id = ? AND status = 'pending' AND next_attempt_at <= ?",
-                [$token, $now, $now, (int) $id, $now]
-            );
+            try {
+                $claimed = $this->statement(
+                    "UPDATE outbox SET status = 'processing', claim_token = ?, claimed_at = ?, attempts = attempts + 1, updated_at = ?
+                     WHERE id = ? AND status = 'pending' AND next_attempt_at <= ?",
+                    [$token, $now, $now, (int) $id, $now]
+                );
+            } catch (RetryableException) {
+                // Another worker keeps it locked: the next candidate, or a later run.
+                continue;
+            }
             if ($claimed === 1) {
                 $row = $this->connection->fetchAssociative('SELECT * FROM outbox WHERE id = ? AND claim_token = ?', [(int) $id, $token]);
                 if ($row !== false) {
@@ -601,6 +658,14 @@ class OutboxSync
                 (string) $result['error']
             )),
             PsJournalClient::REJECTED => $this->incident($row, sprintf('La tienda ha rechazado la línea %d del diario fiscal: %s', $line['seq'], (string) $result['error'])),
+            // The other uploads make a refused signature an incident at once; a journal
+            // line goes through the backoff first (a secret being changed on both sides).
+            PsJournalClient::UNAUTHORIZED => (int) $row['attempts'] >= \count(self::BACKOFF_MINUTES)
+                ? $this->incident($row, sprintf(
+                    'La tienda rechaza la firma de la copia del diario fiscal (HTTP 401) tras %d intentos: revisa que la clave compartida del TPV y la del módulo TPV Connect coincidan y reintenta esta línea.',
+                    (int) $row['attempts']
+                ))
+                : $this->retry($row, (string) ($result['error'] ?? 'The shop refused the signature (HTTP 401)')),
             default => $this->retry($row, (string) ($result['error'] ?? 'The journal line could not be sent')),
         };
     }
@@ -616,7 +681,7 @@ class OutboxSync
     private function wait(array $row, string $error, int $minutes): ?string
     {
         $now = ($this->clock)();
-        $released = $this->connection->executeStatement(
+        $released = $this->statement(
             "UPDATE outbox SET status = 'pending', claim_token = NULL, claimed_at = NULL, next_attempt_at = ?, last_error = ?, updated_at = ?
              WHERE id = ? AND claim_token = ?",
             [$now->modify(sprintf('+%d minutes', $minutes))->format('Y-m-d H:i:s'), $error, $now->format('Y-m-d H:i:s'), (int) $row['id'], (string) $row['claim_token']]
@@ -666,26 +731,36 @@ class OutboxSync
     private function closeWith(array $row, callable $record): ?string
     {
         $now = $this->now();
-        try {
-            $closed = $this->connection->transactional(function () use ($row, $record, $now): bool {
-                $done = $this->connection->executeStatement(
-                    "UPDATE outbox SET status = 'done', claim_token = NULL, last_error = NULL, record_failures = 0, done_at = ?, updated_at = ?
-                     WHERE id = ? AND claim_token = ?",
-                    [$now, $now, (int) $row['id'], (string) $row['claim_token']]
-                );
-                if ($done !== 1) {
-                    return false;
+        for ($try = 1; ; ++$try) {
+            try {
+                $closed = $this->connection->transactional(function () use ($row, $record, $now): bool {
+                    $done = $this->connection->executeStatement(
+                        "UPDATE outbox SET status = 'done', claim_token = NULL, last_error = NULL, record_failures = 0, done_at = ?, updated_at = ?
+                         WHERE id = ? AND claim_token = ?",
+                        [$now, $now, (int) $row['id'], (string) $row['claim_token']]
+                    );
+                    if ($done !== 1) {
+                        return false;
+                    }
+                    $record();
+
+                    return true;
+                });
+
+                return $closed ? 'uploaded' : null;
+            } catch (RetryableException $e) {
+                if ($try < self::DEADLOCK_TRIES) {
+                    // Rolled back as a whole: closing it again is safe and sends nothing again.
+                    usleep(random_int(5000, 50000));
+                    continue;
                 }
-                $record();
 
-                return true;
-            });
-        } catch (\Throwable $e) {
-            // PrestaShop already has it: the next attempt is replayed by request_id.
-            return $this->recordingFailed($row, 'Recording the PrestaShop answer failed: ' . $e->getMessage());
+                return $this->recordingFailed($row, 'Recording the PrestaShop answer failed: ' . $e->getMessage());
+            } catch (\Throwable $e) {
+                // PrestaShop already has it: the next attempt is replayed by request_id.
+                return $this->recordingFailed($row, 'Recording the PrestaShop answer failed: ' . $e->getMessage());
+            }
         }
-
-        return $closed ? 'uploaded' : null;
     }
 
     /**
@@ -699,7 +774,7 @@ class OutboxSync
      */
     private function recordingFailed(array $row, string $error): ?string
     {
-        $this->connection->executeStatement(
+        $this->statement(
             'UPDATE outbox SET record_failures = record_failures + 1 WHERE id = ? AND claim_token = ?',
             [(int) $row['id'], (string) $row['claim_token']]
         );
@@ -723,7 +798,7 @@ class OutboxSync
         $attempts = max(1, (int) $row['attempts']);
         $minutes = self::BACKOFF_MINUTES[min($attempts, \count(self::BACKOFF_MINUTES)) - 1];
         $now = ($this->clock)();
-        $released = $this->connection->executeStatement(
+        $released = $this->statement(
             "UPDATE outbox SET status = 'pending', claim_token = NULL, claimed_at = NULL, next_attempt_at = ?, last_error = ?, updated_at = ?,
                  record_failures = IF(?, record_failures, 0)
              WHERE id = ? AND claim_token = ?",
@@ -738,7 +813,7 @@ class OutboxSync
     {
         $this->logger?->warning('Outbox row {id} needs the administrator: {error}', ['id' => $row['id'], 'error' => $error]);
         $now = $this->now();
-        $closed = $this->connection->executeStatement(
+        $closed = $this->statement(
             "UPDATE outbox SET status = 'incident', claim_token = NULL, last_error = ?, updated_at = ?
              WHERE id = ? AND claim_token = ?",
             [mb_substr($error, 0, 1000), $now, (int) $row['id'], (string) $row['claim_token']]

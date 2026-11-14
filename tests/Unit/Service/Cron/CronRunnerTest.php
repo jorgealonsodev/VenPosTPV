@@ -12,6 +12,7 @@ use VenPosTPV\Service\Cron\CronJobOutcome;
 use VenPosTPV\Service\Cron\CronLock;
 use VenPosTPV\Service\Cron\CronRunner;
 use VenPosTPV\Service\Cron\CronStateStore;
+use VenPosTPV\Service\Fiscal\Journal\FiscalJournalGuardCache;
 
 /**
  * The single scheduled task (odd/tasks/single-cron-task.md): every minute it
@@ -411,6 +412,87 @@ final class CronRunnerTest extends TestCase
         }, self::at('2026-11-15 03:00:10'));
 
         self::assertSame(['journal' => true, 'outbox' => true, 'stock' => true, 'catalog' => false], $nightlyFree);
+    }
+
+    private function blockedRunner(bool $blocked, int &$asked = 0): CronRunner
+    {
+        $guard = $this->createMock(FiscalJournalGuardCache::class);
+        $guard->method('blocks')->willReturnCallback(static function () use ($blocked, &$asked): bool {
+            ++$asked;
+
+            return $blocked;
+        });
+
+        return new CronRunner(new CronStateStore($this->connection), new CronLock($this->lockDir), 'Europe/Madrid', journalGuard: $guard);
+    }
+
+    /** @return list<string> */
+    private function launchedBy(CronRunner $runner, string $time): array
+    {
+        $launched = [];
+        $runner->run(static function (CronJob $job) use (&$launched): CronJobOutcome {
+            $launched[] = $job->id;
+
+            return new CronJobOutcome(0, 'ok');
+        }, self::at($time));
+
+        return $launched;
+    }
+
+    /**
+     * fiscal-journal: while the database is behind the fiscal journal the jobs that
+     * add rows whose ids the recovery needs wait (the customers sync inserts the
+     * `customer` rows the recovered sales and uploads point at); the journal itself,
+     * the uploads (they only update rows), stock, catalog and the backup keep running.
+     */
+    public function testWhileTheDatabaseIsBehindTheJournalOnlyTheJobsThatAddRowsWait(): void
+    {
+        $runner = $this->blockedRunner(true);
+        $launched = $this->launchedBy($runner, '2026-11-15 04:00:10');
+
+        self::assertSame(['journal', 'outbox', 'stock', 'catalog', 'backup'], $launched);
+        $report = (new CronStateStore($this->connection))->job('customers');
+        self::assertSame(CronRunner::BLOCKED_BY_FISCAL_JOURNAL, $report['last_error'] ?? null);
+        self::assertArrayNotHasKey('last_attempt_at', $report, 'not an attempt: no retry is spent');
+        $status = $this->jobStatus($runner->status(self::at('2026-11-15 04:00:20')), 'customers');
+        self::assertSame('Esperando: la base de datos está por detrás del diario fiscal. Se ejecutará cuando un administrador recupere los documentos (Ajustes → VERI*FACTU → Diario fiscal).', $status['last_error']);
+    }
+
+    public function testAWaitingJobIsNotAFailureOfTheTask(): void
+    {
+        $report = $this->blockedRunner(true)->run(static fn (CronJob $job): CronJobOutcome => new CronJobOutcome(0, 'ok'), self::at('2026-11-15 04:00:10'));
+
+        self::assertFalse($report->failed());
+        self::assertContains('customers', $report->skipped());
+        self::assertNotContains('customers', $report->launched());
+    }
+
+    public function testOnceRecoveredTheWaitingJobRunsAtTheNextMinute(): void
+    {
+        $this->launchedBy($this->blockedRunner(true), '2026-11-15 04:00:10');
+        $launched = $this->launchedBy($this->blockedRunner(false), '2026-11-15 04:01:10');
+
+        self::assertContains('customers', $launched);
+        self::assertNull($this->jobStatus($this->runner()->status(self::at('2026-11-15 04:01:20')), 'customers')['last_error']);
+    }
+
+    public function testTheGuardIsOnlyAskedWhenAJobThatAddsRowsIsDue(): void
+    {
+        $asked = 0;
+        $this->launchedBy($this->blockedRunner(false, $asked), '2026-11-15 04:00:10');
+        self::assertSame(1, $asked, 'customers was due');
+
+        $asked = 0;
+        $this->launchedBy($this->blockedRunner(false, $asked), '2026-11-15 04:01:10');
+        self::assertSame(0, $asked, 'only the jobs that keep running were due');
+    }
+
+    public function testEveryNewJobWaitsWhileBlockedUnlessListedAsSafe(): void
+    {
+        foreach (CronRunner::jobs() as $job) {
+            $safe = \in_array($job->id, CronRunner::RUNS_WHILE_JOURNAL_BLOCKED, true);
+            self::assertSame(!\in_array($job->id, ['customers'], true), $safe, $job->id);
+        }
     }
 
     /**

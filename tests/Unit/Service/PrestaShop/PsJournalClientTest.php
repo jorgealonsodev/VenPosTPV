@@ -98,7 +98,8 @@ final class PsJournalClientTest extends TestCase
             'invalid' => [self::json(['error' => 'Validation failed', 'details' => ['line.series' => 'x']], 422), PsJournalClient::REJECTED],
             'rate limited' => [self::json(['error' => 'Rate limit exceeded'], 429), PsJournalClient::RETRY],
             'shop error' => [self::json(['error' => 'Journal storage failed'], 500), PsJournalClient::RETRY],
-            'bad signature' => [self::json(['error' => 'Unauthorized'], 401), PsJournalClient::RETRY],
+            'bad signature (wrong shared secret)' => [self::json(['error' => 'Unauthorized'], 401), PsJournalClient::UNAUTHORIZED],
+            'refused before the module (not JSON)' => [new MockResponse('<html>401</html>', ['http_code' => 401]), PsJournalClient::UNAUTHORIZED],
             'network' => [new TransportException('Connection refused'), PsJournalClient::RETRY],
         ];
         foreach ($cases as $name => [$response, $expected]) {

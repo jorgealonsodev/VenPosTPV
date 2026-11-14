@@ -36,10 +36,13 @@ cp deploy/hosting/root.htaccess "$APP/.htaccess"
 cp deploy/hosting/root-install.php "$APP/install.php"
 cp docs/despliegue-hosting.md "$APP/LEEME-HOSTING.md"
 mkdir -p "$APP/var/cache" "$APP/var/log"
-# Database dumps never ship: backups/ is not in the copy list above, and
-# tpv:backup:database creates it on the server (0700, with its .htaccess) on its
-# first run. This guards against a future copy list that includes it.
-rm -rf "$APP/backups"
+# Database dumps and the fiscal journal never ship: backups/ (with
+# backups/fiscal-journal/) is not in the copy list above, tpv:backup:database and the
+# provisioning step «fiscal-journal» create it on the server (0700, with its
+# .htaccess). var/fiscal-journal/ (the journal's second copy) is made the same way.
+# Unzipping the package over an install keeps both. This guards against a future
+# copy list that includes them.
+rm -rf "$APP/backups" "$APP/var/fiscal-journal"
 
 (cd "$APP" && COMPOSER_HOME="$WORK/composer-home" "$PHP_BIN" "$COMPOSER" install \
     --no-dev --optimize-autoloader --no-interaction --no-progress)

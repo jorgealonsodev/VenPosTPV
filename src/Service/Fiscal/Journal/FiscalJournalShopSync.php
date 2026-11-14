@@ -14,20 +14,28 @@ use VenPosTPV\Service\Sync\OutboxSync;
  * The every-minute part of the shop copy of the fiscal journal (fiscal-journal D6,
  * S8, S9), run by FiscalJournalReconciler after the flush:
  *
- * 1. every journal line without an outbox row gets one (type `journal`, sequence =
- *    seq, the line verbatim in the payload), in seq order; OutboxSync sends them;
- * 2. the shop is asked once for its head of this journal (and of the journal the
+ * 1. the shop is asked once for its head of this journal (and of the journal the
  *    database names, when that is another one, FiscalJournalIdentity), and the
  *    answers are stored in `shop-head.json` of every folder that can be written:
  *    FiscalJournalGuard reads them (`behind_shop`, `journal_missing`);
- * 3. with the head: the lines after the shop's contiguous_seq whose row was lost
- *    (a restore of the database) are queued again; when the shop lost lines it had
- *    acknowledged (its own restore: the row after contiguous_seq was done before the
- *    question), those are queued again too. A gap held by a row in incident (409,
- *    a number the module cannot store) resends nothing. The module dedupes, so a
- *    line sent twice is stored once (200);
+ * 2. every journal line after the last one queued gets an outbox row (type
+ *    `journal`, sequence = seq, the line verbatim in the payload), in seq order;
+ *    OutboxSync sends them. The lines the shop holds without a gap (its
+ *    contiguous_seq, from this answer or a stored one at most HEAD_FRESH_SECONDS
+ *    old) are never queued: after a restore of the database they are not sent again;
+ * 3. with the head: the lines after the shop's contiguous_seq that have no row (a
+ *    restore of the database) and the lines the shop lost after acknowledging them
+ *    (its own restore: done before the question but beyond the shop's last_seq, or
+ *    every done one when the line right after contiguous_seq is among them) are
+ *    queued again, the oldest first. A gap held by a row in incident (409, a number
+ *    the module cannot store) is never queued again by itself: it stays visible and
+ *    the lines after it go on. The module dedupes, so a line sent twice is stored
+ *    once (200);
  * 4. an answer at all means the module has the endpoint: the rows waiting an hour
  *    because it did not (S9) are due at once.
+ *
+ * Each run queues at most ENQUEUE_LIMIT lines in each of 2 and 3; what is left is
+ * queued by the next runs, since a line queued again is no longer a candidate.
  *
  * A shop that cannot be reached or a module too old changes nothing stored and is
  * never a block. The summary goes to `state.json` under `shop` for Ajustes.
@@ -43,6 +51,9 @@ class FiscalJournalShopSync
     /** Rows queued per run at most (the upload sends 100 a minute). */
     public const ENQUEUE_LIMIT = 500;
 
+    /** A stored shop head this recent stands in for one this run could not get. */
+    public const HEAD_FRESH_SECONDS = 600;
+
     private readonly FiscalJournalIdentity $identity;
     private readonly Outbox $outbox;
 
@@ -52,6 +63,7 @@ class FiscalJournalShopSync
         private readonly PsJournalClient $client,
         ?FiscalJournalIdentity $identity = null,
         ?Outbox $outbox = null,
+        private readonly int $enqueueLimit = self::ENQUEUE_LIMIT,
     ) {
         $this->identity = $identity ?? new FiscalJournalIdentity($connection);
         $this->outbox = $outbox ?? new Outbox($connection);
@@ -75,11 +87,6 @@ class FiscalJournalShopSync
         }
         $journalSeq = $journalId !== null ? $this->journalSeq() : null;
 
-        $enqueued = 0;
-        if ($journalId !== null) {
-            $enqueued += $this->enqueueAfter($journalId, $this->queuedSeq($journalId), null, $log);
-        }
-
         $asked = array_values(array_unique(array_filter([$journalId, $named])));
         $answers = [];
         foreach ($asked as $id) {
@@ -91,8 +98,13 @@ class FiscalJournalShopSync
             $this->storeHeads($heads, $asked, $now, $journalId === null, $log);
             $this->releaseUnavailable($now);
         }
-        if ($journalId !== null && $answer['head'] !== null) {
-            $enqueued += $this->requeue($journalId, $answer['head'], (int) $journalSeq, $now, $log);
+        $enqueued = 0;
+        if ($journalId !== null) {
+            $held = $answer['head']['contiguous_seq'] ?? $this->freshStoredContiguousSeq($journalId, $now);
+            $enqueued += $this->enqueueAfter($journalId, max($this->queuedSeq($journalId), (int) $held), null, $log);
+            if ($answer['head'] !== null) {
+                $enqueued += $this->requeue($journalId, $answer['head'], (int) $journalSeq, $now, $log);
+            }
         }
 
         return $this->summary($target, $answer, $journalSeq, $enqueued, $now);
@@ -119,6 +131,31 @@ class FiscalJournalShopSync
         return $seq;
     }
 
+    /** The shop's contiguous_seq of this journal in a stored head at most HEAD_FRESH_SECONDS old. */
+    private function freshStoredContiguousSeq(string $journalId, \DateTimeImmutable $now): ?int
+    {
+        foreach ([$this->locations->primary(), $this->locations->secondary()] as $location) {
+            try {
+                $head = $location->readShopHead()['heads'][$journalId] ?? null;
+            } catch (\Throwable) {
+                continue;
+            }
+            if (!\is_array($head) || !\is_int($head['contiguous_seq'] ?? null) || !\is_string($head['fetched_at'] ?? null)) {
+                continue;
+            }
+            try {
+                $age = $now->getTimestamp() - (new \DateTimeImmutable($head['fetched_at']))->getTimestamp();
+            } catch (\Exception) {
+                continue;
+            }
+            if ($age >= -60 && $age <= self::HEAD_FRESH_SECONDS) {
+                return $head['contiguous_seq'];
+            }
+        }
+
+        return null;
+    }
+
     private function queuedSeq(string $journalId): int
     {
         return (int) $this->connection->fetchOne(
@@ -135,11 +172,11 @@ class FiscalJournalShopSync
      */
     private function linesAfter(int $after): array
     {
-        $lines = $this->locations->primary()->linesAfter($after, self::ENQUEUE_LIMIT);
+        $lines = $this->locations->primary()->linesAfter($after, $this->enqueueLimit);
         $last = $lines !== [] ? (int) $lines[\count($lines) - 1]['seq'] : $after;
         $primaryLast = $this->locations->primary()->lastValidLine();
         $beyond = max($last, \is_array($primaryLast) ? (int) $primaryLast['seq'] : 0, $after);
-        foreach ($this->locations->secondary()->linesAfter($beyond, self::ENQUEUE_LIMIT - \count($lines)) as $line) {
+        foreach ($this->locations->secondary()->linesAfter($beyond, $this->enqueueLimit - \count($lines)) as $line) {
             $lines[] = $line;
         }
 
@@ -176,43 +213,89 @@ class FiscalJournalShopSync
     }
 
     /**
-     * D6: the lines after the shop's contiguous_seq whose row was lost, or that the
-     * shop lost after acknowledging them.
+     * D6: the lines after the shop's contiguous_seq that have no row (lost in a
+     * restore of the database) or that the shop lost after acknowledging them, the
+     * oldest first and at most enqueueLimit; the next runs queue the rest. A line
+     * whose latest row is pending, processing, in incident or discarded is never a
+     * candidate, so an incident gap is never queued again by itself and a line
+     * queued again is not queued a second time.
      *
-     * @param array{contiguous_seq: int} $head
+     * @param array{last_seq: int, contiguous_seq: int} $head
      */
     private function requeue(string $journalId, array $head, int $journalSeq, \DateTimeImmutable $askedAt, ?LoggerInterface $log): int
     {
         $from = $head['contiguous_seq'];
-        $to = min($journalSeq, $from + self::ENQUEUE_LIMIT);
-        if ($to <= $from) {
+        if ($journalSeq <= $from) {
             return 0;
         }
-        /** @var array<int, array{status: string, done_at: ?string}> $latest the latest row of each seq */
-        $latest = [];
-        foreach ($this->connection->fetchAllAssociative(
-            "SELECT sequence, status, done_at FROM outbox WHERE type = 'journal' AND request_id LIKE ? AND sequence > ? AND sequence <= ? ORDER BY id",
-            [Outbox::journalRequestPrefix($journalId) . '%', $from, $to]
-        ) as $row) {
-            $latest[(int) $row['sequence']] = ['status' => (string) $row['status'], 'done_at' => $row['done_at'] !== null ? (string) $row['done_at'] : null];
-        }
+        $prefix = Outbox::journalRequestPrefix($journalId) . '%';
         $asked = self::local($askedAt);
-        $next = $latest[$from + 1] ?? null;
-        $shopLostThem = $next !== null && $next['status'] === Outbox::STATUS_DONE && $next['done_at'] !== null && $next['done_at'] < $asked;
+        $next = $this->connection->fetchAssociative(
+            "SELECT status, done_at FROM outbox WHERE type = 'journal' AND request_id LIKE ? AND sequence = ? ORDER BY id DESC LIMIT 1",
+            [$prefix, $from + 1]
+        );
+        // The shop lacks the line after contiguous_seq although it was sent: it lost lines.
+        $shopLostThem = $next !== false && $next['status'] === Outbox::STATUS_DONE && $next['done_at'] !== null && (string) $next['done_at'] < $asked;
 
         $only = [];
-        for ($seq = $from + 1; $seq <= $to; ++$seq) {
-            $row = $latest[$seq] ?? null;
-            if ($row === null || ($shopLostThem && $row['status'] === Outbox::STATUS_DONE)) {
-                $only[$seq] = true;
-            }
+        foreach ($this->missingSeqs($prefix, $from, $journalSeq) as $seq) {
+            $only[$seq] = true;
+        }
+        // Sent before the question, yet beyond what the shop holds (all of them once it lost the next one).
+        foreach ($this->connection->fetchFirstColumn(
+            sprintf("SELECT o.sequence FROM outbox o
+             WHERE o.type = 'journal' AND o.request_id LIKE ? AND o.sequence > ? AND o.sequence <= ?
+               AND o.status = 'done' AND o.done_at < ?
+               AND NOT EXISTS (SELECT 1 FROM outbox n WHERE n.type = 'journal' AND n.request_id LIKE ? AND n.sequence = o.sequence AND n.id > o.id)
+             ORDER BY o.sequence LIMIT %d", $this->enqueueLimit),
+            [$prefix, $shopLostThem ? $from : max($from, $head['last_seq']), $journalSeq, $asked, $prefix]
+        ) as $seq) {
+            $only[(int) $seq] = true;
         }
         if ($only === []) {
             return 0;
         }
+        ksort($only);
+        $only = \array_slice($only, 0, $this->enqueueLimit, true);
         $log?->info('Fiscal journal shop copy: {count} lines queued again (the shop holds up to {seq})', ['count' => \count($only), 'seq' => $from]);
 
-        return $this->enqueueAfter($journalId, $from, $only, $log);
+        return $this->enqueueAfter($journalId, (int) array_key_first($only) - 1, $only, $log);
+    }
+
+    /**
+     * The seqs after $from, up to the last one queued and at most enqueueLimit, that
+     * have no row at all. Counted first: normally there is none, and nothing more is read.
+     *
+     * @return list<int>
+     */
+    private function missingSeqs(string $prefix, int $from, int $journalSeq): array
+    {
+        $upTo = min($journalSeq, (int) $this->connection->fetchOne(
+            "SELECT COALESCE(MAX(sequence), 0) FROM outbox WHERE type = 'journal' AND request_id LIKE ?",
+            [$prefix]
+        ));
+        if ($upTo <= $from) {
+            return [];
+        }
+        $present = (int) $this->connection->fetchOne(
+            "SELECT COUNT(DISTINCT sequence) FROM outbox WHERE type = 'journal' AND request_id LIKE ? AND sequence > ? AND sequence <= ?",
+            [$prefix, $from, $upTo]
+        );
+        if ($present >= $upTo - $from) {
+            return [];
+        }
+        $have = array_flip(array_map('intval', $this->connection->fetchFirstColumn(
+            "SELECT DISTINCT sequence FROM outbox WHERE type = 'journal' AND request_id LIKE ? AND sequence > ? AND sequence <= ?",
+            [$prefix, $from, $upTo]
+        )));
+        $missing = [];
+        for ($seq = $from + 1; $seq <= $upTo && \count($missing) < $this->enqueueLimit; ++$seq) {
+            if (!isset($have[$seq])) {
+                $missing[] = $seq;
+            }
+        }
+
+        return $missing;
     }
 
     /**
