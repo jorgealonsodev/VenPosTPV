@@ -10,6 +10,7 @@ use VenPosTPV\Service\Checkout\PsOrderClient;
 use VenPosTPV\Service\Exchange\ExchangeService;
 use VenPosTPV\Service\Fiscal\Journal\CanonicalJson;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalFlushResult;
+use VenPosTPV\Service\Fiscal\Journal\FiscalJournalGuard;
 use VenPosTPV\Service\Fiscal\Journal\JournalLocation;
 use VenPosTPV\Service\Invoice\InvoiceIssuer;
 use VenPosTPV\Service\PrestaShop\CouponCreationService;
@@ -39,6 +40,8 @@ final class FiscalJournalIssuingPathsMySqlIntegrationTest extends TestCase
         $this->fixtures->install();
         $this->journal = new JournalHarness($this->connection);
         $this->journal->writer->createJournal();
+        // Every path issues through the in-lock guard (D5), which must never refuse here.
+        $this->fixtures->guard = new FiscalJournalGuard($this->connection, $this->journal->locations);
     }
 
     protected function tearDown(): void

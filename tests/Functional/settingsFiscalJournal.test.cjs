@@ -78,8 +78,31 @@ test('a journal not created yet is neutral, never an error', async () => {
     assert.equal(s.fiscalJournalTone(s.fiscalJournalMessage(s.fiscalJournal.data)), 'color:var(--text3);');
 });
 
+test('a database behind the journal names what is missing and that the till cannot sell (S5)', async () => {
+    const behind = (missing) => state('head_missing', { guard: { state: 'behind_journal', missing } });
+    let s = await rendered(behind({ number: 'A26000003', invoice_type: 'F2', after: 2 }));
+    let message = s.fiscalJournalMessage(s.fiscalJournal.data);
+    assert.deepEqual({ ...message }, { tone: 'error', text: 'La base de datos está por detrás del diario fiscal (falta A26000003 y 2 posteriores). No se puede vender hasta recuperar los documentos.' });
+
+    s = await rendered(behind({ number: 'A26000005', invoice_type: 'F2', after: 0 }));
+    assert.equal(s.fiscalJournalMessage(s.fiscalJournal.data).text, 'La base de datos está por detrás del diario fiscal (falta A26000005). No se puede vender hasta recuperar los documentos.');
+
+    s = await rendered(behind({ number: 'A26000005', invoice_type: 'F2', after: null }));
+    assert.equal(s.fiscalJournalMessage(s.fiscalJournal.data).text, 'La base de datos está por detrás del diario fiscal (falta A26000005). No se puede vender hasta recuperar los documentos.');
+
+    // The guard reads the database now: it wins over a damaged or up-to-date state of the last run.
+    s = await rendered(state('damaged', { damaged: { folder: 'primary', file: 'head.json', line: null, reason: 'removed' }, guard: { state: 'behind_journal', missing: { number: 'A26000005', invoice_type: 'F2', after: null } } }));
+    assert.match(s.fiscalJournalMessage(s.fiscalJournal.data).text, /^La base de datos está por detrás del diario fiscal/);
+
+    s = await rendered(state('head_missing'));
+    assert.equal(s.fiscalJournalMessage(s.fiscalJournal.data).text, 'La base de datos está por detrás del diario fiscal. No se puede vender hasta recuperar los documentos.');
+
+    s = await rendered(state('ok', { guard: { state: 'ok', missing: null } }));
+    assert.equal(s.fiscalJournalMessage(s.fiscalJournal.data).tone, 'ok');
+});
+
 test('the states of later tasks show nothing here, and old unconfirmed documents get one line', async () => {
-    const s = await rendered(state('head_missing'));
+    const s = await rendered(state('journal_missing'));
     assert.equal(s.fiscalJournalMessage(s.fiscalJournal.data), null);
     assert.equal(s.fiscalJournalUnconfirmed(state('ok')), '');
     assert.equal(

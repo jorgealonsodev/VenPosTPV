@@ -89,4 +89,24 @@ final class FiscalJournalCommandTest extends TestCase
 
         $this->assertSame(0, $tester->execute(['--verify-all' => true]));
     }
+
+    public function testADatabaseBehindTheJournalExitsTwoWhenReported(): void
+    {
+        $tester = $this->tester(self::state(FiscalJournalState::HEAD_MISSING, 2, ['writable' => true]));
+
+        $this->assertSame(2, $tester->execute([], ['capture_stderr_separately' => true]));
+        $this->assertStringContainsString('its last document is not in the database', $tester->getErrorOutput());
+    }
+
+    public function testTheHelpListsEveryExitCode(): void
+    {
+        $application = new Application();
+        $application->add(new FiscalJournalCommand($this->createMock(FiscalJournalReconciler::class)));
+        $help = $application->find('tpv:fiscal:journal')->getHelp();
+
+        $this->assertStringContainsString('0 up to date or documents pending', $help);
+        $this->assertStringContainsString('1 neither journal folder can be written', $help);
+        $this->assertStringContainsString('2 the database is behind the fiscal journal (a restore): the till cannot issue documents until they are recovered', $help);
+        $this->assertStringContainsString('3 the journal is damaged', $help);
+    }
 }

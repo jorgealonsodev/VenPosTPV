@@ -197,7 +197,10 @@ class FiscalJournalWriter
             } catch (JournalWriteException) {
                 // Merged up to its torn line; the rest waits.
             }
-            if (JournalMerge::secondaryIntoPrimary($secondary, $primary) > 0) {
+            // The merge counts against the limit of a bounded flush (the rest waits for the next one).
+            $merged = JournalMerge::secondaryIntoPrimary($secondary, $primary, $limit !== null ? max(0, $limit - $written) : null);
+            $written += $merged;
+            if ($merged > 0) {
                 $last = $primary->lastLine();
                 if ($last === false) {
                     return $this->damaged($primary, JournalVerifier::BAD_LINE);

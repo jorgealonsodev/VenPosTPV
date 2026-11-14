@@ -10,12 +10,18 @@ namespace VenPosTPV\Service\Fiscal\Journal;
  * appended to it in order, each checked by its line_hash, `prev` and `seq`; those
  * the primary already holds are dropped. The secondary is emptied only when all of
  * it was accounted for, so a secondary that does not chain to the primary is kept
- * (the flush then journals those documents from the database).
+ * (the flush then journals those documents from the database). With a limit (the
+ * bounded after-response flush) at most that many lines are merged; the secondary
+ * is then kept whole and the next flush merges the rest.
  */
 final class JournalMerge
 {
-    /** @return int the lines appended to the primary. Call with both locations locked. */
-    public static function secondaryIntoPrimary(JournalLocation $secondary, JournalLocation $primary): int
+    /**
+     * @param int|null $limit at most this many lines (null: all of them)
+     *
+     * @return int the lines appended to the primary. Call with both locations locked.
+     */
+    public static function secondaryIntoPrimary(JournalLocation $secondary, JournalLocation $primary, ?int $limit = null): int
     {
         if ($secondary->journalFiles() === []) {
             return 0;
@@ -39,6 +45,10 @@ final class JournalMerge
                 continue;
             }
             if ($line['seq'] !== $seq + 1 || ($line['prev'] ?? null) !== $hash) {
+                $complete = false;
+                break;
+            }
+            if ($limit !== null && $appended >= $limit) {
                 $complete = false;
                 break;
             }

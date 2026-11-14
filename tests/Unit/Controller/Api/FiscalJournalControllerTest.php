@@ -9,6 +9,7 @@ use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Session\Session;
 use Symfony\Component\HttpFoundation\Session\Storage\MockArraySessionStorage;
 use VenPosTPV\Controller\Api\FiscalJournalController;
+use VenPosTPV\Service\Fiscal\Journal\FiscalJournalGuard;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalReconciler;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalState;
 
@@ -28,12 +29,20 @@ final class FiscalJournalControllerTest extends TestCase
         return $request;
     }
 
+    private function guard(?array $report = null): FiscalJournalGuard
+    {
+        $guard = $this->createMock(FiscalJournalGuard::class);
+        $guard->method('report')->willReturn($report ?? ['state' => FiscalJournalGuard::OK, 'missing' => null]);
+
+        return $guard;
+    }
+
     public function testOnlyAnAdminSeesTheJournalState(): void
     {
         $reconciler = $this->createMock(FiscalJournalReconciler::class);
         $reconciler->expects($this->never())->method('current');
         $reconciler->expects($this->never())->method('run');
-        $controller = new FiscalJournalController($reconciler);
+        $controller = new FiscalJournalController($reconciler, $this->guard());
 
         $response = $controller->status($this->request('cashier'));
         $this->assertSame(403, $response->getStatusCode());
@@ -52,7 +61,7 @@ final class FiscalJournalControllerTest extends TestCase
         $reconciler->expects($this->never())->method('run');
         $reconciler->expects($this->once())->method('current')->willReturn(new FiscalJournalState($state));
 
-        $response = (new FiscalJournalController($reconciler))->status($this->request('admin'));
+        $response = (new FiscalJournalController($reconciler, $this->guard()))->status($this->request('admin'));
 
         $this->assertSame(200, $response->getStatusCode());
         $data = json_decode((string) $response->getContent(), true)['data'];
@@ -67,9 +76,36 @@ final class FiscalJournalControllerTest extends TestCase
         $reconciler = $this->createMock(FiscalJournalReconciler::class);
         $reconciler->method('current')->willThrowException(new \RuntimeException('connection refused'));
 
-        $response = (new FiscalJournalController($reconciler))->status($this->request('admin'));
+        $response = (new FiscalJournalController($reconciler, $this->guard()))->status($this->request('admin'));
 
         $this->assertSame(503, $response->getStatusCode());
         $this->assertSame(['error' => 'No se pudo leer el estado del diario fiscal'], json_decode((string) $response->getContent(), true));
+    }
+
+    public function testAnAdminSeesWhetherTheTillIsBlockedAndWhatIsMissing(): void
+    {
+        $state = FiscalJournalState::notStarted(new \DateTimeImmutable('2026-11-14T18:03:00+01:00'))->data;
+        $state['status'] = FiscalJournalState::HEAD_MISSING;
+        $reconciler = $this->createMock(FiscalJournalReconciler::class);
+        $reconciler->method('current')->willReturn(new FiscalJournalState($state));
+        $report = ['state' => FiscalJournalGuard::BEHIND_JOURNAL, 'missing' => ['number' => 'A26000003', 'invoice_type' => 'F2', 'after' => 2]];
+
+        $response = (new FiscalJournalController($reconciler, $this->guard($report)))->status($this->request('admin'));
+
+        $this->assertSame(200, $response->getStatusCode());
+        $data = json_decode((string) $response->getContent(), true)['data'];
+        $this->assertSame('head_missing', $data['status']);
+        $this->assertSame($report, $data['guard']);
+    }
+
+    public function testAnUpToDateTillReportsTheGuardOk(): void
+    {
+        $state = FiscalJournalState::notStarted(new \DateTimeImmutable('2026-11-14T18:03:00+01:00'))->data;
+        $reconciler = $this->createMock(FiscalJournalReconciler::class);
+        $reconciler->method('current')->willReturn(new FiscalJournalState($state));
+
+        $data = json_decode((string) (new FiscalJournalController($reconciler, $this->guard()))->status($this->request('admin'))->getContent(), true)['data'];
+
+        $this->assertSame(['state' => 'ok', 'missing' => null], $data['guard']);
     }
 }

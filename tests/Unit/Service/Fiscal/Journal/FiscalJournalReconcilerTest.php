@@ -500,6 +500,21 @@ final class FiscalJournalReconcilerTest extends TestCase
         $this->assertSame(FiscalJournalState::HEAD_MISSING, $restored->status());
     }
 
+    public function testADatabaseBehindTheJournalFailsTheJobWithTheGuardCodeOncePerIncident(): void
+    {
+        $this->fiveJournaled();
+        $this->connection->executeStatement('DELETE FROM fiscal_record WHERE number IN (?, ?)', ['A26000004', 'A26000005']);
+        $head = $this->connection->fetchAssociative("SELECT id, hash FROM fiscal_record WHERE number = 'A26000003'");
+        $this->connection->update('fiscal_chain', ['last_record_id' => $head['id'], 'last_hash' => $head['hash']], ['id' => 1]);
+
+        $first = $this->reconciler()->run(self::at('2026-11-14 18:11:00'));
+        $this->assertSame(FiscalJournalState::HEAD_MISSING, $first->status());
+        $this->assertSame(FiscalJournalState::EXIT_GUARD, $first->exitCode, 'the run that detects it fails the job');
+        $this->assertSame(0, $this->reconciler()->run(self::at('2026-11-14 18:12:00'))->exitCode, 'not every minute');
+        $this->assertSame(FiscalJournalState::EXIT_GUARD, $this->reconciler()->run(self::at('2026-11-15 18:12:00'))->exitCode, 'again after 24 hours');
+        $this->assertSame(5, \count($this->lines()), 'nothing is written while the database is behind');
+    }
+
     public function testOnlyNewLinesAreCheckedEachMinute(): void
     {
         $this->writer->createJournal();

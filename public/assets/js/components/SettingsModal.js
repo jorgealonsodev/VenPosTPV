@@ -784,6 +784,13 @@ const SettingsModal = {
         // The line shown for the journal state; null when another part of Ajustes speaks for it.
         function fiscalJournalMessage(state) {
             if (!state) return null;
+            // fiscal-journal S5: the guard reads the database now, so it speaks before the last run's state.
+            const guard = state.guard || null;
+            if (guard ? guard.state === 'behind_journal' : state.status === 'head_missing') {
+                const missing = guard && guard.missing;
+                const what = missing ? ' (falta ' + missing.number + (missing.after > 0 ? ' y ' + missing.after + ' posteriores' : '') + ')' : '';
+                return { tone: 'error', text: 'La base de datos está por detrás del diario fiscal' + what + '. No se puede vender hasta recuperar los documentos.' };
+            }
             if (state.status === 'not_started') return { tone: 'muted', text: 'Diario fiscal sin iniciar' };
             if (state.status === 'ok') {
                 const last = state.last_document;

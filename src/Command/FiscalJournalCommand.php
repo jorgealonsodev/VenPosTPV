@@ -19,10 +19,11 @@ use VenPosTPV\Service\Fiscal\Journal\FiscalJournalState;
  * new lines (the whole journal once a day, or now with --verify-all), writes
  * state.json and sends the alert e-mail (fiscal-journal D3.5, D9).
  *
- * Exit codes: 0 up to date or documents pending; 1 neither journal folder can be
- * written (sales go on, the documents wait in the database) or a document cannot
- * be journaled; 3 the journal is damaged. Code 2 (the guard is active) belongs to
- * the guard (D7).
+ * Exit codes (also in --help): 0 up to date or documents pending; 1 neither journal
+ * folder can be written (sales go on, the documents wait in the database) or a
+ * document cannot be journaled; 2 the database is behind the fiscal journal (a
+ * restore, FiscalJournalGuard): the till cannot issue documents until they are
+ * recovered; 3 the journal is damaged.
  *
  * A lasting incident fails the job (its code and one line on STDERR) only on the
  * run that first detects it and once every 24 hours while it lasts; the runs in
@@ -40,6 +41,20 @@ final class FiscalJournalCommand extends Command
 
     protected function configure(): void
     {
+        $this->setHelp(<<<'HELP'
+            Run by tpv:cron every minute: appends to the fiscal journal every document of the
+            database that is not in it yet, resolves leftover intents, checks the new lines
+            (the whole journal once a day, or now with --verify-all) and writes state.json.
+
+            Exit codes:
+              0 up to date or documents pending
+              1 neither journal folder can be written (sales go on, the documents wait in the database) or a document cannot be journaled
+              2 the database is behind the fiscal journal (a restore): the till cannot issue documents until they are recovered
+              3 the journal is damaged
+
+            A lasting incident gives its code only on the run that first detects it and once
+            every 24 hours; the runs in between exit 0.
+            HELP);
         $this->addOption('verify-all', null, InputOption::VALUE_NONE, 'Check every line of the journal now, not only the lines added since the last run');
     }
 

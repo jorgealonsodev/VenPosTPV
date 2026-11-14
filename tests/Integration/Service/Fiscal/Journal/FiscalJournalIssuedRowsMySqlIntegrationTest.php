@@ -6,6 +6,7 @@ namespace VenPosTPV\Tests\Integration\Service\Fiscal\Journal;
 
 use Doctrine\DBAL\Connection;
 use PHPUnit\Framework\TestCase;
+use VenPosTPV\Service\Fiscal\Journal\FiscalJournalGuard;
 use VenPosTPV\Service\Invoice\InvoiceIssuer;
 use VenPosTPV\Tests\Integration\Service\Invoice\InvoiceFixtures;
 use VenPosTPV\Tests\Support\TestDatabase;
@@ -35,6 +36,7 @@ final class FiscalJournalIssuedRowsMySqlIntegrationTest extends TestCase
         $this->fixtures->install();
         $this->journal = new JournalHarness($this->connection);
         $this->journal->writer->createJournal();
+        $this->fixtures->guard = new FiscalJournalGuard($this->connection, $this->journal->locations);
     }
 
     protected function tearDown(): void

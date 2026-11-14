@@ -729,6 +729,8 @@ const RefundScreen = {
             }
             // PRD D3: the server's own words, the screen then offers cash or card.
             if (status === 503 && /voucher_unavailable/.test(match ? match[2] : '')) return detail;
+            // fiscal-journal S5: the till is blocked (database behind the fiscal journal); its message says what to do.
+            if (status === 423) return detail;
             if (status === 404) return 'Pedido no encontrado';
             if (status === 409) return 'No se ha devuelto nada nuevo: ' + detail;
             if (status === 422) return 'No se puede devolver: ' + detail;

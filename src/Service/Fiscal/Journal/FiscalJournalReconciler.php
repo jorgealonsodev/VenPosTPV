@@ -34,7 +34,8 @@ use VenPosTPV\Service\Fiscal\FiscalRecorder;
  * what JournalVerifier finds) and a primary that lost its journal.id
  * (JOURNAL_MISSING, for the guard) are never rewritten from the database.
  *
- * An incident (damaged, blocked, no folder writable) is reported as a failure of
+ * An incident (damaged, blocked, no folder writable, the database behind the
+ * journal: exit code 2, the guard's case) is reported as a failure of
  * the job, with its log messages, only on the run that first detects it and once a
  * day while it lasts; the runs in between exit 0 and log it as debug, so the
  * hosting panel, which mails STDERR, does not mail every minute.
@@ -120,6 +121,8 @@ class FiscalJournalReconciler
         $incident = match (true) {
             $damaged !== null => sprintf('damaged:%s:%s:%s:%s', $damaged['folder'] ?? '', $damaged['file'] ?? '', $damaged['line'] ?? '', $damaged['reason']),
             $journalMissing => 'journal_missing',
+            // The database is behind the journal (a restore): the till cannot issue (FiscalJournalGuard).
+            $headMissing => 'head_missing',
             $blocked !== null => 'blocked:' . $blocked['number'],
             $unwritable => 'unwritable',
             default => null,
@@ -149,6 +152,7 @@ class FiscalJournalReconciler
         $exitCode = match (true) {
             !$reported => FiscalJournalState::EXIT_OK,
             $damaged !== null, $journalMissing => FiscalJournalState::EXIT_DAMAGED,
+            $headMissing => FiscalJournalState::EXIT_GUARD,
             default => FiscalJournalState::EXIT_UNWRITABLE,
         };
 

@@ -36,7 +36,7 @@ final class FiscalJournalState
     public const EXIT_OK = 0;
     /** No folder can be written, or a document cannot be journaled. */
     public const EXIT_UNWRITABLE = 1;
-    /** Reserved for the guard (D7, its own task): the till cannot issue documents. */
+    /** The database is behind the journal (D7, FiscalJournalGuard): the till cannot issue documents. */
     public const EXIT_GUARD = 2;
     public const EXIT_DAMAGED = 3;
 

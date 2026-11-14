@@ -15,6 +15,7 @@ use VenPosTPV\Service\Checkout\CheckoutService;
 use VenPosTPV\Service\Checkout\PsOrderClient;
 use VenPosTPV\Service\PrestaShop\CouponCreationService;
 use VenPosTPV\Service\Fiscal\FiscalRecorder;
+use VenPosTPV\Service\Fiscal\Journal\FiscalJournalGuard;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalIntents;
 use VenPosTPV\Service\Print\PrinterService;
 use VenPosTPV\Service\Refund\OrderSearchService;
@@ -40,6 +41,9 @@ final class JournalPathFixtures
     /** PrestaShop ids used by these tests (coupon sales, uploaded sales, legacy refunds). */
     public const PS_ORDER_FIRST = 947100;
     public const PS_ORDER_LAST = 947199;
+
+    /** The guard every recorder() checks under the chain lock (fiscal-journal D5), as in production. */
+    public ?FiscalJournalGuard $guard = null;
 
     /** @param \Closure(class-string): \PHPUnit\Framework\MockObject\MockObject $mock the test's createMock */
     public function __construct(private readonly Connection $connection, private readonly \Closure $mock)
@@ -100,7 +104,7 @@ final class JournalPathFixtures
 
     public function recorder(?FiscalJournalIntents $intents = null): FiscalRecorder
     {
-        return new FiscalRecorder($this->connection, journal: $intents);
+        return new FiscalRecorder($this->connection, journal: $intents, guard: $this->guard);
     }
 
     public function cash(): CashSessionService

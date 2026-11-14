@@ -163,6 +163,32 @@ final class FiscalJournalWriterTest extends TestCase
         $this->assertPrimaryComplete();
     }
 
+    /** T1b verification: the after-response flush is bounded, the merge of the secondary included. */
+    public function testABoundedFlushMergesAtMostItsLimitAndLeavesTheRestForTheNextFlush(): void
+    {
+        $this->issue(2);
+        $this->writer()->flush();
+        unlink($this->root . '/backups/fiscal-journal/journal.lock');
+        mkdir($this->root . '/backups/fiscal-journal/journal.lock');
+        $this->issue(25);
+        $this->writer()->flush();
+        $this->assertCount(25, $this->lines($this->secondary()));
+        rmdir($this->root . '/backups/fiscal-journal/journal.lock');
+        $this->issue(3);
+
+        $result = $this->writer()->flushAfterIssue(20, 2.0);
+
+        $this->assertSame(FiscalJournalFlushResult::OK, $result->status);
+        $this->assertSame(20, $result->written, 'merged lines count against the limit');
+        $this->assertSame(range(1, 22), array_column($this->lines(), 'seq'), 'two journaled before, twenty merged, nothing more');
+        $this->assertSame($this->lines()[21]['line_hash'], $this->primary()->readHead()['line_hash'] ?? null);
+        $this->assertSame(range(3, 27), array_column($this->lines($this->secondary()), 'seq'), 'the secondary is kept until all of it is merged');
+
+        $this->writer()->flush();
+        $this->assertPrimaryComplete();
+        $this->assertCount(30, $this->lines());
+    }
+
     public function testAReadOnlyMonthFileSendsTheLinesToTheSecondaryAndTheyComeBackOnce(): void
     {
         $this->issue(2);
