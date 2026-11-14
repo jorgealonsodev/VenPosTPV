@@ -21,4 +21,4 @@
 
 1. Run the migrations (`Version00000034LocalCustomers`): `OutboxSync` reads `outbox.depends_on`.
 2. Give the webservice key GET and POST on `customers` and GET on `addresses` in PrestaShop (Advanced Parameters > Webservice). Pairing and TPV Connect 0.8.2 (`upgrade-0.8.2.php`) grant both to the TPV's key.
-3. Run `tpv:customers:sync` once and schedule it.
+3. Nothing to schedule: the `tpv:cron` task runs `tpv:customers:sync` every night from 03:30 (shop time), and on its next minute when it has never run.

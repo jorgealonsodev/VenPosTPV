@@ -38,9 +38,9 @@ Necesitas:
 - un subdominio (por ejemplo `tpv.tutienda.com`) con certificado SSL;
 - PHP 8.4 o superior con `pdo_mysql`;
 - una base de datos MySQL **vacía**, solo para el TPV;
-- poder crear tareas programadas (cron).
+- poder crear una tarea programada (cron) que se ejecute cada minuto.
 
-Sube el zip, ejecuta el instalador web (con la dirección de la tienda y el código del módulo) y crea las tareas programadas que te muestra al terminar. Los pasos completos están en [Instalar en un hosting](despliegue-hosting.md).
+Sube el zip, ejecuta el instalador web (con la dirección de la tienda y el código del módulo) y crea la tarea programada que te muestra al terminar: una sola, `tpv:cron`, cada minuto. Los pasos completos están en [Instalar en un hosting](despliegue-hosting.md).
 
 ## 3. Unir PrestaShop y el TPV
 
@@ -58,7 +58,7 @@ Cómo emparejar más tarde, cambiar de impresora o resolver problemas: [Agente d
 
 - [ ] El módulo **TPV Connect** aparece instalado en PrestaShop.
 - [ ] `https://tu-subdominio/app/login` abre el TPV y entras con el usuario administrador.
-- [ ] El catálogo tiene productos (la tarea `tpv:catalog:sync --full` se ha ejecutado al menos una vez).
+- [ ] El catálogo tiene productos: la tarea `tpv:cron` lo carga sola a los pocos minutos de crearla (en **Ajustes → Acerca de → Estado de la instalación** se ve si la tarea funciona).
 - [ ] En **Ajustes → Cajas**, cada caja sale como «Conectado».
 - [ ] Una venta de prueba imprime el ticket y aparece como pedido en PrestaShop al cabo de un minuto.
 

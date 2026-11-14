@@ -194,27 +194,29 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 // panels that only run a command get the full cron line.
                 $script = preg_match('#^/var/www/vhosts/[^/]+/(.+)$#', $root, $m) === 1 ? $m[1] . '/bin/console' : $root . '/bin/console';
                 $phpVersion = PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION;
-                $task = static fn (string $when, string $args): string => '<tr><td>' . $when . '</td><td><code>' . h($args) . '</code></td></tr>';
+                $cronArgs = 'tpv:cron --env=prod';
                 $tpvUrl = $result['values']['TPV_URL'];
                 page('TPV instalado', '<p class="ok">Base de datos preparada (' . (int) $executed . ' migraciones aplicadas) y configuración guardada en <code>.env</code>.</p>'
                     . \VenPosTPV\Service\Install\ProvisioningSummary::html($provisioning)
                     . ($deleted ? '' : '<p class="err">No se pudo borrar <code>public/install.php</code>. Bórralo a mano; de todas formas ya está bloqueado.</p>')
-                    . '<h2>1. Tareas programadas</h2><p>Crea cinco tareas programadas (cron) en el panel del hosting y notifica solo los errores. '
+                    . '<h2>1. Tareas programadas</h2><p>Crea <strong>una</strong> tarea programada (cron) en el panel del hosting que se ejecute cada minuto y notifica solo los errores. '
                     . 'Si el panel ejecuta un script PHP: ruta <code>' . h($script) . '</code>, PHP <strong>' . h($phpVersion) . '</strong> y como argumentos lo de la tabla. '
-                    . 'Si solo admite un comando: <code>php ' . h($root . '/bin/console') . '</code> seguido de los argumentos (en algunos paneles el binario es <code>php' . h($phpVersion) . '</code>).</p>'
+                    . 'Si solo admite un comando: <code>php ' . h($root . '/bin/console') . ' ' . h($cronArgs) . '</code> (en algunos paneles el binario es <code>php' . h($phpVersion) . '</code>).</p>'
                     . '<div class="table"><table><tr><th>Ejecutar</th><th>Con argumentos</th></tr>'
-                    . $task('Estilo cron <code>* * * * *</code>', 'tpv:sync:outbox --env=prod')
-                    . $task('Estilo cron <code>* * * * *</code>', 'tpv:catalog:sync --stock-only --env=prod')
-                    . $task('Diariamente 03:00', 'tpv:catalog:sync --full --env=prod')
-                    . $task('Diariamente 03:30', 'tpv:customers:sync --env=prod')
-                    . $task('Diariamente 04:00', 'tpv:backup:database --env=prod')
-                    . '</table></div><p>En la tarea del catálogo completo ejecútala también una vez a mano para cargar los productos. La última guarda cada día una copia de la base de datos en <code>backups/</code> (las 7 más recientes); descarga de vez en cuando una copia y el archivo <code>.env</code> fuera del servidor.</p>'
+                    . '<tr><td>Estilo cron <code>* * * * *</code></td><td><code>' . h($cronArgs) . '</code></td></tr>'
+                    . '</table></div><p>La tarea lo hace todo sola: cada minuto sube las ventas y sincroniza el stock, y cada noche carga el catálogo completo, los clientes y la copia de la base de datos. '
+                    . 'Los productos se cargan solos en los primeros minutos. Si la tarea funciona y cómo acabó cada trabajo se ve en <strong>Ajustes → Acerca de</strong>. '
+                    . 'La copia se guarda en <code>backups/</code> (las 7 más recientes); descarga de vez en cuando una copia y el archivo <code>.env</code> fuera del servidor.</p>'
                     . '<h2>2. PHP del subdominio</h2><p><code>max_execution_time</code> = 35 como mínimo y <code>pm.max_children</code> ≥ número de cajas + 6.</p>'
                     . '<h2>3. PrestaShop</h2>'
                     . ($result['pairing'] !== null
                         ? '<p>El TPV y la tienda <code>' . h($result['values']['PS_SHOP_URL']) . '</code> ya están emparejados: el módulo <strong>TPV Connect</strong> tiene la dirección del TPV y el TPV, las claves de la tienda. No hay que copiar nada.</p>'
                         : '<p>Para unir el módulo <strong>TPV Connect</strong> con el TPV sin copiar nada: en el módulo pulsa <strong>Emparejar con un TPV</strong> y escribe el código en el TPV, en <strong>Ajustes → Acerca de → Volver a emparejar con la tienda</strong>.</p>')
-                    . '<h2>4. Entrar</h2><p><a href="' . h($tpvUrl) . '/app/login">' . h($tpvUrl) . '/app/login</a> con el usuario administrador que acabas de crear.</p>');
+                    . '<h2>4. Entrar</h2><p><a href="' . h($tpvUrl) . '/app/login">' . h($tpvUrl) . '/app/login</a> con el usuario administrador que acabas de crear.</p>'
+                    . '<h2>5. Primeros pasos</h2><ol>'
+                    . '<li>Una instalación nueva no tiene cajas: al entrar, el TPV dice «Este equipo no tiene caja asignada». Crea la caja con <strong>Crear caja y usarla en este equipo</strong>; en el ordenador de cada caja, entra como administrador y haz lo mismo.</li>'
+                    . '<li>Para imprimir con el agente: en <strong>Ajustes → Cajas</strong>, en la caja, pon <strong>Tipo de impresora</strong> en «Agente de impresión», guarda y pulsa <strong>Conectar agente</strong>. El código de 6 cifras se escribe en el agente de ese ordenador (guía <code>docs/print-agent.md</code>).</li>'
+                    . '<li>Espera unos minutos a que se carguen los productos y haz una venta de prueba: sale el ticket y aparece como pedido en PrestaShop al cabo de un minuto.</li></ol>');
             }
         }
     }
@@ -233,11 +235,11 @@ page('Instalación del TPV', $errHtml . '<form method="post" autocomplete="off">
     . '<div class="narrow"><label>Puerto</label><input name="db_port" value="' . $v('db_port') . '" required></div></div>'
     . '<label>Nombre de la base de datos</label><input name="db_name" value="' . $v('db_name') . '" required>'
     . '<div class="row"><div><label>Usuario</label><input name="db_user" value="' . $v('db_user') . '" required></div>'
-    . '<div><label>Contraseña</label><input type="password" name="db_password" value="' . $v('db_password') . '"></div></div>'
+    . '<div><label>Contraseña</label><input type="password" name="db_password" value="' . $v('db_password') . '" autocomplete="new-password"></div></div>'
     . '<h2>TPV</h2>'
     . '<label>Dirección del TPV</label><input name="tpv_url" value="' . $v('tpv_url') . '" required>'
     . '<div class="row"><div><label>Usuario administrador</label><input name="admin_user" value="' . $v('admin_user') . '" required></div>'
-    . '<div><label>Contraseña <small>(mín. 12)</small></label><input type="password" name="admin_password" value="' . $v('admin_password') . '" minlength="12" required></div></div>'
+    . '<div><label>Contraseña <small>(mín. 12)</small></label><input type="password" name="admin_password" value="' . $v('admin_password') . '" minlength="12" autocomplete="new-password" required></div></div>'
     . '<label>Nombre de la tienda <small>(sale en los tickets)</small></label><input name="store_name" value="' . $v('store_name') . '" required>'
     . '<label>Dirección postal <small>(sale en los tickets)</small></label><input name="store_address" value="' . $v('store_address') . '">'
     . '<h2>PrestaShop</h2>'

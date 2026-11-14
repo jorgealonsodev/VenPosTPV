@@ -85,6 +85,17 @@ final class InstallerFormRefillTest extends TestCase
         self::assertStringNotContainsString('maxlength', $tag[0]);
     }
 
+    /** A password manager must not offer to overwrite an unrelated saved login. */
+    public function testThePasswordFieldsAskForANewPassword(): void
+    {
+        $html = $this->request(null);
+
+        foreach (['db_password', 'admin_password'] as $name) {
+            self::assertSame(1, preg_match('/<input\b[^>]*\bname="' . $name . '"[^>]*>/', $html, $tag), "field {$name} is in the form");
+            self::assertStringContainsString('autocomplete="new-password"', $tag[0], $name);
+        }
+    }
+
     /** @param array<string, string>|null $post null for a GET */
     private function request(?array $post): string
     {
