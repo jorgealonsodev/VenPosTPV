@@ -25,6 +25,17 @@ En **Ajustes → VERI*FACTU → Comprobar registros** (solo administradores). Re
 
 También está disponible como `GET /api/fiscal/chain`.
 
+### Después de restaurar una copia: recuperar los documentos
+
+Cada documento emitido se anota también en el diario fiscal, fuera de la base de datos (`backups/fiscal-journal/`). Si se restaura una copia de seguridad anterior a los últimos documentos, la caja se bloquea para no repetir números. Para volver a vender, el administrador recupera esos documentos desde el diario:
+
+```bash
+php bin/console tpv:fiscal:replay          # lista lo que falta, no escribe nada (sale con 2)
+php bin/console tpv:fiscal:replay --apply  # lo recupera (sale con 0)
+```
+
+La recuperación vuelve a poner en la base de datos cada ticket, rectificativa y factura posterior a la copia, en orden y con sus números, ids, importes y registros fiscales tal cual (misma huella), de modo que la cadena sigue siendo correcta y los contadores continúan después del último número. Se hace en una sola transacción: si falla o se interrumpe, la base de datos queda como estaba, y repetirla no cambia nada. No se ejecuta si el diario está dañado; si la copia es anterior al diario conservado sale con 3 y si una fila ya existe con otro contenido, con 4. No recupera los cierres Z ni el cierre de las sesiones de caja posteriores a la copia (vuelven abiertas: hay que cerrarlas de nuevo), el stock, el estado de impresión, los clientes nuevos, los tickets aparcados ni los movimientos de caja manuales; las subidas a la tienda vuelven a la cola y la tienda no las duplica.
+
 ## Qué está desactivado
 
 - **QR tributario y leyenda «VERI*FACTU» en los tickets.** El código existe (ESC/POS y PDF, arriba del ticket, con «QR tributario:» encima y «VERI*FACTU» debajo), pero no se imprime.
@@ -78,6 +89,7 @@ Revisado en los textos consolidados del BOE el 5 de noviembre de 2026; conviene 
 - `src/Service/Fiscal/FiscalRecorder.php`: grabación encadenada dentro de la transacción de la venta o del abono.
 - `src/Service/Fiscal/FiscalChainVerifier.php`: comprobación de la cadena.
 - `src/Service/Fiscal/FiscalRecordTriggers.php`: triggers que impiden modificar o borrar.
+- `src/Service/Fiscal/Journal/FiscalReplay.php` y `src/Command/FiscalReplayCommand.php`: recuperación de documentos desde el diario fiscal tras restaurar una copia (`tpv:fiscal:replay`).
 - `src/Service/Fiscal/FiscalQr.php`: URL de cotejo del QR tributario.
 - `src/Service/Fiscal/VerifactuSettings.php`: interruptor y bloqueo (`SUBMISSION_AVAILABLE`).
 - `src/Controller/Api/FiscalController.php`: `GET /api/fiscal/chain`, `GET/PUT /api/fiscal/settings`.

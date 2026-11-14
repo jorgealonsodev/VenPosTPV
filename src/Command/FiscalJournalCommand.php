@@ -49,7 +49,7 @@ final class FiscalJournalCommand extends Command
             Exit codes:
               0 up to date or documents pending
               1 neither journal folder can be written (sales go on, the documents wait in the database) or a document cannot be journaled
-              2 the database is behind the fiscal journal (a restore): the till cannot issue documents until they are recovered
+              2 the database is behind the fiscal journal (a restore): the till cannot issue documents until they are recovered (tpv:fiscal:replay)
               3 the journal is damaged
 
             A lasting incident gives its code only on the run that first detects it and once
