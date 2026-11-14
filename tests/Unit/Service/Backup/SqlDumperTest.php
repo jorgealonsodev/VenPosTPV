@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace VenPosTPV\Tests\Unit\Service\Backup;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use VenPosTPV\Service\Backup\SqlDumper;
 
@@ -33,5 +34,25 @@ final class SqlDumperTest extends TestCase
             . "DELIMITER ;\n",
             SqlDumper::triggerStatement('t1', $create)
         );
+    }
+
+    /** @return iterable<string, array{string, bool}> */
+    public static function columnExtras(): iterable
+    {
+        yield 'plain column' => ['', false];
+        yield 'auto increment' => ['auto_increment', false];
+        yield 'MySQL DEFAULT CURRENT_TIMESTAMP' => ['DEFAULT_GENERATED', false];
+        yield 'MySQL ON UPDATE CURRENT_TIMESTAMP' => ['DEFAULT_GENERATED on update CURRENT_TIMESTAMP', false];
+        yield 'MariaDB ON UPDATE CURRENT_TIMESTAMP' => ['on update current_timestamp()', false];
+        yield 'virtual generated' => ['VIRTUAL GENERATED', true];
+        yield 'stored generated' => ['STORED GENERATED', true];
+        yield 'older MariaDB persistent' => ['PERSISTENT GENERATED', true];
+        yield 'lower case' => ['stored generated', true];
+    }
+
+    #[DataProvider('columnExtras')]
+    public function testOnlyVirtualOrStoredGeneratedColumnsAreLeftOutOfTheDump(string $extra, bool $generated): void
+    {
+        $this->assertSame($generated, SqlDumper::isGeneratedColumn($extra));
     }
 }

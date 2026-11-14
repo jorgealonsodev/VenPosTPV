@@ -24,6 +24,7 @@ final class DatabaseBackupMySqlIntegrationTest extends TestCase
 {
     private const RESTORE_DB = 'venposbackup_restore';
     private const PROBE = 'backup_probe';
+    private const STAMPED = 'backup_probe_stamped';
 
     private ?Connection $connection = null;
     private ?Connection $restored = null;
@@ -43,6 +44,7 @@ final class DatabaseBackupMySqlIntegrationTest extends TestCase
         $this->dir = sys_get_temp_dir() . '/venpos-backup-it-' . bin2hex(random_bytes(4)) . '/backups';
         $this->triggersExisted = FiscalRecordTriggers::exist($this->connection);
         $this->connection->executeStatement('DROP TABLE IF EXISTS ' . self::PROBE);
+        $this->connection->executeStatement('DROP TABLE IF EXISTS ' . self::STAMPED);
         $this->connection->executeStatement(
             'CREATE TABLE ' . self::PROBE . ' (
                 id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -62,6 +64,7 @@ final class DatabaseBackupMySqlIntegrationTest extends TestCase
         $this->restored?->close();
         $this->root(sprintf('DROP DATABASE IF EXISTS %s', self::RESTORE_DB));
         $this->connection->executeStatement('DROP TABLE IF EXISTS ' . self::PROBE);
+        $this->connection->executeStatement('DROP TABLE IF EXISTS ' . self::STAMPED);
         if (!$this->triggersExisted) {
             $this->connection->executeStatement('DROP TRIGGER IF EXISTS fiscal_record_no_update');
             $this->connection->executeStatement('DROP TRIGGER IF EXISTS fiscal_record_no_delete');
@@ -200,5 +203,49 @@ final class DatabaseBackupMySqlIntegrationTest extends TestCase
         $this->assertStringContainsString("SET FOREIGN_KEY_CHECKS=0;\n", substr($sql, 0, 500));
         $this->assertStringEndsWith("SET FOREIGN_KEY_CHECKS=1;\n", $sql);
         $this->assertStringNotContainsString('DEFINER', $sql);
+    }
+
+    public function testColumnsWithADefaultOrOnUpdateTimestampKeepTheirStoredValuesAndOnlyGeneratedColumnsAreLeftOut(): void
+    {
+        \assert($this->connection !== null);
+        // MySQL 8 reports EXTRA = DEFAULT_GENERATED for a DEFAULT CURRENT_TIMESTAMP column;
+        // that is not a generated column and its value must survive the restore.
+        $this->connection->executeStatement(
+            'CREATE TABLE ' . self::STAMPED . ' (
+                id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                label VARCHAR(64) NOT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                stamped_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                touched_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                label_upper VARCHAR(64) AS (UPPER(label)) VIRTUAL,
+                label_length INT AS (CHAR_LENGTH(label)) STORED
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+        );
+        $this->connection->executeStatement(
+            'INSERT INTO ' . self::STAMPED . " (label, created_at, stamped_at, touched_at) VALUES
+             ('first', '2026-01-02 03:04:05', '2026-01-02 03:04:06', '2026-01-02 03:04:07'),
+             ('second', '2025-12-31 23:59:59', '2025-12-31 23:59:58', NULL)"
+        );
+        $expected = $this->connection->fetchAllAssociative(
+            'SELECT id, label, created_at, stamped_at, touched_at, label_upper, label_length FROM ' . self::STAMPED . ' ORDER BY id'
+        );
+
+        $result = (new DatabaseBackup(
+            new SqlDumper($this->connection),
+            new BackupRetention(),
+            new DatabaseHealthCheck($this->connection, new FiscalChainVerifier($this->connection)),
+            $this->dir
+        ))->run(7);
+
+        $sql = (string) gzdecode((string) file_get_contents($result->path));
+        $this->assertStringContainsString(
+            'INSERT INTO `' . self::STAMPED . "` (`id`, `label`, `created_at`, `stamped_at`, `touched_at`) VALUES\n",
+            $sql,
+            'default and on-update timestamp columns are dumped, generated ones are not'
+        );
+        $this->restored = $this->restore($result->path);
+        $this->assertSame($expected, $this->restored->fetchAllAssociative(
+            'SELECT id, label, created_at, stamped_at, touched_at, label_upper, label_length FROM ' . self::STAMPED . ' ORDER BY id'
+        ));
     }
 }
