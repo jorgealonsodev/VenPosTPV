@@ -21,6 +21,12 @@ class CronLock
     ) {
     }
 
+    /** Where the lock files live. */
+    public function directory(): string
+    {
+        return $this->directory;
+    }
+
     /** True when the lock is now held by this process; false when another holds it. Never waits. */
     public function acquire(string $name): bool
     {

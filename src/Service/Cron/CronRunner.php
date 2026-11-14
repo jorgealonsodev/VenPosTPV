@@ -11,7 +11,10 @@ use Symfony\Component\DependencyInjection\Attribute\Autowire;
  * Minute jobs run every time. A nightly job runs when its last success is older
  * than the latest occurrence of its hour (so a missed hour runs at the next
  * minute); after a failure it is tried again no sooner than 30 minutes later, at
- * most 3 times a night. A job still running from an earlier run is skipped, and
+ * most 3 times a night. That accounting is kept both in the database and in a
+ * local marker (CronAttemptMarker), and a nightly job runs only when both say it
+ * is due, so a database that refuses writes cannot relaunch it every minute. A
+ * state that cannot be read counts as no information. A job still running from an earlier run is skipped, and
  * so is a nightly job while another nightly job runs. A state that cannot be
  * saved never stops the run.
  */
@@ -24,12 +27,15 @@ class CronRunner
     private const NIGHTLY_LOCK = 'cron-nightly';
 
     private readonly \DateTimeZone $timezone;
+    private readonly CronAttemptMarker $marker;
 
     public function __construct(
         private readonly CronStateStore $store,
         private readonly CronLock $lock,
         #[Autowire('%env(PS_SHOP_TIMEZONE)%')] string $timezone = 'Europe/Madrid',
+        ?CronAttemptMarker $marker = null,
     ) {
+        $this->marker = $marker ?? new CronAttemptMarker($lock->directory());
         try {
             $this->timezone = new \DateTimeZone($timezone);
         } catch (\Exception) {
@@ -58,8 +64,8 @@ class CronRunner
         $launched = $failures = $skipped = $errors = [];
         foreach (self::jobs() as $job) {
             $at = $clock();
-            $state = $this->store->job($job->id);
-            if (!$this->isDue($job, $state, $at)) {
+            $state = $this->readState($job);
+            if (!$this->isDue($job, $state, $at) || ($job->dailyAt !== null && !$this->isDue($job, $this->marker->state($job->id), $at))) {
                 continue;
             }
             // A nightly job also takes the nightly lock, so two nightly jobs never
@@ -79,12 +85,18 @@ class CronRunner
 
             $launched[] = $job->id;
             try {
+                if ($job->dailyAt !== null) {
+                    $this->marker->begin($job->id, $this->latestOccurrence($job->dailyAt, $at), $at);
+                }
                 $this->store->refreshConnection();
                 try {
                     $outcome = $launch($job);
                     $error = $outcome->exitCode === 0 ? null : self::lastLine($outcome->output, $outcome->exitCode);
                 } catch (\Throwable $e) {
                     $error = $e->getMessage() !== '' ? $e->getMessage() : $e::class;
+                }
+                if ($job->dailyAt !== null) {
+                    $this->marker->finish($job->id, $error === null);
                 }
                 $recorded = $this->record($job, $state, $at, $error);
                 if ($recorded !== null) {
@@ -101,6 +113,20 @@ class CronRunner
         }
 
         return new CronReport($launched, $failures, $skipped, $errors);
+    }
+
+    /**
+     * The job's stored state; empty (no information) when it cannot be read.
+     *
+     * @return array<string, mixed>
+     */
+    private function readState(CronJob $job): array
+    {
+        try {
+            return $this->store->job($job->id);
+        } catch (\Throwable) {
+            return [];
+        }
     }
 
     /**
