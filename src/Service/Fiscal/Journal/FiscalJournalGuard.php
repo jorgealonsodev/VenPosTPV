@@ -21,8 +21,17 @@ use Psr\Log\LoggerInterface;
  * behind the database (normal lag) is never a block.
  *
  * A journal that cannot be read and a database error never block either (S2): the
- * check logs and lets the till issue. The shop's half of the guard (`behind_shop`,
- * `journal_missing`) is a later task (T7).
+ * check logs and lets the till issue.
+ *
+ * The shop's half (D6, D7, S8), checked after the journal's: `shop-head.json`, the
+ * last document of every series the shop holds, stored by the every-minute task
+ * (FiscalJournalShopSync), for the journal in the folders and the one the database
+ * names (FiscalJournalIdentity). A document there that the database lacks is
+ * `behind_shop`: the shop only ever receives committed documents, so this is never
+ * normal lag. The database naming a journal that no folder holds, with no answer of
+ * the shop for it yet, is `journal_missing`. A shop that cannot be reached, a
+ * module too old, a missing or unreadable shop head and the head of any other
+ * journal are never a block: only positive evidence is.
  *
  * Cost per check: a few small files and one indexed lookup per distinct document
  * (usually one). Called early by FiscalJournalGuardListener, before the issuing
@@ -35,6 +44,8 @@ class FiscalJournalGuard
 {
     public const OK = 'ok';
     public const BEHIND_JOURNAL = 'behind_journal';
+    public const BEHIND_SHOP = 'behind_shop';
+    public const JOURNAL_MISSING = 'journal_missing';
 
     /** Whether this process refused an issue since the last takeRefusal() (one request per process). */
     private bool $refused = false;
@@ -43,6 +54,7 @@ class FiscalJournalGuard
         private readonly Connection $connection,
         private readonly FiscalJournalLocations $locations,
         private readonly ?LoggerInterface $logger = null,
+        private ?FiscalJournalIdentity $identity = null,
     ) {
     }
 
@@ -87,7 +99,79 @@ class FiscalJournalGuard
             $this->logger?->warning('Fiscal journal guard could not check the database: {message}', ['message' => $e->getMessage()]);
         }
 
+        try {
+            return $this->checkShop();
+        } catch (\Throwable $e) {
+            $this->logger?->warning('Fiscal journal guard could not check the shop copy: {message}', ['message' => $e->getMessage()]);
+        }
+
         return ['state' => self::OK, 'missing' => null];
+    }
+
+    /**
+     * @return array{state: string, missing: ?array{number: string, invoice_type: string}}
+     */
+    private function checkShop(): array
+    {
+        $inFolders = [];
+        foreach ([$this->locations->primary(), $this->locations->secondary()] as $location) {
+            $id = $location->journalId();
+            if ($id !== null) {
+                $inFolders[strtolower($id)] = true;
+            }
+        }
+        $named = ($this->identity ??= new FiscalJournalIdentity($this->connection))->journalId();
+        $relevant = $inFolders + ($named !== null ? [$named => true] : []);
+        $heads = $this->shopHeads(array_keys($relevant));
+        foreach ($heads as $head) {
+            foreach ($head['series'] as $entry) {
+                $document = ['number' => $entry['number'], 'invoice_type' => '', 'hash' => $entry['hash']];
+                if (!$this->inDatabase($document)) {
+                    return ['state' => self::BEHIND_SHOP, 'missing' => ['number' => $entry['number'], 'invoice_type' => '']];
+                }
+            }
+        }
+        if ($named !== null && !isset($inFolders[$named]) && !isset($heads[$named])) {
+            return ['state' => self::JOURNAL_MISSING, 'missing' => null];
+        }
+
+        return ['state' => self::OK, 'missing' => null];
+    }
+
+    /**
+     * The newest shop head of each of these journals found in either folder.
+     *
+     * @param list<string> $journalIds lowercase
+     *
+     * @return array<string, array{fetched_at: string, series: list<array{number: string, hash: string}>}>
+     */
+    private function shopHeads(array $journalIds): array
+    {
+        $heads = [];
+        foreach ([$this->locations->primary(), $this->locations->secondary()] as $location) {
+            $stored = $location->readShopHead();
+            if (!\is_array($stored['heads'] ?? null)) {
+                continue;
+            }
+            foreach ($stored['heads'] as $id => $head) {
+                $id = strtolower((string) $id);
+                if (!\in_array($id, $journalIds, true) || !\is_array($head) || !\is_string($head['fetched_at'] ?? null) || !\is_array($head['series'] ?? null)) {
+                    continue;
+                }
+                if (isset($heads[$id]) && strcmp($heads[$id]['fetched_at'], $head['fetched_at']) >= 0) {
+                    continue;
+                }
+                $series = [];
+                foreach ($head['series'] as $entry) {
+                    if (\is_array($entry) && \is_string($entry['number'] ?? null) && $entry['number'] !== '' && \is_string($entry['hash'] ?? null) && $entry['hash'] !== '') {
+                        $series[] = ['number' => $entry['number'], 'hash' => $entry['hash']];
+                    }
+                }
+                $heads[$id] = ['fetched_at' => $head['fetched_at'], 'series' => $series];
+            }
+        }
+
+        return $heads;
     }
 
     /**
@@ -104,6 +188,9 @@ class FiscalJournalGuard
             return ['state' => $check['state'], 'missing' => null];
         }
         $missing = $check['missing'] + ['after' => null];
+        if ($check['state'] !== self::BEHIND_JOURNAL) {
+            return ['state' => $check['state'], 'missing' => $missing];
+        }
         try {
             $counted = $this->missingLines();
             if ($counted !== null) {

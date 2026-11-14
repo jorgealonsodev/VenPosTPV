@@ -791,6 +791,17 @@ const SettingsModal = {
                 const what = missing ? ' (falta ' + missing.number + (missing.after > 0 ? ' y ' + missing.after + ' posteriores' : '') + ')' : '';
                 return { tone: 'error', text: 'La base de datos está por detrás del diario fiscal' + what + '. No se puede vender hasta recuperar los documentos.' };
             }
+            // fiscal-journal D7: the shop half of the guard.
+            if (guard && guard.state === 'behind_shop') {
+                const missing = guard.missing;
+                return { tone: 'error', text: 'La base de datos está por detrás de la copia en la tienda' + (missing ? ' (falta ' + missing.number + ')' : '') + '. No se puede vender hasta recuperar los documentos.' };
+            }
+            if (guard && guard.state === 'journal_missing') {
+                return { tone: 'error', text: 'Falta el diario fiscal de este servidor y la tienda todavía no ha confirmado que la base de datos esté al día. No se puede vender hasta que lo confirme o se inicie un diario nuevo con tpv:fiscal:journal:reset.' };
+            }
+            if (state.status === 'journal_missing') {
+                return { tone: 'error', text: 'Falta el diario fiscal de este servidor (journal.id): los documentos no se anotan hasta iniciar un diario nuevo con tpv:fiscal:journal:reset.' };
+            }
             if (state.status === 'not_started') return { tone: 'muted', text: 'Diario fiscal sin iniciar' };
             if (state.status === 'ok') {
                 const last = state.last_document;
@@ -814,6 +825,20 @@ const SettingsModal = {
                 const count = (state.pending && state.pending.count) || 0;
                 return { tone: 'error', text: 'El diario fiscal no puede anotar el documento ' + blocked.number + ' (' + blocked.reason + '); los ' + count + ' documentos pendientes esperan en orden hasta que se resuelva.' };
             }
+            return null;
+        }
+
+        // The shop copy of the journal (fiscal-journal D6, S8, S9): `shop` of the last run.
+        function fiscalJournalShopMessage(state) {
+            const shop = state && state.shop;
+            if (!shop) return null;
+            if (shop.status === 'ok') {
+                return { tone: 'ok', text: shop.last_document ? 'Copia en la tienda al día (último documento ' + shop.last_document.number + ').' : 'Copia en la tienda al día.' };
+            }
+            if (shop.status === 'pending') return { tone: 'muted', text: 'Copia en la tienda con ' + (shop.pending || 0) + ' documentos pendientes de enviar; se envían solos cada minuto.' };
+            if (shop.status === 'unavailable') return { tone: 'muted', text: 'Copia en la tienda no disponible: actualiza el módulo TPV Connect a la versión 0.9.0. Mientras tanto el diario se guarda solo en el servidor.' };
+            if (shop.status === 'unreachable') return { tone: 'muted', text: 'No se ha podido consultar la copia en la tienda; se vuelve a intentar cada minuto. La venta no se bloquea por ello.' };
+            if (shop.status === 'incidents') return { tone: 'error', text: 'La copia en la tienda tiene ' + (shop.incidents || 0) + ' documentos con incidencia; revísalos en Incidencias.' };
             return null;
         }
 
@@ -1055,7 +1080,7 @@ const SettingsModal = {
             saveSyncInterval, saveSyncPushInterval, syncNow,
             INPUT_STYLE, mail, mailSaving, mailError, mailTestTo, mailTestStatus, saveMail, sendMailTest, loadMail,
             verifactu, loadVerifactu, saveVerifactu, checkChain,
-            fiscalJournal, loadFiscalJournal, fiscalJournalMessage, fiscalJournalUnconfirmed, fiscalJournalTone,
+            fiscalJournal, loadFiscalJournal, fiscalJournalMessage, fiscalJournalShopMessage, fiscalJournalUnconfirmed, fiscalJournalTone,
             fiscalReplay, fiscalJournalCanReplay, previewReplay, applyReplay, cancelReplay,
             numbering, loadNumbering, tillNumbering, startNumberingChange, cancelNumberingChange, saveNumberingChange,
             cashCloses, loadCashCloses, printClose, pdfClose, formatMoney, formatDateTime,
@@ -1655,6 +1680,7 @@ const SettingsModal = {
                             <div style="font-size:12px; color:var(--text3); margin-bottom:12px;">Cada documento emitido se anota también en un diario fuera de la base de datos (carpeta backups/fiscal-journal del servidor), para que una restauración no pueda perder ni repetir un número.</div>
                             <div v-if="fiscalJournal.error" data-fiscal-journal="error" style="color:var(--red); font-size:13px;">{{ fiscalJournal.error }}</div>
                             <div v-else-if="fiscalJournalMessage(fiscalJournal.data)" data-fiscal-journal="state" :style="fiscalJournalTone(fiscalJournalMessage(fiscalJournal.data))" style="font-size:13px; overflow-wrap:anywhere;">{{ fiscalJournalMessage(fiscalJournal.data).text }}</div>
+                            <div v-if="!fiscalJournal.error && fiscalJournalShopMessage(fiscalJournal.data)" data-fiscal-journal="shop" :style="fiscalJournalTone(fiscalJournalShopMessage(fiscalJournal.data))" style="margin-top:6px; font-size:13px; overflow-wrap:anywhere;">{{ fiscalJournalShopMessage(fiscalJournal.data).text }}</div>
                             <div v-if="fiscalJournalUnconfirmed(fiscalJournal.data)" data-fiscal-journal="unconfirmed" style="margin-top:6px; font-size:12px; color:var(--text3);">{{ fiscalJournalUnconfirmed(fiscalJournal.data) }}</div>
                             <div v-if="fiscalJournalCanReplay(fiscalJournal.data) || fiscalReplay.done || fiscalReplay.error" style="margin-top:12px;">
                                 <button v-if="fiscalJournalCanReplay(fiscalJournal.data) && !fiscalReplay.confirming" data-fiscal-journal="replay" @click="previewReplay" :disabled="fiscalReplay.busy"

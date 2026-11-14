@@ -443,6 +443,59 @@ final class JournalLocation
     }
 
     /**
+     * Writes `shop-head.json` (fiscal-journal D6) atomically: what the shop answered
+     * to `head`, by journal id ({"v": 1, "heads": {"<journal_id>": {...}}}).
+     *
+     * @param array<string, mixed> $shopHead
+     *
+     * @throws JournalWriteException
+     */
+    public function writeShopHead(array $shopHead): void
+    {
+        $this->writeAtomically($this->directory . '/shop-head.json', json_encode($shopHead, self::LINE_FLAGS));
+    }
+
+    /** @return array<string, mixed>|null null when missing or not valid JSON */
+    public function readShopHead(): ?array
+    {
+        return $this->readJson($this->directory . '/shop-head.json');
+    }
+
+    /**
+     * The valid lines (JSON, line_hash) with a seq above $after, oldest first, at
+     * most $limit. Read from the end of the journal when they are near it (the
+     * every-minute case), from the start otherwise (a first upload of a long journal).
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function linesAfter(int $after, int $limit): array
+    {
+        if ($limit < 1) {
+            return [];
+        }
+        $last = $this->lastValidLine();
+        if ($last === null || (\is_array($last) && (int) $last['seq'] <= $after)) {
+            return [];
+        }
+        $near = \is_array($last) && (int) $last['seq'] - $after <= 2000;
+        $lines = $near
+            ? array_map(static fn (array $entry): ?array => $entry['terminated'] ? $entry['line'] : null, $this->tail((int) $last['seq'] - $after + 1))
+            : $this->lines();
+        $result = [];
+        foreach ($lines as $line) {
+            if (!self::selfValid($line) || !\is_int($line['seq'] ?? null) || $line['seq'] <= $after) {
+                continue;
+            }
+            $result[] = $line;
+            if (\count($result) >= $limit) {
+                break;
+            }
+        }
+
+        return $result;
+    }
+
+    /**
      * Opens and locks `journal.lock` (exclusive). Without a deadline it waits as long
      * as it takes; with one (microtime(true) value) it retries every 50 ms until then.
      *

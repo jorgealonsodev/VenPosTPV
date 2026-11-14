@@ -105,6 +105,43 @@ its sale is `done`. A row is claimed by one process with a conditional UPDATE
 back (the module replays an order that already exists, so no duplicate is created).
 Stock is never pushed for an upload: PrestaShop lowers it when it creates the order.
 
+### Fiscal journal lines (type `journal`, module 0.9.0)
+
+Every line of the fiscal journal (`backups/fiscal-journal/`, see `docs/verifactu.md`)
+is also sent to the shop (`POST /module/tpvconnect/journal`, signed like the other
+endpoints), so a number is never repeated even if the server journal is lost.
+
+- Queued by the journal job of `tpv:cron` (`tpv:fiscal:journal`,
+  `FiscalJournalShopSync`), right after it brings the journal up to date: one row per
+  line without one, `order_id` NULL, `sequence` = the line's `seq`, `request_id`
+  `journal-<16 hex of the journal id>-<seq>-<random>`. The payload carries the line
+  exactly as the journal file holds it (plus `journal_id`, `seq`, `number`,
+  `invoice_type`, `hash`, `line_hash`), so sending never reads the journal and the
+  module hashes the same canonical JSON (`CanonicalJson`, the shared vectors in
+  `modules/tpvconnect/tests/fixtures/`). Up to 500 rows per run.
+- Sent in `seq` order: a `journal` row is not claimed while a `journal` row with a
+  lower `sequence` is `pending` or `processing` (one in backoff holds the later ones
+  back; an `incident` does not).
+- The same job asks the module for its `head` once a minute and stores it in
+  `shop-head.json` of the journal folders; the guard reads it (see
+  `docs/verifactu.md`). Lines after the shop's `contiguous_seq` whose row was lost (a
+  restore of the TPV database), or that the shop lost after acknowledging them, are
+  queued again; the module stores a line once.
+
+| Module answer | Outcome |
+|---|---|
+| 201 stored, 200 `duplicate: true` | row `done` |
+| 404, or a body that is not JSON (module older than 0.9.0) | row back to `pending`, next attempt in 60 minutes, `last_error` «Copia en la tienda no disponible: actualiza el módulo TPV Connect a la versión 0.9.0.»; never an incident, one request an hour. When the module answers the next `head`, the waiting rows are due at once |
+| 409 (another line at that position, or the document at another position) | `incident`, never retried by itself and never overwritten; later lines go on |
+| 400 (`line_hash` mismatch), 413, 422 | `incident` with the module's details |
+| network error, timeout, 401, 429, 5xx | `pending`, the usual backoff |
+
+A line whose number the module cannot store (only letters, digits and `. _ / -`, up
+to 60: a coupon sale numbered by a shop with customised order references) becomes an
+`incident` before anything is sent: «El número "…" no cabe en la copia de la tienda
+(solo letras, cifras y . _ / -, hasta 60): el documento queda solo en el diario del
+servidor.» The document is safe in the server journal; later lines go on.
+
 A `pending` row behind a `discarded` one (an earlier row of its sale, or the row in
 its `depends_on`) can never upload. Each run moves it to `incident` with
 `last_error` "Depende de una operación descartada", so the administrator sees it and

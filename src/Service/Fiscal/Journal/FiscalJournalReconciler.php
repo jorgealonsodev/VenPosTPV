@@ -40,7 +40,14 @@ use VenPosTPV\Service\Fiscal\FiscalRecorder;
  * day while it lasts; the runs in between exit 0 and log it as debug, so the
  * hosting panel, which mails STDERR, does not mail every minute.
  *
- * While no journal exists (the provisioning step creates it) nothing is done.
+ * 5. the shop copy (FiscalJournalShopSync, D6): the lines without an upload are
+ *    queued, the shop head is asked and stored for the guard, and its summary goes
+ *    to `state.json` under `shop`. Never blocks and never fails the job.
+ *
+ * While no journal exists (the provisioning step creates it) nothing is done,
+ * unless the database names one (FiscalJournalIdentity): then the journal was lost
+ * (D7 `journal_missing`). The job reports it, asks the shop for that journal so the
+ * guard can tell whether the database is behind, and never creates a journal.
  */
 class FiscalJournalReconciler
 {
@@ -61,6 +68,8 @@ class FiscalJournalReconciler
         private readonly FiscalJournalAlerts $alerts,
         private readonly ?LoggerInterface $logger = null,
         private readonly ?FiscalDocumentSnapshot $snapshot = null,
+        private readonly ?FiscalJournalShopSync $shop = null,
+        private ?FiscalJournalIdentity $identity = null,
     ) {
     }
 
@@ -69,7 +78,7 @@ class FiscalJournalReconciler
         $now = ($now ?? new \DateTimeImmutable())->setTimezone(new \DateTimeZone(FiscalRecorder::TIME_ZONE));
         $journalId = $this->journalId();
         if ($journalId === null) {
-            return FiscalJournalState::notStarted($now);
+            return $this->runLost($now) ?? FiscalJournalState::notStarted($now);
         }
         $this->journaledHashes = null;
         $log = new IncidentLogBuffer($this->logger);
@@ -128,6 +137,7 @@ class FiscalJournalReconciler
             default => null,
         };
         $reported = $this->alerts->report($incident, $now);
+        $shop = $this->shopCopy($now, $log);
 
         $data = [
             'v' => 1,
@@ -144,6 +154,7 @@ class FiscalJournalReconciler
             'alert' => null,
             'full_verified_at' => $full ? $now->format(\DATE_ATOM) : ($lastFull?->format(\DATE_ATOM)),
             'verified' => $verification['checkpoints'],
+            'shop' => $shop,
         ];
         $data['alert'] = $this->alert($data, $now);
         $this->writeState($data, $log);
@@ -205,7 +216,18 @@ class FiscalJournalReconciler
         $now = ($now ?? new \DateTimeImmutable())->setTimezone(new \DateTimeZone(FiscalRecorder::TIME_ZONE));
         $journalId = $this->journalId();
         if ($journalId === null) {
-            return FiscalJournalState::notStarted($now);
+            $named = $this->namedJournal();
+            if ($named === null) {
+                return FiscalJournalState::notStarted($now);
+            }
+            $stored = $this->storedState();
+            $checkedAt = self::date($stored['checked_at'] ?? null);
+            if ($stored !== null && ($stored['status'] ?? null) === FiscalJournalState::JOURNAL_MISSING && $checkedAt !== null && $checkedAt <= $now
+                && $now->getTimestamp() - $checkedAt->getTimestamp() <= self::STATE_FRESH_SECONDS) {
+                return new FiscalJournalState($stored);
+            }
+
+            return new FiscalJournalState($this->lostData($named, $now, null) + ['stale' => true]);
         }
         $stored = $this->storedState();
         $checkedAt = self::date($stored['checked_at'] ?? null);
@@ -236,8 +258,84 @@ class FiscalJournalReconciler
             'unconfirmed_intents' => \is_array($stored['unconfirmed_intents'] ?? null) ? $stored['unconfirmed_intents'] : [],
             'confirmed_missing' => \is_array($stored['confirmed_missing'] ?? null) ? $stored['confirmed_missing'] : [],
             'alert' => \is_array($stored['alert'] ?? null) ? $stored['alert'] : null,
+            'shop' => \is_array($stored['shop'] ?? null) ? $stored['shop'] : null,
             'stale' => true,
         ]);
+    }
+
+    /**
+     * The database names a journal that no folder holds (D7 `journal_missing`): the
+     * incident is reported, the shop is asked for that journal (the guard decides
+     * with its answer) and nothing else is done; a new journal is only started by
+     * tpv:fiscal:journal:reset.
+     *
+     * @return FiscalJournalState|null null when the database names no journal (not started)
+     */
+    private function runLost(\DateTimeImmutable $now): ?FiscalJournalState
+    {
+        $named = $this->namedJournal();
+        if ($named === null) {
+            return null;
+        }
+        $log = new IncidentLogBuffer($this->logger);
+        $log->error('Fiscal journal: the database names the journal {id}, which neither folder holds; documents are refused until the shop confirms the database is not behind', ['id' => $named]);
+        $shop = $this->shopCopy($now, $log);
+        $reported = $this->alerts->report('journal_missing', $now);
+        $data = $this->lostData($named, $now, $shop);
+        $this->writeState($data, $log);
+        $log->release($reported);
+
+        return new FiscalJournalState($data, $reported ? FiscalJournalState::EXIT_DAMAGED : FiscalJournalState::EXIT_OK);
+    }
+
+    /**
+     * @param array<string, mixed>|null $shop
+     *
+     * @return array<string, mixed>
+     */
+    private function lostData(string $named, \DateTimeImmutable $now, ?array $shop): array
+    {
+        return [
+            'v' => 1,
+            'status' => FiscalJournalState::JOURNAL_MISSING,
+            'checked_at' => $now->format(\DATE_ATOM),
+            'journal_id' => $named,
+            'writable' => $this->locations->primary()->isWritable() || $this->locations->secondary()->isWritable(),
+            'last_document' => null,
+            'pending' => self::noPending(),
+            'damaged' => null,
+            'blocked' => null,
+            'unconfirmed_intents' => [],
+            'confirmed_missing' => [],
+            'alert' => null,
+            'full_verified_at' => null,
+            'shop' => $shop,
+        ];
+    }
+
+    /** The journal the database names (app_setting fiscal_journal.id); null when none or unreadable. */
+    private function namedJournal(): ?string
+    {
+        try {
+            return ($this->identity ??= new FiscalJournalIdentity($this->connection))->journalId();
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    /** @return array<string, mixed>|null */
+    private function shopCopy(\DateTimeImmutable $now, LoggerInterface $log): ?array
+    {
+        if ($this->shop === null) {
+            return null;
+        }
+        try {
+            return $this->shop->run($now, $log);
+        } catch (\Throwable $e) {
+            $log->warning('Fiscal journal shop copy failed: {message}', ['message' => $e->getMessage()]);
+
+            return null;
+        }
     }
 
     private function journalId(): ?string

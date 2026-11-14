@@ -12,7 +12,9 @@ use VenPosTPV\Service\Checkout\Exception\CheckoutException;
 use VenPosTPV\Service\Checkout\FreeItemSettingsStore;
 use VenPosTPV\Service\Checkout\PsOrderClient;
 use VenPosTPV\Service\PrestaShop\Exception\PsApiException;
+use VenPosTPV\Service\Fiscal\Journal\JournalLocation;
 use VenPosTPV\Service\PrestaShop\PrestaShopApiClient;
+use VenPosTPV\Service\PrestaShop\PsJournalClient;
 use VenPosTPV\Service\Refund\Exception\RefundException;
 use VenPosTPV\Service\Refund\PsRefundClient;
 use VenPosTPV\Service\Refund\PsRestockClient;
@@ -51,6 +53,16 @@ use VenPosTPV\Service\Refund\PsRestockClient;
  * - Recording PrestaShop's answer locally can fail too (a database error): it is
  *   retried with the same backoff, and after MAX_RECORD_FAILURES failures in a row
  *   the row becomes an incident instead of waiting silently for ever.
+ * - Fiscal journal lines (type journal, fiscal-journal D6, S8, S9) go to the
+ *   module's journal endpoint in seq order: a journal row is not claimed while a
+ *   row with a lower seq is pending or being sent, so one line in backoff holds the
+ *   later ones back (an incident does not). Stored (201) and duplicate (200) are
+ *   both done. A module without the endpoint (404, not JSON) is no incident: the
+ *   row waits an hour (JOURNAL_MODULE_UNAVAILABLE) and so do the ones behind it,
+ *   one request an hour, until FiscalJournalShopSync sees the module answer. A 409
+ *   (the shop holds another line at that position) and a refused line are
+ *   incidents, never retried by themselves and never overwritten; a number the
+ *   module cannot store (open point O6) is an incident before anything is sent.
  */
 class OutboxSync
 {
@@ -66,6 +78,12 @@ class OutboxSync
     /** A claim older than this belongs to a worker that died. */
     public const STUCK_AFTER_SECONDS = 300;
 
+    /** last_error of a journal row waiting for the module 0.9.0 (S9); FiscalJournalShopSync looks for it. */
+    public const JOURNAL_MODULE_UNAVAILABLE = 'Copia en la tienda no disponible: actualiza el módulo TPV Connect a la versión 0.9.0.';
+
+    /** Minutes a journal row waits when the module has no journal endpoint (S9). */
+    public const JOURNAL_UNAVAILABLE_MINUTES = 60;
+
     /** @var \Closure(): \DateTimeImmutable */
     private readonly \Closure $clock;
 
@@ -79,6 +97,7 @@ class OutboxSync
         private readonly ?PsRestockClient $restockClient = null,
         private readonly ?PrestaShopApiClient $customerClient = null,
         private readonly ?FreeItemSettingsStore $freeItemSettings = null,
+        private readonly ?PsJournalClient $journalClient = null,
     ) {
         $this->clock = $clock ?? static fn (): \DateTimeImmutable => new \DateTimeImmutable();
     }
@@ -188,6 +207,9 @@ class OutboxSync
                    SELECT 1 FROM outbox p WHERE p.order_id = o.order_id AND p.sequence < o.sequence AND p.status <> 'done'
                )
                AND (o.depends_on IS NULL OR EXISTS (SELECT 1 FROM outbox d WHERE d.id = o.depends_on AND d.status = 'done'))
+               AND (o.type <> 'journal' OR NOT EXISTS (
+                   SELECT 1 FROM outbox j WHERE j.type = 'journal' AND j.sequence < o.sequence AND j.status IN ('pending', 'processing')
+               ))
              ORDER BY o.id LIMIT 10",
             [$now]
         );
@@ -228,6 +250,7 @@ class OutboxSync
             Outbox::TYPE_REFUND => $this->processRefund($row, $payload),
             Outbox::TYPE_RESTOCK => $this->processRestock($row, $payload),
             Outbox::TYPE_CUSTOMER => $this->processCustomer($row, $payload),
+            Outbox::TYPE_JOURNAL => $this->processJournal($row, $payload),
             default => $this->incident($row, sprintf("Uploading '%s' operations is not supported", (string) $row['type'])),
         };
     }
@@ -536,6 +559,70 @@ class OutboxSync
                 [$psCustomerId, $now, $now, $localId]
             );
         });
+    }
+
+    /**
+     * One fiscal journal line to the shop copy (fiscal-journal D6). The payload holds
+     * the line as the journal file does; it is checked (line_hash, seq, document)
+     * before it is sent, so a damaged row never reaches the shop.
+     *
+     * @param array<string, mixed> $row
+     * @param array<string, mixed> $payload {journal_id, seq, number, invoice_type, hash, line_hash, line}
+     *
+     * @return 'uploaded'|'retried'|'incidents'|null
+     */
+    private function processJournal(array $row, array $payload): ?string
+    {
+        if ($this->journalClient === null) {
+            return $this->retry($row, 'The PrestaShop journal client is not configured');
+        }
+        $raw = $payload['line'] ?? null;
+        $line = \is_string($raw) ? json_decode($raw, true) : null;
+        if (!\is_array($line) || !JournalLocation::selfValid($line) || $line['seq'] !== (int) $row['sequence']
+            || ($line['fiscal_record']['hash'] ?? null) !== ($payload['hash'] ?? null) || !\is_string($payload['journal_id'] ?? null)) {
+            return $this->incident($row, 'La línea del diario fiscal guardada para subir no es válida (no coincide con su line_hash o su posición): no se envía.');
+        }
+        $number = (string) ($line['fiscal_record']['number'] ?? '');
+        if (!PsJournalClient::fitsNumber($number)) {
+            // Open point O6: a shop order reference with other characters (a coupon sale).
+            return $this->incident($row, sprintf(
+                'El número %s no cabe en la copia de la tienda (solo letras, cifras y . _ / -, hasta 60): el documento queda solo en el diario del servidor.',
+                json_encode($number, \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES)
+            ));
+        }
+        $result = $this->journalClient->send($payload['journal_id'], $raw);
+
+        return match ($result['status']) {
+            PsJournalClient::STORED, PsJournalClient::DUPLICATE => $this->closeWith($row, static function (): void {}),
+            PsJournalClient::UNAVAILABLE => $this->wait($row, self::JOURNAL_MODULE_UNAVAILABLE, self::JOURNAL_UNAVAILABLE_MINUTES),
+            PsJournalClient::CONFLICT => $this->incident($row, sprintf(
+                'La tienda ya tiene otra línea en la posición %d del diario fiscal, o este documento en otra posición (409). No se reintenta ni se sobrescribe: revisa la copia en la tienda. %s',
+                $line['seq'],
+                (string) $result['error']
+            )),
+            PsJournalClient::REJECTED => $this->incident($row, sprintf('La tienda ha rechazado la línea %d del diario fiscal: %s', $line['seq'], (string) $result['error'])),
+            default => $this->retry($row, (string) ($result['error'] ?? 'The journal line could not be sent')),
+        };
+    }
+
+    /**
+     * Releases a claimed row to wait a fixed time, without counting it as a failure
+     * that grows the backoff.
+     *
+     * @param array<string, mixed> $row
+     *
+     * @return 'retried'|null
+     */
+    private function wait(array $row, string $error, int $minutes): ?string
+    {
+        $now = ($this->clock)();
+        $released = $this->connection->executeStatement(
+            "UPDATE outbox SET status = 'pending', claim_token = NULL, claimed_at = NULL, next_attempt_at = ?, last_error = ?, updated_at = ?
+             WHERE id = ? AND claim_token = ?",
+            [$now->modify(sprintf('+%d minutes', $minutes))->format('Y-m-d H:i:s'), $error, $now->format('Y-m-d H:i:s'), (int) $row['id'], (string) $row['claim_token']]
+        );
+
+        return $released === 1 ? 'retried' : null;
     }
 
     /**

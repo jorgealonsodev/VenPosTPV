@@ -101,9 +101,9 @@ test('a database behind the journal names what is missing and that the till cann
     assert.equal(s.fiscalJournalMessage(s.fiscalJournal.data).tone, 'ok');
 });
 
-test('the states of later tasks show nothing here, and old unconfirmed documents get one line', async () => {
+test('a lost journal has its line, and old unconfirmed documents get one line', async () => {
     const s = await rendered(state('journal_missing'));
-    assert.equal(s.fiscalJournalMessage(s.fiscalJournal.data), null);
+    assert.deepEqual({ ...s.fiscalJournalMessage(s.fiscalJournal.data) }, { tone: 'error', text: 'Falta el diario fiscal de este servidor (journal.id): los documentos no se anotan hasta iniciar un diario nuevo con tpv:fiscal:journal:reset.' });
     assert.equal(s.fiscalJournalUnconfirmed(state('ok')), '');
     assert.equal(
         s.fiscalJournalUnconfirmed(state('ok', { unconfirmed_intents: [{ number: 'A26000126', created_at: '2026-11-14T17:40:00+01:00' }] })),
@@ -237,4 +237,46 @@ test('the template has the button, the list, what is not recovered and the confi
     assert.ok(verifactu.includes('data-fiscal-journal="replay-list"'));
     assert.ok(verifactu.includes('data-fiscal-journal="replay-confirm"'));
     assert.ok(verifactu.includes('No se recuperan los cierres Z ni el cierre de las sesiones de caja posteriores a la copia (vuelven abiertas: ciérralas de nuevo), el estado de impresión, el stock, los clientes nuevos, los tickets aparcados ni los movimientos de caja manuales. Las subidas a la tienda vuelven a la cola.'));
+});
+
+// The shop copy (fiscal-journal D6, D7, D9, S8, S9): the guard's shop half and the
+// state of the uploads, from `guard` and `shop` of GET /api/fiscal/journal.
+
+test('a database behind the shop copy, and a lost journal the shop has not confirmed, block with their own line', async () => {
+    let s = await rendered(state('ok', { guard: { state: 'behind_shop', missing: { number: 'A26000130', invoice_type: '', after: null } } }));
+    assert.deepEqual({ ...s.fiscalJournalMessage(s.fiscalJournal.data) }, { tone: 'error', text: 'La base de datos está por detrás de la copia en la tienda (falta A26000130). No se puede vender hasta recuperar los documentos.' });
+    assert.equal(s.fiscalJournalCanReplay(s.fiscalJournal.data), false, 'the button replays the server journal only');
+
+    s = await rendered(state('journal_missing', { last_document: null, guard: { state: 'journal_missing', missing: null } }));
+    assert.deepEqual({ ...s.fiscalJournalMessage(s.fiscalJournal.data) }, { tone: 'error', text: 'Falta el diario fiscal de este servidor y la tienda todavía no ha confirmado que la base de datos esté al día. No se puede vender hasta que lo confirme o se inicie un diario nuevo con tpv:fiscal:journal:reset.' });
+});
+
+test('the shop copy line says how the uploads stand, with the S9 text for an older module', async () => {
+    const shop = (extra) => state('ok', { shop: Object.assign({ status: 'ok', last_document: { number: 'A26000124', seq: 812 }, pending: 0, incidents: 0 }, extra) });
+    let s = await rendered(shop({}));
+    assert.deepEqual({ ...s.fiscalJournalShopMessage(s.fiscalJournal.data) }, { tone: 'ok', text: 'Copia en la tienda al día (último documento A26000124).' });
+
+    s = await rendered(shop({ status: 'pending', pending: 4 }));
+    assert.deepEqual({ ...s.fiscalJournalShopMessage(s.fiscalJournal.data) }, { tone: 'muted', text: 'Copia en la tienda con 4 documentos pendientes de enviar; se envían solos cada minuto.' });
+
+    s = await rendered(shop({ status: 'unavailable', last_document: null }));
+    assert.deepEqual({ ...s.fiscalJournalShopMessage(s.fiscalJournal.data) }, { tone: 'muted', text: 'Copia en la tienda no disponible: actualiza el módulo TPV Connect a la versión 0.9.0. Mientras tanto el diario se guarda solo en el servidor.' });
+
+    s = await rendered(shop({ status: 'unreachable', last_document: null }));
+    assert.deepEqual({ ...s.fiscalJournalShopMessage(s.fiscalJournal.data) }, { tone: 'muted', text: 'No se ha podido consultar la copia en la tienda; se vuelve a intentar cada minuto. La venta no se bloquea por ello.' });
+
+    s = await rendered(shop({ status: 'incidents', incidents: 1 }));
+    assert.deepEqual({ ...s.fiscalJournalShopMessage(s.fiscalJournal.data) }, { tone: 'error', text: 'La copia en la tienda tiene 1 documentos con incidencia; revísalos en Incidencias.' });
+
+    s = await rendered(state('ok'));
+    assert.equal(s.fiscalJournalShopMessage(s.fiscalJournal.data), null, 'no shop state yet: no line');
+    assert.equal(s.fiscalJournalShopMessage(null), null);
+});
+
+test('the template shows the shop copy line in VERI*FACTU and the bumped script tag', () => {
+    const verifactu = SOURCE.slice(SOURCE.indexOf(`<div v-if="activeSection === 'verifactu'">`), SOURCE.indexOf('<!-- ==================== CIERRES DE CAJA'));
+    assert.ok(verifactu.includes('data-fiscal-journal="shop"'));
+    assert.ok(verifactu.includes('{{ fiscalJournalShopMessage(fiscalJournal.data).text }}'));
+    const twig = fs.readFileSync(path.resolve(__dirname, '../../templates/pos.html.twig'), 'utf8');
+    assert.match(twig, /SettingsModal\.js\?v=20261114-journal-shop-v1"/);
 });
