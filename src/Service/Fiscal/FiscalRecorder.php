@@ -8,6 +8,7 @@ use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\Exception\TableNotFoundException;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
+use VenPosTPV\Service\Fiscal\Journal\FiscalJournalIntents;
 
 /**
  * Writes the fiscal record of every issued ticket (F2, simplified invoice), credit
@@ -40,6 +41,7 @@ class FiscalRecorder
         private readonly Connection $connection,
         private readonly LoggerInterface $logger = new NullLogger(),
         private readonly string $timeZone = self::TIME_ZONE,
+        private readonly ?FiscalJournalIntents $journal = null,
     ) {
     }
 
@@ -156,7 +158,7 @@ class FiscalRecorder
         $generatedAt = FiscalHash::timestamp(new \DateTimeImmutable('now', $zone));
         $hash = FiscalHash::alta($issuerNif, $record['number'], $issueDate, $record['invoice_type'], $record['tax_total'], $record['total'], $previousHash, $generatedAt);
 
-        $this->connection->insert('fiscal_record', $record + [
+        $row = $record + [
             'record_type' => 'alta',
             'issuer_nif' => $issuerNif,
             'issue_date' => $issueDate,
@@ -164,7 +166,14 @@ class FiscalRecorder
             'hash' => $hash,
             'generated_at' => $generatedAt,
             'created_at' => $issuedAt->format('Y-m-d H:i:s'),
-        ]);
+        ];
+        // The fiscal journal's intent (fiscal-journal D3.1); it never stops the issue.
+        try {
+            $this->journal?->prepared($row);
+        } catch (\Throwable $e) {
+            $this->logger->error('Fiscal journal intent of {number} failed: {message}', ['number' => $record['number'], 'message' => $e->getMessage()]);
+        }
+        $this->connection->insert('fiscal_record', $row);
         $this->connection->update('fiscal_chain', [
             'last_record_id' => (int) $this->connection->lastInsertId(),
             'last_hash' => $hash,
