@@ -817,6 +817,67 @@ const SettingsModal = {
             return null;
         }
 
+        // «Recuperar documentos» (fiscal-journal S7, D8.5): POST /api/fiscal/journal/replay runs
+        // tpv:fiscal:replay's service. First a dry run that lists the documents, then the
+        // administrator confirms and they are recovered.
+        const fiscalReplay = Vue.reactive({ busy: false, confirming: false, documents: null, error: '', done: '' });
+
+        function fiscalJournalCanReplay(state) {
+            return !!(state && state.guard && state.guard.state === 'behind_journal');
+        }
+
+        async function previewReplay() {
+            if (fiscalReplay.busy) return;
+            fiscalReplay.busy = true;
+            fiscalReplay.error = '';
+            fiscalReplay.done = '';
+            fiscalReplay.confirming = false;
+            fiscalReplay.documents = null;
+            try {
+                const resp = await ApiClient.post('/api/fiscal/journal/replay', { apply: false });
+                const data = (resp && resp.data) || {};
+                const documents = data.documents || [];
+                if (data.status === 'pending' && documents.length) {
+                    fiscalReplay.documents = documents;
+                    fiscalReplay.confirming = true;
+                } else {
+                    fiscalReplay.done = data.message || 'Nada que recuperar.';
+                    await loadFiscalJournal();
+                }
+            } catch (e) {
+                fiscalReplay.error = errorText(e, 'No se pudo consultar qué documentos recuperar');
+            } finally {
+                fiscalReplay.busy = false;
+            }
+        }
+
+        async function applyReplay() {
+            if (fiscalReplay.busy || !fiscalReplay.confirming) return;
+            fiscalReplay.busy = true;
+            fiscalReplay.error = '';
+            try {
+                const resp = await ApiClient.post('/api/fiscal/journal/replay', { apply: true });
+                const data = (resp && resp.data) || {};
+                const documents = data.documents || [];
+                fiscalReplay.done = documents.length
+                    ? 'Recuperados ' + documents.length + ' documentos (' + documents[0].number + ' … ' + documents[documents.length - 1].number + '). La caja puede volver a emitir documentos.'
+                    : (data.message || 'Nada que recuperar.');
+                fiscalReplay.confirming = false;
+                fiscalReplay.documents = null;
+            } catch (e) {
+                fiscalReplay.error = errorText(e, 'No se pudieron recuperar los documentos');
+            } finally {
+                fiscalReplay.busy = false;
+            }
+            await loadFiscalJournal();
+        }
+
+        function cancelReplay() {
+            fiscalReplay.confirming = false;
+            fiscalReplay.documents = null;
+            fiscalReplay.error = '';
+        }
+
         // Documents prepared more than 10 minutes ago and not found in the database (fiscal-journal D3.5).
         function fiscalJournalUnconfirmed(state) {
             const count = (state && state.unconfirmed_intents && state.unconfirmed_intents.length) || 0;
@@ -995,6 +1056,7 @@ const SettingsModal = {
             INPUT_STYLE, mail, mailSaving, mailError, mailTestTo, mailTestStatus, saveMail, sendMailTest, loadMail,
             verifactu, loadVerifactu, saveVerifactu, checkChain,
             fiscalJournal, loadFiscalJournal, fiscalJournalMessage, fiscalJournalUnconfirmed, fiscalJournalTone,
+            fiscalReplay, fiscalJournalCanReplay, previewReplay, applyReplay, cancelReplay,
             numbering, loadNumbering, tillNumbering, startNumberingChange, cancelNumberingChange, saveNumberingChange,
             cashCloses, loadCashCloses, printClose, pdfClose, formatMoney, formatDateTime,
             provisioning, provisioningLoading, provisioningError, loadProvisioning, provisioningLabel, cronState, cronSchedule,
@@ -1594,6 +1656,29 @@ const SettingsModal = {
                             <div v-if="fiscalJournal.error" data-fiscal-journal="error" style="color:var(--red); font-size:13px;">{{ fiscalJournal.error }}</div>
                             <div v-else-if="fiscalJournalMessage(fiscalJournal.data)" data-fiscal-journal="state" :style="fiscalJournalTone(fiscalJournalMessage(fiscalJournal.data))" style="font-size:13px; overflow-wrap:anywhere;">{{ fiscalJournalMessage(fiscalJournal.data).text }}</div>
                             <div v-if="fiscalJournalUnconfirmed(fiscalJournal.data)" data-fiscal-journal="unconfirmed" style="margin-top:6px; font-size:12px; color:var(--text3);">{{ fiscalJournalUnconfirmed(fiscalJournal.data) }}</div>
+                            <div v-if="fiscalJournalCanReplay(fiscalJournal.data) || fiscalReplay.done || fiscalReplay.error" style="margin-top:12px;">
+                                <button v-if="fiscalJournalCanReplay(fiscalJournal.data) && !fiscalReplay.confirming" data-fiscal-journal="replay" @click="previewReplay" :disabled="fiscalReplay.busy"
+                                    style="padding:8px 18px; border-radius:8px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:13px; font-weight:600; cursor:pointer;">
+                                    {{ fiscalReplay.busy ? 'Consultando…' : 'Recuperar documentos' }}
+                                </button>
+                                <div v-if="fiscalReplay.confirming && fiscalReplay.documents" data-fiscal-journal="replay-list" style="font-size:13px;">
+                                    <div style="margin-bottom:6px;">Se recuperarán {{ fiscalReplay.documents.length }} documentos del diario fiscal, con sus números e importes originales:</div>
+                                    <div style="max-height:180px; overflow-y:auto; border:1px solid var(--border); border-radius:8px; padding:6px 10px; font-size:12px;">
+                                        <div v-for="doc in fiscalReplay.documents" :key="doc.seq" style="overflow-wrap:anywhere;">{{ doc.number }} · {{ doc.kind }} · {{ formatDateTime(doc.generated_at) }}</div>
+                                    </div>
+                                    <div style="margin-top:8px; font-size:12px; color:var(--text3);">No se recuperan los cierres Z ni el cierre de las sesiones de caja posteriores a la copia (vuelven abiertas: ciérralas de nuevo), el estado de impresión, el stock, los clientes nuevos, los tickets aparcados ni los movimientos de caja manuales. Las subidas a la tienda vuelven a la cola.</div>
+                                    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
+                                        <button data-fiscal-journal="replay-confirm" @click="applyReplay" :disabled="fiscalReplay.busy"
+                                            style="padding:8px 18px; border-radius:8px; border:none; background:var(--primary); color:#fff; font-size:13px; font-weight:600; cursor:pointer;">
+                                            {{ fiscalReplay.busy ? 'Recuperando…' : 'Recuperar ' + fiscalReplay.documents.length + ' documentos' }}
+                                        </button>
+                                        <button @click="cancelReplay" :disabled="fiscalReplay.busy"
+                                            style="padding:8px 18px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text); font-size:13px; cursor:pointer;">Cancelar</button>
+                                    </div>
+                                </div>
+                                <div v-if="fiscalReplay.error" data-fiscal-journal="replay-error" style="margin-top:8px; color:var(--red); font-size:13px; overflow-wrap:anywhere;">{{ fiscalReplay.error }}</div>
+                                <div v-if="fiscalReplay.done" data-fiscal-journal="replay-done" style="margin-top:8px; color:var(--green); font-size:13px; overflow-wrap:anywhere;">{{ fiscalReplay.done }}</div>
+                            </div>
                         </div>
 
                         <!-- ==================== CIERRES DE CAJA ==================== -->

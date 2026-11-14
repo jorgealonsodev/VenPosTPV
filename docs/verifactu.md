@@ -27,7 +27,7 @@ También está disponible como `GET /api/fiscal/chain`.
 
 ### Después de restaurar una copia: recuperar los documentos
 
-Cada documento emitido se anota también en el diario fiscal, fuera de la base de datos (`backups/fiscal-journal/`). Si se restaura una copia de seguridad anterior a los últimos documentos, la caja se bloquea para no repetir números. Para volver a vender, el administrador recupera esos documentos desde el diario:
+Cada documento emitido se anota también en el diario fiscal, fuera de la base de datos (`backups/fiscal-journal/`). Si se restaura una copia de seguridad anterior a los últimos documentos, la caja se bloquea para no repetir números. Para volver a vender, el administrador recupera esos documentos desde el diario, con el botón **Ajustes → VERI*FACTU → Diario fiscal → «Recuperar documentos»** (solo administradores; aparece mientras la caja está bloqueada): primero lista los documentos que faltan sin escribir nada y, al confirmar, los recupera. El botón ejecuta lo mismo que la orden de consola:
 
 ```bash
 php bin/console tpv:fiscal:replay          # lista lo que falta, no escribe nada (sale con 2)
