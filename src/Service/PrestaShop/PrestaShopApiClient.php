@@ -487,6 +487,17 @@ class PrestaShopApiClient
             return $field;
         }
 
+        // The JSON output lists language entries: [{"id": 1, "value": "…"}, …].
+        if (array_is_list($field) && \is_array($field[0] ?? null) && \array_key_exists('value', $field[0])) {
+            foreach ($field as $entry) {
+                if (\is_array($entry) && (string) ($entry['id'] ?? '') === $languageKey) {
+                    return $entry['value'] ?? null;
+                }
+            }
+
+            return $field[0]['value'];
+        }
+
         if (isset($field[$languageKey])) {
             return $field[$languageKey];
         }

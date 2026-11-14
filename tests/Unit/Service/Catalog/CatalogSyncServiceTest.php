@@ -521,4 +521,71 @@ final class CatalogSyncServiceTest extends TestCase
         }
         $this->assertSame(['catalog_stock', 'catalog_combination_attribute', 'catalog_combination', 'catalog_product', 'catalog_category', 'catalog_stock'], $deleted);
     }
+
+    /**
+     * PrestaShop 9 returns every multilingual field as a list of language entries.
+     * The language 1 value must be stored, and no array may reach the database:
+     * PDO turns it into the literal "Array" with an "Array to string conversion" warning.
+     */
+    public function testSyncAllStoresTheLanguageOneNameOfTheMultilingualListShape(): void
+    {
+        $names = $this->syncNamesFrom(
+            [['id' => '1', 'value' => 'Inicio'], ['id' => '2', 'value' => 'Home']],
+            [['id' => '1', 'value' => 'Camiseta'], ['id' => '2', 'value' => 'T-shirt']],
+            [['id' => '1', 'value' => 'Talla'], ['id' => '2', 'value' => 'Size']],
+            [['id' => '1', 'value' => 'Pequeña'], ['id' => '2', 'value' => 'Small']],
+        );
+
+        $this->assertSame(['Inicio', 'Camiseta', 'Talla', 'Pequeña'], $names);
+    }
+
+    /** The plain-string shape some PrestaShop versions return keeps giving the same names. */
+    public function testSyncAllStoresPlainStringNamesAsBefore(): void
+    {
+        $names = $this->syncNamesFrom('Inicio', 'Camiseta', 'Talla', 'Pequeña');
+
+        $this->assertSame(['Inicio', 'Camiseta', 'Talla', 'Pequeña'], $names);
+    }
+
+    /**
+     * Runs a full sync of one category, product, option group and option value with
+     * the given name fields, turning any PHP warning into a failure.
+     *
+     * @return array{0: mixed, 1: mixed, 2: mixed, 3: mixed} category, product, group and attribute names as stored
+     */
+    private function syncNamesFrom(mixed $category, mixed $product, mixed $group, mixed $value): array
+    {
+        $conn = $this->createCapturingConnection();
+        $apiClient = $this->createMockApiClient();
+        $apiClient->method('getCategories')->willReturn([['id' => 2, 'name' => $category, 'id_parent' => 1, 'active' => 1]]);
+        $apiClient->method('getProducts')->willReturn([['id' => 1, 'name' => $product, 'reference' => 'REF001', 'ean13' => '', 'price' => 10.0, 'id_category_default' => 2, 'active' => 1]]);
+        $apiClient->method('getCombinations')->willReturn([
+            ['id' => 10, 'id_product' => 1, 'reference' => 'C10', 'ean13' => '', 'price' => 0.0, 'associations' => ['product_option_values' => [['id' => 5]]]],
+        ]);
+        $apiClient->method('getProductOptions')->willReturn([['id' => 3, 'name' => $group]]);
+        $apiClient->method('getProductOptionValues')->willReturn([['id' => 5, 'id_attribute_group' => 3, 'name' => $value, 'color' => '']]);
+        $apiClient->method('getStockAvailables')->willReturn([]);
+
+        set_error_handler(static function (int $severity, string $message, string $file, int $line): never {
+            throw new \ErrorException($message, 0, $severity, $file, $line);
+        });
+        try {
+            (new CatalogSyncService($apiClient, $conn, $this->createMockSyncLogRepo()))->syncAll();
+        } finally {
+            restore_error_handler();
+        }
+
+        foreach ($this->capturedStatements as $statement) {
+            foreach ($statement['params'] as $param) {
+                $this->assertTrue($param === null || \is_scalar($param), 'no array may be bound to a statement: ' . $statement['sql']);
+            }
+        }
+
+        $category = $this->capturedParamsForTable('catalog_category');
+        $productRow = $this->capturedParamsForTable('catalog_product');
+        $attribute = $this->capturedParamsForTable('catalog_combination_attribute');
+
+        // Columns: category (id, name, …); product (id, name, …); attribute (combination_id, group_name, attribute_name, color).
+        return [$category[1] ?? null, $productRow[1] ?? null, $attribute[1] ?? null, $attribute[2] ?? null];
+    }
 }

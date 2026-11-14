@@ -159,6 +159,22 @@ final class PrestaShopApiClientTest extends TestCase
         $this->assertSame('Simple Name', $result);
     }
 
+    /** PrestaShop 9 JSON: a list of language entries, not a map keyed by language id. */
+    public function testExtractTranslationsReadsTheLanguageEntryOfTheListShape(): void
+    {
+        $field = [['id' => 1, 'value' => 'Raíz'], ['id' => 2, 'value' => 'Root']];
+
+        $this->assertSame('Raíz', PrestaShopApiClient::extractTranslations($field, '1'));
+        $this->assertSame('Root', PrestaShopApiClient::extractTranslations($field, '2'));
+    }
+
+    public function testExtractTranslationsFallsBackToTheFirstEntryOfTheListShape(): void
+    {
+        $field = [['id' => '2', 'value' => 'Root']];
+
+        $this->assertSame('Root', PrestaShopApiClient::extractTranslations($field, '1'));
+    }
+
     public function testHttp401ThrowsPsApiException(): void
     {
         $client = $this->createClient([$this->createJsonResponse([], 401)]);
