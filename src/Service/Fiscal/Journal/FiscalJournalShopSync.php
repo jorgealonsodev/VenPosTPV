@@ -14,10 +14,12 @@ use VenPosTPV\Service\Sync\OutboxSync;
  * The every-minute part of the shop copy of the fiscal journal (fiscal-journal D6,
  * S8, S9), run by FiscalJournalReconciler after the flush:
  *
- * 1. the shop is asked once for its head of this journal (and of the journal the
- *    database names, when that is another one, FiscalJournalIdentity), and the
- *    answers are stored in `shop-head.json` of every folder that can be written:
- *    FiscalJournalGuard reads them (`behind_shop`, `journal_missing`);
+ * 1. the shop is asked once for every journal it holds (PsJournalClient::heads,
+ *    whatever journal id this database knows, or none), and the answer replaces
+ *    `shop-head.json` of every folder that can be written: FiscalJournalGuard reads
+ *    it (`behind_shop`, `journal_missing`). A module that cannot answer for every
+ *    journal is asked, as before, for the journal in the folders and the one the
+ *    database names;
  * 2. every journal line after the last one queued gets an outbox row (type
  *    `journal`, sequence = seq, the line verbatim in the payload), in seq order;
  *    OutboxSync sends them. The lines the shop holds without a gap (its
@@ -77,17 +79,34 @@ class FiscalJournalShopSync
         $journalId = $this->journalInFolders();
         $named = $this->namedJournal($log);
         $target = $journalId ?? $named;
+
+        // Every journal the shop holds, whatever id this database knows (or none): the guard's evidence.
+        $all = $this->askHeads();
+        if ($all['status'] === PsJournalClient::OK) {
+            // Without a journal here, folders are only made when the shop holds something to compare.
+            $this->remember($all, $now, $journalId === null && $all['journals'] !== [], $log);
+        }
         if ($target === null) {
             return null;
         }
         $journalSeq = $journalId !== null ? $this->journalSeq() : null;
 
         $asked = array_values(array_unique(array_filter([$journalId, $named])));
-        $answers = $this->ask($asked);
+        if ($all['status'] === PsJournalClient::OK) {
+            $answers = [];
+            foreach ($asked as $id) {
+                $answers[$id] = ['status' => PsJournalClient::OK, 'head' => $all['journals'][$id] ?? ['journal_id' => $id, 'last_seq' => 0, 'contiguous_seq' => 0, 'series' => []], 'error' => null];
+            }
+        } else {
+            // A module that cannot answer for every journal: the single-journal head, as before.
+            $answers = $this->ask($asked);
+            $heads = array_filter(array_map(static fn (array $a): ?array => $a['head'], $answers));
+            if ($heads !== []) {
+                $this->storeHeads($heads, $asked, $now, $journalId === null, $log);
+            }
+        }
         $answer = $answers[$target];
-        $heads = array_filter(array_map(static fn (array $a): ?array => $a['head'], $answers));
-        if ($heads !== []) {
-            $this->storeHeads($heads, $asked, $now, $journalId === null, $log);
+        if ($answer['head'] !== null) {
             $this->releaseUnavailable($now);
         }
         $enqueued = 0;
@@ -103,15 +122,50 @@ class FiscalJournalShopSync
     }
 
     /**
-     * Asks the shop now, storing nothing, for its head of the same journals run()
-     * asks for: the one in the folders and the one the database names
-     * (tpv:fiscal:journal:reset decides with the answers before it changes anything).
+     * Asks the shop now, storing nothing, for every journal it holds
+     * (PsJournalClient::heads): tpv:fiscal:journal:reset and the provisioning step
+     * decide with it before they change anything. A shop that cannot answer for
+     * every journal (down, an older module, an error) is not OK.
      *
-     * @return array<string, array{status: string, head: ?array, error: ?string}> by journal id (empty when no journal is known)
+     * @return array{status: string, journals: ?array<string, array<string, mixed>>, series: ?array<string, array<string, mixed>>, error: ?string}
      */
     public function askHeads(): array
     {
-        return $this->ask(array_values(array_unique(array_filter([$this->journalInFolders(), $this->namedJournal(null)]))));
+        try {
+            return $this->client->heads();
+        } catch (\Throwable $e) {
+            return ['status' => PsJournalClient::ERROR, 'journals' => null, 'series' => null, 'error' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * Stores an answer for every journal in `shop-head.json` of every folder that can
+     * be written, replacing what was stored (the shop is the authority on what it
+     * holds), marked `all` so FiscalJournalGuard knows the shop answered for every
+     * journal. With $prepare the folders are created first (no journal here yet).
+     *
+     * @param array{journals: ?array<string, array<string, mixed>>} $answer an OK answer of askHeads()
+     */
+    public function remember(array $answer, \DateTimeImmutable $now, bool $prepare = false, ?LoggerInterface $log = null): void
+    {
+        $fetchedAt = $now->setTimezone(new \DateTimeZone('UTC'))->format(\DATE_ATOM);
+        $heads = [];
+        foreach ($answer['journals'] ?? [] as $id => $head) {
+            $heads[strtolower((string) $id)] = ['journal_id' => strtolower((string) $id), 'fetched_at' => $fetchedAt, 'last_seq' => $head['last_seq'], 'contiguous_seq' => $head['contiguous_seq'], 'series' => $head['series']];
+        }
+        foreach ([$this->locations->primary(), $this->locations->secondary()] as $location) {
+            if ($prepare) {
+                $location->prepare();
+            }
+            if (!$location->isWritable()) {
+                continue;
+            }
+            try {
+                $location->writeShopHead(['v' => 1, 'all' => ['fetched_at' => $fetchedAt], 'heads' => (object) $heads]);
+            } catch (\Throwable $e) {
+                $log?->warning('Fiscal journal shop head not written in {directory}: {message}', ['directory' => $location->directory(), 'message' => $e->getMessage()]);
+            }
+        }
     }
 
     /**

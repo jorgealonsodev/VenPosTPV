@@ -20,7 +20,11 @@ require_once _PS_MODULE_DIR_ . 'tpvconnect/classes/JournalStore.php';
  * for the same line again, 400 line_hash mismatch, 409 another line at that
  * position or the document at another position.
  * POST /module/tpvconnect/journal {"journal_id", "action": "head"}
- * 200 {"journal_id", "last_seq", "series": {"A26": {"number", "hash", "seq"}, ...}}.
+ * 200 {"journal_id", "last_seq", "contiguous_seq", "series": {"A26": {"number", "hash", "seq"}, ...}}.
+ * POST /module/tpvconnect/journal {"action": "heads"} (no journal_id) 200
+ * {"journals": {"<journal_id>": <the head above>, ...}, "series": {"A26":
+ * {"journal_id", "number", "hash", "seq"}, ...}}: every journal the shop holds and
+ * the line stored last of every series across them.
  * 401 bad signature, 405, 413 body over 1 MiB, 422 invalid body, 429 rate limited.
  */
 class TpvconnectJournalModuleFrontController extends ModuleFrontController

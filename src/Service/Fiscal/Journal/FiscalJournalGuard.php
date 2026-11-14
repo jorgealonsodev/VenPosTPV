@@ -24,14 +24,15 @@ use Psr\Log\LoggerInterface;
  * check logs and lets the till issue.
  *
  * The shop's half (D6, D7, S8), checked after the journal's: `shop-head.json`, the
- * last document of every series the shop holds, stored by the every-minute task
- * (FiscalJournalShopSync), for the journal in the folders and the one the database
- * names (FiscalJournalIdentity). A document there that the database lacks is
+ * last document of every series of every journal the shop holds, stored by the
+ * every-minute task, the reset and the provisioning step (FiscalJournalShopSync),
+ * whatever journal id this database knows or none, but the retired journals
+ * (FiscalJournalIdentity::retired). A document there that the database lacks is
  * `behind_shop`: the shop only ever receives committed documents, so this is never
- * normal lag. The database naming a journal that no folder holds, with no answer of
- * the shop for it yet, is `journal_missing`. A shop that cannot be reached, a
- * module too old, a missing or unreadable shop head and the head of any other
- * journal are never a block: only positive evidence is.
+ * normal lag. The database naming a journal that no folder holds, until the shop
+ * has answered for every journal it holds, is `journal_missing`. A shop that cannot
+ * be reached, a module too old and a missing or unreadable shop head are never a
+ * block: only positive evidence is.
  *
  * Cost per check: a few small files and one indexed lookup per distinct document
  * (usually one). Called early by FiscalJournalGuardListener, before the issuing
@@ -120,14 +121,15 @@ class FiscalJournalGuard
                 $inFolders[strtolower($id)] = true;
             }
         }
-        $named = ($this->identity ??= new FiscalJournalIdentity($this->connection))->journalId();
-        $relevant = $inFolders + ($named !== null ? [$named => true] : []);
-        $heads = $this->shopHeads(array_keys($relevant));
+        $identity = $this->identity ??= new FiscalJournalIdentity($this->connection);
+        $named = $identity->journalId();
+        [$heads, $answeredForAll] = $this->shopHeads($identity->retired());
         $missing = $this->missingFromShop($heads);
         if ($missing !== null) {
             return ['state' => self::BEHIND_SHOP, 'missing' => $missing];
         }
-        if ($named !== null && !isset($inFolders[$named]) && !isset($heads[$named])) {
+        // Only an answer for every journal confirms: "nothing under that id" alone never does.
+        if ($named !== null && !isset($inFolders[$named]) && !$answeredForAll) {
             return ['state' => self::JOURNAL_MISSING, 'missing' => null];
         }
 
@@ -161,23 +163,29 @@ class FiscalJournalGuard
     }
 
     /**
-     * The newest shop head of each of these journals found in either folder.
+     * The newest stored shop head of every journal the shop holds, found in either
+     * folder, but the retired ones (FiscalJournalIdentity::retired), and whether a
+     * stored answer covered every journal of the shop (`all`).
      *
-     * @param list<string> $journalIds lowercase
+     * @param list<string> $retired lowercase
      *
-     * @return array<string, array{fetched_at: string, series: list<array{number: string, hash: string}>}>
+     * @return array{0: array<string, array{fetched_at: string, series: list<array{number: string, hash: string}>}>, 1: bool}
      */
-    private function shopHeads(array $journalIds): array
+    private function shopHeads(array $retired): array
     {
         $heads = [];
+        $answeredForAll = false;
         foreach ([$this->locations->primary(), $this->locations->secondary()] as $location) {
             $stored = $location->readShopHead();
+            if (\is_string($stored['all']['fetched_at'] ?? null)) {
+                $answeredForAll = true;
+            }
             if (!\is_array($stored['heads'] ?? null)) {
                 continue;
             }
             foreach ($stored['heads'] as $id => $head) {
                 $id = strtolower((string) $id);
-                if (!\in_array($id, $journalIds, true) || !\is_array($head) || !\is_string($head['fetched_at'] ?? null) || !\is_array($head['series'] ?? null)) {
+                if (\in_array($id, $retired, true) || !\is_array($head) || !\is_string($head['fetched_at'] ?? null) || !\is_array($head['series'] ?? null)) {
                     continue;
                 }
                 if (isset($heads[$id]) && strcmp($heads[$id]['fetched_at'], $head['fetched_at']) >= 0) {
@@ -193,7 +201,7 @@ class FiscalJournalGuard
             }
         }
 
-        return $heads;
+        return [$heads, $answeredForAll];
     }
 
     /**

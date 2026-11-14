@@ -33,6 +33,14 @@ No hay ningún paso a mano. El paso de instalación **«Diario fiscal preparado�
 - crea las dos carpetas con sus protecciones (y las vuelve a cerrar si alguien cambió los permisos);
 - la primera vez, empieza el diario y anota en él los tickets y facturas que la tienda ya había emitido antes de esta versión, marcados como anteriores al diario y con sus números de siempre. Si hay muchos, la actualización anota los primeros 500 y la tarea de cada minuto termina el resto sin parar la venta.
 
+Antes de empezar el diario, el paso pregunta a la tienda por **todos** los diarios que guarda. Si la tienda tiene un documento que esta base de datos no tiene (bajo cualquier diario), no empieza ninguno, porque el siguiente ticket repetiría su número, y la caja queda bloqueada. Pasa al restaurar una base de datos anterior al diario, y también, **a propósito**, al instalar desde cero con la base de datos vacía contra una tienda que ya tiene el diario de una instalación anterior: el TPV no puede distinguir una cosa de la otra. Si de verdad se empieza de cero (una reinstalación, nunca después de restaurar una copia), el administrador empieza el diario con:
+
+```bash
+php bin/console tpv:fiscal:journal:reset --confirm "Reinstalación desde cero" --accept-shop-ahead --env=prod
+```
+
+Una tienda caída, sin el módulo o con un error no frena nunca la instalación ni la venta; una tienda que todavía no tiene ninguna línea del diario (lo normal al actualizar una instalación en uso) tampoco.
+
 Si el paso queda «Pendiente», el motivo dice qué hacer (normalmente, los permisos de la carpeta del TPV).
 
 ## Qué ves en Ajustes
@@ -102,12 +110,15 @@ En los dos casos, cuando ya está claro que la base de datos tiene todos los doc
 php bin/console tpv:fiscal:journal:reset --confirm "Servidor nuevo, el diario no se copió" --env=prod
 ```
 
-- Antes de cambiar nada **pregunta a la tienda** por su copia del diario. Si la tienda tiene documentos que la base de datos no tiene, se niega: recupéralos con `tpv:fiscal:replay --apply` si el diario los tiene, o restaura una copia más reciente de la base de datos.
-- Si no se puede preguntar a la tienda (caída, módulo TPV Connect anterior a 0.9.0, un error), también se niega. Solo si sabes que la tienda no puede tener la copia, repite la orden con `--shop-unavailable`. **Cuidado**: si la base de datos se restauró de una copia anterior, así se pueden repetir números.
-- El motivo es obligatorio y queda en el registro de auditoría (`audit_log`, acción `fiscal_journal_reset`), con el diario anterior, lo archivado y si la tienda lo confirmó o se usó `--shop-unavailable`.
+- Antes de cambiar nada **pregunta a la tienda** por todos los diarios que guarda (también los de reinicios anteriores o de un diario que la base de datos no conoce). Si la tienda tiene, en cualquiera de ellos, documentos que la base de datos no tiene, se niega: recupéralos con `tpv:fiscal:replay --apply` si el diario los tiene, o restaura una copia más reciente de la base de datos.
+- Solo para **empezar de cero a propósito** (una reinstalación con la base de datos vacía contra una tienda que tiene el diario de la instalación anterior), `--accept-shop-ahead` deja empezar aunque la tienda tenga esos documentos: **sus números se pueden volver a emitir**, así que nunca se usa después de restaurar una copia de seguridad. Los diarios que la tienda tiene en ese momento quedan **retirados** (no vuelven a bloquear la caja) y se anotan en `audit_log`.
+- Si no se puede preguntar a la tienda (caída, un módulo TPV Connect que no puede contestar por todos sus diarios, un error), también se niega. Solo si sabes que la tienda no puede tener la copia, repite la orden con `--shop-unavailable`. **Cuidado**: si la base de datos se restauró de una copia anterior, así se pueden repetir números.
+- El motivo es obligatorio y queda en el registro de auditoría (`audit_log`, acción `fiscal_journal_reset`), con el diario anterior, lo archivado, si la tienda lo confirmó o se usó `--shop-unavailable`, y los diarios retirados con `--accept-shop-ahead`.
 - **No se borra nada**: los archivos del diario anterior se mueven tal cual a `archive/<id del diario>-<fecha>/` dentro de `backups/fiscal-journal/` y de `var/fiscal-journal/`.
 - El diario nuevo anota todos los documentos que tiene la base de datos (si son muchos, la tarea de cada minuto anota el resto) y se envía de nuevo a la tienda.
 - **No se ejecuta** mientras la base de datos está por detrás del diario (recupera antes los documentos con **Recuperar documentos**), ni cuando lo que aún se puede leer de un diario dañado (las líneas sanas, `head.json`, los documentos a medio anotar) nombra documentos que la base de datos no tiene, ni mientras la tienda los tiene: con un diario nuevo se repetirían números. Sale con 3 y no escribe nada (tampoco aparta a `quarantine/` una última línea a medio escribir).
+
+**Lo que no se puede detectar.** Si se restauran a la vez la base de datos y la tienda desde copias anteriores, y además se pierden las dos carpetas del diario, ya no queda ninguna copia de los últimos documentos: ni el servidor ni la tienda saben que existieron, y el TPV volvería a emitir sus números. Guarda siempre las carpetas del diario con las copias de seguridad y no restaures la tienda sin avisar al administrador del TPV.
 
 Si se han perdido a la vez la base de datos, el diario y la copia en la tienda, no hay forma de saber el último número: ajusta la numeración a mano como explica «Continuar la numeración a mano» en [despliegue-plesk.md](despliegue-plesk.md#copias-de-seguridad-y-restauración).
 
@@ -117,7 +128,7 @@ Si se han perdido a la vez la base de datos, el diario y la copia en la tienda, 
 |---|---|
 | `tpv:fiscal:journal` | La lanza `tpv:cron` cada minuto: anota lo pendiente y comprueba el diario. `--verify-all` lo comprueba entero ahora. |
 | `tpv:fiscal:replay [--apply]` | Recupera los documentos tras restaurar una copia (lo mismo que el botón). |
-| `tpv:fiscal:journal:reset --confirm "<motivo>" [--shop-unavailable]` | Empieza un diario nuevo cuando el anterior se ha perdido o está dañado. Códigos de salida: 0 hecho, 1 error, 2 falta el motivo, 3 rechazado porque la base de datos va por detrás o no se ha podido preguntar a la tienda. |
+| `tpv:fiscal:journal:reset --confirm "<motivo>" [--shop-unavailable] [--accept-shop-ahead]` | Empieza un diario nuevo cuando el anterior se ha perdido o está dañado, o desde cero a propósito (`--accept-shop-ahead`). Códigos de salida: 0 hecho, 1 error, 2 falta el motivo, 3 rechazado porque la base de datos va por detrás o no se ha podido preguntar a la tienda. |
 | `tpv:provision` | Ejecuta ahora los pasos pendientes de la instalación, entre ellos «Diario fiscal preparado». |
 
 Todas se ejecutan con `php bin/console … --env=prod` desde la carpeta del TPV (en Plesk, una tarea «Ejecutar un script PHP» con esos argumentos y **Ejecutar ahora**).

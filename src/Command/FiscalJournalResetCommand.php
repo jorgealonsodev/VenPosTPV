@@ -17,7 +17,7 @@ use VenPosTPV\Service\Fiscal\Journal\FiscalJournalResetResult;
  * Starts a new fiscal journal from the current database (fiscal-journal A6,
  * FiscalJournalReset; docs/diario-fiscal.md):
  *
- *     php bin/console tpv:fiscal:journal:reset --confirm "<motivo>" [--shop-unavailable] --env=prod
+ *     php bin/console tpv:fiscal:journal:reset --confirm "<motivo>" [--shop-unavailable] [--accept-shop-ahead] --env=prod
  *
  * It asks the shop for its copy of the journal first; a shop that cannot be asked
  * refuses it unless --shop-unavailable is given.
@@ -49,6 +49,13 @@ final class FiscalJournalResetCommand extends Command
             TPV Connect anterior a 0.9.0, un error), también se niega, salvo con
             --shop-unavailable.
 
+            Solo si se empieza de cero a propósito (por ejemplo, una reinstalación con la base
+            de datos vacía contra una tienda que ya tiene el diario de la instalación anterior),
+            --accept-shop-ahead deja empezar aunque la tienda tenga documentos que esta base de
+            datos no tiene: sus números se pueden volver a emitir, así que nunca se usa después
+            de restaurar una copia de seguridad. Los diarios que la tienda tiene en ese momento
+            quedan retirados (no vuelven a bloquear la caja) y se anotan en audit_log.
+
             Tampoco se ejecuta mientras la base de datos está por detrás del diario fiscal
             (recupera antes los documentos con tpv:fiscal:replay --apply), ni cuando lo que
             aún se puede leer de un diario dañado nombra documentos que la base de datos no
@@ -67,6 +74,7 @@ final class FiscalJournalResetCommand extends Command
               3 rechazado: la base de datos está por detrás del diario fiscal o de la copia en la tienda, o no se ha podido preguntar a la tienda
             HELP);
         $this->addOption('confirm', null, InputOption::VALUE_REQUIRED, 'El motivo, que queda en el registro de auditoría (obligatorio)');
+        $this->addOption('accept-shop-ahead', null, InputOption::VALUE_NONE, 'Empezar aunque la tienda tenga documentos que esta base de datos no tiene: sus números se pueden volver a emitir. Solo para empezar de cero a propósito (una reinstalación), nunca después de restaurar una copia de seguridad');
         $this->addOption('shop-unavailable', null, InputOption::VALUE_NONE, 'Seguir aunque no se pueda preguntar a la tienda por su copia del diario. Cuidado: si la base de datos se restauró de una copia anterior, se pueden repetir números');
     }
 
@@ -80,7 +88,7 @@ final class FiscalJournalResetCommand extends Command
             return 2;
         }
 
-        $result = $this->reset->run($reason, null, (bool) $input->getOption('shop-unavailable'));
+        $result = $this->reset->run($reason, null, (bool) $input->getOption('shop-unavailable'), (bool) $input->getOption('accept-shop-ahead'));
         ($result->status === FiscalJournalResetResult::DONE ? $output : $errors)->writeln($result->message);
         foreach ($result->archived as $folder) {
             $output->writeln('Diario anterior archivado en ' . $folder);

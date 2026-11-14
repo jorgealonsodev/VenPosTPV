@@ -44,8 +44,9 @@ use VenPosTPV\Service\Fiscal\FiscalRecorder;
  *    queued, the shop head is asked and stored for the guard, and its summary goes
  *    to `state.json` under `shop`. Never blocks and never fails the job.
  *
- * While no journal exists (the provisioning step creates it) nothing is done,
- * unless the database names one (FiscalJournalIdentity): then the journal was lost
+ * While no journal exists (the provisioning step creates it) nothing is done but
+ * asking the shop for every journal it holds (stored only when it holds any, for
+ * the guard's `behind_shop`), unless the database names one (FiscalJournalIdentity): then the journal was lost
  * (D7 `journal_missing`). The job reports it, asks the shop for that journal so the
  * guard can tell whether the database is behind, and never creates a journal.
  */
@@ -78,7 +79,15 @@ class FiscalJournalReconciler
         $now = ($now ?? new \DateTimeImmutable())->setTimezone(new \DateTimeZone(FiscalRecorder::TIME_ZONE));
         $journalId = $this->journalId();
         if ($journalId === null) {
-            return $this->runLost($now) ?? FiscalJournalState::notStarted($now);
+            $lost = $this->runLost($now);
+            if ($lost !== null) {
+                return $lost;
+            }
+            // Not started (or a database from before the journal): the shop is still asked for
+            // every journal it holds, so the guard blocks when it holds a document the database lacks.
+            $this->shopCopy($now, new IncidentLogBuffer($this->logger));
+
+            return FiscalJournalState::notStarted($now);
         }
         $this->journaledHashes = null;
         $log = new IncidentLogBuffer($this->logger);

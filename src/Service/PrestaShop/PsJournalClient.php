@@ -121,6 +121,51 @@ class PsJournalClient
             : ['status' => self::OK, 'head' => $head, 'error' => null];
     }
 
+    /**
+     * Every journal the shop holds (`{"action":"heads"}`), whatever journal id the TPV
+     * knows: each journal's head as head() returns it, and the line stored last of
+     * every series across them. A module that does not know the action (422, 404,
+     * not JSON) is UNAVAILABLE: it cannot be asked.
+     *
+     * @return array{status: string, journals: ?array<string, array{journal_id: string, last_seq: int, contiguous_seq: int, series: array<string, array{number: string, hash: string, seq: int}>}>, series: ?array<string, array{journal_id: string, number: string, hash: string, seq: int}>, error: ?string}
+     */
+    public function heads(): array
+    {
+        [$status, $content, $error] = $this->post('{"action":"heads"}');
+        if ($status === null) {
+            return ['status' => self::ERROR, 'journals' => null, 'series' => null, 'error' => $error];
+        }
+        $data = json_decode($content, true);
+        if ($status === 404 || $status === 422 || !\is_array($data)) {
+            return ['status' => self::UNAVAILABLE, 'journals' => null, 'series' => null, 'error' => sprintf('The shop cannot answer for every journal (HTTP %d): TPV Connect %s or later is needed', $status, self::MIN_MODULE_VERSION)];
+        }
+        if ($status !== 200) {
+            return ['status' => self::ERROR, 'journals' => null, 'series' => null, 'error' => self::detail($status, $data)];
+        }
+        $journals = \is_array($data['journals'] ?? null) ? [] : null;
+        foreach (\is_array($data['journals'] ?? null) ? $data['journals'] : [] as $id => $head) {
+            $valid = \is_array($head) ? self::validHead((string) $id, $head) : null;
+            if ($valid === null) {
+                $journals = null;
+                break;
+            }
+            $journals[strtolower((string) $id)] = $valid;
+        }
+        $series = \is_array($data['series'] ?? null) ? [] : null;
+        foreach (\is_array($data['series'] ?? null) ? $data['series'] : [] as $name => $entry) {
+            if (!\is_array($entry) || !\is_string($entry['journal_id'] ?? null) || !\is_string($entry['number'] ?? null) || !\is_string($entry['hash'] ?? null) || !\is_int($entry['seq'] ?? null)) {
+                $series = null;
+                break;
+            }
+            $series[(string) $name] = ['journal_id' => $entry['journal_id'], 'number' => $entry['number'], 'hash' => $entry['hash'], 'seq' => $entry['seq']];
+        }
+        if ($journals === null || $series === null) {
+            return ['status' => self::ERROR, 'journals' => null, 'series' => null, 'error' => 'The shop answered the journal heads in another shape'];
+        }
+
+        return ['status' => self::OK, 'journals' => $journals, 'series' => $series, 'error' => null];
+    }
+
     /** @return array{0: ?int, 1: string, 2: ?string} status (null when nothing was answered), body, error */
     private function post(string $body): array
     {

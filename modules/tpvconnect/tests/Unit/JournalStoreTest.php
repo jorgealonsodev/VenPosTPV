@@ -97,6 +97,29 @@ final class InMemoryJournalStorage implements JournalStorage
 
         return $heads;
     }
+
+    public function journalIds(): array
+    {
+        $ids = [];
+        foreach ($this->rows as $row) {
+            $ids[$row['journal_id']] = true;
+        }
+        $ids = array_keys($ids);
+        sort($ids);
+
+        return $ids;
+    }
+
+    public function latestBySeries(): array
+    {
+        // The rows are kept in the order they were stored (the table's auto-increment id).
+        $latest = [];
+        foreach ($this->rows as $row) {
+            $latest[$row['series']] = ['journal_id' => $row['journal_id'], 'number' => $row['number'], 'hash' => $row['hash'], 'seq' => $row['seq']];
+        }
+
+        return $latest;
+    }
 }
 
 /**
@@ -282,6 +305,56 @@ final class JournalStoreTest extends TestCase
         self::assertSame('{"journal_id":"' . self::JOURNAL . '","last_seq":0,"contiguous_seq":0,"series":{}}', json_encode($body));
     }
 
+    /**
+     * fiscal-journal, second correction round: the TPV asks for every journal the shop
+     * holds, so a document under any journal id (a journal later reset, a setting the
+     * shop never heard of) is still seen.
+     */
+    public function test_heads_answers_every_journal_and_the_last_document_of_each_series_across_them(): void
+    {
+        $this->post(['journal_id' => self::JOURNAL, 'line' => self::line(1, 'A26', 'A26000001')]);
+        $this->post(['journal_id' => self::JOURNAL, 'line' => self::line(2, 'A26', 'A26000002')]);
+        $this->post(['journal_id' => self::OTHER_JOURNAL, 'line' => self::line(1, 'A26', 'A26000003')]);
+        $this->post(['journal_id' => self::OTHER_JOURNAL, 'line' => self::line(3, 'R2026', 'R2026000001', 'R5')]);
+
+        // No journal_id needed: the answer covers every journal.
+        [$status, $body] = $this->post(['action' => 'heads']);
+
+        self::assertSame(200, $status);
+        $journals = $body['journals'];
+        ksort($journals);
+        $expected = [self::JOURNAL, self::OTHER_JOURNAL];
+        sort($expected);
+        self::assertSame($expected, array_keys($journals));
+        self::assertSame(['journal_id' => self::JOURNAL, 'last_seq' => 2, 'contiguous_seq' => 2, 'series' => ['A26' => ['number' => 'A26000002', 'hash' => self::line(2, 'A26', 'A26000002')['fiscal_record']['hash'], 'seq' => 2]]], $journals[self::JOURNAL]);
+        self::assertSame(3, $journals[self::OTHER_JOURNAL]['last_seq']);
+        self::assertSame(1, $journals[self::OTHER_JOURNAL]['contiguous_seq']);
+        self::assertSame('A26000003', $journals[self::OTHER_JOURNAL]['series']['A26']['number']);
+        self::assertSame(['journal_id' => self::OTHER_JOURNAL, 'number' => 'A26000003', 'hash' => self::line(1, 'A26', 'A26000003')['fiscal_record']['hash'], 'seq' => 1], $body['series']['A26'], 'the last document stored of the series, whatever its journal');
+        self::assertSame('R2026000001', $body['series']['R2026']['number']);
+    }
+
+    public function test_heads_of_an_empty_store_has_no_journal_and_no_series_as_json_objects(): void
+    {
+        $request = (string) json_encode(['action' => 'heads']);
+        [$status, $body] = (new JournalStore($this->storage))->respond($request, 'HMAC-SHA256 ' . hash_hmac('sha256', $request, self::SECRET), self::SECRET);
+
+        self::assertSame(200, $status);
+        self::assertSame('{"journals":{},"series":{}}', json_encode($body));
+    }
+
+    public function test_the_single_journal_head_still_answers_as_before(): void
+    {
+        $this->post(['journal_id' => self::JOURNAL, 'line' => self::line(1, 'A26', 'A26000001')]);
+        $this->post(['journal_id' => self::OTHER_JOURNAL, 'line' => self::line(1, 'A26', 'A26000002')]);
+
+        [$status, $body] = $this->post(['journal_id' => self::JOURNAL, 'action' => 'head']);
+
+        self::assertSame(200, $status);
+        self::assertSame(['journal_id', 'last_seq', 'contiguous_seq', 'series'], array_keys($body));
+        self::assertSame('A26000001', $body['series']['A26']['number']);
+    }
+
     public function test_a_second_journal_is_kept_apart_from_the_first(): void
     {
         $this->post(['journal_id' => self::JOURNAL, 'line' => self::line(1, 'A26', 'A26000001')]);
@@ -382,6 +455,8 @@ final class JournalStoreTest extends TestCase
         yield 'journal_id missing' => [['line' => $line], 'journal_id'];
         yield 'neither line nor head' => [['journal_id' => self::JOURNAL], 'line'];
         yield 'unknown action' => [['journal_id' => self::JOURNAL, 'action' => 'drop'], 'action'];
+        yield 'heads with a journal_id that is not a uuid' => [['journal_id' => '../x', 'action' => 'heads'], 'journal_id'];
+        yield 'heads with a line' => [['action' => 'heads', 'line' => $line], 'action'];
         yield 'line and action together' => [['journal_id' => self::JOURNAL, 'action' => 'head', 'line' => $line], 'action'];
         yield 'line is not an object' => [['journal_id' => self::JOURNAL, 'line' => 'x'], 'line'];
         yield 'series used as SQL' => [$with(['series' => "A26'; DROP TABLE x;--"]), 'line.series'];

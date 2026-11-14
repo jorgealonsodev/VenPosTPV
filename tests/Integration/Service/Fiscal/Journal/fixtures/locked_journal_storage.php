@@ -109,4 +109,23 @@ final class LockedFileJournalStorage implements JournalStorage
 
         return $heads;
     }
+
+    public function journalIds(): array
+    {
+        $ids = array_values(array_unique(array_map(static fn (array $row): string => $row['journal_id'], $this->rows)));
+        sort($ids);
+
+        return $ids;
+    }
+
+    public function latestBySeries(): array
+    {
+        // Rows are kept in the order they were stored, as the table's auto-increment id.
+        $latest = [];
+        foreach ($this->rows as $row) {
+            $latest[$row['series']] = ['journal_id' => $row['journal_id'], 'number' => $row['number'], 'hash' => $row['hash'], 'seq' => $row['seq']];
+        }
+
+        return $latest;
+    }
 }

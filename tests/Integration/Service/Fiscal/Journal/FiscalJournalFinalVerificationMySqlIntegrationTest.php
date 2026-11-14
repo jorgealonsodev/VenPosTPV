@@ -278,4 +278,174 @@ final class FiscalJournalFinalVerificationMySqlIntegrationTest extends TestCase
         $this->assertSame(5, (int) $this->restored->fetchOne("SELECT COUNT(DISTINCT order_id) FROM outbox WHERE type = 'sale'"), 'every sale keeps its upload row');
         $this->assertSame(5, (int) $this->restored->fetchOne('SELECT COUNT(*) FROM fiscal_record'));
     }
+
+    /** The dump restored as the database of a new server whose journal folders were not copied. */
+    private function restoreOnANewServer(): JournalPathFixtures
+    {
+        $this->restored = JournalRestore::restore($this->dump, self::RESTORE_DB);
+        exec('rm -rf ' . escapeshellarg($this->journal->root . '/backups') . ' ' . escapeshellarg($this->journal->root . '/var/fiscal-journal'));
+        $fixtures = new JournalPathFixtures($this->restored, fn (string $class) => $this->createMock($class));
+        $fixtures->guard = new FiscalJournalGuard($this->restored, $this->journal->locations);
+
+        return $fixtures;
+    }
+
+    private function resetOn(Connection $connection, FakeJournalShop $shop): FiscalJournalReset
+    {
+        $identity = new FiscalJournalIdentity($connection);
+        $writer = new FiscalJournalWriter($connection, $this->journal->locations, $this->journal->intents);
+
+        return new FiscalJournalReset($connection, $this->journal->locations, $writer, new FiscalJournalStarter($connection, $writer, $identity), $identity, $this->journal->root . '/var/fiscal-replay.lock', shop: $this->shop($connection, $shop));
+    }
+
+    /** @param list<string> $issued */
+    private function assertNoNumberIsIssuedAgain(JournalPathFixtures $fixtures, array $issued): void
+    {
+        $before = $this->restored->fetchFirstColumn('SELECT number FROM fiscal_record ORDER BY id');
+        try {
+            $this->sell(1, $fixtures);
+        } catch (FiscalJournalBehindException) {
+        }
+        $after = $this->restored->fetchFirstColumn('SELECT number FROM fiscal_record ORDER BY id');
+        foreach (array_diff($after, $before) as $number) {
+            $this->assertNotContains($number, $issued, 'a number already issued (held by the shop) was issued again');
+        }
+    }
+
+    /**
+     * Recheck P2c-ii: a reset in the history (J1 then J2), a dump taken under J1
+     * restored on a server without the journal folders. Asking the shop about J1 only
+     * found nothing; it is asked for every journal now.
+     */
+    public function testAfterAResetInTheHistoryAnOlderDumpIsBehindTheShopUnderTheLaterJournal(): void
+    {
+        if (!JournalRestore::available()) {
+            $this->markTestSkipped('MySQL test container unavailable for the restore');
+        }
+        $this->provision();
+        $this->sell(2);
+        $this->journal->writer->flush();
+        $shop = new FakeJournalShop($this->shopStore);
+        $j1 = (string) $this->journal->primary()->journalId();
+        $this->uploadJournal($shop, $j1);
+        $this->dump = JournalRestore::dump($this->connection);
+        $this->assertSame(FiscalJournalResetResult::DONE, $this->resetOn($this->connection, $shop)->run('Reinicio del administrador')->status);
+        $j2 = (string) $this->journal->primary()->journalId();
+        $this->sell(2);
+        $this->journal->writer->flush();
+        $this->uploadJournal($shop, $j2);
+        $issued = $this->connection->fetchFirstColumn('SELECT number FROM fiscal_record ORDER BY id');
+
+        $fixtures = $this->restoreOnANewServer();
+        $this->assertSame($j1, (new FiscalJournalIdentity($this->restored))->journalId());
+
+        $result = $this->resetOn($this->restored, $shop)->run('Servidor nuevo');
+        $this->assertSame(FiscalJournalResetResult::REFUSED, $result->status, $result->message);
+        $this->assertStringContainsString($issued[3], $result->message);
+        // The every-minute task asks the shop for every journal: the till is blocked.
+        $this->shop($this->restored, $shop)->run(new \DateTimeImmutable());
+        $this->assertSame(FiscalJournalGuard::BEHIND_SHOP, (new FiscalJournalGuard($this->restored, $this->journal->locations))->check()['state']);
+        $this->assertNoNumberIsIssuedAgain($fixtures, $issued);
+    }
+
+    /** Recheck P2c-ii': a setting the shop never heard of; "nothing under that id" is no confirmation. */
+    public function testASettingTheShopNeverHeardOfIsNoConfirmation(): void
+    {
+        if (!JournalRestore::available()) {
+            $this->markTestSkipped('MySQL test container unavailable for the restore');
+        }
+        $this->provision();
+        $this->sell(2);
+        $this->journal->writer->flush();
+        $this->dump = JournalRestore::dump($this->connection);
+        $this->sell(2);
+        $this->journal->writer->flush();
+        $shop = new FakeJournalShop($this->shopStore);
+        $this->uploadJournal($shop, (string) $this->journal->primary()->journalId());
+        $issued = $this->connection->fetchFirstColumn('SELECT number FROM fiscal_record ORDER BY id');
+
+        $fixtures = $this->restoreOnANewServer();
+        $this->restored->executeStatement("UPDATE app_setting SET value = ? WHERE name = 'fiscal_journal.id'", ['0b8f6a1e-0000-4000-8000-000000000001']);
+
+        $result = $this->resetOn($this->restored, $shop)->run('Servidor nuevo');
+        $this->assertSame(FiscalJournalResetResult::REFUSED, $result->status, $result->message);
+        $this->assertStringContainsString($issued[3], $result->message);
+        $this->shop($this->restored, $shop)->run(new \DateTimeImmutable());
+        $this->assertSame(FiscalJournalGuard::BEHIND_SHOP, (new FiscalJournalGuard($this->restored, $this->journal->locations))->check()['state']);
+        $this->assertNoNumberIsIssuedAgain($fixtures, $issued);
+    }
+
+    /**
+     * Recheck P2c-i / case (iii): a database from before the journal existed (no
+     * setting), the folders lost, the shop holding the journal's lines. The provisioning
+     * step re-run by an upgrade used to start a fresh journal and repeat a number.
+     */
+    public function testADatabaseFromBeforeTheJournalIsBehindTheShopAndTheStepStartsNoJournal(): void
+    {
+        if (!JournalRestore::available()) {
+            $this->markTestSkipped('MySQL test container unavailable for the restore');
+        }
+        $this->sell(2);
+        $this->dump = JournalRestore::dump($this->connection);
+        $this->provision();
+        $this->sell(2);
+        $this->journal->writer->flush();
+        $shop = new FakeJournalShop($this->shopStore);
+        $this->uploadJournal($shop, (string) $this->journal->primary()->journalId());
+        $issued = $this->connection->fetchFirstColumn('SELECT number FROM fiscal_record ORDER BY id');
+
+        $fixtures = $this->restoreOnANewServer();
+        $this->assertNull((new FiscalJournalIdentity($this->restored))->journalId());
+
+        // The provisioning step (an upgrade, an install re-run) asks the shop first.
+        $identity = new FiscalJournalIdentity($this->restored);
+        $writer = new FiscalJournalWriter($this->restored, $this->journal->locations, $this->journal->intents);
+        $step = new FiscalJournalStep($this->journal->locations, $identity, $writer, new FiscalJournalStarter($this->restored, $writer, $identity),
+            FiscalJournalStep::BACKFILL_LINES_PER_RUN, $this->shop($this->restored, $shop), new FiscalJournalGuard($this->restored, $this->journal->locations));
+        try {
+            $step->run();
+            $this->fail('the step must not start a journal');
+        } catch (\VenPosTPV\Service\Provisioning\ProvisioningException $e) {
+            $this->assertStringContainsString($issued[3], $e->getMessage());
+            $this->assertStringContainsString('docs/diario-fiscal.md', $e->getMessage());
+            $this->assertStringContainsString('--accept-shop-ahead', $e->getMessage());
+        }
+        $this->assertNull($this->journal->primary()->journalId());
+        $this->assertNull($identity->journalId());
+        $this->assertSame(FiscalJournalGuard::BEHIND_SHOP, (new FiscalJournalGuard($this->restored, $this->journal->locations))->check()['state']);
+        $this->assertSame(FiscalJournalResetResult::REFUSED, $this->resetOn($this->restored, $shop)->run('Servidor nuevo')->status);
+        $this->assertNoNumberIsIssuedAgain($fixtures, $issued);
+        $this->assertSame(\array_slice($issued, 0, 2), $this->restored->fetchFirstColumn('SELECT number FROM fiscal_record ORDER BY id'));
+    }
+
+    /** Decision C end to end: a deliberate fresh start against a shop holding another install's journal. */
+    public function testAReinstallWithAnEmptyDatabaseStartsOverOnlyWithAcceptShopAhead(): void
+    {
+        if (!JournalRestore::available()) {
+            $this->markTestSkipped('MySQL test container unavailable for the restore');
+        }
+        $this->dump = JournalRestore::dump($this->connection);
+        $this->provision();
+        $this->sell(2);
+        $this->journal->writer->flush();
+        $shop = new FakeJournalShop($this->shopStore);
+        $previous = (string) $this->journal->primary()->journalId();
+        $this->uploadJournal($shop, $previous);
+
+        // A reinstall: the empty database, no folders.
+        $this->restoreOnANewServer();
+        $result = $this->resetOn($this->restored, $shop)->run('Reinstalación');
+        $this->assertSame(FiscalJournalResetResult::REFUSED, $result->status, $result->message);
+
+        $result = $this->resetOn($this->restored, $shop)->run('Reinstalación desde cero', null, false, true);
+
+        $this->assertSame(FiscalJournalResetResult::DONE, $result->status, $result->message);
+        $this->assertSame([$previous], (new FiscalJournalIdentity($this->restored))->retired());
+        $audit = json_decode((string) $this->restored->fetchOne('SELECT payload FROM audit_log WHERE action = ?', [FiscalJournalReset::AUDIT_ACTION]), true);
+        $this->assertSame([$previous], $audit['accept_shop_ahead']['retired_journals']);
+        // The minute job stores the shop's answer again: the retired journal never blocks.
+        $this->shop($this->restored, $shop)->run(new \DateTimeImmutable());
+        $this->assertSame(FiscalJournalGuard::OK, (new FiscalJournalGuard($this->restored, $this->journal->locations))->check()['state']);
+    }
 }
+

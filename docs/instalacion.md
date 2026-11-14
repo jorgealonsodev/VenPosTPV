@@ -62,6 +62,10 @@ Cómo emparejar más tarde, cambiar de impresora o resolver problemas: [Agente d
 - [ ] En **Ajustes → Cajas**, cada caja sale como «Conectado».
 - [ ] Una venta de prueba imprime el ticket y aparece como pedido en PrestaShop al cabo de un minuto.
 
+### Reinstalación
+
+Si instalas el TPV de nuevo desde cero (base de datos vacía) contra una tienda que ya tiene el diario fiscal de la instalación anterior, el paso «Diario fiscal preparado» queda pendiente y la caja no deja vender: para el TPV es lo mismo que haber restaurado una copia antigua, y el siguiente ticket repetiría un número que la tienda ya tiene. Si de verdad empiezas de cero, un administrador empieza el diario con `php bin/console tpv:fiscal:journal:reset --confirm "Reinstalación desde cero" --accept-shop-ahead --env=prod`. Nunca lo hagas después de restaurar una copia de seguridad. Detalles en [Diario fiscal](diario-fiscal.md#instalación-y-actualización).
+
 ## Actualizar
 
 Descarga la release nueva y repite solo lo que cambie:

@@ -13,12 +13,16 @@ use VenPosTPV\Service\Fiscal\Journal\FiscalDocumentSnapshot;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalAlerts;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalIntents;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalLocations;
+use VenPosTPV\Service\Fiscal\Journal\FiscalJournalGuard;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalIdentity;
+use VenPosTPV\Service\Fiscal\Journal\FiscalJournalShopSync;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalReconciler;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalState;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalWriter;
 use VenPosTPV\Service\Fiscal\Journal\JournalLocation;
 use VenPosTPV\Service\Mail\BackupAlertMailer;
+use VenPosTPV\Service\PrestaShop\PsJournalClient;
+use Symfony\Component\HttpClient\MockHttpClient;
 
 /**
  * The every-minute catch-up of the fiscal journal (fiscal-journal S2, S3, D3.5,
@@ -216,6 +220,41 @@ final class FiscalJournalReconcilerTest extends TestCase
         $this->assertDirectoryDoesNotExist($this->root . '/backups/fiscal-journal', 'no folder is created before the provisioning step');
         $this->assertDirectoryDoesNotExist($this->root . '/var/fiscal-journal');
         $this->assertSame(FiscalJournalState::NOT_STARTED, $this->reconciler()->current(self::at('2026-11-14 12:00:00'))->status());
+    }
+
+    /**
+     * Second correction round, recheck case (iii): a database from before the journal
+     * (no setting) on a server whose folders were lost. The every-minute task still asks
+     * the shop for every journal; when the shop holds a document the database lacks the
+     * guard blocks, when it holds nothing no folder is made.
+     */
+    public function testWithoutAJournalTheShopIsAskedForEveryJournalAndAShopAheadBlocks(): void
+    {
+        $this->issue('A26000001', '2026-11-14 10:00:00');
+        $answer = ['status' => PsJournalClient::OK, 'journals' => [], 'series' => [], 'error' => null];
+        $client = new class($answer) extends PsJournalClient {
+            public function __construct(public array $answer)
+            {
+                parent::__construct('https://tienda.tutienda.com', 'secret', new MockHttpClient());
+            }
+
+            public function heads(): array
+            {
+                return $this->answer;
+            }
+        };
+        $shop = new FiscalJournalShopSync($this->connection, $this->locations, $client, new FiscalJournalIdentity($this->connection));
+        $reconciler = new FiscalJournalReconciler($this->connection, $this->locations, $this->intents, new FiscalJournalAlerts($this->connection), null, $this->snapshot(), $shop);
+
+        $this->assertSame(FiscalJournalState::NOT_STARTED, $reconciler->run(self::at('2026-11-14 12:00:00'))->status());
+        $this->assertDirectoryDoesNotExist($this->root . '/backups/fiscal-journal', 'a shop holding nothing: nothing to keep');
+
+        $journal = '00000000-0000-4000-8000-0000000000d1';
+        $client->answer['journals'] = [$journal => ['journal_id' => $journal, 'last_seq' => 2, 'contiguous_seq' => 2, 'series' => ['A26' => ['number' => 'A26000002', 'hash' => str_repeat('E', 64), 'seq' => 2]]]];
+        $reconciler->run(self::at('2026-11-14 12:01:00'));
+
+        $this->assertSame(FiscalJournalGuard::BEHIND_SHOP, (new FiscalJournalGuard($this->connection, $this->locations))->check()['state']);
+        $this->assertNull($this->locations->primary()->journalId(), 'no journal is created');
     }
 
     public function testMissingDocumentsAreAppendedAndTheStateSaysUpToDate(): void

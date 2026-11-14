@@ -8,15 +8,19 @@ use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\DependencyInjection\Attribute\AsTaggedItem;
+use Symfony\Component\HttpClient\MockHttpClient;
 use VenPosTPV\Service\Backup\BackupRetention;
 use VenPosTPV\Service\Fiscal\FiscalHash;
 use VenPosTPV\Service\Fiscal\Journal\FiscalDocumentSnapshot;
+use VenPosTPV\Service\Fiscal\Journal\FiscalJournalGuard;
+use VenPosTPV\Service\Fiscal\Journal\FiscalJournalShopSync;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalIdentity;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalIntents;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalLocations;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalStarter;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalStep;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalWriter;
+use VenPosTPV\Service\PrestaShop\PsJournalClient;
 use VenPosTPV\Service\Provisioning\PendingMigrationsStep;
 use VenPosTPV\Service\Provisioning\ProvisioningException;
 use VenPosTPV\Service\Provisioning\ProvisioningRunner;
@@ -69,9 +73,102 @@ final class FiscalJournalStepTest extends TestCase
         return new FiscalJournalWriter($connection, $locations, new FiscalJournalIntents($locations), null, $snapshot);
     }
 
-    private function step(int $backfillLimit = FiscalJournalStep::BACKFILL_LINES_PER_RUN): FiscalJournalStep
+    private function step(int $backfillLimit = FiscalJournalStep::BACKFILL_LINES_PER_RUN, ?array $shopAnswer = null): FiscalJournalStep
     {
-        return new FiscalJournalStep($this->locations, $this->identity, $this->writer, new FiscalJournalStarter($this->connection, $this->writer, $this->identity), $backfillLimit);
+        $shop = null;
+        if ($shopAnswer !== null) {
+            $client = new class($shopAnswer) extends PsJournalClient {
+                public function __construct(private readonly array $answer)
+                {
+                    parent::__construct('https://tienda.tutienda.com', 'secret', new MockHttpClient());
+                }
+
+                public function heads(): array
+                {
+                    return $this->answer;
+                }
+            };
+            $shop = new FiscalJournalShopSync($this->connection, $this->locations, $client, $this->identity);
+        }
+
+        return new FiscalJournalStep($this->locations, $this->identity, $this->writer, new FiscalJournalStarter($this->connection, $this->writer, $this->identity), $backfillLimit,
+            $shop, new FiscalJournalGuard($this->connection, $this->locations, null, $this->identity));
+    }
+
+    /** @return array{status: string, journals: array<string, array<string, mixed>>, series: array<string, mixed>, error: null} the shop holding document $n of the series under $journalId */
+    private static function shopHolding(string $journalId, int $n, string $hash): array
+    {
+        return ['status' => PsJournalClient::OK, 'journals' => [$journalId => [
+            'journal_id' => $journalId, 'last_seq' => $n, 'contiguous_seq' => $n,
+            'series' => ['A26' => ['number' => sprintf('A26%06d', $n), 'hash' => $hash, 'seq' => $n]],
+        ]], 'series' => [], 'error' => null];
+    }
+
+    /**
+     * Second correction round, recheck case (iii) and decision D: a first journal is
+     * never started while the shop holds, under any journal, a document this database
+     * lacks. A fresh install with an empty database against a shop that holds an
+     * earlier install's journal is refused by design (it cannot be told from a restore).
+     */
+    public function testNoJournalIsStartedWhileTheShopHoldsADocumentTheDatabaseLacks(): void
+    {
+        self::issue($this->connection, 1);
+        $step = $this->step(shopAnswer: self::shopHolding('00000000-0000-4000-8000-0000000000c1', 4, str_repeat('C', 64)));
+
+        try {
+            $step->run();
+            $this->fail('the step must refuse');
+        } catch (ProvisioningException $e) {
+            $this->assertStringContainsString('A26000004', $e->getMessage());
+            $this->assertStringContainsString('docs/diario-fiscal.md', $e->getMessage());
+            $this->assertStringContainsString('tpv:fiscal:journal:reset --confirm "<motivo>" --accept-shop-ahead', $e->getMessage());
+        }
+        $this->assertNull($this->locations->primary()->journalId(), 'no journal started');
+        $this->assertNull($this->identity->journalId());
+        $this->assertFalse($step->isDone());
+        $this->assertSame(FiscalJournalGuard::BEHIND_SHOP, (new FiscalJournalGuard($this->connection, $this->locations))->check()['state'], 'the till is blocked');
+    }
+
+    /** @return iterable<string, array{0: array<string, mixed>}> */
+    public static function shopsThatNeverHoldAnInstallBack(): iterable
+    {
+        yield 'a shop that never had journal lines' => [['status' => PsJournalClient::OK, 'journals' => [], 'series' => [], 'error' => null]];
+        yield 'shop down' => [['status' => PsJournalClient::ERROR, 'journals' => null, 'series' => null, 'error' => 'timeout']];
+        yield 'an older module' => [['status' => PsJournalClient::UNAVAILABLE, 'journals' => null, 'series' => null, 'error' => 'HTTP 422']];
+        yield 'a shop error' => [['status' => PsJournalClient::ERROR, 'journals' => null, 'series' => null, 'error' => 'HTTP 500']];
+    }
+
+    /** Decision D: no false block on a fresh install or an upgrade. */
+    #[\PHPUnit\Framework\Attributes\DataProvider('shopsThatNeverHoldAnInstallBack')]
+    public function testAFreshInstallAndALiveUpgradeStartNormally(array $answer): void
+    {
+        $this->step(shopAnswer: $answer)->run();
+        $this->assertNotNull($this->identity->journalId(), 'fresh install');
+
+        // An upgrade of a live install: months of documents, the same shop.
+        JournalLines::remove($this->root . '/backups');
+        JournalLines::remove($this->root . '/var');
+        $this->connection->executeStatement('DELETE FROM app_setting');
+        foreach (range(1, 30) as $n) {
+            self::issue($this->connection, $n);
+        }
+        $this->step(shopAnswer: $answer)->run();
+        $this->assertSame(30, \count($this->lines()));
+        $this->assertSame(FiscalJournalGuard::OK, (new FiscalJournalGuard($this->connection, $this->locations))->check()['state']);
+    }
+
+    public function testAShopThatHoldsOnlyDocumentsOfTheDatabaseOrRetiredOnesDoesNotStopTheStep(): void
+    {
+        self::issue($this->connection, 1);
+        $hash = (string) $this->connection->fetchOne('SELECT hash FROM fiscal_record WHERE id = 1');
+        $this->identity->retire(['00000000-0000-4000-8000-0000000000c9']);
+        $answer = self::shopHolding('00000000-0000-4000-8000-0000000000c1', 1, $hash);
+        $answer['journals'] += self::shopHolding('00000000-0000-4000-8000-0000000000c9', 9, str_repeat('D', 64))['journals'];
+
+        $this->step(shopAnswer: $answer)->run();
+
+        $this->assertNotNull($this->identity->journalId());
+        $this->assertSame(1, \count($this->lines()));
     }
 
     public static function issue(Connection $connection, int $n): void

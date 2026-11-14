@@ -50,7 +50,7 @@ final class FiscalJournalResetCommandTest extends TestCase
     public function testItRunsWithTheReasonAndPrintsTheOutcome(): void
     {
         $reset = $this->createMock(FiscalJournalReset::class);
-        $reset->expects($this->once())->method('run')->with('Servidor nuevo', null, false)->willReturn(
+        $reset->expects($this->once())->method('run')->with('Servidor nuevo', null, false, false)->willReturn(
             new FiscalJournalResetResult(FiscalJournalResetResult::DONE, 'Diario fiscal nuevo 1234: 3 documentos anotados.', '1234', 3, ['backups/fiscal-journal/archive/x'])
         );
         $tester = $this->tester($reset);
@@ -74,7 +74,7 @@ final class FiscalJournalResetCommandTest extends TestCase
     public function testShopUnavailableIsPassedToTheServiceOnlyWhenGiven(): void
     {
         $reset = $this->createMock(FiscalJournalReset::class);
-        $reset->expects($this->once())->method('run')->with('Tienda sin el módulo 0.9.0', null, true)->willReturn(
+        $reset->expects($this->once())->method('run')->with('Tienda sin el módulo 0.9.0', null, true, false)->willReturn(
             new FiscalJournalResetResult(FiscalJournalResetResult::DONE, 'Diario fiscal nuevo 1234: 3 documentos anotados.', '1234', 3)
         );
 
@@ -90,6 +90,21 @@ final class FiscalJournalResetCommandTest extends TestCase
         $this->assertStringContainsString('se pueden repetir números', $option->getDescription());
         $this->assertStringContainsString('copia anterior', $option->getDescription());
         $this->assertStringContainsString('--shop-unavailable', $command->getHelp());
+    }
+
+    public function testAcceptShopAheadIsPassedOnlyWhenGivenAndItsHelpWarnsNumbersMayBeIssuedAgain(): void
+    {
+        $reset = $this->createMock(FiscalJournalReset::class);
+        $reset->expects($this->once())->method('run')->with('Reinstalación desde cero', null, false, true)->willReturn(
+            new FiscalJournalResetResult(FiscalJournalResetResult::DONE, 'Diario fiscal nuevo 1234: 0 documentos anotados.', '1234', 0)
+        );
+        $this->assertSame(0, $this->tester($reset)->execute(['--confirm' => 'Reinstalación desde cero', '--accept-shop-ahead' => true]));
+
+        $command = new FiscalJournalResetCommand($this->createMock(FiscalJournalReset::class));
+        $description = $command->getDefinition()->getOption('accept-shop-ahead')->getDescription();
+        $this->assertStringContainsString('la tienda tenga documentos que esta base de datos no tiene', $description);
+        $this->assertStringContainsString('se pueden volver a emitir', $description);
+        $this->assertStringContainsString('nunca después de restaurar una copia de seguridad', $description);
     }
 
     public function testTheHelpListsTheExitCodes(): void

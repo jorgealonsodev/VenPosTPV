@@ -143,6 +143,49 @@ final class PsJournalClientTest extends TestCase
         }
     }
 
+    /** Second correction round: the shop's evidence of every journal it holds, whatever id the TPV knows. */
+    public function testHeadsAsksForEveryJournalTheShopHolds(): void
+    {
+        $other = '00000000-0000-4000-8000-000000000001';
+        $answer = [
+            'journals' => [
+                self::JOURNAL => ['journal_id' => self::JOURNAL, 'last_seq' => 2, 'contiguous_seq' => 2, 'series' => ['A26' => ['number' => 'A26000002', 'hash' => str_repeat('a', 64), 'seq' => 2]]],
+                $other => ['journal_id' => $other, 'last_seq' => 4, 'contiguous_seq' => 4, 'series' => ['A26' => ['number' => 'A26000006', 'hash' => str_repeat('b', 64), 'seq' => 4]]],
+            ],
+            'series' => ['A26' => ['journal_id' => $other, 'number' => 'A26000006', 'hash' => str_repeat('b', 64), 'seq' => 4]],
+        ];
+        $result = $this->client([self::json($answer, 200)])->heads();
+
+        self::assertSame(PsJournalClient::OK, $result['status']);
+        self::assertSame($answer['journals'], $result['journals']);
+        self::assertSame($answer['series'], $result['series']);
+        self::assertSame('{"action":"heads"}', $this->requests[0]['body']);
+        self::assertContains('Authorization: HMAC-SHA256 ' . hash_hmac('sha256', '{"action":"heads"}', self::SECRET), $this->requests[0]['headers']);
+
+        $empty = $this->client([new MockResponse('{"journals":{},"series":{}}', ['http_code' => 200])])->heads();
+        self::assertSame(['status' => PsJournalClient::OK, 'journals' => [], 'series' => [], 'error' => null], $empty);
+    }
+
+    public function testAnAnswerForEveryJournalThatCannotBeTrustedIsNeverAnAnswer(): void
+    {
+        $cases = [
+            // A module that only knows the single-journal head answers 422 to "heads": it cannot be asked.
+            'module without heads' => [self::json(['error' => 'Validation failed', 'details' => ['journal_id' => 'Required UUID']], 422), PsJournalClient::UNAVAILABLE],
+            'module too old' => [new MockResponse('<html>404</html>', ['http_code' => 404]), PsJournalClient::UNAVAILABLE],
+            'not JSON' => [new MockResponse('<html>Shop</html>', ['http_code' => 200]), PsJournalClient::UNAVAILABLE],
+            'no journals' => [self::json(['series' => []], 200), PsJournalClient::ERROR],
+            'a journal under another id' => [self::json(['journals' => [self::JOURNAL => ['journal_id' => '00000000-0000-4000-8000-000000000000', 'last_seq' => 1, 'contiguous_seq' => 1, 'series' => []]], 'series' => []], 200), PsJournalClient::ERROR],
+            'bad journal entry' => [self::json(['journals' => [self::JOURNAL => ['journal_id' => self::JOURNAL, 'last_seq' => 1]], 'series' => []], 200), PsJournalClient::ERROR],
+            'shop error' => [self::json(['error' => 'x'], 500), PsJournalClient::ERROR],
+            'network' => [new TransportException('timeout'), PsJournalClient::ERROR],
+        ];
+        foreach ($cases as $name => [$response, $expected]) {
+            $result = $this->client([$response])->heads();
+            self::assertSame($expected, $result['status'], $name);
+            self::assertNull($result['journals'], $name);
+        }
+    }
+
     public function testTheNumberRuleIsTheModuleOne(): void
     {
         foreach (['A26000124', 'R2026000001', 'F26000003', 'XKBKNABJK', 'a.b_c/d-e', str_repeat('A', 60)] as $number) {

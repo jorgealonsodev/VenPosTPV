@@ -150,7 +150,8 @@ final class FiscalJournalShopCopyMySqlIntegrationTest extends TestCase
 
     private function shopHeadAnswering(int $status, string $body): FiscalJournalShopSync
     {
-        $client = new PsJournalClient('https://tienda.tutienda.com', 'x', new MockHttpClient(new MockResponse($body, ['http_code' => $status])));
+        // The same answer to every question (the one for every journal, then this journal's head).
+        $client = new PsJournalClient('https://tienda.tutienda.com', 'x', new MockHttpClient(static fn (): MockResponse => new MockResponse($body, ['http_code' => $status])));
 
         return new FiscalJournalShopSync($this->connection, $this->journal->anotherProcess()->locations, $client);
     }
@@ -178,7 +179,7 @@ final class FiscalJournalShopCopyMySqlIntegrationTest extends TestCase
         $this->shop->requests = [];
         $second = $this->cron();
         $this->assertSame([], $this->shop->sentSeqs());
-        $this->assertSame(['head'], array_column($this->shop->requests, 'action'));
+        $this->assertSame(['heads'], array_column($this->shop->requests, 'action'), 'one question a minute, for every journal');
         $shop = $second->data['shop'];
         $this->assertSame(FiscalJournalShopSync::OK, $shop['status']);
         $this->assertSame(['number' => $numbers[2], 'seq' => 3], $shop['last_document']);
@@ -226,7 +227,7 @@ final class FiscalJournalShopCopyMySqlIntegrationTest extends TestCase
             $this->cron();
         }
         $this->assertSame([], $this->shop->sentSeqs(), 'nothing sent while the hour runs');
-        $this->assertSame(5, \count($this->shop->requests), 'one head a minute');
+        $this->assertSame(array_merge(...array_fill(0, 5, ['heads', 'head'])), array_column($this->shop->requests, 'action'), 'every journal, then this one, once a minute');
         $this->issue(1);
         (new FiscalJournalGuard($this->connection, $this->journal->locations))->assertCanIssue();
 
@@ -545,7 +546,6 @@ final class FiscalJournalShopCopyMySqlIntegrationTest extends TestCase
         $foreignHead = ['journal_id' => $foreign, 'fetched_at' => '2099-01-01T00:00:00+00:00', 'last_seq' => 9, 'contiguous_seq' => 9, 'series' => ['J26' => ['number' => 'J26999999', 'hash' => str_repeat('A', 64), 'seq' => 9]]];
         $stored = [
             'not JSON' => '{not json',
-            'only another journal' => json_encode(['v' => 1, 'heads' => [$foreign => $foreignHead]]),
             'another shape' => json_encode(['v' => 1, 'heads' => [$this->journalId => ['series' => 'x']]]),
             'empty' => '',
         ];
@@ -555,6 +555,11 @@ final class FiscalJournalShopCopyMySqlIntegrationTest extends TestCase
             }
             $this->assertSame(FiscalJournalGuard::OK, $this->guardState(), $why);
         }
+        // Another journal holding a document the database lacks is evidence too (second correction round).
+        foreach (['backups', 'var'] as $base) {
+            file_put_contents($this->journal->root . '/' . $base . '/fiscal-journal/shop-head.json', (string) json_encode(['v' => 1, 'heads' => [$foreign => $foreignHead]]));
+        }
+        $this->assertSame(FiscalJournalGuard::BEHIND_SHOP, $this->guardState(), 'another journal');
         foreach (['backups', 'var'] as $base) {
             @unlink($this->journal->root . '/' . $base . '/fiscal-journal/shop-head.json');
         }
@@ -617,20 +622,21 @@ final class FiscalJournalShopCopyMySqlIntegrationTest extends TestCase
         $this->assertSame([5, 5], $this->shopPositions(), 'an empty shop is filled again');
     }
 
-    public function testTheStoredHeadOfTheOldJournalIsIgnoredAfterAJournalReset(): void
+    /**
+     * After a reset the archived journal's documents are all in the database, so its
+     * stored head never blocks; the guard only blocks for it when the shop holds a
+     * document of it the database lacks (second correction round: the shop's evidence
+     * is independent of the journal id, decision C).
+     */
+    public function testTheStoredHeadOfTheOldJournalNeverBlocksAfterAJournalResetWhileItsDocumentsAreInTheDatabase(): void
     {
         (new FiscalJournalIdentity($this->connection))->store($this->journalId);
         $this->issue(2);
         $this->cron();
+        // The next minute's answer shows the shop holding both lines of this journal.
+        $this->cron();
         $old = $this->journalId;
-        // The stored head of the old journal names a document the database lacks.
-        foreach (['backups', 'var'] as $base) {
-            $file = $this->journal->root . '/' . $base . '/fiscal-journal/shop-head.json';
-            $head = json_decode((string) file_get_contents($file), true);
-            $head['heads'][$old]['series']['ZZ'] = ['number' => 'Z26000001', 'hash' => str_repeat('b', 64), 'seq' => 99];
-            file_put_contents($file, (string) json_encode($head));
-        }
-        $this->assertSame(FiscalJournalGuard::BEHIND_SHOP, $this->guardState(), 'while it is this journal it blocks');
+        $this->assertSame([2, 2], $this->shopPositions());
 
         // The reset: the journal files archived, a new journal id in the folders and the setting.
         foreach (['backups', 'var'] as $base) {
@@ -644,6 +650,15 @@ final class FiscalJournalShopCopyMySqlIntegrationTest extends TestCase
         (new FiscalJournalIdentity($this->connection))->store($fresh);
 
         $this->assertNotSame($old, $fresh);
-        $this->assertSame(FiscalJournalGuard::OK, $this->guardState());
+        $this->assertSame(FiscalJournalGuard::OK, $this->guardState(), 'every document of the old journal is in the database');
+
+        // The stored head of the old journal names a document the database lacks: that is evidence, whatever the journal.
+        foreach (['backups', 'var'] as $base) {
+            $file = $this->journal->root . '/' . $base . '/fiscal-journal/shop-head.json';
+            $head = json_decode((string) file_get_contents($file), true);
+            $head['heads'][$old]['series']['ZZ'] = ['number' => 'Z26000001', 'hash' => str_repeat('b', 64), 'seq' => 99];
+            file_put_contents($file, (string) json_encode($head));
+        }
+        $this->assertSame(FiscalJournalGuard::BEHIND_SHOP, $this->guardState());
     }
 }

@@ -37,9 +37,11 @@ final class FiscalJournalResetTest extends TestCase
     private FiscalJournalWriter $writer;
     private FiscalJournalIdentity $identity;
 
-    /** @var array<string, array{status: string, head: ?array, error: ?string}> what the shop answers, by journal id (missing: an empty head) */
-    private array $shopAnswers = [];
-    /** @var list<string> the journals the shop was asked about */
+    /** @var array<string, array<string, mixed>> the journals the shop holds, by id (their heads) */
+    private array $shopJournals = [];
+    /** @var array{status: string, journals: null, series: null, error: string}|null what the shop answers instead, when it cannot */
+    private ?array $shopFailure = null;
+    /** @var list<string> what the shop was asked */
     private array $shopAsked = [];
     private bool $shopConfigured = true;
 
@@ -66,18 +68,22 @@ final class FiscalJournalResetTest extends TestCase
     private function reset(int $backfillLinesPerRun = 500): FiscalJournalReset
     {
         $starter = new FiscalJournalStarter($this->connection, $this->writer, $this->identity);
-        $client = new class($this->shopAnswers, $this->shopAsked) extends PsJournalClient {
-            public function __construct(private array &$answers, private array &$asked)
+        $client = new class($this->shopJournals, $this->shopFailure, $this->shopAsked) extends PsJournalClient {
+            public function __construct(private array &$journals, private ?array &$failure, private array &$asked)
             {
                 parent::__construct('https://tienda.tutienda.com', 'secret', new MockHttpClient());
             }
 
+            public function heads(): array
+            {
+                $this->asked[] = 'heads';
+
+                return $this->failure ?? ['status' => PsJournalClient::OK, 'journals' => $this->journals, 'series' => [], 'error' => null];
+            }
+
             public function head(string $journalId): array
             {
-                $this->asked[] = $journalId;
-
-                return $this->answers[$journalId]
-                    ?? ['status' => PsJournalClient::OK, 'head' => ['journal_id' => $journalId, 'last_seq' => 0, 'contiguous_seq' => 0, 'series' => []], 'error' => null];
+                throw new \LogicException('the reset asks for every journal');
             }
 
             public function send(string $journalId, string $line): array
@@ -103,10 +109,10 @@ final class FiscalJournalResetTest extends TestCase
     /** The shop's head of $journalId holding document $n of the series A26 (FiscalJournalStepTest::issue numbering). */
     private function shopHolds(string $journalId, int $n): void
     {
-        $this->shopAnswers[$journalId] = ['status' => PsJournalClient::OK, 'head' => [
+        $this->shopJournals[$journalId] = [
             'journal_id' => $journalId, 'last_seq' => $n, 'contiguous_seq' => $n,
             'series' => ['A26' => ['number' => sprintf('A26%06d', $n), 'hash' => self::hashOf($n), 'seq' => $n]],
-        ], 'error' => null];
+        ];
     }
 
     /** The fiscal hash document $n gets from FiscalJournalStepTest::issue on top of documents 1..n-1. */
@@ -231,7 +237,9 @@ final class FiscalJournalResetTest extends TestCase
         $this->assertSame($old, $payload['previous_journal_id']);
         $this->assertSame(FiscalJournalGuard::OK, $payload['guard']);
         $this->assertSame(3, $payload['backfill_until']);
-        $this->assertSame(['path' => FiscalJournalReset::SHOP_CONFIRMED, 'asked' => [$old], 'error' => null], $payload['shop']);
+        $this->assertSame(['path' => FiscalJournalReset::SHOP_CONFIRMED, 'asked' => [], 'error' => null], $payload['shop']);
+        $this->assertNull($payload['accept_shop_ahead']);
+        $this->assertSame([], $this->identity->retired(), 'a normal reset retires nothing');
         $this->assertSame(['backups/fiscal-journal/archive/' . $old . '-20261114T170509Z', 'var/fiscal-journal/archive/' . $old . '-20261114T170509Z'], $payload['archived']);
 
         $this->assertSame(FiscalJournalGuard::OK, (new FiscalJournalGuard($this->connection, $this->locations))->check()['state']);
@@ -382,7 +390,7 @@ final class FiscalJournalResetTest extends TestCase
 
         $result = $this->reset()->run('Quiero empezar de nuevo');
 
-        $this->assertSame([$id], $this->shopAsked);
+        $this->assertSame(['heads'], $this->shopAsked);
         $this->assertSame(FiscalJournalResetResult::REFUSED, $result->status, $result->message);
         $this->assertSame(3, $result->exitCode());
         $this->assertStringContainsString('A26000005', $result->message);
@@ -401,7 +409,7 @@ final class FiscalJournalResetTest extends TestCase
 
         $result = $this->reset()->run('Servidor nuevo, el diario no se pudo copiar');
 
-        $this->assertSame([self::LOST], $this->shopAsked);
+        $this->assertSame(['heads'], $this->shopAsked);
         $this->assertSame(FiscalJournalResetResult::REFUSED, $result->status, $result->message);
         $this->assertStringContainsString('A26000004', $result->message);
         $this->assertSame(self::LOST, $this->identity->journalId());
@@ -414,9 +422,10 @@ final class FiscalJournalResetTest extends TestCase
      */
     public static function shopThatCannotBeAsked(): iterable
     {
-        yield 'down' => [['status' => PsJournalClient::ERROR, 'head' => null, 'error' => 'Connection refused']];
-        yield 'module older than 0.9.0' => [['status' => PsJournalClient::UNAVAILABLE, 'head' => null, 'error' => 'HTTP 404']];
-        yield 'an error' => [['status' => PsJournalClient::ERROR, 'head' => null, 'error' => 'HTTP 500']];
+        yield 'down' => [['status' => PsJournalClient::ERROR, 'journals' => null, 'series' => null, 'error' => 'Connection refused']];
+        yield 'module older than 0.9.0' => [['status' => PsJournalClient::UNAVAILABLE, 'journals' => null, 'series' => null, 'error' => 'HTTP 404']];
+        yield 'a module without the answer for every journal' => [['status' => PsJournalClient::UNAVAILABLE, 'journals' => null, 'series' => null, 'error' => 'HTTP 422']];
+        yield 'an error' => [['status' => PsJournalClient::ERROR, 'journals' => null, 'series' => null, 'error' => 'HTTP 500']];
         yield 'not configured' => [null];
     }
 
@@ -428,7 +437,7 @@ final class FiscalJournalResetTest extends TestCase
         if ($answer === null) {
             $this->shopConfigured = false;
         } else {
-            $this->shopAnswers[self::LOST] = $answer;
+            $this->shopFailure = $answer;
         }
 
         $result = $this->reset()->run('Servidor nuevo');
@@ -446,14 +455,14 @@ final class FiscalJournalResetTest extends TestCase
     {
         FiscalJournalStepTest::issue($this->connection, 1);
         $this->identity->store(self::LOST);
-        $this->shopAnswers[self::LOST] = ['status' => PsJournalClient::UNAVAILABLE, 'head' => null, 'error' => 'HTTP 404'];
+        $this->shopFailure = ['status' => PsJournalClient::UNAVAILABLE, 'journals' => null, 'series' => null, 'error' => 'HTTP 404'];
 
         $result = $this->reset()->run('Tienda sin el módulo 0.9.0', null, true);
 
         $this->assertSame(FiscalJournalResetResult::DONE, $result->status, $result->message);
         $payload = json_decode((string) $this->audit()[0]['payload'], true);
         $this->assertSame(FiscalJournalReset::SHOP_UNAVAILABLE, $payload['shop']['path']);
-        $this->assertSame([self::LOST], $payload['shop']['asked']);
+        $this->assertSame([], $payload['shop']['asked']);
         $this->assertStringContainsString('0.9.0', (string) $payload['shop']['error']);
     }
 
@@ -482,6 +491,82 @@ final class FiscalJournalResetTest extends TestCase
         $this->writer->flush();
         $lines = array_values(iterator_to_array($this->locations->primary()->lines(), false));
         $this->assertSame([true, true, true, true, true, false], array_column($lines, 'backfill'), 'backfill_until labels them, whoever flushes');
+    }
+
+    /**
+     * Second correction round, recheck cases (i) and (ii): the shop is asked for every
+     * journal, so later documents under a journal the database setting does not name
+     * (one reset in the history, an id the shop never heard of) refuse the reset.
+     */
+    public function testTheShopHoldingADocumentTheDatabaseLacksUnderAnyJournalRefusesTheReset(): void
+    {
+        FiscalJournalStepTest::issue($this->connection, 1);
+        FiscalJournalStepTest::issue($this->connection, 2);
+        $this->identity->store(self::LOST);
+        // The shop knows nothing of LOST, but holds A26000004 under another journal (reset later).
+        $this->shopHolds('00000000-0000-4000-8000-0000000000a2', 4);
+
+        $result = $this->reset()->run('Servidor nuevo');
+
+        $this->assertSame(FiscalJournalResetResult::REFUSED, $result->status, $result->message);
+        $this->assertStringContainsString('A26000004', $result->message);
+        $this->assertStringContainsString('--accept-shop-ahead', $result->message);
+        $this->assertSame(self::LOST, $this->identity->journalId());
+        $this->assertSame([], $this->audit());
+        $this->assertDirectoryDoesNotExist($this->root . '/backups/fiscal-journal');
+    }
+
+    public function testAShopThatHoldsOnlyDocumentsOfTheDatabaseConfirmsWhateverTheirJournal(): void
+    {
+        FiscalJournalStepTest::issue($this->connection, 1);
+        FiscalJournalStepTest::issue($this->connection, 2);
+        $this->identity->store(self::LOST);
+        $this->shopHolds('00000000-0000-4000-8000-0000000000a1', 2);
+
+        $result = $this->reset()->run('Servidor nuevo');
+
+        $this->assertSame(FiscalJournalResetResult::DONE, $result->status, $result->message);
+        $payload = json_decode((string) $this->audit()[0]['payload'], true);
+        $this->assertSame(['00000000-0000-4000-8000-0000000000a1'], $payload['shop']['asked']);
+        $this->assertSame([], $this->identity->retired());
+    }
+
+    /** Decision C: a deliberate fresh start retires the journals the shop holds, and they never block again. */
+    public function testAcceptShopAheadStartsOverRetiresTheShopsJournalsAndRecordsThem(): void
+    {
+        // A reinstall: an empty database against a shop that holds the previous install's journal.
+        $previous = '00000000-0000-4000-8000-0000000000b1';
+        $this->shopHolds($previous, 7);
+
+        $refused = $this->reset()->run('Reinstalación desde cero');
+        $this->assertSame(FiscalJournalResetResult::REFUSED, $refused->status, $refused->message);
+
+        $result = $this->reset()->run('Reinstalación desde cero', null, false, true);
+
+        $this->assertSame(FiscalJournalResetResult::DONE, $result->status, $result->message);
+        $this->assertSame([$previous], $this->identity->retired());
+        $payload = json_decode((string) $this->audit()[0]['payload'], true);
+        $this->assertSame(['missing' => 'A26000007', 'retired_journals' => [$previous]], $payload['accept_shop_ahead']);
+        $this->assertSame(FiscalJournalGuard::OK, (new FiscalJournalGuard($this->connection, $this->locations))->check()['state']);
+
+        // The guard ignores the retired journal in the stored shop head, and so does a later reset.
+        $this->locations->primary()->writeShopHead(['v' => 1, 'all' => ['fetched_at' => '2026-11-14T18:00:00Z'], 'heads' => [$previous => ['fetched_at' => '2026-11-14T18:00:00Z'] + $this->shopJournals[$previous]]]);
+        $this->assertSame(FiscalJournalGuard::OK, (new FiscalJournalGuard($this->connection, $this->locations))->check()['state']);
+        $this->assertSame(FiscalJournalResetResult::DONE, $this->reset()->run('Otra vez')->status);
+        $this->assertSame([$previous], $this->identity->retired(), 'nothing more retired');
+    }
+
+    public function testAcceptShopAheadNeverOverridesTheJournalsOwnEvidence(): void
+    {
+        $id = $this->journaled(4);
+        $this->restoreBefore(2);
+
+        $result = $this->reset()->run('Motivo', null, false, true);
+
+        $this->assertSame(FiscalJournalResetResult::REFUSED, $result->status, $result->message);
+        $this->assertStringContainsString('A26000004', $result->message);
+        $this->assertSame([], $this->identity->retired());
+        $this->assertSame($id, $this->identity->journalId());
     }
 
     public function testASecondResetIsToldThatAResetIsRunning(): void

@@ -77,13 +77,14 @@ final class FiscalJournalGuardShopTest extends TestCase
     }
 
     /** @param array<string, array{number: string, hash: string, seq: int}> $series */
-    private function shopHead(string $journalId, array $series, string $folder = 'primary'): void
+    private function shopHead(string $journalId, array $series, string $folder = 'primary', bool $all = false): void
     {
         $location = $folder === 'primary' ? $this->locations->primary() : $this->locations->secondary();
         $location->prepare();
-        $heads = $location->readShopHead()['heads'] ?? [];
+        $stored = $location->readShopHead() ?? [];
+        $heads = $stored['heads'] ?? [];
         $heads[$journalId] = ['journal_id' => $journalId, 'fetched_at' => '2026-11-14T18:10:00+01:00', 'last_seq' => 9, 'contiguous_seq' => 9, 'series' => $series];
-        $location->writeShopHead(['v' => 1, 'heads' => $heads]);
+        $location->writeShopHead(['v' => 1, 'heads' => $heads] + ($all || isset($stored['all']) ? ['all' => ['fetched_at' => '2026-11-14T18:10:00+01:00']] : []));
     }
 
     private function refusal(FiscalJournalGuard $guard): FiscalJournalBehindException
@@ -140,17 +141,27 @@ final class FiscalJournalGuardShopTest extends TestCase
         $this->assertSame(FiscalJournalGuard::BEHIND_SHOP, $this->refusal($this->guard())->state);
     }
 
-    public function testTheShopHeadOfAnotherJournalAndAnUnreadableOneNeverBlock(): void
+    /**
+     * Second correction round: the shop's evidence is independent of the journal id.
+     * A document the database lacks under ANY journal the shop holds (one later reset,
+     * one the setting never named) blocks; a retired journal and an unreadable shop
+     * head never do.
+     */
+    public function testADocumentTheDatabaseLacksUnderAnyJournalBlocksButARetiredJournalNever(): void
     {
         $this->writer->createJournal();
         $this->issue(1);
         $this->writer->flush();
-        // An older journal (before a reset): its documents say nothing about this one.
-        $this->shopHead('00000000-0000-4000-8000-000000000001', ['A26' => ['number' => 'A26000009', 'hash' => strtoupper(hash('sha256', 'old')), 'seq' => 9]]);
+        $old = '00000000-0000-4000-8000-000000000001';
+        $this->shopHead($old, ['A26' => ['number' => 'A26000009', 'hash' => strtoupper(hash('sha256', 'old')), 'seq' => 9]], all: true);
+        $e = $this->refusal($this->guard());
+        $this->assertSame(FiscalJournalGuard::BEHIND_SHOP, $e->state);
+        $this->assertSame('A26000009', $this->guard()->check()['missing']['number']);
+
+        (new FiscalJournalIdentity($this->connection))->retire([$old]);
         $this->guard()->assertCanIssue();
 
         file_put_contents($this->root . '/backups/fiscal-journal/shop-head.json', '{"v":1,"heads":');
-        $this->guard()->assertCanIssue();
         $this->assertSame(FiscalJournalGuard::OK, $this->guard()->check()['state']);
     }
 
@@ -162,7 +173,17 @@ final class FiscalJournalGuardShopTest extends TestCase
         $this->guard()->assertCanIssue();
     }
 
-    public function testAJournalLostWhileTheDatabaseNamesItBlocksUntilTheShopAnswersForIt(): void
+    /** Recheck case (iii): a database from before the journal existed, no setting, the folders lost. */
+    public function testWithoutSettingOrJournalADocumentTheShopHoldsAndTheDatabaseLacksBlocks(): void
+    {
+        $this->issue(1);
+        // The every-minute task (or the provisioning step) stored the shop's answer for every journal.
+        $this->shopHead('6f1c2a4e-1b2c-4d3e-8f90-0123456789ab', ['A26' => ['number' => 'A26000004', 'hash' => strtoupper(hash('sha256', 'issued later')), 'seq' => 4]], all: true);
+
+        $this->assertSame(FiscalJournalGuard::BEHIND_SHOP, $this->refusal($this->guard())->state);
+    }
+
+    public function testAJournalLostWhileTheDatabaseNamesItBlocksUntilTheShopAnswersForEveryJournal(): void
     {
         $journalId = '6f1c2a4e-1b2c-4d3e-8f90-0123456789ab';
         (new FiscalJournalIdentity($this->connection))->store($journalId);
@@ -173,8 +194,12 @@ final class FiscalJournalGuardShopTest extends TestCase
         $this->assertSame(FiscalJournalGuard::JOURNAL_MISSING, $e->state);
         $this->assertSame(['state' => FiscalJournalGuard::JOURNAL_MISSING, 'missing' => null], $this->guard()->report());
 
-        // The every-minute task asked the shop: it holds nothing the database lacks.
+        // An answer for that journal only (a module that cannot answer for every journal) never confirms.
         $this->shopHead($journalId, ['A26' => ['number' => $two[1]['number'], 'hash' => $two[1]['hash'], 'seq' => 2]]);
+        $this->assertSame(FiscalJournalGuard::JOURNAL_MISSING, $this->refusal($this->guard())->state);
+
+        // The shop answered for every journal: it holds nothing the database lacks.
+        $this->shopHead($journalId, ['A26' => ['number' => $two[1]['number'], 'hash' => $two[1]['hash'], 'seq' => 2]], all: true);
         $this->guard()->assertCanIssue();
 
         // ... or it does: the database is behind the shop.
@@ -182,17 +207,23 @@ final class FiscalJournalGuardShopTest extends TestCase
         $this->assertSame(FiscalJournalGuard::BEHIND_SHOP, $this->refusal($this->guard())->state);
     }
 
-    public function testAJournalOfAnotherIdThanTheSettingIsMissingUntilTheShopAnswersForTheSetting(): void
+    /** Recheck case (ii): a setting the shop never heard of is not confirmed by "nothing under that id". */
+    public function testASettingTheShopNeverHeardOfIsMissingUntilTheShopAnswersForEveryJournal(): void
     {
-        $this->writer->createJournal();
-        $one = $this->issue(1);
-        $this->writer->flush();
         $named = '6f1c2a4e-1b2c-4d3e-8f90-0123456789ab';
         (new FiscalJournalIdentity($this->connection))->store($named);
-
+        $one = $this->issue(1);
+        $this->shopHead($named, []);
         $this->assertSame(FiscalJournalGuard::JOURNAL_MISSING, $this->refusal($this->guard())->state);
 
-        $this->shopHead($named, ['A26' => ['number' => $one['number'], 'hash' => $one['hash'], 'seq' => 1]]);
+        // Every journal: the shop holds the later documents under another journal id.
+        $this->shopHead('00000000-0000-4000-8000-000000000002', ['A26' => ['number' => 'A26000002', 'hash' => strtoupper(hash('sha256', 'later')), 'seq' => 2]], all: true);
+        $this->assertSame(FiscalJournalGuard::BEHIND_SHOP, $this->refusal($this->guard())->state);
+
+        // And when every journal the shop holds is in the database, the till goes on.
+        $this->locations->primary()->writeShopHead(['v' => 1, 'all' => ['fetched_at' => '2026-11-14T18:11:00+01:00'], 'heads' => [
+            '00000000-0000-4000-8000-000000000002' => ['journal_id' => '00000000-0000-4000-8000-000000000002', 'fetched_at' => '2026-11-14T18:11:00+01:00', 'last_seq' => 1, 'contiguous_seq' => 1, 'series' => ['A26' => ['number' => $one['number'], 'hash' => $one['hash'], 'seq' => 1]]],
+        ]]);
         $this->guard()->assertCanIssue();
     }
 

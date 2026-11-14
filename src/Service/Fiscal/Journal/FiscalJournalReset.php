@@ -16,12 +16,20 @@ use VenPosTPV\Service\PrestaShop\PsJournalClient;
  * damaged, lost (`journal_missing`) or that the administrator wants to start again
  * while it is up to date. Never run by itself.
  *
- * Before anything else the shop is asked for its head of the journal in the folders
- * and of the one the database names (FiscalJournalShopSync::askHeads). A shop that
- * cannot be asked (down, module older than 0.9.0, an error, no journal known to ask
- * about) refuses the reset, unless the administrator says so (`--shop-unavailable`):
- * without the shop, a database restored from an older copy would issue numbers
- * already issued again. The path taken is recorded in audit_log (`shop`).
+ * Before anything else the shop is asked for every journal it holds, whatever
+ * journal id this database knows (FiscalJournalShopSync::askHeads), the retired ones
+ * aside. A shop that cannot be asked (down, a module that cannot answer for every
+ * journal, an error) refuses the reset, unless the administrator says so
+ * (`--shop-unavailable`): without the shop, a database restored from an older copy
+ * would issue numbers already issued again. The path taken is recorded in audit_log
+ * (`shop`).
+ *
+ * The shop holding, under any journal, a document the database lacks refuses the
+ * reset, unless the administrator starts over on purpose (`--accept-shop-ahead`,
+ * never after restoring a backup): then every journal the shop holds is retired
+ * (FiscalJournalIdentity::retire, in the same transaction as the new journal) and
+ * audit_log records them (`accept_shop_ahead`). A normal reset retires nothing: the
+ * archived journal's documents are all in the database, so they never block.
  *
  * Refused, with nothing written (not even a torn tail moved to quarantine/), when
  * any evidence still readable names a document the database lacks: the shop head
@@ -73,8 +81,10 @@ class FiscalJournalReset
 
     /**
      * @param bool $shopUnavailable go on when the shop cannot be asked (--shop-unavailable)
+     * @param bool $acceptShopAhead go on although the shop holds documents the database lacks, retiring the
+     *                              journals the shop holds (--accept-shop-ahead: a deliberate fresh start only)
      */
-    public function run(string $reason, ?\DateTimeImmutable $now = null, bool $shopUnavailable = false): FiscalJournalResetResult
+    public function run(string $reason, ?\DateTimeImmutable $now = null, bool $shopUnavailable = false, bool $acceptShopAhead = false): FiscalJournalResetResult
     {
         $reason = trim($reason);
         if ($reason === '') {
@@ -114,11 +124,11 @@ class FiscalJournalReset
                 return $shop;
             }
             // Decided before anything is written (folders, locks, a torn tail): a refusal changes nothing.
-            $refusal = $this->assess($shop['heads'])['refusal'];
+            $refusal = $this->assess($shop['heads'], $acceptShopAhead)['refusal'];
             if ($refusal !== null) {
                 return $refusal;
             }
-            $started = $this->resetLocked($reason, $now, $shop);
+            $started = $this->resetLocked($reason, $now, $shop, $acceptShopAhead);
             if (!\is_array($started)) {
                 return $started;
             }
@@ -137,40 +147,35 @@ class FiscalJournalReset
     }
 
     /**
-     * Asks the shop for its journal heads (nothing is stored).
+     * Asks the shop for every journal it holds (nothing is stored). The retired
+     * journals are left out of the evidence.
      *
      * @return array{path: string, asked: list<string>, heads: list<array<string, mixed>>, error: ?string}|FiscalJournalResetResult the refusal when it cannot be asked and the administrator did not say to go on
      */
     private function askShop(bool $shopUnavailable): array|FiscalJournalResetResult
     {
-        $answers = [];
+        $journals = [];
         $error = null;
         if ($this->shop === null) {
             $error = 'la conexión con la tienda no está configurada';
         } else {
-            try {
-                $answers = $this->shop->askHeads();
-            } catch (\Throwable $e) {
-                $error = $e->getMessage();
-            }
-            if ($error === null && $answers === []) {
-                $error = 'no se sabe por qué diario preguntar (ni las carpetas ni la base de datos nombran ninguno)';
-            }
-            foreach ($answers as $id => $answer) {
-                if ($error === null && !\is_array($answer['head'] ?? null)) {
-                    $error = ($answer['status'] ?? null) === PsJournalClient::UNAVAILABLE
-                        ? 'el módulo TPV Connect de la tienda es anterior a la versión ' . PsJournalClient::MIN_MODULE_VERSION
-                        : sprintf('la tienda no ha contestado por el diario %s (%s)', $id, (string) ($answer['error'] ?? $answer['status'] ?? '?'));
-                }
+            $answer = $this->shop->askHeads();
+            if ($answer['status'] === PsJournalClient::OK && \is_array($answer['journals'] ?? null)) {
+                $journals = $answer['journals'];
+            } else {
+                $error = ($answer['status'] ?? null) === PsJournalClient::UNAVAILABLE
+                    ? 'el módulo TPV Connect de la tienda no puede contestar por todos sus diarios (hace falta la versión ' . PsJournalClient::MIN_MODULE_VERSION . ' o posterior)'
+                    : sprintf('la tienda no ha contestado (%s)', (string) ($answer['error'] ?? $answer['status'] ?? '?'));
             }
         }
+        $retired = $this->identity->retired();
         $heads = [];
-        foreach ($answers as $answer) {
-            if (\is_array($answer['head'] ?? null)) {
-                $heads[] = $answer['head'];
+        foreach ($journals as $id => $head) {
+            if (!\in_array(strtolower((string) $id), $retired, true)) {
+                $heads[] = $head;
             }
         }
-        $result = ['path' => self::SHOP_CONFIRMED, 'asked' => array_map('strval', array_keys($answers)), 'heads' => $heads, 'error' => $error];
+        $result = ['path' => self::SHOP_CONFIRMED, 'asked' => array_map(static fn ($id): string => strtolower((string) $id), array_keys($journals)), 'heads' => $heads, 'error' => $error];
         if ($error === null) {
             return $result;
         }
@@ -190,18 +195,21 @@ class FiscalJournalReset
      *
      * @param list<array<string, mixed>> $shopHeads the heads the shop just answered
      *
-     * @return array{refusal: ?FiscalJournalResetResult, damaged: ?string, guard: array{state: string, missing: ?array{number: string, invoice_type: string}}}
+     * @param bool $acceptShopAhead --accept-shop-ahead: the shop holding documents the database lacks does not refuse
+     *
+     * @return array{refusal: ?FiscalJournalResetResult, damaged: ?string, guard: array{state: string, missing: ?array{number: string, invoice_type: string}}, shop_ahead: ?array{number: string, invoice_type: string}}
      */
-    private function assess(array $shopHeads): array
+    private function assess(array $shopHeads, bool $acceptShopAhead = false): array
     {
         $damaged = $this->damage();
         $guard = $this->guard->check();
-        $refuse = static fn (string $message): array => ['refusal' => new FiscalJournalResetResult(FiscalJournalResetResult::REFUSED, $message), 'damaged' => $damaged, 'guard' => $guard];
+        $refuse = static fn (string $message): array => ['refusal' => new FiscalJournalResetResult(FiscalJournalResetResult::REFUSED, $message), 'damaged' => $damaged, 'guard' => $guard, 'shop_ahead' => null];
 
-        $shopMissing = $guard['state'] === FiscalJournalGuard::BEHIND_SHOP ? $guard['missing'] : $this->guard->missingFromShop($shopHeads);
-        if ($shopMissing !== null) {
+        $shopMissing = $guard['state'] === FiscalJournalGuard::BEHIND_SHOP ? $guard['missing'] : null;
+        $shopMissing ??= $this->guard->missingFromShop($shopHeads);
+        if ($shopMissing !== null && !$acceptShopAhead) {
             return $refuse(sprintf(
-                'La copia en la tienda tiene documentos que la base de datos no tiene (falta %s): con un diario nuevo se repetirían números. Si el diario fiscal los tiene, recupéralos con tpv:fiscal:replay --apply; si no, restaura una copia más reciente de la base de datos (docs/diario-fiscal.md). No se ha cambiado nada.',
+                'La copia en la tienda tiene documentos que la base de datos no tiene (falta %s): con un diario nuevo se repetirían números. Si el diario fiscal los tiene, recupéralos con tpv:fiscal:replay --apply; si no, restaura una copia más reciente de la base de datos (docs/diario-fiscal.md). Solo para empezar de cero a propósito, nunca tras restaurar una copia: --accept-shop-ahead. No se ha cambiado nada.',
                 $shopMissing['number'] ?? '?',
             ));
         }
@@ -221,7 +229,7 @@ class FiscalJournalReset
             ));
         }
 
-        return ['refusal' => null, 'damaged' => $damaged, 'guard' => $guard];
+        return ['refusal' => null, 'damaged' => $damaged, 'guard' => $guard, 'shop_ahead' => $shopMissing];
     }
 
     /**
@@ -283,7 +291,7 @@ class FiscalJournalReset
      *
      * @return array{journal_id: string, backfill_until: int, archived: list<string>}|FiscalJournalResetResult
      */
-    private function resetLocked(string $reason, \DateTimeImmutable $now, array $shop): array|FiscalJournalResetResult
+    private function resetLocked(string $reason, \DateTimeImmutable $now, array $shop, bool $acceptShopAhead): array|FiscalJournalResetResult
     {
         $locations = [$this->locations->primary(), $this->locations->secondary()];
         $locks = [];
@@ -300,12 +308,15 @@ class FiscalJournalReset
             }
 
             // Again under the locks: a flush may have written a line since.
-            $assessment = $this->assess($shop['heads']);
+            $assessment = $this->assess($shop['heads'], $acceptShopAhead);
             if ($assessment['refusal'] !== null) {
                 return $assessment['refusal'];
             }
             $damaged = $assessment['damaged'];
             $guard = $assessment['guard'];
+            // --accept-shop-ahead with the shop ahead: every journal it holds now is retired, so
+            // what it holds under them is ignored from now on. Otherwise nothing is retired.
+            $retire = $acceptShopAhead && $assessment['shop_ahead'] !== null ? $shop['asked'] : [];
 
             $previous = $this->previousJournalId();
             $archived = [];
@@ -319,7 +330,10 @@ class FiscalJournalReset
                         }
                     }
                 },
-                function (string $journalId, int $until) use ($reason, $previous, $guard, $damaged, $shop, &$archived, $now): void {
+                function (string $journalId, int $until) use ($reason, $previous, $guard, $damaged, $shop, $retire, $assessment, &$archived, $now): void {
+                    if ($retire !== []) {
+                        $this->identity->retire($retire);
+                    }
                     $this->connection->insert('audit_log', [
                         'user_id' => null,
                         'terminal_id' => null,
@@ -331,6 +345,7 @@ class FiscalJournalReset
                             'guard' => $guard['state'],
                             'damaged' => $damaged,
                             'shop' => ['path' => $shop['path'], 'asked' => $shop['asked'], 'error' => $shop['error']],
+                            'accept_shop_ahead' => $retire !== [] ? ['missing' => $assessment['shop_ahead']['number'] ?? null, 'retired_journals' => $retire] : null,
                             'archived' => $archived,
                             'backfill_until' => $until,
                         ], \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES | \JSON_THROW_ON_ERROR),

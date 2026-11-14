@@ -39,6 +39,12 @@ interface JournalStorage
 
     /** @return array<string, array{number: string, hash: string, seq: int}> the last line of every series */
     public function seriesHeads(string $journalId): array;
+
+    /** @return list<string> every journal that has at least one line */
+    public function journalIds(): array;
+
+    /** @return array<string, array{journal_id: string, number: string, hash: string, seq: int}> the line stored last of every series, whatever its journal */
+    public function latestBySeries(): array;
 }
 
 /** A rejected journal request, with the HTTP status and body the TPV receives. */
@@ -141,16 +147,25 @@ class JournalStore
             throw self::invalid(['body' => 'Invalid JSON']);
         }
 
-        $journalId = $data['journal_id'] ?? null;
-        if (!is_string($journalId) || preg_match(self::UUID, $journalId) !== 1) {
-            throw self::invalid(['journal_id' => 'Required UUID']);
-        }
-
         $hasAction = array_key_exists('action', $data);
         $hasLine = array_key_exists('line', $data);
         if ($hasAction && $hasLine) {
             throw self::invalid(['action' => 'Send either "line" or "action", not both']);
         }
+
+        $journalId = $data['journal_id'] ?? null;
+        if ($hasAction && $data['action'] === 'heads') {
+            // Every journal: no journal_id needed (one given must still be a UUID).
+            if ($journalId !== null && (!is_string($journalId) || preg_match(self::UUID, $journalId) !== 1)) {
+                throw self::invalid(['journal_id' => 'Must be a UUID']);
+            }
+
+            return [200, $this->heads()];
+        }
+        if (!is_string($journalId) || preg_match(self::UUID, $journalId) !== 1) {
+            throw self::invalid(['journal_id' => 'Required UUID']);
+        }
+
         if ($hasAction) {
             if ($data['action'] !== 'head') {
                 throw self::invalid(['action' => 'Unknown action']);
@@ -256,6 +271,28 @@ class JournalStore
             'contiguous_seq' => $this->storage->contiguousSeq($normalized),
             'series' => (object) $series,
         ];
+    }
+
+    /**
+     * Every journal the shop holds, each as head() answers it, and the line stored
+     * last of every series across them. The TPV decides with it whether its database
+     * is behind the shop whatever journal id it knows (or none).
+     *
+     * @return array{journals: object, series: object}
+     */
+    private function heads(): array
+    {
+        $journals = [];
+        foreach ($this->storage->journalIds() as $journalId) {
+            $journals[(string) $journalId] = $this->head((string) $journalId);
+        }
+        $series = [];
+        foreach ($this->storage->latestBySeries() as $name => $line) {
+            $series[(string) $name] = ['journal_id' => (string) $line['journal_id'], 'number' => (string) $line['number'], 'hash' => (string) $line['hash'], 'seq' => (int) $line['seq']];
+        }
+
+        // Objects even when empty or when a key looks like a number.
+        return ['journals' => (object) $journals, 'series' => (object) $series];
     }
 
     /**
@@ -471,5 +508,36 @@ class PsJournalStorage implements JournalStorage
         }
 
         return $heads;
+    }
+
+    public function journalIds(): array
+    {
+        $rows = Db::getInstance()->executeS(
+            'SELECT DISTINCT `journal_id` FROM `' . _DB_PREFIX_ . self::TABLE . '` ORDER BY `journal_id`',
+            true,
+            false
+        );
+
+        return array_values(array_map(static fn (array $row): string => (string) $row['journal_id'], is_array($rows) ? $rows : []));
+    }
+
+    public function latestBySeries(): array
+    {
+        $table = '`' . _DB_PREFIX_ . self::TABLE . '`';
+        $rows = Db::getInstance()->executeS(
+            'SELECT j.`series`, j.`journal_id`, j.`number`, j.`hash`, j.`seq` FROM ' . $table . ' j
+            INNER JOIN (SELECT `series`, MAX(`id_tpvconnect_journal`) AS `id` FROM ' . $table . ' GROUP BY `series`) m
+                ON m.`id` = j.`id_tpvconnect_journal`
+            ORDER BY j.`series`',
+            true,
+            false
+        );
+
+        $latest = [];
+        foreach (is_array($rows) ? $rows : [] as $row) {
+            $latest[(string) $row['series']] = ['journal_id' => (string) $row['journal_id'], 'number' => (string) $row['number'], 'hash' => (string) $row['hash'], 'seq' => (int) $row['seq']];
+        }
+
+        return $latest;
     }
 }
