@@ -47,7 +47,7 @@ Si algo falla, el instalador lo dice y no escribe nada:
 
 **Volver a emparejar** (Ajustes → Acerca de, solo administradores) sirve para cambiar de tienda o cuando el TPV deja de conectar con ella. Reescribe en `.env` solo esas seis claves, de golpe (archivo temporal y cambio de nombre), y deja el anterior al lado como `.env.bak-<fecha>-<hora>` (permisos 0600; bórralo cuando compruebes que todo va bien). No muestra ninguna clave en el navegador. Se niega si alguna de esas claves está en `.env.local`, en `.env.local.php` o en una variable de entorno del servidor, porque el cambio no se aplicaría.
 
-Sin emparejar, el enlace **Introducir las claves a mano** del instalador pide la clave del webservice («Generar clave API» en el módulo, apartado «Configuración manual»), el secreto SSO, los ids de moneda y tienda y la zona horaria, como antes.
+Sin emparejar, el enlace **Introducir las claves a mano** del instalador pide la clave del webservice («Generar clave API» en el módulo, apartado «Configuración manual»), el secreto SSO (mismo apartado), los ids de moneda y tienda y la zona horaria. El secreto SSO es obligatorio: firma todas las llamadas del TPV al módulo (pedidos, devoluciones, reposición de stock, precios, consulta de pedidos y la copia del diario fiscal en la tienda) y, sin él, el instalador no puede preguntar a la tienda por su diario fiscal antes de empezar uno nuevo. Si falta, el formulario vuelve a salir con el aviso «Falta el secreto SSO del módulo» y no se guarda nada.
 
 ## Qué escribe el instalador
 

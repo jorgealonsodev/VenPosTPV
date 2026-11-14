@@ -152,7 +152,12 @@ final class WebInstaller
         }
         // Pairing: the shop gives the keys, the ids and the timezone (pair()).
         $sso = $pairing ? '' : $get('sso_secret');
-        if ($sso !== '' && \strlen($sso) < 32) {
+        // The secret signs every call to the module (orders, refunds, prices, the
+        // fiscal journal): without it the installer cannot ask the shop for its journal.
+        if (!$pairing && $sso === '') {
+            $errors[] = 'Falta el secreto SSO del módulo. Está en PrestaShop, módulo TPV Connect, apartado «Configuración manual». '
+                . 'El TPV lo necesita para hablar con la tienda: pedidos, devoluciones, precios y la comprobación del diario fiscal.';
+        } elseif ($sso !== '' && \strlen($sso) < 32) {
             $errors[] = 'El secreto SSO del módulo debe tener al menos 32 caracteres.';
         }
         foreach (['ps_currency' => 'La moneda', 'ps_shop' => 'La tienda'] as $k => $label) {

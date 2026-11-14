@@ -248,6 +248,23 @@ final class InstallerJournalDecisionMySqlIntegrationTest extends TestCase
         $this->assertNothingStarted();
     }
 
+    /** Without the module secret the shop cannot be asked for its journal: the manual form comes back and nothing runs. */
+    public function testTheManualKeysWithoutTheSecretShowTheFormAgainAndStartNothing(): void
+    {
+        $html = $this->request(['sso_secret' => ''] + $this->form());
+
+        $this->assertStringContainsString('Falta el secreto SSO del módulo. Está en PrestaShop, módulo TPV Connect, apartado «Configuración manual».', $html);
+        $this->assertStringContainsString('la comprobación del diario fiscal', $html);
+        $this->assertStringNotContainsString('La tienda ya tiene documentos fiscales', $html);
+        $this->assertSame(self::API_KEY, self::fieldValue($html, 'ps_api_key'));
+        $this->assertSame([], $this->journalRequests());
+        $this->assertSame(0, (int) $this->conn->fetchOne('SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()'), 'no migration ran');
+        $this->assertFileDoesNotExist($this->project . '/.env');
+        $this->assertFileDoesNotExist($this->project . '/var/install.lock');
+        $this->assertDirectoryDoesNotExist($this->project . '/backups/fiscal-journal');
+        $this->assertDirectoryDoesNotExist($this->project . '/var/fiscal-journal');
+    }
+
     public function testAFreshStartWithoutTheCheckboxOrTheReasonIsRefusedAndKeepsEveryField(): void
     {
         $first = $this->request($this->form());

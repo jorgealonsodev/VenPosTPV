@@ -188,7 +188,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                         \Symfony\Component\HttpClient\HttpClient::create(),
                     ));
                 } else {
-                    // Without the secret the shop is never asked; only a sent choice makes that matter.
+                    // validate() requires the secret in manual mode and pairing returns one, so this
+                    // is defensive: the shop is never asked; only a sent choice makes that matter.
                     $check = ['state' => \VenPosTPV\Service\Install\WebInstaller::SHOP_UNREACHABLE, 'ahead' => null];
                 }
                 $ahead = $check['ahead'];
@@ -309,7 +310,7 @@ page('Instalación del TPV', $errHtml . '<form method="post" autocomplete="off">
     . '</div>'
     . '<div class="ps-manual">'
     . '<label for="ps_api_key">Clave del webservice <small>— módulo TPV Connect → «Generar clave API»</small></label><input id="ps_api_key" name="ps_api_key" value="' . $v('ps_api_key') . '">'
-    . '<label for="sso_secret">Secreto SSO <small>— módulo TPV Connect (opcional, puedes ponerlo luego en .env)</small></label><input id="sso_secret" name="sso_secret" value="' . $v('sso_secret') . '">'
+    . '<label for="sso_secret">Secreto SSO <small>— módulo TPV Connect → «Configuración manual» (el TPV lo necesita para hablar con la tienda)</small></label><input id="sso_secret" name="sso_secret" value="' . $v('sso_secret') . '">'
     . '<div class="row"><div><label>ID de moneda</label><input name="ps_currency" value="' . $v('ps_currency') . '"></div>'
     . '<div><label>ID de tienda</label><input name="ps_shop" value="' . $v('ps_shop') . '"></div>'
     . '<div><label>Zona horaria</label><input name="timezone" value="' . $v('timezone') . '"></div></div>'
