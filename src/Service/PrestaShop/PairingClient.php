@@ -25,10 +25,14 @@ final class PairingClient
     {
     }
 
-    /** "123 456" → "123456"; null unless it is 6 digits. */
+    /**
+     * "123 456" → "123456"; null unless it is 6 digits. A pasted code may bring any
+     * kind of space (no-break ones too), line breaks or a dash: all are dropped.
+     */
     public static function normalizeCode(string $code): ?string
     {
-        $code = (string) preg_replace('/[\s-]+/', '', $code);
+        // null on text that is not UTF-8, which then is not 6 digits either.
+        $code = (string) preg_replace('/[\s\p{Z}\p{Pd}\x{200B}\x{FEFF}]+/u', '', $code);
 
         return preg_match('/^\d{6}$/', $code) === 1 ? $code : null;
     }

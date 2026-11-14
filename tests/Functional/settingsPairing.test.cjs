@@ -88,8 +88,35 @@ async function testTheShopErrorIsShown() {
     assert.equal(s.pairing.running, false);
 }
 
+// A code copied from the module comes as "024 261", often with a space or a line
+// break around it, or with a no-break space in the middle.
+async function testAPastedCodeWithAnySpacingIsAccepted() {
+    for (const pasted of [' 024 261', '024 261\n', '024 261', '024 261', '\t024 - 261 ', '024–261']) {
+        const posts = [];
+        const s = load({ post: async (url, body) => { posts.push(body); return { data: { shop_url: 'https://shop.example.com', shop_id: 1 } }; } });
+        s.pairing.open = true;
+        s.pairing.shopUrl = 'https://shop.example.com';
+        s.pairing.code = pasted;
+
+        await s.runPairing();
+
+        assert.equal(s.pairing.error, '', JSON.stringify(pasted));
+        assert.equal(posts.length, 1, JSON.stringify(pasted));
+        assert.equal(posts[0].code, '024261', JSON.stringify(pasted));
+    }
+}
+
+// maxlength would cut " 024 261" to " 024 26" when it is pasted.
+function testTheCodeFieldDoesNotCutAPastedCode() {
+    const field = aboutSection().match(/<input v-model="pairing\.code"[^>]*>/);
+    assert.ok(field, 'the code field');
+    assert.ok(!/maxlength/.test(field[0]), 'no maxlength on the code field');
+}
+
 (async () => {
     testTheAboutSectionOffersRePairing();
+    testTheCodeFieldDoesNotCutAPastedCode();
+    await testAPastedCodeWithAnySpacingIsAccepted();
     await testOpeningPrefillsTheCurrentShopAddress();
     await testPairingPostsTheCodeAndShowsTheResultWithoutSecrets();
     await testAMalformedCodeIsRefusedWithoutARequest();

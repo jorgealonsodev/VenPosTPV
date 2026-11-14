@@ -131,7 +131,7 @@ El script copia el programa a `/usr/local/bin`, crea el usuario `venpos-agent` (
 6. Muchos paneles de hosting ponen nginx delante de Apache: sin más, todas las peticiones llegan desde el proxy y los límites de intentos (por IP) y la «última IP» del agente verían la IP del proxy. Pon `TRUSTED_PROXIES=127.0.0.1,::1` en el entorno del servidor (ver `env.example`): Symfony toma entonces la IP real de `X-Forwarded-For` y el esquema de `X-Forwarded-Proto` solo cuando la petición viene de esos proxies. Vacío o sin definir (por defecto) no se confía en ningún proxy. Tras cambiar la configuración, vacía la caché (`php bin/console cache:clear`).
 7. La escucha larga envía un espacio por segundo mientras espera (cabecera `X-Accel-Buffering: no` para que nginx no lo retenga) para notar enseguida que el agente se ha parado y no recoger trabajos hacia una conexión muerta. Si el proxy retiene la respuesta igualmente, la reserva de 30 s devuelve el trabajo a la cola y la caja avisa a los 15 s.
 
-La limpieza del historial (contenido a las 24 h, trabajos a los 30 días) la hace la tarea de cada minuto `tpv:sync:outbox`. El registro de aperturas del cajón (`drawer_audit`) no se borra nunca.
+La limpieza del historial (contenido a las 24 h, trabajos a los 30 días) la hace `tpv:sync:outbox`, que lanza cada minuto la tarea programada `tpv:cron`. El registro de aperturas del cajón (`drawer_audit`) no se borra nunca.
 
 ## API del agente (para desarrolladores)
 

@@ -288,9 +288,9 @@ mod tests {
     #[test]
     fn spaces_typed_in_the_tpv_address_are_ignored() {
         assert_eq!(
-            pair_request("https://tpv.clubnatacion .com", "707438"),
+            pair_request("https://tpv.tutienda .com", "707438"),
             Ok(Request::Pair {
-                server: "https://tpv.clubnatacion.com".into(),
+                server: "https://tpv.tutienda.com".into(),
                 code: "707438".into()
             })
         );

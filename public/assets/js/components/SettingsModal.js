@@ -84,6 +84,16 @@ const SettingsModal = {
             return step && step.status === 'blocked' ? 'Bloqueado' : 'Pendiente';
         }
 
+        // The scheduled task (tpv:cron) comes in the same answer as «cron».
+        function cronState(cron) {
+            if (!cron || !cron.last_run_at) return 'never';
+            return cron.running ? 'running' : 'stopped';
+        }
+
+        function cronSchedule(job) {
+            return job && job.daily_at ? 'cada noche, ' + job.daily_at : 'cada minuto';
+        }
+
         // Acerca de → «Volver a emparejar con la tienda»: the code of TPV Connect's
         // «Emparejar con un TPV»; the server writes the shop's keys into .env and
         // answers no secret (POST /api/settings/prestashop/pair, admins only).
@@ -103,7 +113,7 @@ const SettingsModal = {
         }
 
         async function runPairing() {
-            const code = String(pairing.code || '').replace(/[\s-]+/g, '');
+            const code = String(pairing.code || '').replace(/[\s\p{Pd}\u200B]+/gu, '');
             pairing.error = '';
             if (!/^\d{6}$/.test(code)) {
                 pairing.error = 'El código de emparejamiento tiene 6 cifras.';
@@ -921,7 +931,7 @@ const SettingsModal = {
             verifactu, loadVerifactu, saveVerifactu, checkChain,
             numbering, loadNumbering, tillNumbering, startNumberingChange, cancelNumberingChange, saveNumberingChange,
             cashCloses, loadCashCloses, printClose, pdfClose, formatMoney, formatDateTime,
-            provisioning, provisioningLoading, provisioningError, loadProvisioning, provisioningLabel,
+            provisioning, provisioningLoading, provisioningError, loadProvisioning, provisioningLabel, cronState, cronSchedule,
             pairing, openPairing, runPairing,
             closing, closeSettings,
             emit,
@@ -1728,6 +1738,18 @@ const SettingsModal = {
                                     </div>
                                     <div v-if="step.status !== 'done' && step.reason" style="margin-top:4px; font-size:12px; color:var(--text3); overflow-wrap:anywhere;">{{ step.reason }}</div>
                                 </div>
+                                <div style="padding:10px 0; font-size:13px;">
+                                    <div v-if="cronState(provisioning.cron) === 'never'" style="color:var(--red); font-weight:600;">La tarea programada no se ha ejecutado nunca. Crea en el panel del hosting una tarea cada minuto con <code>tpv:cron --env=prod</code>.</div>
+                                    <div v-else-if="cronState(provisioning.cron) === 'stopped'" style="color:var(--red); font-weight:600;">La tarea programada no se ejecuta desde {{ formatDateTime(provisioning.cron.last_run_at) }}.</div>
+                                    <div v-else style="color:var(--green); font-weight:600;">Tarea programada en marcha</div>
+                                    <div v-for="job in (provisioning.cron && provisioning.cron.jobs) || []" :key="job.id" style="margin-top:6px; font-size:12px;">
+                                        <div style="display:flex; justify-content:space-between; gap:12px;">
+                                            <span style="color:var(--text);">{{ job.label }} <span style="color:var(--text3);">({{ cronSchedule(job) }})</span></span>
+                                            <span style="color:var(--text3); flex-shrink:0;">{{ job.last_success_at ? formatDateTime(job.last_success_at) : 'todavía no' }}</span>
+                                        </div>
+                                        <div v-if="job.last_error" style="margin-top:2px; color:var(--red); overflow-wrap:anywhere;">{{ job.last_error }}</div>
+                                    </div>
+                                </div>
                             </div>
 
                             <div style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; color:var(--text); margin:24px 0 6px;">
@@ -1743,7 +1765,7 @@ const SettingsModal = {
                                 <label style="font-size:12px; color:var(--text3);">Dirección de la tienda</label>
                                 <input v-model="pairing.shopUrl" type="url" placeholder="https://tutienda.com" autocomplete="off" :style="INPUT_STYLE">
                                 <label style="font-size:12px; color:var(--text3);">Código de emparejamiento</label>
-                                <input v-model="pairing.code" inputmode="numeric" maxlength="7" placeholder="123456" autocomplete="one-time-code" :style="INPUT_STYLE" @keyup.enter="runPairing()">
+                                <input v-model="pairing.code" inputmode="numeric" placeholder="123456" autocomplete="one-time-code" :style="INPUT_STYLE" @keyup.enter="runPairing()">
                                 <div v-if="pairing.error" style="font-size:12px; color:var(--red); overflow-wrap:anywhere;">{{ pairing.error }}</div>
                                 <div style="display:flex; gap:8px; margin-top:4px;">
                                     <button @click="runPairing()" :disabled="pairing.running"

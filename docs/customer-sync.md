@@ -5,7 +5,7 @@
 ## The local copy
 
 - Table `customer` (migration `Version00000034LocalCustomers`): `id` (local), `ps_customer_id` (unique, NULL until a till-created customer is uploaded), `firstname`, `lastname`, `email`, `phone` (the PrestaShop customer resource has none: it comes from the customer's addresses, below), `active`, `outbox_id` (the upload of a till-created customer), `synced_at`.
-- `bin/console tpv:customers:sync` refreshes it from the PrestaShop webservice (`GET /api/customers?display=[id,firstname,lastname,email,active]&filter[deleted]=0`), like `tpv:catalog:sync`: the read happens before the write transaction, rows are upserted by PrestaShop id, customers PrestaShop no longer returns are deactivated (never deleted), and till-created customers not uploaded yet are left alone. Schedule it with cron, e.g. every 15 minutes.
+- `bin/console tpv:customers:sync` refreshes it from the PrestaShop webservice (`GET /api/customers?display=[id,firstname,lastname,email,active]&filter[deleted]=0`), like `tpv:catalog:sync`: the read happens before the write transaction, rows are upserted by PrestaShop id, customers PrestaShop no longer returns are deactivated (never deleted), and till-created customers not uploaded yet are left alone. It runs every night (03:30, shop time) from the single scheduled task `tpv:cron`; it can still be run by hand.
 - Phones (TPV Connect 0.8.2): the same sync reads the addresses (`GET /api/addresses?display=[id,id_customer,phone,phone_mobile]&filter[deleted]=0`) and takes, for each customer, the mobile or else the landline of the newest address (up to 32 characters). A customer without an address phone keeps the phone already stored (for example, one typed at the till). When the key cannot read addresses (a module older than 0.8.2), the sync still runs and phones stay as they are.
 - `GET /api/customers?q=` searches the active rows by name, email or phone (up to 20). It never calls PrestaShop, so it works offline.
 
@@ -21,4 +21,4 @@
 
 1. Run the migrations (`Version00000034LocalCustomers`): `OutboxSync` reads `outbox.depends_on`.
 2. Give the webservice key GET and POST on `customers` and GET on `addresses` in PrestaShop (Advanced Parameters > Webservice). Pairing and TPV Connect 0.8.2 (`upgrade-0.8.2.php`) grant both to the TPV's key.
-3. Run `tpv:customers:sync` once and schedule it.
+3. Nothing to schedule: the `tpv:cron` task runs `tpv:customers:sync` every night from 03:30 (shop time), and on its next minute when it has never run.

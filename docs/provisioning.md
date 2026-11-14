@@ -9,7 +9,7 @@ Todos los pasos están en un único registro: cada clase que implementa `VenPosT
 | Cuándo | Cómo | Espera tras un fallo |
 |---|---|---|
 | Al instalar | `public/install.php`, justo después de las migraciones y de escribir `.env` | no |
-| Cada minuto | `tpv:sync:outbox`, antes de subir las ventas | 15 minutos por paso; un paso **bloqueado**, nunca |
+| Cada minuto | `tpv:sync:outbox` (lo lanza la tarea `tpv:cron`), antes de subir las ventas | 15 minutos por paso; un paso **bloqueado**, nunca |
 | A mano | `php bin/console tpv:provision --env=prod` | no |
 
 `php bin/console tpv:provision --status --env=prod` solo informa. Las dos terminan con 0 si todo está hecho y con 1 si queda algo pendiente.

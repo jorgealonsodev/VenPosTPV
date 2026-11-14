@@ -43,7 +43,7 @@ También está disponible como `GET /api/fiscal/chain`.
 
 El servidor solo aplica migraciones desde el instalador (`install.php`). Antes de desplegar esta versión en una instalación existente hay que aplicar la migración `Version00000042FiscalRecord`. Mientras no se aplique, el TPV sigue vendiendo con normalidad y deja constancia en el log de cada ticket emitido sin registro fiscal.
 
-En `tpv.clubnatacion.com` la migración se aplicó el 5 de noviembre de 2026 (se aplicaron las migraciones 40, 41 y 42 pendientes). El servidor permite triggers, así que la base de datos también impide modificar o borrar registros. Desde ese día cada ticket y cada abono genera su registro encadenado.
+En la primera instalación en producción la migración se aplicó el 5 de noviembre de 2026 (se aplicaron las migraciones 40, 41 y 42 pendientes). El servidor permite triggers, así que la base de datos también impide modificar o borrar registros. Desde ese día cada ticket y cada abono genera su registro encadenado.
 
 ## Contexto legal (resumen)
 

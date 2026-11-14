@@ -75,14 +75,16 @@ not linked to a till answers 409 `{"code": "device_not_linked"}`.
 `reference` = ticket code (module 0.6.0). It runs:
 
 1. once after the response of the request that queued the row (kernel.terminate);
-2. every minute from cron, with or without the TPV open:
+2. every minute from cron, with or without the TPV open: the single scheduled task
+   `tpv:cron` launches `tpv:sync:outbox` on every run:
 
 ```cron
-* * * * * php bin/console tpv:sync:outbox
+* * * * * php bin/console tpv:cron --env=prod
 ```
 
 In the crontab, run it from the project directory (for example
-`* * * * * cd /path/to/VenPosTPV && php bin/console tpv:sync:outbox`).
+`* * * * * cd /path/to/VenPosTPV && php bin/console tpv:cron --env=prod`).
+`tpv:sync:outbox` can still be run on its own.
 
 Use the PHP binary of the deployment (for example `.runtime/php-8.5.12/bin/php`) and
 the absolute project path. `--limit=N` caps the uploads of one run (default 100).
