@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace VenPosTPV\Service\Cron;
 
 use Symfony\Component\DependencyInjection\Attribute\Autowire;
+use VenPosTPV\Service\Fiscal\Journal\FiscalJournalGuardCache;
 
 /**
  * The single scheduled task (tpv:cron, every minute): launches the jobs due now.
@@ -17,6 +18,12 @@ use Symfony\Component\DependencyInjection\Attribute\Autowire;
  * state that cannot be read counts as no information. A job still running from an earlier run is skipped, and
  * so is a nightly job while another nightly job runs. A state that cannot be
  * saved never stops the run.
+ *
+ * While the database is behind the fiscal journal (FiscalJournalGuardCache), a job
+ * not in RUNS_WHILE_JOURNAL_BLOCKED waits: it is not launched, its state shows
+ * BLOCKED_BY_FISCAL_JOURNAL, no attempt is counted, and it runs at the first minute
+ * after the documents are recovered. Deny by default, as the API: a job added later
+ * waits unless it is listed.
  */
 class CronRunner
 {
@@ -26,6 +33,21 @@ class CronRunner
     private const ERROR_MAX_LENGTH = 300;
     private const NIGHTLY_LOCK = 'cron-nightly';
 
+    /**
+     * The jobs that insert no row whose id the recovery (tpv:fiscal:replay) needs, so
+     * they keep running while the database is behind the fiscal journal:
+     * - journal: completes and checks the journal, and keeps the shop copy going;
+     * - outbox: only updates existing rows (outbox, order_meta, movement, customer);
+     * - stock, catalog: the product cache tables, never journaled.
+     * Left out: customers, which inserts `customer` rows (a sale and its upload row
+     * recovered from the journal point at their customer by local id); and backup:
+     * each blocked night would add a dump of the restored database, which is behind,
+     * and the rotation would end up deleting every good dump taken before.
+     */
+    public const RUNS_WHILE_JOURNAL_BLOCKED = ['journal', 'outbox', 'stock', 'catalog'];
+
+    public const BLOCKED_BY_FISCAL_JOURNAL = 'Esperando: la base de datos está por detrás del diario fiscal. Se ejecutará cuando un administrador recupere los documentos (Ajustes → VERI*FACTU → Diario fiscal).';
+
     private readonly \DateTimeZone $timezone;
     private readonly CronAttemptMarker $marker;
 
@@ -34,6 +56,7 @@ class CronRunner
         private readonly CronLock $lock,
         #[Autowire('%env(PS_SHOP_TIMEZONE)%')] string $timezone = 'Europe/Madrid',
         ?CronAttemptMarker $marker = null,
+        private readonly ?FiscalJournalGuardCache $journalGuard = null,
     ) {
         $this->marker = $marker ?? new CronAttemptMarker($lock->directory());
         try {
@@ -47,7 +70,9 @@ class CronRunner
     public static function jobs(): array
     {
         return [
-            new CronJob('outbox', 'Subida de ventas', 'tpv:sync:outbox'),
+            // First, so the upload that follows finds the journal lines (fiscal-journal D9).
+            new CronJob('journal', 'Diario fiscal', 'tpv:fiscal:journal'),
+            new CronJob('outbox','Subida de ventas', 'tpv:sync:outbox'),
             new CronJob('stock', 'Stock', 'tpv:catalog:sync', ['--stock-only' => true]),
             new CronJob('catalog', 'Catálogo completo', 'tpv:catalog:sync', ['--full' => true], '03:00'),
             new CronJob('customers', 'Clientes', 'tpv:customers:sync', [], '03:30'),
@@ -62,10 +87,22 @@ class CronRunner
         $this->save(fn () => $this->store->recordRun($clock()));
 
         $launched = $failures = $skipped = $errors = [];
+        $journalBlocked = null;
         foreach (self::jobs() as $job) {
             $at = $clock();
             $state = $this->readState($job);
             if (!$this->isDue($job, $state, $at) || ($job->dailyAt !== null && !$this->isDue($job, $this->marker->state($job->id), $at))) {
+                continue;
+            }
+            if (!\in_array($job->id, self::RUNS_WHILE_JOURNAL_BLOCKED, true) && ($journalBlocked ??= $this->journalBlocked())) {
+                $skipped[] = $job->id;
+                if (($state['last_error'] ?? null) !== self::BLOCKED_BY_FISCAL_JOURNAL) {
+                    $state['last_error'] = self::BLOCKED_BY_FISCAL_JOURNAL;
+                    $this->save(function () use ($job, $state): void {
+                        $this->store->refreshConnection();
+                        $this->store->saveJob($job->id, $state);
+                    });
+                }
                 continue;
             }
             // A nightly job also takes the nightly lock, so two nightly jobs never
@@ -113,6 +150,21 @@ class CronRunner
         }
 
         return new CronReport($launched, $failures, $skipped, $errors);
+    }
+
+    /** A guard that cannot answer never holds a job back (the guard itself logs why). */
+    private function journalBlocked(): bool
+    {
+        if ($this->journalGuard === null) {
+            return false;
+        }
+        try {
+            $this->store->refreshConnection();
+
+            return $this->journalGuard->blocks();
+        } catch (\Throwable) {
+            return false;
+        }
     }
 
     /**

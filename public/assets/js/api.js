@@ -11,6 +11,44 @@ const ApiClient = (function () {
     let isOnline = navigator.onLine !== undefined ? navigator.onLine : true;
 
     window.addEventListener('online', () => { isOnline = true; flushQueue(); });
+
+    // fiscal-journal S5: the requests the server still accepts while the database is
+    // behind the fiscal journal (FiscalJournalGuardListener::ALLOWED_WHILE_BLOCKED); a
+    // success of any other change means the till is no longer blocked.
+    const ALLOWED_WHILE_JOURNAL_BLOCKED = ['/api/auth/', '/api/device/', '/api/fiscal/journal/replay'];
+
+    // FiscalJournalGuard states that block the till (FiscalJournalGuardCache::blocks).
+    const JOURNAL_BLOCKING_STATES = ['behind_journal', 'behind_shop', 'journal_missing'];
+
+    function journalBlock() {
+        return typeof useFiscalJournalBlock !== 'undefined' ? useFiscalJournalBlock : null;
+    }
+
+    /** Sets or clears the till's «Caja bloqueada» notice (FiscalJournalBlockNotice) from an answer. */
+    function trackJournalBlock(path, method, status, body) {
+        const block = journalBlock();
+        if (!block) return;
+        if (status === 423 && body && body.code === 'fiscal_journal_behind') {
+            block.lock();
+            return;
+        }
+        if (status < 200 || status >= 300) return;
+        const data = body && body.data ? body.data : null;
+        if (path === '/api/fiscal/journal') {
+            const state = data && data.guard ? data.guard.state : null;
+            if (state === 'ok') block.unlock();
+            if (JOURNAL_BLOCKING_STATES.indexOf(state) !== -1) block.lock();
+            return;
+        }
+        if (path === '/api/fiscal/journal/replay') {
+            if (data && data.status === 'done') block.unlock();
+            return;
+        }
+        if (method && method !== 'GET' && path.indexOf('/api/') === 0
+            && !ALLOWED_WHILE_JOURNAL_BLOCKED.some((prefix) => path.indexOf(prefix) === 0)) {
+            block.unlock();
+        }
+    }
     window.addEventListener('offline', () => { isOnline = false; });
 
     async function request(path, options = {}) {
@@ -64,9 +102,12 @@ const ApiClient = (function () {
             // tell apart e.g. a locked account (403 {locked:true}) or a rate limit (429).
             error.status = response.status;
             try { error.body = JSON.parse(text); } catch (e) { error.body = null; }
+            trackJournalBlock(path, options.method, response.status, error.body);
             return Promise.reject(error);
         }
-        return response.json();
+        const json = await response.json();
+        trackJournalBlock(path, options.method, response.status, json);
+        return json;
     }
 
     /** Replays the queue in order; whatever still fails stays queued for the next time. */
@@ -83,6 +124,8 @@ const ApiClient = (function () {
 
     return {
         get: (path) => request(path, { method: 'GET' }),
+        /** fiscal-journal: the journal status (admins) or only the guard state (any logged-in user); sets «Caja bloqueada». */
+        fiscalJournalStatus: () => request('/api/fiscal/journal', { method: 'GET' }),
         post: (path, body) => request(path, { method: 'POST', body: JSON.stringify(body) }),
         put: (path, body) => request(path, { method: 'PUT', body: JSON.stringify(body) }),
         del: (path) => request(path, { method: 'DELETE' }),

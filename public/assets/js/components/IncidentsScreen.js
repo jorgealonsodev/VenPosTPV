@@ -32,6 +32,8 @@ const DISCARD_NOUNS = {
     refund: { stays: 'La devolución queda en el TPV (caja y abono no cambian)', of: 'de ella' },
     restock: { stays: 'La reposición de stock queda en el TPV', of: 'de ella' },
     customer: { stays: 'El cliente queda en el TPV', of: 'de él' },
+    // fiscal-journal S8: the shop copy of one journal line.
+    journal: { stays: 'El documento queda en el diario fiscal del TPV', of: 'de él' },
 };
 
 const IncidentsScreen = {
@@ -48,7 +50,7 @@ const IncidentsScreen = {
         const showDiscarded = Vue.ref(false);
         const discardedError = Vue.ref('');
 
-        const typeLabels = { sale: 'Venta', refund: 'Devolución', restock: 'Reposición de stock', customer: 'Cliente' };
+        const typeLabels = { sale: 'Venta', refund: 'Devolución', restock: 'Reposición de stock', customer: 'Cliente', journal: 'Copia del diario fiscal' };
 
         async function load() {
             loading.value = true;

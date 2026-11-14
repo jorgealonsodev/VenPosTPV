@@ -387,10 +387,14 @@ const PaymentModal = {
                 // booked nothing, so the cart may be charged without the coupon.
                 const offline = isVoucher && msg.includes('coupon_offline');
                 couponOffline.value = offline;
+                // fiscal-journal S5: the database is behind the fiscal journal; the server
+                // refused before taking a number or calling PrestaShop. Its message says
+                // what to do; there is nothing to retry or reconcile.
+                const tillLocked = err && err.status === 423 && err.body && err.body.code === 'fiscal_journal_behind';
                 // Any other coupon checkout failure may have reached PrestaShop even when
                 // the browser cannot classify it. Lock every such outcome rather than
                 // inferring safety from an English transport error message.
-                const couponResultUnknown = isVoucher && !offline;
+                const couponResultUnknown = isVoucher && !offline && !tillLocked;
                 if (couponResultUnknown) {
                     voucherReconciliationRequired.value = true;
                     invalidateVoucher();
@@ -401,7 +405,7 @@ const PaymentModal = {
                 // What to do first; the server's short detail after it, never the raw response.
                 errorMsg.value = couponResultUnknown
                     ? 'No se ha podido confirmar el cobro con cupón en la tienda: el pedido puede haberse creado. No vuelvas a cobrar esta venta; revisa el pedido en PrestaShop. (' + serverMessage(msg) + ')'
-                    : (offline ? serverMessage(msg) : msg);
+                    : (offline || tillLocked ? serverMessage(msg) : msg);
                 errorRetry.value = retry;
                 step.value = 'error';
             } finally {

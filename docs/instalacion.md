@@ -29,7 +29,7 @@ Una instalación completa son tres piezas, en este orden: el **módulo de Presta
 2. Abre **Configurar** en **TPV Connect**.
 3. Pulsa **Emparejar con un TPV**. Sale un código de 6 cifras y la dirección de la tienda: los escribirás en el instalador del TPV. El código vale 10 minutos y una sola vez; si caduca, pulsa otra vez el botón.
 
-No hay que copiar claves. Si no puedes emparejar, el instalador tiene el enlace **Introducir las claves a mano** y el módulo, el apartado **Configuración manual** («Generar clave API» y el secreto SSO).
+No hay que copiar claves. Si no puedes emparejar, el instalador tiene el enlace **Introducir las claves a mano** y el módulo, el apartado **Configuración manual** («Generar clave API» y el secreto SSO). Con las claves a mano, el secreto SSO es obligatorio: firma todas las llamadas del TPV al módulo (pedidos, devoluciones, precios y la comprobación del diario fiscal) y, sin él, el instalador no podría preguntar a la tienda si ya tiene documentos fiscales. Si falta, el formulario vuelve a salir con el aviso y no se guarda nada.
 
 ## 2. TPV en el hosting
 
@@ -61,6 +61,15 @@ Cómo emparejar más tarde, cambiar de impresora o resolver problemas: [Agente d
 - [ ] El catálogo tiene productos: la tarea `tpv:cron` lo carga sola a los pocos minutos de crearla (en **Ajustes → Acerca de → Estado de la instalación** se ve si la tarea funciona).
 - [ ] En **Ajustes → Cajas**, cada caja sale como «Conectado».
 - [ ] Una venta de prueba imprime el ticket y aparece como pedido en PrestaShop al cabo de un minuto.
+
+### Reinstalación
+
+Si instalas el TPV de nuevo con una base de datos vacía contra una tienda que ya tiene el diario fiscal de la instalación anterior, para el TPV es lo mismo que haber restaurado una copia antigua: el siguiente ticket repetiría un número que la tienda ya tiene. Por eso el instalador (con el código de emparejamiento, o con las claves a mano y su secreto SSO, que es obligatorio) pregunta a la tienda y, antes de guardar la configuración, se para en la página **«La tienda ya tiene documentos fiscales»** (con el último número de cada serie que guarda la tienda) y pide elegir:
+
+- **«Voy a restaurar una copia de seguridad»**: la instalación termina sin empezar el diario fiscal. El paso «Diario fiscal preparado» queda pendiente y la caja no deja vender hasta que restaures la copia de la base de datos y, si Ajustes lo pide, pulses **Recuperar documentos**.
+- **«Empezar de cero»**: pide marcar una casilla de confirmación y escribir el motivo. Los diarios que guarda la tienda quedan retirados, empieza un diario nuevo y queda anotado en el registro de auditoría con el motivo y el origen `installer`. La numeración empieza otra vez en 1: antes de la primera venta ajusta en **Ajustes → Cajas** el próximo número de cada serie o usa otra letra de caja. Nunca la elijas si vas a restaurar una copia de seguridad.
+
+Si en ese momento no se puede preguntar a la tienda, el instalador no guarda nada y ofrece volver a intentarlo. Una vez instalado, el camino es la orden de consola `php bin/console tpv:fiscal:journal:reset --confirm "Reinstalación desde cero" --accept-shop-ahead --env=prod`. Detalles en [Diario fiscal](diario-fiscal.md#reinstalar-contra-una-tienda-que-ya-tiene-documentos).
 
 ## Actualizar
 

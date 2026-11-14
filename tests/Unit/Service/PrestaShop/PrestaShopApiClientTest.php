@@ -250,6 +250,30 @@ final class PrestaShopApiClientTest extends TestCase
         $this->assertGreaterThanOrEqual(0, $result['latency_ms']);
     }
 
+    /**
+     * PrestaShop 9.2 answers 500 to the webservice root asked as JSON
+     * (WebserviceOutputJSON::overrideContent runs array_filter on a resource name)
+     * unless it displays errors; the root in its default format answers 200.
+     */
+    public function testPingAsksTheWebserviceRootInItsDefaultFormat(): void
+    {
+        $asked = [];
+        $httpClient = new MockHttpClient(static function (string $method, string $url) use (&$asked): MockResponse {
+            $asked[] = $method . ' ' . $url;
+
+            return str_contains($url, 'output_format=JSON')
+                ? new MockResponse('', ['http_code' => 500])
+                : new MockResponse('<prestashop><api/></prestashop>', ['http_code' => 200]);
+        });
+
+        $client = new PrestaShopApiClient('https://tpv.tutienda.com', 'TEST_KEY', $httpClient);
+        $result = $client->ping();
+
+        $this->assertSame(['GET https://tpv.tutienda.com/api'], $asked);
+        $this->assertTrue($result['online']);
+        $this->assertIsInt($result['latency_ms']);
+    }
+
     public function testPingReturnsOnlineFalseOnNetworkError(): void
     {
         $httpClient = new MockHttpClient([

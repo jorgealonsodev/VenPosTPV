@@ -237,6 +237,12 @@ services:
             $shopUrl: '%ps.api.url%'
             $sharedSecret: '%sso.shared_secret%'
 
+    # Shop copy of the fiscal journal (docs/outbox-sync.md, type journal)
+    VenPosTPV\Service\PrestaShop\PsJournalClient:
+        arguments:
+            $shopUrl: '%ps.api.url%'
+            $sharedSecret: '%sso.shared_secret%'
+
     VenPosTPV\Service\Catalog\PsPriceClient:
         arguments:
             $shopUrl: '%ps.api.url%'

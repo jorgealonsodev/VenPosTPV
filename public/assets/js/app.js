@@ -43,6 +43,7 @@ const app = createApp({
     },
     template: `
         <div class="app-root">
+            <fiscal-journal-block-notice />
             <login-screen v-if="session.screen === 'login'" :store-name="session.storeName" @login="onLogin" />
             <device-link-screen v-else-if="session.screen === 'deviceLink'" />
             <cash-open-screen v-else-if="session.screen === 'cashOpen'" :cashier-name="session.cashierName" @open="onOpenCash" />
@@ -79,6 +80,7 @@ app.component('ticket-list-panel', TicketListPanel);
 app.component('order-detail-view', OrderDetailView);
 app.component('invoice-modal', InvoiceModal);
 app.component('print-status-notice', PrintStatusNotice);
+app.component('fiscal-journal-block-notice', FiscalJournalBlockNotice);
 app.component('print-agent-panel', PrintAgentPanel);
 app.component('print-history-panel', PrintHistoryPanel);
 app.component('label-print-modal', LabelPrintModal);

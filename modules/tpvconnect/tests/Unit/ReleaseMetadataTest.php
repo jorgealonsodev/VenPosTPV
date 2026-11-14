@@ -18,7 +18,7 @@ class ReleaseMetadataTest extends TestCase
         $php = (string) file_get_contents($moduleRoot . '/tpvconnect.php');
         $xml = (string) file_get_contents($moduleRoot . '/config.xml');
 
-        self::assertSame('0.8.4', $this->declaredPhpVersion($php));
+        self::assertSame('0.9.0', $this->declaredPhpVersion($php));
         self::assertSame($this->declaredPhpVersion($php), $this->declaredXmlVersion($xml));
         self::assertTrue(version_compare($this->declaredPhpVersion($php), '0.1.0', '>'));
     }
@@ -186,10 +186,27 @@ class ReleaseMetadataTest extends TestCase
         self::assertSame($before, \Configuration::$values);
     }
 
+    public function test_0_9_0_upgrade_creates_the_journal_table_on_a_0_8_4_shop_and_keeps_the_configuration(): void
+    {
+        $moduleRoot = dirname(__DIR__, 2);
+        \Configuration::$values = ['TPVCONNECT_SSO_SECRET' => 'existing-secret', 'TPV_OS_PAID' => 44, 'TPVCONNECT_WS_KEY_ID' => '12'];
+        $before = \Configuration::$values;
+        \Db::$executed = [];
+
+        require_once $moduleRoot . '/upgrade/upgrade-0.9.0.php';
+
+        self::assertTrue(upgrade_module_0_9_0(new \Module()));
+        $created = array_values(array_filter(\Db::$executed, static fn (string $sql): bool => str_contains($sql, 'CREATE TABLE IF NOT EXISTS `ps_tpvconnect_journal`')));
+        self::assertCount(1, $created);
+        self::assertSame([], array_filter(\Db::$executed, static fn (string $sql): bool => preg_match('/\\b(DROP|DELETE|TRUNCATE|ALTER)\\b/i', $sql) === 1));
+        self::assertSame($before, \Configuration::$values);
+    }
+
     public function test_changelog_documents_the_current_version(): void
     {
         $changelog = (string) file_get_contents(dirname(__DIR__, 2) . '/CHANGELOG.md');
 
+        self::assertStringContainsString("## 0.9.0\n", $changelog);
         self::assertStringContainsString("## 0.8.4\n", $changelog);
         self::assertStringContainsString("## 0.8.3\n", $changelog);
         self::assertStringContainsString("## 0.8.0\n", $changelog);

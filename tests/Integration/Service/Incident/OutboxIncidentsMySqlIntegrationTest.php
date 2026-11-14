@@ -7,6 +7,7 @@ namespace VenPosTPV\Tests\Integration\Service\Incident;
 use Doctrine\DBAL\Connection;
 use PHPUnit\Framework\TestCase;
 use VenPosTPV\Service\Incident\OutboxIncidents;
+use VenPosTPV\Service\Sync\OutboxSync;
 use VenPosTPV\Tests\Support\TestDatabase;
 
 /**
@@ -104,6 +105,27 @@ final class OutboxIncidentsMySqlIntegrationTest extends TestCase
         $this->connection->rollBack();
 
         $this->assertSame(['pending' => 3, 'incidents' => 1], [
+            'pending' => $after['pending'] - $before['pending'],
+            'incidents' => $after['incidents'] - $before['incidents'],
+        ]);
+    }
+
+    public function testJournalLinesWaitingForTheModuleUpgradeAreNotPendingUploadsButJournalIncidentsCount(): void
+    {
+        $this->connection->beginTransaction();
+        $before = $this->incidents()->counts();
+
+        // fiscal-journal S9: the shop's module has no journal endpoint yet; the lines wait an hour at a time.
+        $this->row(null, 1, 'pending', 'journal', 1, OutboxSync::JOURNAL_MODULE_UNAVAILABLE);
+        $this->row(null, 2, 'pending', 'journal', 1, OutboxSync::JOURNAL_MODULE_UNAVAILABLE);
+        // A journal line in its normal backoff and one refused by the shop still count.
+        $this->row(null, 3, 'pending', 'journal', 1, 'The shop could not be reached: timeout');
+        $this->row(null, 4, 'incident', 'journal', 1, 'La tienda ha rechazado la línea 4 del diario fiscal');
+        $this->row($this->sale('Z26000004'), 1, 'pending', 'sale', 1, OutboxSync::JOURNAL_MODULE_UNAVAILABLE);
+        $after = $this->incidents()->counts();
+        $this->connection->rollBack();
+
+        $this->assertSame(['pending' => 2, 'incidents' => 1], [
             'pending' => $after['pending'] - $before['pending'],
             'incidents' => $after['incidents'] - $before['incidents'],
         ]);

@@ -350,7 +350,8 @@ class TpvConnectInstaller
 
     /**
      * Clean up Configuration values on uninstall.
-     * Order states are deliberately NOT deleted to preserve history.
+     * Order states and the fiscal-journal table are deliberately NOT deleted
+     * to preserve history.
      */
     public function uninstallConfiguration(): bool
     {

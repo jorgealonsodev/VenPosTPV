@@ -22,6 +22,7 @@ use VenPosTPV\Service\Customer\CustomerDirectory;
 use VenPosTPV\Service\Print\PrinterService;
 use VenPosTPV\Service\Print\TicketDataResolver;
 use VenPosTPV\Service\Fiscal\FiscalRecorder;
+use VenPosTPV\Service\Fiscal\Journal\FiscalJournalBehindException;
 use VenPosTPV\Service\Sale\Prorate;
 use VenPosTPV\Service\Sale\SaleLineWriter;
 use VenPosTPV\Service\Sale\VatRate;
@@ -318,6 +319,13 @@ class CheckoutService
         } catch (NoOpenCashSessionException $e) {
             throw $e;
         } catch (\Throwable $e) {
+            // The database is behind the fiscal journal (fiscal-journal D7, refused under the
+            // chain lock and wrapped by insertOrderMeta): rolled back, answered 423, never localSaveFailed.
+            for ($cause = $e; $cause !== null; $cause = $cause->getPrevious()) {
+                if ($cause instanceof FiscalJournalBehindException) {
+                    throw $cause;
+                }
+            }
             // Everything rolled back. A concurrent request with the same request_id
             // that won the unique key already stored the sale: answer that one.
             $existing = $requestId !== null ? $this->replayedSale($requestId) : null;

@@ -16,8 +16,9 @@ use Doctrine\DBAL\Connection;
  *
  * - every base table is dropped and recreated with SHOW CREATE TABLE, which also
  *   keeps the AUTO_INCREMENT counters, so ticket numbers continue after a restore;
- * - rows are multi-row INSERTs with explicit columns (generated columns are left
- *   out), strings escaped by the connection's quote() and binary columns written
+ * - rows are multi-row INSERTs with explicit columns (VIRTUAL / STORED generated
+ *   columns are left out; DEFAULT CURRENT_TIMESTAMP and ON UPDATE columns keep their
+ *   stored values), strings escaped by the connection's quote() and binary columns written
  *   as hexadecimal literals, so NUL bytes and invalid UTF-8 survive any import;
  * - TIMESTAMP values are read and written in UTC (`SET time_zone = '+00:00'`);
  * - the triggers (fiscal_record_no_update / fiscal_record_no_delete) are recreated
@@ -133,7 +134,7 @@ class SqlDumper
         );
         $binary = [];
         foreach ($columns as $column) {
-            if (stripos((string) $column['extra'], 'GENERATED') === false) {
+            if (!self::isGeneratedColumn((string) $column['extra'])) {
                 $binary[(string) $column['name']] = \in_array(strtolower((string) $column['type']), self::BINARY_TYPES, true);
             }
         }
@@ -247,6 +248,18 @@ class SqlDumper
             $write(self::triggerStatement($name, (string) $create['SQL Original Statement']));
         }
         $write("\n");
+    }
+
+    /**
+     * Whether information_schema.COLUMNS.EXTRA describes a generated column, whose value
+     * the server computes and an INSERT may not set: `VIRTUAL GENERATED` or
+     * `STORED GENERATED` (MySQL and MariaDB), `PERSISTENT GENERATED` (older MariaDB).
+     * MySQL 8 also writes `DEFAULT_GENERATED` for a column with an expression default
+     * such as DEFAULT CURRENT_TIMESTAMP: that is an ordinary column and is dumped.
+     */
+    public static function isGeneratedColumn(string $extra): bool
+    {
+        return preg_match('/(?<![\w])(?:VIRTUAL|STORED|PERSISTENT)\s+GENERATED(?![\w])/i', $extra) === 1;
     }
 
     private static function identifier(string $name): string

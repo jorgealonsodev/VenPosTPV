@@ -1,0 +1,52 @@
+{
+    "rule": "line_hash = lowercase hex SHA-256 of the canonical JSON of the line without its line_hash key. Canonical JSON: object keys sorted by byte order (ksort SORT_STRING) at every depth, list order kept, encoded with JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION (fiscal-journal D2).",
+    "line_without_hash": {
+        "v": 1,
+        "seq": 2,
+        "journaled_at": "2026-11-14T18:02:11+01:00",
+        "kind": "F2",
+        "series": "A26",
+        "counter": {
+            "table": "ticket_sequence",
+            "letter": "A",
+            "year": 2026,
+            "number": 124
+        },
+        "fiscal_record": {
+            "id": 930,
+            "invoice_type": "F2",
+            "number": "A26000124",
+            "hash": "9C1E5B0F3A7D2E4C6B8A0F1E3D5C7B9A1F2E4D6C8B0A2F4E6D8C0B2A4F6E8D0C",
+            "previous_hash": "77AB0C1D2E3F405162738495A6B7C8D9E0F1021324354657687980A1B2C3D4E5",
+            "generated_at": "2026-11-14T18:02:10+01:00",
+            "total": "12.50",
+            "nif": null
+        },
+        "rows": {
+            "order_meta": {
+                "id": 1501,
+                "payment_breakdown": "{\"cash\":\"12.50\"}",
+                "note": "Año <3 € / café",
+                "discount": 0.0,
+                "rate": 21.5
+            },
+            "sale_line": [
+                {
+                    "id": 2,
+                    "name": "Té verde",
+                    "qty": 1
+                },
+                {
+                    "id": 1,
+                    "name": "Agua",
+                    "qty": 2
+                }
+            ],
+            "outbox": []
+        },
+        "backfill": false,
+        "prev": "5d0f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f7"
+    },
+    "canonical_json": "{\"backfill\":false,\"counter\":{\"letter\":\"A\",\"number\":124,\"table\":\"ticket_sequence\",\"year\":2026},\"fiscal_record\":{\"generated_at\":\"2026-11-14T18:02:10+01:00\",\"hash\":\"9C1E5B0F3A7D2E4C6B8A0F1E3D5C7B9A1F2E4D6C8B0A2F4E6D8C0B2A4F6E8D0C\",\"id\":930,\"invoice_type\":\"F2\",\"nif\":null,\"number\":\"A26000124\",\"previous_hash\":\"77AB0C1D2E3F405162738495A6B7C8D9E0F1021324354657687980A1B2C3D4E5\",\"total\":\"12.50\"},\"journaled_at\":\"2026-11-14T18:02:11+01:00\",\"kind\":\"F2\",\"prev\":\"5d0f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f7\",\"rows\":{\"order_meta\":{\"discount\":0.0,\"id\":1501,\"note\":\"Año <3 € / café\",\"payment_breakdown\":\"{\\\"cash\\\":\\\"12.50\\\"}\",\"rate\":21.5},\"outbox\":[],\"sale_line\":[{\"id\":2,\"name\":\"Té verde\",\"qty\":1},{\"id\":1,\"name\":\"Agua\",\"qty\":2}]},\"seq\":2,\"series\":\"A26\",\"v\":1}",
+    "line_hash": "5d49cad2aaab27a70353937303d5091dce72dc74f24f501096938f55c8a9b74f"
+}

@@ -8,6 +8,9 @@ use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\Exception\TableNotFoundException;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
+use VenPosTPV\Service\Fiscal\Journal\FiscalJournalBehindException;
+use VenPosTPV\Service\Fiscal\Journal\FiscalJournalGuard;
+use VenPosTPV\Service\Fiscal\Journal\FiscalJournalIntents;
 
 /**
  * Writes the fiscal record of every issued ticket (F2, simplified invoice), credit
@@ -40,6 +43,8 @@ class FiscalRecorder
         private readonly Connection $connection,
         private readonly LoggerInterface $logger = new NullLogger(),
         private readonly string $timeZone = self::TIME_ZONE,
+        private readonly ?FiscalJournalIntents $journal = null,
+        private readonly ?FiscalJournalGuard $guard = null,
     ) {
     }
 
@@ -121,7 +126,11 @@ class FiscalRecorder
         ], $issuedAt, true);
     }
 
-    /** @param array<string, mixed> $record */
+    /**
+     * @param array<string, mixed> $record
+     *
+     * @throws FiscalJournalBehindException when the database is behind the fiscal journal
+     */
     private function append(array $record, \DateTimeImmutable $issuedAt, bool $required = false): void
     {
         if (!$this->connection->isTransactionActive()) {
@@ -144,6 +153,10 @@ class FiscalRecorder
             $head = $this->connection->fetchAssociative('SELECT last_hash FROM fiscal_chain WHERE id = 1 FOR UPDATE');
         }
         $previousHash = \is_array($head) && ($head['last_hash'] ?? null) !== null ? (string) $head['last_hash'] : '';
+        // fiscal-journal D5: with the chain locked, a database behind the fiscal journal
+        // (a restore) refuses the issue before any hash, intent or record; the exception
+        // rolls the issuing transaction back (the number with it) and is answered 423.
+        $this->guard?->assertCanIssue();
 
         $issuerNif = strtoupper(trim((string) $this->connection->fetchOne('SELECT tax_id FROM terminal WHERE id = ?', [$record['terminal_id']])));
         if ($issuerNif === '') {
@@ -156,7 +169,7 @@ class FiscalRecorder
         $generatedAt = FiscalHash::timestamp(new \DateTimeImmutable('now', $zone));
         $hash = FiscalHash::alta($issuerNif, $record['number'], $issueDate, $record['invoice_type'], $record['tax_total'], $record['total'], $previousHash, $generatedAt);
 
-        $this->connection->insert('fiscal_record', $record + [
+        $row = $record + [
             'record_type' => 'alta',
             'issuer_nif' => $issuerNif,
             'issue_date' => $issueDate,
@@ -164,7 +177,15 @@ class FiscalRecorder
             'hash' => $hash,
             'generated_at' => $generatedAt,
             'created_at' => $issuedAt->format('Y-m-d H:i:s'),
-        ]);
+        ];
+        // The fiscal journal's intent (fiscal-journal D3.1), with the document's rows as
+        // issued (read in this transaction); it never stops the issue.
+        try {
+            $this->journal?->prepared($row, $this->connection);
+        } catch (\Throwable $e) {
+            $this->logger->warning('Fiscal journal intent of {number} failed: {message}', ['number' => $record['number'], 'message' => $e->getMessage()]);
+        }
+        $this->connection->insert('fiscal_record', $row);
         $this->connection->update('fiscal_chain', [
             'last_record_id' => (int) $this->connection->lastInsertId(),
             'last_hash' => $hash,

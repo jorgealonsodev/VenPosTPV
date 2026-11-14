@@ -8,8 +8,15 @@ use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
 use Symfony\Component\Dotenv\Dotenv;
 use VenPosTPV\Kernel;
+use VenPosTPV\Service\Fiscal\Journal\FiscalJournalFreshStart;
+use VenPosTPV\Service\Fiscal\Journal\FiscalJournalGuard;
+use VenPosTPV\Service\Fiscal\Journal\FiscalJournalIdentity;
+use VenPosTPV\Service\Fiscal\Journal\FiscalJournalLocations;
+use VenPosTPV\Service\Fiscal\Journal\FiscalJournalResetResult;
+use VenPosTPV\Service\Fiscal\Journal\FiscalJournalStep;
 use VenPosTPV\Service\PrestaShop\PairingClient;
 use VenPosTPV\Service\PrestaShop\PairingException;
+use VenPosTPV\Service\PrestaShop\PsJournalClient;
 use VenPosTPV\Service\Provisioning\ProvisioningReport;
 use VenPosTPV\Service\Provisioning\ProvisioningRunner;
 
@@ -26,6 +33,15 @@ final class WebInstaller
     public const ROOT_HTACCESS_MARKER = '# VenPosTPV: forward-to-public';
     public const LOCK_FILE = 'var/install.lock';
     private const MIGRATIONS_TABLE = 'doctrine_migration_versions';
+    /** shopJournalCheck(): the shop holds fiscal documents this database lacks. */
+    public const SHOP_AHEAD = 'ahead';
+    /** shopJournalCheck(): the shop answered and holds nothing this database lacks, or was not asked. */
+    public const SHOP_CLEAR = 'clear';
+    /** shopJournalCheck(): the shop could not be asked. */
+    public const SHOP_UNREACHABLE = 'unreachable';
+
+    /** The installed app, booted once for the fresh start and the provisioning steps. */
+    private ?Kernel $kernel = null;
 
     public function __construct(
         private readonly string $projectDir,
@@ -136,7 +152,12 @@ final class WebInstaller
         }
         // Pairing: the shop gives the keys, the ids and the timezone (pair()).
         $sso = $pairing ? '' : $get('sso_secret');
-        if ($sso !== '' && \strlen($sso) < 32) {
+        // The secret signs every call to the module (orders, refunds, prices, the
+        // fiscal journal): without it the installer cannot ask the shop for its journal.
+        if (!$pairing && $sso === '') {
+            $errors[] = 'Falta el secreto SSO del módulo. Está en PrestaShop, módulo TPV Connect, apartado «Configuración manual». '
+                . 'El TPV lo necesita para hablar con la tienda: pedidos, devoluciones, precios y la comprobación del diario fiscal.';
+        } elseif ($sso !== '' && \strlen($sso) < 32) {
             $errors[] = 'El secreto SSO del módulo debe tener al menos 32 caracteres.';
         }
         foreach (['ps_currency' => 'La moneda', 'ps_shop' => 'La tienda'] as $k => $label) {
@@ -260,6 +281,97 @@ final class WebInstaller
     }
 
     /**
+     * Before the journal is started (after the migrations, before .env is written):
+     * does the shop hold, under any journal but the retired ones, fiscal documents
+     * this database lacks? The same rule as the provisioning step
+     * (FiscalJournalStep::shopAhead). Then the installer asks what to do
+     * (JournalDecisionPage). Null, so the install goes on as before, when the shop
+     * holds no journal lines, cannot be asked (down, an older module, an error) or
+     * the install already has a journal (the database names one or the folders hold
+     * one): a journal this install started is never offered for retirement.
+     * Nothing is written.
+     *
+     * @return array{missing: string, documents: int, journals: int, series: array<string, string>}|null
+     *         documents: one journal line per document, the journals' last positions added up;
+     *         series: the last number the shop holds of each series
+     */
+    public function shopJournalAhead(Connection $conn, PsJournalClient $client): ?array
+    {
+        return $this->shopJournalCheck($conn, $client)['ahead'];
+    }
+
+    /**
+     * shopJournalAhead() that also says why there is nothing to decide: SHOP_CLEAR
+     * when the shop answered and holds nothing this database lacks (or the install
+     * already has a journal and the shop is not asked), SHOP_UNREACHABLE when the shop
+     * could not be asked (down, an older module, an error, a bad answer). The
+     * installer needs the difference once a choice was made on the decision page:
+     * that choice is never dropped because the shop cannot be asked at that moment.
+     *
+     * @return array{state: self::SHOP_*, ahead: array{missing: string, documents: int, journals: int, series: array<string, string>}|null}
+     */
+    public function shopJournalCheck(Connection $conn, PsJournalClient $client): array
+    {
+        $identity = new FiscalJournalIdentity($conn);
+        $locations = new FiscalJournalLocations($this->projectDir . '/backups/fiscal-journal', $this->projectDir . '/var/fiscal-journal');
+        if ($identity->journalId() !== null || $locations->primary()->journalId() !== null || $locations->secondary()->journalId() !== null) {
+            return ['state' => self::SHOP_CLEAR, 'ahead' => null];
+        }
+        try {
+            $answer = $client->heads();
+        } catch (\Throwable $e) {
+            error_log('TPV installer journal heads: ' . $e::class . ': ' . $e->getMessage());
+
+            return ['state' => self::SHOP_UNREACHABLE, 'ahead' => null];
+        }
+        // The same answers FiscalJournalStep::shopAhead treats as "nothing to say".
+        if (($answer['status'] ?? null) !== PsJournalClient::OK || !\is_array($answer['journals'] ?? null)) {
+            return ['state' => self::SHOP_UNREACHABLE, 'ahead' => null];
+        }
+        $ahead = FiscalJournalStep::shopAhead($answer, $identity, new FiscalJournalGuard($conn, $locations, null, $identity));
+        if ($ahead === null) {
+            return ['state' => self::SHOP_CLEAR, 'ahead' => null];
+        }
+
+        $documents = 0;
+        foreach ($ahead['heads'] as $head) {
+            $documents += \is_int($head['last_seq'] ?? null) ? $head['last_seq'] : 0;
+        }
+        $series = [];
+        foreach (\is_array($answer['series'] ?? null) ? $answer['series'] : [] as $name => $entry) {
+            if (\is_array($entry) && \is_string($entry['number'] ?? null) && isset($ahead['heads'][strtolower((string) ($entry['journal_id'] ?? ''))])) {
+                $series[(string) $name] = $entry['number'];
+            }
+        }
+        ksort($series, \SORT_STRING);
+
+        return ['state' => self::SHOP_AHEAD, 'ahead' => ['missing' => $ahead['missing']['number'], 'documents' => $documents, 'journals' => \count($ahead['heads']), 'series' => $series]];
+    }
+
+    /**
+     * «Empezar de cero» on the decision page, once .env is written and before the
+     * provisioning steps: FiscalJournalFreshStart (tpv:fiscal:journal:reset
+     * --accept-shop-ahead, recorded as coming from the installer). Never throws.
+     *
+     * @param (\Closure(): FiscalJournalFreshStart)|null $factory the default boots the installed app
+     */
+    public function startJournalAfresh(string $reason, ?\Closure $factory = null): FiscalJournalResetResult
+    {
+        try {
+            $freshStart = $factory !== null ? $factory() : $this->installedKernel()->getContainer()->get(FiscalJournalFreshStart::class);
+            if (!$freshStart instanceof FiscalJournalFreshStart) {
+                throw new \LogicException('The fiscal journal fresh start is not available.');
+            }
+
+            return $freshStart->run($reason);
+        } catch (\Throwable $e) {
+            error_log('TPV installer journal fresh start: ' . $e::class . ': ' . $e->getMessage());
+
+            return new FiscalJournalResetResult(FiscalJournalResetResult::ERROR, 'No se ha podido empezar el diario fiscal (el detalle está en el registro de errores de PHP).');
+        }
+    }
+
+    /**
      * Runs the provisioning steps (docs/provisioning.md) once the install is
      * written. Nothing here may fail the install: a step that needs the shop
      * (the module is not installed yet) stays pending with its reason and the
@@ -281,15 +393,24 @@ final class WebInstaller
     /** The runner of the app as installed: the .env just written, production kernel. */
     private function installedRunner(): ProvisioningRunner
     {
-        (new Dotenv())->bootEnv($this->projectDir . '/.env');
-        $kernel = new Kernel((string) ($_SERVER['APP_ENV'] ?? 'prod'), false);
-        $kernel->boot();
-        $runner = $kernel->getContainer()->get(ProvisioningRunner::class);
+        $runner = $this->installedKernel()->getContainer()->get(ProvisioningRunner::class);
         if (!$runner instanceof ProvisioningRunner) {
             throw new \LogicException('The provisioning runner is not available.');
         }
 
         return $runner;
+    }
+
+    private function installedKernel(): Kernel
+    {
+        if ($this->kernel === null) {
+            (new Dotenv())->bootEnv($this->projectDir . '/.env');
+            $kernel = new Kernel((string) ($_SERVER['APP_ENV'] ?? 'prod'), false);
+            $kernel->boot();
+            $this->kernel = $kernel;
+        }
+
+        return $this->kernel;
     }
 
     /**

@@ -12,6 +12,7 @@ use VenPosTPV\Service\Cron\CronJobOutcome;
 use VenPosTPV\Service\Cron\CronLock;
 use VenPosTPV\Service\Cron\CronRunner;
 use VenPosTPV\Service\Cron\CronStateStore;
+use VenPosTPV\Service\Fiscal\Journal\FiscalJournalGuardCache;
 
 /**
  * The single scheduled task (odd/tasks/single-cron-task.md): every minute it
@@ -74,7 +75,7 @@ final class CronRunnerTest extends TestCase
         return $launched;
     }
 
-    public function testTheJobsAreTheFiveExistingCommandsWithTheirArguments(): void
+    public function testTheJobsAreTheFiscalJournalFirstThenTheFiveExistingCommandsWithTheirArguments(): void
     {
         $jobs = [];
         foreach (CronRunner::jobs() as $job) {
@@ -82,6 +83,7 @@ final class CronRunnerTest extends TestCase
         }
 
         self::assertSame([
+            'journal' => ['tpv:fiscal:journal', [], null],
             'outbox' => ['tpv:sync:outbox', [], null],
             'stock' => ['tpv:catalog:sync', ['--stock-only' => true], null],
             'catalog' => ['tpv:catalog:sync', ['--full' => true], '03:00'],
@@ -92,21 +94,21 @@ final class CronRunnerTest extends TestCase
 
     public function testANewInstallRunsEverythingOnItsFirstMinute(): void
     {
-        self::assertSame(['outbox', 'stock', 'catalog', 'customers', 'backup'], $this->launchedAt('2026-11-14 12:00:10'));
+        self::assertSame(['journal', 'outbox', 'stock', 'catalog', 'customers', 'backup'], $this->launchedAt('2026-11-14 12:00:10'));
     }
 
     public function testUploadsAndStockRunEveryMinuteAndTheNightlyJobsOnceANight(): void
     {
         $this->launchedAt('2026-11-14 12:00:10');
 
-        self::assertSame(['outbox', 'stock'], $this->launchedAt('2026-11-14 12:01:10'));
-        self::assertSame(['outbox', 'stock'], $this->launchedAt('2026-11-15 02:59:10'), 'not before its hour');
-        self::assertSame(['outbox', 'stock', 'catalog'], $this->launchedAt('2026-11-15 03:00:10'));
-        self::assertSame(['outbox', 'stock'], $this->launchedAt('2026-11-15 03:01:10'), 'once a night');
-        self::assertSame(['outbox', 'stock', 'customers'], $this->launchedAt('2026-11-15 03:30:10'));
-        self::assertSame(['outbox', 'stock', 'backup'], $this->launchedAt('2026-11-15 04:00:10'));
-        self::assertSame(['outbox', 'stock'], $this->launchedAt('2026-11-15 23:59:10'));
-        self::assertSame(['outbox', 'stock', 'catalog'], $this->launchedAt('2026-11-16 03:00:10'), 'the next night again');
+        self::assertSame(['journal', 'outbox', 'stock'], $this->launchedAt('2026-11-14 12:01:10'));
+        self::assertSame(['journal', 'outbox', 'stock'], $this->launchedAt('2026-11-15 02:59:10'), 'not before its hour');
+        self::assertSame(['journal', 'outbox', 'stock', 'catalog'], $this->launchedAt('2026-11-15 03:00:10'));
+        self::assertSame(['journal', 'outbox', 'stock'], $this->launchedAt('2026-11-15 03:01:10'), 'once a night');
+        self::assertSame(['journal', 'outbox', 'stock', 'customers'], $this->launchedAt('2026-11-15 03:30:10'));
+        self::assertSame(['journal', 'outbox', 'stock', 'backup'], $this->launchedAt('2026-11-15 04:00:10'));
+        self::assertSame(['journal', 'outbox', 'stock'], $this->launchedAt('2026-11-15 23:59:10'));
+        self::assertSame(['journal', 'outbox', 'stock', 'catalog'], $this->launchedAt('2026-11-16 03:00:10'), 'the next night again');
     }
 
     public function testANightlyJobMissedAtItsHourRunsAtTheNextMinute(): void
@@ -114,8 +116,8 @@ final class CronRunnerTest extends TestCase
         $this->launchedAt('2026-11-14 12:00:10');
 
         // The task was down from 02:00 to 09:00.
-        self::assertSame(['outbox', 'stock', 'catalog', 'customers', 'backup'], $this->launchedAt('2026-11-15 09:00:10'));
-        self::assertSame(['outbox', 'stock'], $this->launchedAt('2026-11-15 09:01:10'));
+        self::assertSame(['journal', 'outbox', 'stock', 'catalog', 'customers', 'backup'], $this->launchedAt('2026-11-15 09:00:10'));
+        self::assertSame(['journal', 'outbox', 'stock'], $this->launchedAt('2026-11-15 09:01:10'));
     }
 
     public function testAFailedNightlyJobIsTriedAgainAfterHalfAnHourUpToThreeTimesANight(): void
@@ -147,10 +149,25 @@ final class CronRunnerTest extends TestCase
     {
         $launched = $this->launchedAt('2026-11-14 12:00:10', ['outbox' => new \RuntimeException('boom')]);
 
-        self::assertSame(['outbox', 'stock', 'catalog', 'customers', 'backup'], $launched);
+        self::assertSame(['journal', 'outbox', 'stock', 'catalog', 'customers', 'backup'], $launched);
         $status = $this->runner()->status(self::at('2026-11-14 12:00:20'));
         self::assertSame('boom', $this->jobStatus($status, 'outbox')['last_error']);
         self::assertNull($this->jobStatus($status, 'stock')['last_error']);
+    }
+
+    public function testTheFiscalJournalRunsFirstEveryMinuteAndItsFailureNeverStopsTheOtherJobs(): void
+    {
+        self::assertSame('Diario fiscal', CronRunner::jobs()[0]->label);
+
+        // Exit 1: neither journal folder can be written (fiscal-journal D9).
+        $launched = $this->launchedAt('2026-11-14 12:00:10', ['journal' => 1]);
+        self::assertSame(['journal', 'outbox', 'stock', 'catalog', 'customers', 'backup'], $launched);
+        self::assertSame(['journal', 'outbox', 'stock'], $this->launchedAt('2026-11-14 12:01:10', ['journal' => new \RuntimeException('disk full')]));
+
+        $status = $this->runner()->status(self::at('2026-11-14 12:01:20'));
+        self::assertSame('disk full', $this->jobStatus($status, 'journal')['last_error']);
+        self::assertNull($this->jobStatus($status, 'outbox')['last_error']);
+        self::assertSame('2026-11-14T12:01:10+01:00', $this->jobStatus($status, 'outbox')['last_success_at']);
     }
 
     public function testAJobStillRunningFromAnEarlierMinuteIsSkippedAndTheOthersRun(): void
@@ -169,7 +186,7 @@ final class CronRunnerTest extends TestCase
                 return new CronJobOutcome(0, 'ok');
             }, self::at('2026-11-15 03:00:10'));
 
-            self::assertSame(['outbox', 'stock'], $launched);
+            self::assertSame(['journal', 'outbox', 'stock'], $launched);
             self::assertSame(['catalog'], $report->skipped());
             self::assertFalse($report->failed(), 'a skipped job is not a failure');
         } finally {
@@ -178,7 +195,7 @@ final class CronRunnerTest extends TestCase
         }
 
         // Released: the job was not counted as done nor as an attempt, so it runs now.
-        self::assertSame(['outbox', 'stock', 'catalog'], $this->launchedAt('2026-11-15 03:01:10'));
+        self::assertSame(['journal', 'outbox', 'stock', 'catalog'], $this->launchedAt('2026-11-15 03:01:10'));
     }
 
     public function testTheLockIsFreeAgainAfterEachJob(): void
@@ -186,7 +203,7 @@ final class CronRunnerTest extends TestCase
         $this->launchedAt('2026-11-14 12:00:10');
 
         $lock = new CronLock($this->lockDir);
-        foreach (['outbox', 'stock', 'catalog', 'customers', 'backup'] as $id) {
+        foreach (['journal', 'outbox', 'stock', 'catalog', 'customers', 'backup'] as $id) {
             self::assertTrue($lock->acquire('cron-' . $id), $id);
             $lock->release('cron-' . $id);
         }
@@ -199,7 +216,7 @@ final class CronRunnerTest extends TestCase
             self::at('2026-11-14 12:00:10')
         );
 
-        self::assertSame(['outbox', 'stock', 'catalog', 'customers', 'backup'], $report->launched());
+        self::assertSame(['journal', 'outbox', 'stock', 'catalog', 'customers', 'backup'], $report->launched());
         self::assertSame(['stock'], $report->failures());
         self::assertTrue($report->failed());
     }
@@ -209,7 +226,7 @@ final class CronRunnerTest extends TestCase
         $never = $this->runner()->status(self::at('2026-11-14 12:00:00'));
         self::assertNull($never['last_run_at']);
         self::assertFalse($never['running']);
-        self::assertCount(5, $never['jobs']);
+        self::assertCount(6, $never['jobs']);
         self::assertNull($this->jobStatus($never, 'catalog')['last_success_at']);
 
         $this->launchedAt('2026-11-14 12:00:10', ['catalog' => 1]);
@@ -244,7 +261,7 @@ final class CronRunnerTest extends TestCase
     {
         $this->connection->executeStatement('DROP TABLE app_setting');
 
-        self::assertSame(['outbox', 'stock', 'catalog', 'customers', 'backup'], $this->launchedAt('2026-11-14 12:00:10'));
+        self::assertSame(['journal', 'outbox', 'stock', 'catalog', 'customers', 'backup'], $this->launchedAt('2026-11-14 12:00:10'));
         self::assertNull($this->runner()->status(self::at('2026-11-14 12:00:20'))['last_run_at']);
     }
 
@@ -263,8 +280,8 @@ final class CronRunnerTest extends TestCase
             return new CronJobOutcome(0, 'ok');
         }, self::at('2026-11-14 03:00:00'));
 
-        self::assertSame(['outbox', 'stock', 'catalog', 'customers', 'backup'], $launched);
-        self::assertSame(['outbox', 'stock', 'catalog', 'customers', 'backup'], $report->launched());
+        self::assertSame(['journal', 'outbox', 'stock', 'catalog', 'customers', 'backup'], $launched);
+        self::assertSame(['journal', 'outbox', 'stock', 'catalog', 'customers', 'backup'], $report->launched());
         self::assertSame(['catalog'], $report->failures());
         self::assertSame(['catalog' => 'PrestaShop API error: timeout'], $report->errors());
     }
@@ -296,7 +313,7 @@ final class CronRunnerTest extends TestCase
             return new CronJobOutcome(0, 'ok');
         }, self::at('2026-11-14 12:00:10'));
 
-        self::assertSame(['outbox' => false, 'stock' => false, 'catalog' => false, 'customers' => false, 'backup' => false], $connected);
+        self::assertSame(['journal' => false, 'outbox' => false, 'stock' => false, 'catalog' => false, 'customers' => false, 'backup' => false], $connected);
     }
 
     public function testAJobsStateIsSavedBeforeItsLockIsReleased(): void
@@ -325,7 +342,7 @@ final class CronRunnerTest extends TestCase
             self::at('2026-11-14 12:00:10')
         );
 
-        self::assertSame(['outbox' => true, 'stock' => true, 'catalog' => true, 'customers' => true, 'backup' => true], $lockHeldWhileSaving->getArrayCopy());
+        self::assertSame(['journal' => true, 'outbox' => true, 'stock' => true, 'catalog' => true, 'customers' => true, 'backup' => true], $lockHeldWhileSaving->getArrayCopy());
     }
 
     public function testASuccessDatedInTheFutureDoesNotKeepANightlyJobFromRunning(): void
@@ -370,7 +387,7 @@ final class CronRunnerTest extends TestCase
                 return new CronJobOutcome(0, 'ok');
             }, self::at('2026-11-14 12:00:10'));
 
-            self::assertSame(['outbox', 'stock'], $launched);
+            self::assertSame(['journal', 'outbox', 'stock'], $launched);
             self::assertSame(['catalog', 'customers', 'backup'], $report->skipped());
             self::assertFalse($report->failed(), 'a skipped job is not a failure');
         } finally {
@@ -379,7 +396,7 @@ final class CronRunnerTest extends TestCase
         }
 
         // Not counted as attempts: they run as soon as the nightly lock is free.
-        self::assertSame(['outbox', 'stock', 'catalog', 'customers', 'backup'], $this->launchedAt('2026-11-14 12:01:10'));
+        self::assertSame(['journal', 'outbox', 'stock', 'catalog', 'customers', 'backup'], $this->launchedAt('2026-11-14 12:01:10'));
     }
 
     public function testTheMinuteJobsDoNotTakeTheNightlyLock(): void
@@ -394,7 +411,95 @@ final class CronRunnerTest extends TestCase
             return new CronJobOutcome(0, 'ok');
         }, self::at('2026-11-15 03:00:10'));
 
-        self::assertSame(['outbox' => true, 'stock' => true, 'catalog' => false], $nightlyFree);
+        self::assertSame(['journal' => true, 'outbox' => true, 'stock' => true, 'catalog' => false], $nightlyFree);
+    }
+
+    private function blockedRunner(bool $blocked, int &$asked = 0): CronRunner
+    {
+        $guard = $this->createMock(FiscalJournalGuardCache::class);
+        $guard->method('blocks')->willReturnCallback(static function () use ($blocked, &$asked): bool {
+            ++$asked;
+
+            return $blocked;
+        });
+
+        return new CronRunner(new CronStateStore($this->connection), new CronLock($this->lockDir), 'Europe/Madrid', journalGuard: $guard);
+    }
+
+    /** @return list<string> */
+    private function launchedBy(CronRunner $runner, string $time): array
+    {
+        $launched = [];
+        $runner->run(static function (CronJob $job) use (&$launched): CronJobOutcome {
+            $launched[] = $job->id;
+
+            return new CronJobOutcome(0, 'ok');
+        }, self::at($time));
+
+        return $launched;
+    }
+
+    /**
+     * fiscal-journal: while the database is behind the fiscal journal the jobs that
+     * add rows whose ids the recovery needs wait (the customers sync inserts the
+     * `customer` rows the recovered sales and uploads point at), and so does the
+     * nightly backup: a week of blocked nights would otherwise rotate out every good
+     * dump and keep only dumps of the restored database that is behind. The journal
+     * itself, the uploads (they only update rows), stock and catalog keep running.
+     */
+    public function testWhileTheDatabaseIsBehindTheJournalOnlyTheJobsThatAddRowsWait(): void
+    {
+        $runner = $this->blockedRunner(true);
+        $launched = $this->launchedBy($runner, '2026-11-15 04:00:10');
+
+        self::assertSame(['journal', 'outbox', 'stock', 'catalog'], $launched);
+        foreach (['customers', 'backup'] as $waiting) {
+            $report = (new CronStateStore($this->connection))->job($waiting);
+            self::assertSame(CronRunner::BLOCKED_BY_FISCAL_JOURNAL, $report['last_error'] ?? null, $waiting);
+            self::assertArrayNotHasKey('last_attempt_at', $report, $waiting . ': not an attempt, no retry is spent');
+        }
+        $report = (new CronStateStore($this->connection))->job('customers');
+        self::assertSame(CronRunner::BLOCKED_BY_FISCAL_JOURNAL, $report['last_error'] ?? null);
+        self::assertArrayNotHasKey('last_attempt_at', $report, 'not an attempt: no retry is spent');
+        $status = $this->jobStatus($runner->status(self::at('2026-11-15 04:00:20')), 'customers');
+        self::assertSame('Esperando: la base de datos está por detrás del diario fiscal. Se ejecutará cuando un administrador recupere los documentos (Ajustes → VERI*FACTU → Diario fiscal).', $status['last_error']);
+    }
+
+    public function testAWaitingJobIsNotAFailureOfTheTask(): void
+    {
+        $report = $this->blockedRunner(true)->run(static fn (CronJob $job): CronJobOutcome => new CronJobOutcome(0, 'ok'), self::at('2026-11-15 04:00:10'));
+
+        self::assertFalse($report->failed());
+        self::assertContains('customers', $report->skipped());
+        self::assertNotContains('customers', $report->launched());
+    }
+
+    public function testOnceRecoveredTheWaitingJobRunsAtTheNextMinute(): void
+    {
+        $this->launchedBy($this->blockedRunner(true), '2026-11-15 04:00:10');
+        $launched = $this->launchedBy($this->blockedRunner(false), '2026-11-15 04:01:10');
+
+        self::assertContains('customers', $launched);
+        self::assertNull($this->jobStatus($this->runner()->status(self::at('2026-11-15 04:01:20')), 'customers')['last_error']);
+    }
+
+    public function testTheGuardIsOnlyAskedWhenAJobThatAddsRowsIsDue(): void
+    {
+        $asked = 0;
+        $this->launchedBy($this->blockedRunner(false, $asked), '2026-11-15 04:00:10');
+        self::assertSame(1, $asked, 'customers was due');
+
+        $asked = 0;
+        $this->launchedBy($this->blockedRunner(false, $asked), '2026-11-15 04:01:10');
+        self::assertSame(0, $asked, 'only the jobs that keep running were due');
+    }
+
+    public function testEveryNewJobWaitsWhileBlockedUnlessListedAsSafe(): void
+    {
+        foreach (CronRunner::jobs() as $job) {
+            $safe = \in_array($job->id, CronRunner::RUNS_WHILE_JOURNAL_BLOCKED, true);
+            self::assertSame(!\in_array($job->id, ['customers', 'backup'], true), $safe, $job->id);
+        }
     }
 
     /**

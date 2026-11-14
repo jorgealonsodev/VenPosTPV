@@ -36,7 +36,7 @@ final class InstalledEnvBootsTest extends TestCase
             'admin_user' => 'admin', 'admin_password' => 'a-long-password',
             'store_name' => 'Tienda', 'store_address' => '',
             'ps_url' => 'https://shop.example.com', 'ps_api_key' => 'KEY',
-            'sso_secret' => '', 'ps_currency' => '1', 'ps_shop' => '1', 'timezone' => 'Europe/Madrid',
+            'sso_secret' => str_repeat('s', 32), 'ps_currency' => '1', 'ps_shop' => '1', 'timezone' => 'Europe/Madrid',
         ])['values'];
 
         // Exactly the installer's .env: anything else this process has is removed.

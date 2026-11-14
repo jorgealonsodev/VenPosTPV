@@ -37,8 +37,12 @@ final class CronCommand extends Command
         $report = $this->runner->run(fn (CronJob $job): CronJobOutcome => $this->launch($job, $output));
 
         if ($output->isVerbose()) {
+            $waiting = $report->skipped() !== [] ? $this->heldBackByTheFiscalJournal() : [];
             foreach ($report->skipped() as $id) {
-                $output->writeln("Skipped {$id}: still running from an earlier run (or another nightly job is).");
+                // A job held back by the fiscal journal guard (CronRunner::RUNS_WHILE_JOURNAL_BLOCKED) says why.
+                $output->writeln(isset($waiting[$id])
+                    ? "Skipped {$id}: " . CronRunner::BLOCKED_BY_FISCAL_JOURNAL
+                    : "Skipped {$id}: still running from an earlier run (or another nightly job is).");
             }
         }
 
@@ -56,6 +60,29 @@ final class CronCommand extends Command
         }
 
         return $report->failed() ? Command::FAILURE : Command::SUCCESS;
+    }
+
+    /**
+     * The jobs whose stored state says they wait for the fiscal journal guard: the
+     * runner writes that state when it holds a job back, and replaces it when the job runs.
+     *
+     * @return array<string, true>
+     */
+    private function heldBackByTheFiscalJournal(): array
+    {
+        try {
+            $jobs = $this->runner->status()['jobs'];
+        } catch (\Throwable) {
+            return [];
+        }
+        $waiting = [];
+        foreach ($jobs as $job) {
+            if ($job['last_error'] === CronRunner::BLOCKED_BY_FISCAL_JOURNAL) {
+                $waiting[$job['id']] = true;
+            }
+        }
+
+        return $waiting;
     }
 
     private function launch(CronJob $job, OutputInterface $output): CronJobOutcome

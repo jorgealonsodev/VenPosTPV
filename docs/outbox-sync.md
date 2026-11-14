@@ -103,7 +103,64 @@ Rows of one sale upload in `sequence` order: a refund or exchange row waits unti
 its sale is `done`. A row is claimed by one process with a conditional UPDATE
 (`pending` → `processing` with a claim token); a claim older than 5 minutes is taken
 back (the module replays an order that already exists, so no duplicate is created).
+Concurrent runs can make MySQL pick one of them as a deadlock victim (1213) or time
+a lock wait out: the statements that claim, release or recover a row, and the
+transaction that closes it, are tried again up to 3 times (nothing was written then),
+so a run never stops on a deadlock and a row is never sent again because recording
+the answer deadlocked. Stuck rows are taken back one by one by primary key; if that
+still deadlocks, the next run takes them back.
 Stock is never pushed for an upload: PrestaShop lowers it when it creates the order.
+
+### Fiscal journal lines (type `journal`, module 0.9.0)
+
+Every line of the fiscal journal (`backups/fiscal-journal/`, see `docs/verifactu.md`)
+is also sent to the shop (`POST /module/tpvconnect/journal`, signed like the other
+endpoints), so a number is never repeated even if the server journal is lost.
+
+- Queued by the journal job of `tpv:cron` (`tpv:fiscal:journal`,
+  `FiscalJournalShopSync`), right after it brings the journal up to date: one row per
+  line without one, `order_id` NULL, `sequence` = the line's `seq`, `request_id`
+  `journal-<16 hex of the journal id>-<seq>-<random>`. The payload carries the line
+  exactly as the journal file holds it (plus `journal_id`, `seq`, `number`,
+  `invoice_type`, `hash`, `line_hash`), so sending never reads the journal and the
+  module hashes the same canonical JSON (`CanonicalJson`, the shared vectors in
+  `modules/tpvconnect/tests/fixtures/`). Up to 500 rows per run. Queueing starts
+  after the last line queued, or after the shop's `contiguous_seq` when that is
+  higher (from this minute's `head`, or from `shop-head.json` when it is at most 10
+  minutes old): after a restore of the TPV database the lines the shop already
+  holds are not sent again.
+- Sent in `seq` order: a `journal` row is not claimed while a `journal` row with a
+  lower `sequence` is `pending` or `processing` (one in backoff holds the later ones
+  back; an `incident` does not).
+- The same job asks the module for its `head` once a minute and stores it in
+  `shop-head.json` of the journal folders; the guard reads it (see
+  `docs/verifactu.md`). Lines after the shop's `contiguous_seq` whose row was lost (a
+  restore of the TPV database), or that the shop lost after acknowledging them (a
+  restore of the shop: sent before the question but beyond the shop's `last_seq`, or
+  all of them when the line right after `contiguous_seq` is one), are queued again,
+  the oldest first, up to 500 per run; the next runs go on until every one is back.
+  A line in `incident` keeps the shop's `contiguous_seq` at its gap for good: it is
+  never queued again by itself (no loop, the outbox does not grow), it stays on the
+  incidents screen, and the lines after it go on. The module stores a line once.
+
+| Module answer | Outcome |
+|---|---|
+| 201 stored, 200 `duplicate: true` | row `done` |
+| 404, or a body that is not JSON (module older than 0.9.0) | row back to `pending`, next attempt in 60 minutes, `last_error` «Copia en la tienda no disponible: actualiza el módulo TPV Connect a la versión 0.9.0.»; never an incident, one request an hour. When the module answers the next `head`, the waiting rows are due at once |
+| 409 (another line at that position, or the document at another position) | `incident`, never retried by itself and never overwritten; later lines go on |
+| 400 (`line_hash` mismatch), 413, 422 | `incident` with the module's details |
+| 401 (the shop does not accept the signature: the shared secret differs) | `pending` with the usual backoff; after 6 attempts (the ladder used up) `incident`: «La tienda rechaza la firma de la copia del diario fiscal (HTTP 401) tras 6 intentos: revisa que la clave compartida del TPV y la del módulo TPV Connect coincidan y reintenta esta línea.» The lines behind it are tried in turn; once the secret is fixed, retry the incidents |
+| network error, timeout, 429, 5xx | `pending`, the usual backoff |
+
+Journal rows waiting for the module upgrade (the 404 case) are not counted as
+pending uploads by the POS sync indicator: they wait for the administrator, and
+Ajustes says so.
+
+A line whose number the module cannot store (only letters, digits and `. _ / -`, up
+to 60: a coupon sale numbered by a shop with customised order references) becomes an
+`incident` before anything is sent: «El número "…" no cabe en la copia de la tienda
+(solo letras, cifras y . _ / -, hasta 60): el documento queda solo en el diario del
+servidor.» The document is safe in the server journal; later lines go on.
 
 A `pending` row behind a `discarded` one (an earlier row of its sale, or the row in
 its `depends_on`) can never upload. Each run moves it to `incident` with

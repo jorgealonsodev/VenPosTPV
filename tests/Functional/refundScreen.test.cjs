@@ -110,6 +110,18 @@ async function testServerErrorsAreShownInSpanishWithDetail() {
     assert.ok(state.selectedOrder.value, 'stays on the order after an error');
 }
 
+async function testABlockedTillShowsTheServerMessageAsIs() {
+    // fiscal-journal S5: the database is behind the fiscal journal; nothing was refunded.
+    const message = 'Caja bloqueada: la base de datos se ha restaurado desde una copia anterior a los últimos documentos. Avisa al administrador (Ajustes → VERI*FACTU → Diario fiscal).';
+    const { state, emitted } = load(async () => { throw new Error('HTTP 423: ' + JSON.stringify({ error: message, code: 'fiscal_journal_behind', retry: false })); });
+    state.selectOrder({ ...ORDER, tender: { cash: 60, card: 0 } });
+    state.toggleLine(0);
+    state.setReason('size');
+    await state.confirmRefund();
+    assert.equal(emitted.at(-1)[1], message);
+    assert.ok(state.selectedOrder.value, 'stays on the order');
+}
+
 async function testPendingRefundBlocksNewOnesAndCanBeRetried() {
     const retried = [];
     const { state, emitted } = load(async () => { throw new Error('must not create a new refund'); }, async (id) => { retried.push(id); return { data: { refunded_amount: 24.18, cash_amount: 24.18 } }; });
@@ -967,6 +979,7 @@ async function testTicketListNamesASaleNotUploadedYetByItsTicketCode() {
     await testRequestCarriesOnlyIndexesQuantitiesRestockReasonAndConfirmation();
     await testOtherReasonNeedsTextAndQuantityIsCappedAtRefundable();
     await testServerErrorsAreShownInSpanishWithDetail();
+    await testABlockedTillShowsTheServerMessageAsIs();
     await testOnlineOrderRefundPaysNothingAndLeavesTheWebRefundPending();
     await testTpvSaleIsNotMarkedOnline();
     await testUndeliveredOrTpvMadeOnlineOrdersAreBlocked();

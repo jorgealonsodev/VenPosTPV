@@ -51,6 +51,49 @@ class InstallLifecycleTest extends TestCase
 
     /**
      * @test
+     */
+    public function install_creates_the_fiscal_journal_table_with_its_unique_keys(): void
+    {
+        \Db::$executed = [];
+
+        self::assertTrue((new \TpvConnectInstaller(new \Module()))->installSql());
+
+        $created = array_values(array_filter(\Db::$executed, static fn (string $sql): bool => str_contains($sql, 'CREATE TABLE IF NOT EXISTS `ps_tpvconnect_journal`')));
+        self::assertCount(1, $created);
+        foreach ([
+            '`id_tpvconnect_journal`', '`journal_id` CHAR(36) NOT NULL', '`seq` BIGINT UNSIGNED NOT NULL', '`series` VARCHAR(16) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL',
+            '`number` VARCHAR(60) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL', '`invoice_type` CHAR(2) NOT NULL', '`hash` CHAR(64) NOT NULL', '`line_hash` CHAR(64) NOT NULL',
+            '`line` MEDIUMTEXT NOT NULL', '`date_add` DATETIME NOT NULL', 'UNIQUE KEY `uniq_journal_seq` (`journal_id`, `seq`)', 'UNIQUE KEY `uniq_journal_hash` (`journal_id`, `hash`)',
+        ] as $column) {
+            self::assertStringContainsString($column, $created[0]);
+        }
+    }
+
+    /**
+     * @test
+     */
+    public function uninstall_and_reinstall_keep_the_fiscal_journal_table_and_its_lines(): void
+    {
+        \Db::$executed = [];
+        $installer = new \TpvConnectInstaller(new \Module());
+
+        // A module «Reset»: uninstall, then install.
+        $installer->uninstallConfiguration();
+        self::assertTrue($installer->installSql());
+
+        $touchingJournal = array_values(array_filter(\Db::$executed, static fn (string $sql): bool => str_contains($sql, 'tpvconnect_journal')));
+        self::assertCount(1, $touchingJournal);
+        self::assertStringContainsString('CREATE TABLE IF NOT EXISTS `ps_tpvconnect_journal`', $touchingJournal[0]);
+        self::assertSame([], array_filter(\Db::$executed, static fn (string $sql): bool => preg_match('/\\b(DROP|TRUNCATE)\\b/i', $sql) === 1));
+        self::assertFalse(method_exists($installer, 'uninstallSql'));
+        $module = (string) file_get_contents(dirname(__DIR__, 2) . '/tpvconnect.php');
+        preg_match('/function uninstall\(\): bool\s*\{.*?\n    \}/s', $module, $uninstall);
+        self::assertStringNotContainsString('uninstallSql', $uninstall[0] ?? 'missing');
+        self::assertStringNotContainsString('tpvconnect_journal', $uninstall[0] ?? 'missing');
+    }
+
+    /**
+     * @test
      * @group integration
      */
     public function uninstaller_removes_configuration_keys(): void

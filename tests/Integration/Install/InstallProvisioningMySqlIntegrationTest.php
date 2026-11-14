@@ -7,8 +7,12 @@ namespace VenPosTPV\Tests\Integration\Install;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
 use PHPUnit\Framework\TestCase;
+use Symfony\Component\DependencyInjection\Compiler\CompilerPassInterface;
+use Symfony\Component\DependencyInjection\Compiler\PassConfig;
+use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\Filesystem\Filesystem;
 use VenPosTPV\Kernel;
+use VenPosTPV\Service\Fiscal\Journal\FiscalJournalLocations;
 use VenPosTPV\Service\Install\MigrationRunner;
 use VenPosTPV\Service\Install\WebInstaller;
 use VenPosTPV\Service\Provisioning\ProvisioningRunner;
@@ -107,6 +111,24 @@ final class InstallProvisioningMySqlIntegrationTest extends TestCase
             {
                 return $this->cache . '/cache';
             }
+
+            protected function build(ContainerBuilder $container): void
+            {
+                parent::build($container);
+                // The fiscal journal of this install goes to the test folder, never to the project's own.
+                $container->addCompilerPass(new class ($this->cache) implements CompilerPassInterface {
+                    public function __construct(private readonly string $dir)
+                    {
+                    }
+
+                    public function process(ContainerBuilder $container): void
+                    {
+                        $container->getDefinition(FiscalJournalLocations::class)
+                            ->setArgument('$primary', $this->dir . '/backups/fiscal-journal')
+                            ->setArgument('$secondary', $this->dir . '/var/fiscal-journal');
+                    }
+                }, PassConfig::TYPE_BEFORE_OPTIMIZATION, 1000);
+            }
         };
         $kernel = $this->kernel;
         $report = $installer->provision(static function () use ($kernel): ProvisioningRunner {
@@ -124,9 +146,24 @@ final class InstallProvisioningMySqlIntegrationTest extends TestCase
         }
         // coupon-checkout joined the steps in a39363f; coupon checkout is on by default
         // (config/services.yaml), so the step is already done and changes nothing.
-        $this->assertSame(['migrations', 'free-item-products', 'coupon-checkout'], array_keys($byId), 'the migrations go first');
+        // fiscal-journal (FiscalJournalStep, priority 500) runs right after the migrations.
+        $this->assertSame(['migrations', 'fiscal-journal', 'free-item-products', 'coupon-checkout'], array_keys($byId), 'the migrations go first');
         $this->assertSame(StepStatus::DONE, $byId['migrations']->status);
         $this->assertFalse($byId['migrations']->attempted, 'the installer already migrated');
+
+        // A fresh install: the step starts the journal (no shop needed) and is done.
+        $this->assertSame(StepStatus::DONE, $byId['fiscal-journal']->status, (string) $byId['fiscal-journal']->reason);
+        $this->assertTrue($byId['fiscal-journal']->attempted);
+        $this->assertSame('Diario fiscal preparado', $byId['fiscal-journal']->description);
+        $journal = json_decode((string) file_get_contents($this->dir . '/backups/fiscal-journal/journal.id'), true);
+        $this->assertIsArray($journal);
+        $this->assertSame($journal['journal_id'], $this->conn->fetchOne("SELECT value FROM app_setting WHERE name = 'fiscal_journal.id'"), 'the database names the journal of this install');
+        $this->assertSame(0, $journal['backfill_until'], 'nothing issued before: nothing to backfill');
+        foreach (['backups/fiscal-journal', 'var/fiscal-journal'] as $folder) {
+            clearstatcache();
+            $this->assertSame(0700, fileperms($this->dir . '/' . $folder) & 0777, $folder);
+            $this->assertSame("Require all denied\n", file_get_contents($this->dir . '/' . $folder . '/.htaccess'), $folder);
+        }
         $this->assertSame(StepStatus::FAILED, $byId['free-item-products']->status);
         $this->assertStringStartsWith('PrestaShop no ha preparado los productos del artículo libre: ', (string) $byId['free-item-products']->reason);
         $this->assertSame(StepStatus::DONE, $byId['coupon-checkout']->status);

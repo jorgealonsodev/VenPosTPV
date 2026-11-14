@@ -33,6 +33,9 @@ final class WebInstallerTest extends TestCase
         @rmdir($this->dir);
     }
 
+    private const MISSING_SECRET = 'Falta el secreto SSO del módulo. Está en PrestaShop, módulo TPV Connect, apartado «Configuración manual». '
+        . 'El TPV lo necesita para hablar con la tienda: pedidos, devoluciones, precios y la comprobación del diario fiscal.';
+
     /** @return array<string, string> */
     private function validInput(): array
     {
@@ -43,7 +46,7 @@ final class WebInstallerTest extends TestCase
             'admin_user' => 'admin', 'admin_password' => 'a-long-password',
             'store_name' => 'Tienda', 'store_address' => '',
             'ps_url' => 'https://shop.example.com', 'ps_api_key' => 'KEY',
-            'sso_secret' => '', 'ps_currency' => '1', 'ps_shop' => '1', 'timezone' => 'Europe/Madrid',
+            'sso_secret' => str_repeat('s', 32), 'ps_currency' => '1', 'ps_shop' => '1', 'timezone' => 'Europe/Madrid',
         ];
     }
 
@@ -100,6 +103,28 @@ final class WebInstallerTest extends TestCase
         self::assertContains('La contraseña del administrador debe tener al menos 12 caracteres.', $errors);
         self::assertContains('El secreto SSO del módulo debe tener al menos 32 caracteres.', $errors);
         self::assertContains('La zona horaria no es válida.', $errors);
+    }
+
+    public function testTheManualKeysNeedTheModuleSecret(): void
+    {
+        foreach (['', '   '] as $secret) {
+            $result = (new WebInstaller($this->dir))->validate(['ps_mode' => 'manual', 'sso_secret' => $secret] + $this->validInput());
+
+            self::assertSame([self::MISSING_SECRET], $result['errors']);
+        }
+    }
+
+    public function testTheManualKeysWithTheSecretAndThePairingPathAreAcceptedAsBefore(): void
+    {
+        $manual = (new WebInstaller($this->dir))->validate($this->validInput());
+        self::assertSame([], $manual['errors']);
+        self::assertSame(str_repeat('s', 32), $manual['values']['SSO_SHARED_SECRET']);
+        self::assertNull($manual['pairing']);
+
+        // Pairing: the secret comes from the shop, so the form sends none.
+        $paired = (new WebInstaller($this->dir))->validate($this->pairingInput());
+        self::assertSame([], $paired['errors']);
+        self::assertSame('', $paired['values']['SSO_SHARED_SECRET']);
     }
 
     public function testLineBreakInAnyFieldIsRejected(): void

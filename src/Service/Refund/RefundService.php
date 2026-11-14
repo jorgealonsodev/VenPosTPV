@@ -12,6 +12,7 @@ use VenPosTPV\Service\Cash\Exception\NoOpenCashSessionException;
 use VenPosTPV\Service\Catalog\CatalogPriceResolver;
 use VenPosTPV\Service\Catalog\Exception\ProductNotInCatalogException;
 use VenPosTPV\Service\Fiscal\FiscalRecorder;
+use VenPosTPV\Service\Fiscal\Journal\FiscalJournalIntents;
 use VenPosTPV\Service\PrestaShop\CouponCreationService;
 use VenPosTPV\Service\Refund\Exception\RefundException;
 use VenPosTPV\Service\Sync\Outbox;
@@ -94,6 +95,7 @@ class RefundService
         private readonly ?Outbox $outbox = null,
         private readonly ?OutboxSyncTrigger $syncTrigger = null,
         private readonly ?FiscalRecorder $fiscalRecorder = null,
+        private readonly ?FiscalJournalIntents $journalIntents = null,
     ) {
         $this->voucherIssuer = new VoucherIssuer($conn, $couponCreationService);
     }
@@ -612,6 +614,22 @@ class RefundService
         }
     }
 
+    /**
+     * The concept of a refund's cash movement, from the movement's own links: the
+     * PrestaShop order when there is one, otherwise the local ticket, otherwise «sin
+     * ticket». Both completion paths use it; RefundService::complete() books its
+     * movement without a local sale (order_id null). The fiscal journal stores the
+     * committed movement row itself, so nothing has to rebuild it from this rule.
+     */
+    public static function cashMovementConcept(?int $orderId, ?int $psOrderId, string $reference): string
+    {
+        if ($psOrderId !== null) {
+            return sprintf('Devolución pedido #%d', $psOrderId);
+        }
+
+        return $orderId === null ? 'Devolución sin ticket' : sprintf('Devolución ticket %s', $reference);
+    }
+
     private function fiscal(): FiscalRecorder
     {
         return $this->fiscalRecorder ?? new FiscalRecorder($this->conn);
@@ -696,14 +714,14 @@ class RefundService
                 'session_id' => $sessionId,
                 'type' => 'refund',
                 'amount' => $cashAmount,
-                'concept' => $orderId === null
-                    ? 'Devolución sin ticket'
-                    : ($psOrderId !== null ? sprintf('Devolución pedido #%d', $psOrderId) : sprintf('Devolución ticket %s', $reference)),
+                'concept' => self::cashMovementConcept($orderId, $psOrderId, $reference),
                 'ps_order_id' => $psOrderId,
                 'order_id' => $orderId,
                 'created_at' => $now->format('Y-m-d H:i:s'),
             ]);
             $movementId = (int) $this->conn->lastInsertId();
+            // The credit note's journal line stores this very row (fiscal-journal D2).
+            $this->journalIntents?->attachRefundMovement($refundId, $movementId);
         }
 
         foreach ($this->conn->fetchAllAssociative('SELECT * FROM refund_line WHERE refund_id = ? ORDER BY id', [$refundId]) as $line) {
@@ -724,6 +742,8 @@ class RefundService
         $outbox = $this->outbox ?? new Outbox($this->conn);
         if ($orderId !== null) {
             $this->conn->executeStatement('UPDATE order_meta SET refunded_amount = refunded_amount + ? WHERE id = ?', [$total, $orderId]);
+            // The credit note's journal line stores the amount as this refund leaves it (fiscal-journal D2).
+            $this->journalIntents?->captureRefundedAmount($refundId, $this->conn);
             // Behind the sale (PRD S2): its PrestaShop order id is read when it is sent.
             $outbox->enqueueAfter(Outbox::TYPE_REFUND, $orderId, [
                 'request_id' => $requestId,
@@ -1173,11 +1193,13 @@ class RefundService
                         'session_id' => $sessionId,
                         'type' => 'refund',
                         'amount' => $cashAmount,
-                        'concept' => $psOrderId !== null ? sprintf('Devolución pedido #%d', $psOrderId) : 'Devolución sin ticket',
+                        // This movement is not linked to a local sale (no order_id).
+                        'concept' => self::cashMovementConcept(null, $psOrderId, ''),
                         'ps_order_id' => $psOrderId,
                         'ps_order_slip_id' => $slipId > 0 ? $slipId : null,
                         'created_at' => (new \DateTimeImmutable())->format('Y-m-d H:i:s'),
                     ]);
+                    $this->journalIntents?->attachRefundMovement($refundId, (int) $this->conn->lastInsertId());
                 }
 
                 foreach ($lines as $line) {
@@ -1198,6 +1220,7 @@ class RefundService
                         'UPDATE order_meta SET refunded_amount = refunded_amount + ? WHERE ps_order_id = ?',
                         [$total, $psOrderId]
                     );
+                    $this->journalIntents?->captureRefundedAmount($refundId, $this->conn);
                 }
             });
         } catch (\Throwable $e) {

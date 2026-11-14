@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace VenPosTPV\Service\Sync;
 
 use Doctrine\DBAL\Connection;
+use VenPosTPV\Service\Fiscal\Journal\JournalLocation;
 
 /**
  * The uploads to PrestaShop still to do (PRD S1, S2). A row is written in the same
@@ -29,6 +30,14 @@ class Outbox
      * that customer waits for it (depends_on) and is sent with its PrestaShop id.
      */
     public const TYPE_CUSTOMER = 'customer';
+
+    /**
+     * One line of the fiscal journal for the shop copy (fiscal-journal D6, S8). It
+     * belongs to no sale: `sequence` is the line's seq, and OutboxSync sends the
+     * lines of the journal in that order. The payload carries the line exactly as
+     * the journal file holds it, so sending never reads the journal.
+     */
+    public const TYPE_JOURNAL = 'journal';
 
     public const STATUS_PENDING = 'pending';
     public const STATUS_PROCESSING = 'processing';
@@ -101,6 +110,38 @@ class Outbox
     public function enqueueStandalone(string $type, array $payload, ?string $requestId = null): string
     {
         return $this->insert($type, null, 1, $payload, $requestId);
+    }
+
+    /**
+     * Queues one journal line for the shop copy (the caller holds a transaction).
+     *
+     * @param array<string, mixed> $line a valid journal line (seq, fiscal_record, line_hash)
+     *
+     * @return string the request_id, which starts with journalRequestPrefix($journalId)
+     */
+    public function enqueueJournal(string $journalId, array $line): string
+    {
+        $seq = (int) $line['seq'];
+        $record = \is_array($line['fiscal_record'] ?? null) ? $line['fiscal_record'] : [];
+
+        return $this->insert(self::TYPE_JOURNAL, null, $seq, [
+            'journal_id' => strtolower($journalId),
+            'seq' => $seq,
+            'number' => (string) ($record['number'] ?? ''),
+            'invoice_type' => (string) ($record['invoice_type'] ?? ''),
+            'hash' => (string) ($record['hash'] ?? ''),
+            'line_hash' => (string) $line['line_hash'],
+            'line' => rtrim(JournalLocation::encode($line), "\n"),
+        ], self::journalRequestPrefix($journalId) . $seq . '-' . bin2hex(random_bytes(6)));
+    }
+
+    /**
+     * The start of the request_id of every row of one journal, so its rows are found
+     * by index (a line can be queued again after a restore, with a new request_id).
+     */
+    public static function journalRequestPrefix(string $journalId): string
+    {
+        return 'journal-' . substr(str_replace('-', '', strtolower($journalId)), 0, 16) . '-';
     }
 
     /** @param array<string, mixed> $payload */
