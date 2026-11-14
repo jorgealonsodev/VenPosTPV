@@ -82,7 +82,7 @@ final class TicketPdfWidthTest extends TestCase
         return new TicketData(
             orderId: 1, reference: 'A26000003', storeName: 'Nada Más',
             storeAddress: 'RÚA EUGENIO ARBONES,N4, local 36210 VIGO Pontevedra',
-            ticketHeader: 'https://clubnatacion.com/', ticketFooter: 'Gracias por su compra', ticketLogo: $logo,
+            ticketHeader: 'https://tutienda.example/', ticketFooter: 'Gracias por su compra', ticketLogo: $logo,
             ticketWidthPx: $widthPx, date: new \DateTimeImmutable('2026-11-05 11:15:00'), cashierName: 'ana',
             lines: [new TicketLine('Bañador Mujer TURBO PROSKIN VANGUARD CLOSED BACK MOON (Talla: 20)', 1, 380.0, 380.0)],
             subtotal: 380.0, tax: 0.0, total: 380.0, paymentMethod: 'cash', amountTendered: 380.0, changeDue: 0.0,

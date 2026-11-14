@@ -35,7 +35,7 @@ El paquete `venpostpv-hosting.zip` lleva el TPV con sus dependencias y un instal
    |---|---|
    | Activa | Marcado |
    | Tipo de tarea | **Ejecutar un script PHP** |
-   | Ruta de acceso del script | `tpv.clubnatacion.com/bin/console` (la carpeta del subdominio + `/bin/console`) |
+   | Ruta de acceso del script | `tpv.tutienda.com/bin/console` (la carpeta del subdominio + `/bin/console`) |
    | con argumentos (a la derecha de la ruta) | `tpv:cron --env=prod` |
    | Usar la versión PHP | **8.5** (la del subdominio; nunca la 5.3 que sale por defecto) |
    | Ejecutar | elige **Estilo cron** en el desplegable y escribe `* * * * *` (cada minuto) |
@@ -111,7 +111,7 @@ Desde la migración `Version00000046SaleLine`, cada venta guarda sus líneas con
 | Campo en Plesk | Qué poner |
 |---|---|
 | Tipo de tarea | **Ejecutar un script PHP** |
-| Ruta de acceso del script | `tpv.clubnatacion.com/bin/console` |
+| Ruta de acceso del script | `tpv.tutienda.com/bin/console` |
 | con argumentos | `tpv:sales:backfill-lines --env=prod` |
 | Usar la versión PHP | **8.5** |
 | Ejecutar | cualquiera (se lanza con **Ejecutar ahora** y después se puede borrar la tarea) |
