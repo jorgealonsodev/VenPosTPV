@@ -20,7 +20,7 @@ El paquete `venpostpv-hosting.zip` lleva el TPV con sus dependencias y un instal
 
    Dos avisos:
    - El tipo de tarea tiene que ser **Ejecutar un script PHP**. «Ejecutar un comando» falla en muchos Plesk porque se ejecuta en un entorno aislado donde no existe `/opt/plesk/php`.
-   - Cambia siempre **Usar la versión PHP** a la del subdominio (8.4 o superior; en loading.es, 8.5). Por defecto sale **5.3** y con ella la tarea falla con «Unsupported declare strict_types».
+   - Cambia siempre **Usar la versión PHP** a la del subdominio (8.4 o superior). Por defecto sale **5.3** y con ella la tarea falla con «Unsupported declare strict_types».
 
    **Tarea `tpv:cron` — Tareas del TPV.** Cada minuto lanza lo que toca en ese momento:
 
