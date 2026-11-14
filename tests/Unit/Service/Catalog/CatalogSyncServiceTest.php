@@ -68,6 +68,54 @@ final class CatalogSyncServiceTest extends TestCase
         $this->assertSame(1, $result['stock']);
     }
 
+    /**
+     * The remote reads take minutes with the connection idle: the server may have
+     * closed it ("MySQL server has gone away"), so the write starts on a new one.
+     */
+    public function testSyncAllReconnectsAfterTheRemoteReadsAndBeforeWriting(): void
+    {
+        $calls = [];
+        $conn = $this->createMock(Connection::class);
+        $conn->method('executeStatement')->willReturn(1);
+        $conn->method('isTransactionActive')->willReturnCallback(static fn (): bool => \in_array('begin', $calls, true));
+        $conn->method('close')->willReturnCallback(static function () use (&$calls): void {
+            $calls[] = 'close';
+        });
+        $conn->method('beginTransaction')->willReturnCallback(static function () use (&$calls): bool {
+            $calls[] = 'begin';
+
+            return true;
+        });
+
+        $apiClient = $this->createMockApiClient();
+        $apiClient->method('getCategories')->willReturn([]);
+        $apiClient->method('getProducts')->willReturn([]);
+        $apiClient->method('getCombinations')->willReturn([]);
+        $apiClient->method('getStockAvailables')->willReturnCallback(static function () use (&$calls): array {
+            $calls[] = 'remote';
+
+            return [];
+        });
+
+        (new CatalogSyncService($apiClient, $conn, $this->createMockSyncLogRepo()))->syncAll();
+
+        $this->assertSame(['remote', 'close', 'begin'], $calls);
+    }
+
+    public function testSyncAllKeepsTheConnectionOfACallerThatIsInsideATransaction(): void
+    {
+        $conn = $this->createMockConnection(); // isTransactionActive: true
+        $conn->expects($this->never())->method('close');
+
+        $apiClient = $this->createMockApiClient();
+        $apiClient->method('getCategories')->willReturn([]);
+        $apiClient->method('getProducts')->willReturn([]);
+        $apiClient->method('getCombinations')->willReturn([]);
+        $apiClient->method('getStockAvailables')->willReturn([]);
+
+        (new CatalogSyncService($apiClient, $conn, $this->createMockSyncLogRepo()))->syncAll();
+    }
+
     public function testSyncStockOnlyModifiesStockTable(): void
     {
         $conn = $this->createMockConnection();
