@@ -128,7 +128,7 @@ const CatalogPanel = {
             if (!this.editMode) this.editItem = null;
         },
         // After a save the grid shows the product as the till now sells it (stock,
-        // local EAN and reference), without reloading the list.
+        // price, local EAN and reference), without reloading the list.
         async onEditSaved(item) {
             const id = item && item.id_product;
             if (!id) return;
@@ -140,6 +140,9 @@ const CatalogPanel = {
                     shown.stock = fresh.stock;
                     shown.ean13 = fresh.ean13;
                     shown.reference = fresh.reference;
+                    for (const key of ['price', 'base_price', 'price_ttc', 'net_price', 'price_basis']) {
+                        if (key in fresh) shown[key] = fresh[key];
+                    }
                 }
             } catch (e) {
                 // The next search or sync shows it.
