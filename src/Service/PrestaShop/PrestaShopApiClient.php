@@ -363,7 +363,9 @@ class PrestaShopApiClient
      */
     public function ping(): array
     {
-        $url = sprintf('%s/api?limit=0&output_format=JSON', $this->baseUrl);
+        // The root in its default (XML) format: asked as JSON, PrestaShop 9.2 answers 500
+        // unless it displays errors. A wrong key still answers 401 here.
+        $url = sprintf('%s/api', $this->baseUrl);
         $start = hrtime(true);
 
         try {
