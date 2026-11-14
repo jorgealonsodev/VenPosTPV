@@ -9,6 +9,7 @@ use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Session\Session;
 use Symfony\Component\HttpFoundation\Session\Storage\MockArraySessionStorage;
 use VenPosTPV\Controller\Api\ProvisioningController;
+use VenPosTPV\Service\Cron\CronRunner;
 use VenPosTPV\Service\Provisioning\ProvisioningReport;
 use VenPosTPV\Service\Provisioning\ProvisioningRunner;
 use VenPosTPV\Service\Provisioning\StepStatus;
@@ -61,5 +62,29 @@ final class ProvisioningControllerTest extends TestCase
                 ['id' => 'free-item-products', 'description' => 'Productos genéricos del artículo libre en PrestaShop', 'status' => 'failed', 'reason' => 'Sin conexión con PrestaShop.', 'attempted_at' => '2026-11-09T10:00:00+01:00', 'next_attempt_at' => '2026-11-09T10:15:00+01:00'],
             ],
         ]], json_decode((string) $response->getContent(), true));
+    }
+
+    public function testAnAdminAlsoGetsTheStateOfTheScheduledTask(): void
+    {
+        $runner = $this->createMock(ProvisioningRunner::class);
+        $runner->method('status')->willReturn(new ProvisioningReport([
+            new StepStatus('migrations', 'Actualizar la base de datos (migraciones)', StepStatus::DONE),
+        ]));
+        $cronStatus = [
+            'last_run_at' => '2026-11-14T12:00:10+01:00',
+            'running' => true,
+            'jobs' => [
+                ['id' => 'catalog', 'label' => 'Catálogo completo', 'daily_at' => '03:00', 'last_attempt_at' => '2026-11-14T03:00:10+01:00', 'last_success_at' => null, 'last_error' => 'Sync failed: shop unreachable'],
+            ],
+        ];
+        $cron = $this->createMock(CronRunner::class);
+        $cron->expects($this->never())->method('run');
+        $cron->expects($this->once())->method('status')->willReturn($cronStatus);
+
+        $data = json_decode((string) (new ProvisioningController($runner, $cron))->status($this->request('admin'))->getContent(), true)['data'];
+
+        $this->assertTrue($data['complete'], 'the existing fields stay');
+        $this->assertCount(1, $data['steps']);
+        $this->assertSame($cronStatus, $data['cron']);
     }
 }
