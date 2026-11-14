@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace VenPosTPV\Service\Fiscal\Journal;
 
+use Doctrine\DBAL\ArrayParameterType;
 use Doctrine\DBAL\Connection;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\DependencyInjection\Attribute\Autowire;
+use VenPosTPV\Service\PrestaShop\PsJournalClient;
 
 /**
  * Starts a new fiscal journal from the current database (fiscal-journal A6;
@@ -14,25 +16,43 @@ use Symfony\Component\DependencyInjection\Attribute\Autowire;
  * damaged, lost (`journal_missing`) or that the administrator wants to start again
  * while it is up to date. Never run by itself.
  *
- * Refused, with nothing changed, while the database is behind a healthy journal
- * (`behind_journal`: recover the documents with tpv:fiscal:replay first) or behind
- * the shop copy (`behind_shop`): a new journal would let numbers already issued be
- * issued again.
+ * Before anything else the shop is asked for its head of the journal in the folders
+ * and of the one the database names (FiscalJournalShopSync::askHeads). A shop that
+ * cannot be asked (down, module older than 0.9.0, an error, no journal known to ask
+ * about) refuses the reset, unless the administrator says so (`--shop-unavailable`):
+ * without the shop, a database restored from an older copy would issue numbers
+ * already issued again. The path taken is recorded in audit_log (`shop`).
+ *
+ * Refused, with nothing written (not even a torn tail moved to quarantine/), when
+ * any evidence still readable names a document the database lacks: the shop head
+ * just asked for and the stored one (`behind_shop`), the journal's guard
+ * (`behind_journal`, while the journal is healthy), and, damaged or not, every
+ * line that still passes its own checks, `head.json` and the confirmed intents of
+ * both folders. Only when none of it does is a damaged journal a reason to allow
+ * a reset the guard would otherwise refuse.
  *
  * Nothing is ever deleted: every file of each journal folder (lines, head, identity,
  * intents, quarantine, state, shop head) is moved to
  * `archive/<journal_id>-<UTC timestamp>/` inside that folder, byte for byte; only
  * `.htaccess`, `journal.lock` and `archive/` stay. The archive, the new journal.id,
  * the app_setting `fiscal_journal.id` and the audit_log record are written together
- * under the chain lock (FiscalJournalStarter), with the replay lock and both
- * `journal.lock` held. Then every document of the database is journaled again,
- * marked `backfill`.
+ * under the chain lock (FiscalJournalStarter), with the reset's own lock, the replay
+ * lock and both `journal.lock` held. Then the documents of the database are
+ * journaled again, at most $backfillLinesPerRun in this run (the every-minute job
+ * writes the rest); the journal's `backfill_until` marks them `backfill`, never a
+ * document issued after the new journal started.
  */
 class FiscalJournalReset
 {
     public const AUDIT_ACTION = 'fiscal_journal_reset';
+    /** audit_log `shop.path`: the shop answered for every journal and holds nothing the database lacks. */
+    public const SHOP_CONFIRMED = 'confirmed';
+    /** audit_log `shop.path`: the shop could not be asked and the administrator passed --shop-unavailable. */
+    public const SHOP_UNAVAILABLE = 'shop_unavailable';
     private const LOCK_WAIT_SECONDS = 10.0;
+    private const BACKFILL_LOCK_WAIT_SECONDS = 5.0;
     private const STAYS = ['.', '..', '.htaccess', 'journal.lock', 'archive'];
+    private const NUMBERS_PER_QUERY = 500;
 
     private readonly FiscalJournalGuard $guard;
 
@@ -45,11 +65,16 @@ class FiscalJournalReset
         #[Autowire('%kernel.project_dir%/var/fiscal-replay.lock')] private readonly string $replayLockPath,
         ?FiscalJournalGuard $guard = null,
         private readonly ?LoggerInterface $logger = null,
+        private readonly ?FiscalJournalShopSync $shop = null,
+        private readonly int $backfillLinesPerRun = FiscalJournalStep::BACKFILL_LINES_PER_RUN,
     ) {
         $this->guard = $guard ?? new FiscalJournalGuard($connection, $locations, $logger, $identity);
     }
 
-    public function run(string $reason, ?\DateTimeImmutable $now = null): FiscalJournalResetResult
+    /**
+     * @param bool $shopUnavailable go on when the shop cannot be asked (--shop-unavailable)
+     */
+    public function run(string $reason, ?\DateTimeImmutable $now = null, bool $shopUnavailable = false): FiscalJournalResetResult
     {
         $reason = trim($reason);
         if ($reason === '') {
@@ -61,22 +86,44 @@ class FiscalJournalReset
         if (!is_dir($folder)) {
             @mkdir($folder, 0775, true);
         }
+        $resetLockPath = $folder . '/fiscal-journal-reset.lock';
+        $resetLock = @fopen($resetLockPath, 'c');
+        if ($resetLock === false) {
+            return self::error('no se puede abrir ' . $resetLockPath);
+        }
+        if (!flock($resetLock, \LOCK_EX | \LOCK_NB)) {
+            fclose($resetLock);
+
+            return new FiscalJournalResetResult(FiscalJournalResetResult::ERROR, 'Ya hay otro tpv:fiscal:journal:reset en marcha; espera a que termine. No se ha cambiado nada.');
+        }
         $replayLock = @fopen($this->replayLockPath, 'c');
         if ($replayLock === false) {
+            JournalLocation::unlock($resetLock);
+
             return self::error('no se puede abrir ' . $this->replayLockPath);
         }
         if (!flock($replayLock, \LOCK_EX | \LOCK_NB)) {
             fclose($replayLock);
+            JournalLocation::unlock($resetLock);
 
-            return new FiscalJournalResetResult(FiscalJournalResetResult::ERROR, 'Hay una recuperación de documentos en marcha; espera a que termine. No se ha cambiado nada.');
+            return new FiscalJournalResetResult(FiscalJournalResetResult::ERROR, 'Hay una recuperación de documentos en marcha (tpv:fiscal:replay o el botón «Recuperar documentos» de Ajustes); espera a que termine. No se ha cambiado nada.');
         }
         try {
-            $started = $this->resetLocked($reason, $now);
+            $shop = $this->askShop($shopUnavailable);
+            if ($shop instanceof FiscalJournalResetResult) {
+                return $shop;
+            }
+            // Decided before anything is written (folders, locks, a torn tail): a refusal changes nothing.
+            $refusal = $this->assess($shop['heads'])['refusal'];
+            if ($refusal !== null) {
+                return $refusal;
+            }
+            $started = $this->resetLocked($reason, $now, $shop);
             if (!\is_array($started)) {
                 return $started;
             }
-            // journal.lock is free again: the backfill takes it like any flush.
-            $flush = $this->writer->flush(true);
+            // journal.lock is free again: the backfill takes it like any flush, bounded as the step's.
+            $flush = $this->writer->flush($this->backfillLinesPerRun, self::BACKFILL_LOCK_WAIT_SECONDS);
 
             return $this->done($started, $flush);
         } catch (\Throwable $e) {
@@ -84,15 +131,159 @@ class FiscalJournalReset
 
             return self::error($e->getMessage());
         } finally {
-            flock($replayLock, \LOCK_UN);
-            fclose($replayLock);
+            JournalLocation::unlock($replayLock);
+            JournalLocation::unlock($resetLock);
         }
     }
 
     /**
+     * Asks the shop for its journal heads (nothing is stored).
+     *
+     * @return array{path: string, asked: list<string>, heads: list<array<string, mixed>>, error: ?string}|FiscalJournalResetResult the refusal when it cannot be asked and the administrator did not say to go on
+     */
+    private function askShop(bool $shopUnavailable): array|FiscalJournalResetResult
+    {
+        $answers = [];
+        $error = null;
+        if ($this->shop === null) {
+            $error = 'la conexión con la tienda no está configurada';
+        } else {
+            try {
+                $answers = $this->shop->askHeads();
+            } catch (\Throwable $e) {
+                $error = $e->getMessage();
+            }
+            if ($error === null && $answers === []) {
+                $error = 'no se sabe por qué diario preguntar (ni las carpetas ni la base de datos nombran ninguno)';
+            }
+            foreach ($answers as $id => $answer) {
+                if ($error === null && !\is_array($answer['head'] ?? null)) {
+                    $error = ($answer['status'] ?? null) === PsJournalClient::UNAVAILABLE
+                        ? 'el módulo TPV Connect de la tienda es anterior a la versión ' . PsJournalClient::MIN_MODULE_VERSION
+                        : sprintf('la tienda no ha contestado por el diario %s (%s)', $id, (string) ($answer['error'] ?? $answer['status'] ?? '?'));
+                }
+            }
+        }
+        $heads = [];
+        foreach ($answers as $answer) {
+            if (\is_array($answer['head'] ?? null)) {
+                $heads[] = $answer['head'];
+            }
+        }
+        $result = ['path' => self::SHOP_CONFIRMED, 'asked' => array_map('strval', array_keys($answers)), 'heads' => $heads, 'error' => $error];
+        if ($error === null) {
+            return $result;
+        }
+        if (!$shopUnavailable) {
+            return new FiscalJournalResetResult(FiscalJournalResetResult::REFUSED, sprintf(
+                'No se ha podido preguntar a la tienda por su copia del diario fiscal: %s. Sin ella no se sabe si la base de datos va por detrás de los documentos ya emitidos. Vuelve a intentarlo cuando la tienda conteste o, si la tienda no puede tener la copia, repite la orden con --shop-unavailable (si la base de datos se restauró de una copia anterior, se pueden repetir números). No se ha cambiado nada.',
+                rtrim($error, '. '),
+            ));
+        }
+
+        return ['path' => self::SHOP_UNAVAILABLE] + $result;
+    }
+
+    /**
+     * Whether the reset may go on, read only (nothing is written, not even a torn
+     * tail repaired): the refusal, and what the audit record keeps.
+     *
+     * @param list<array<string, mixed>> $shopHeads the heads the shop just answered
+     *
+     * @return array{refusal: ?FiscalJournalResetResult, damaged: ?string, guard: array{state: string, missing: ?array{number: string, invoice_type: string}}}
+     */
+    private function assess(array $shopHeads): array
+    {
+        $damaged = $this->damage();
+        $guard = $this->guard->check();
+        $refuse = static fn (string $message): array => ['refusal' => new FiscalJournalResetResult(FiscalJournalResetResult::REFUSED, $message), 'damaged' => $damaged, 'guard' => $guard];
+
+        $shopMissing = $guard['state'] === FiscalJournalGuard::BEHIND_SHOP ? $guard['missing'] : $this->guard->missingFromShop($shopHeads);
+        if ($shopMissing !== null) {
+            return $refuse(sprintf(
+                'La copia en la tienda tiene documentos que la base de datos no tiene (falta %s): con un diario nuevo se repetirían números. Si el diario fiscal los tiene, recupéralos con tpv:fiscal:replay --apply; si no, restaura una copia más reciente de la base de datos (docs/diario-fiscal.md). No se ha cambiado nada.',
+                $shopMissing['number'] ?? '?',
+            ));
+        }
+        if ($guard['state'] === FiscalJournalGuard::BEHIND_JOURNAL && $damaged === null) {
+            return $refuse(sprintf(
+                'La base de datos está por detrás del diario fiscal (falta %s): recupera primero los documentos con tpv:fiscal:replay --apply o con el botón «Recuperar documentos» de Ajustes. No se ha cambiado nada.',
+                $guard['missing']['number'] ?? '?',
+            ));
+        }
+        $missing = $this->missingEvidence();
+        if ($missing !== null) {
+            return $refuse(sprintf(
+                $damaged !== null
+                    ? 'El diario fiscal está dañado, pero lo que aún se puede leer de él nombra documentos que la base de datos no tiene (falta %s): con un diario nuevo se repetirían números. Restaura una copia más reciente de la base de datos (docs/diario-fiscal.md). No se ha cambiado nada.'
+                    : 'La base de datos está por detrás del diario fiscal (falta %s): recupera primero los documentos con tpv:fiscal:replay --apply o con el botón «Recuperar documentos» de Ajustes. No se ha cambiado nada.',
+                $missing['number'],
+            ));
+        }
+
+        return ['refusal' => null, 'damaged' => $damaged, 'guard' => $guard];
+    }
+
+    /**
+     * The first document named by what is still readable in either folder (every
+     * line that passes its own checks and whose fiscal hash recomputes, damaged
+     * journal or not; `head.json`; the confirmed intents) that the database lacks.
+     *
+     * @return array{number: string, invoice_type: string}|null
+     */
+    private function missingEvidence(): ?array
+    {
+        /** @var array<string, array{number: string, invoice_type: string, hash: string}> $documents by hash, oldest first */
+        $documents = [];
+        $add = static function (mixed $record) use (&$documents): void {
+            $number = \is_array($record) ? ($record['number'] ?? null) : null;
+            $hash = \is_array($record) ? ($record['hash'] ?? null) : null;
+            if (\is_string($number) && $number !== '' && \is_string($hash) && $hash !== '' && !isset($documents[$hash])) {
+                $documents[$hash] = ['number' => $number, 'invoice_type' => \is_string($record['invoice_type'] ?? null) ? $record['invoice_type'] : '', 'hash' => $hash];
+            }
+        };
+        foreach ([$this->locations->primary(), $this->locations->secondary()] as $location) {
+            foreach ($location->lines() as $line) {
+                if (JournalLocation::selfValid($line) && JournalVerifier::fiscalHashMatches($line['fiscal_record'] ?? null)) {
+                    $add($line['fiscal_record']);
+                }
+            }
+            $add($location->readHead());
+            foreach ($location->intents() as $intent) {
+                if (($intent['state'] ?? null) === FiscalJournalIntents::STATE_CONFIRMED) {
+                    $add($intent['fiscal_record'] ?? null);
+                }
+            }
+        }
+
+        $numbers = array_values(array_unique(array_column($documents, 'number')));
+        $held = [];
+        foreach (array_chunk($numbers, self::NUMBERS_PER_QUERY) as $chunk) {
+            $rows = $this->connection->fetchAllAssociative(
+                'SELECT number, hash, invoice_type FROM fiscal_record WHERE number IN (?)',
+                [$chunk],
+                [ArrayParameterType::STRING],
+            );
+            foreach ($rows as $row) {
+                $held[(string) $row['number'] . "\0" . (string) $row['hash']][] = (string) $row['invoice_type'];
+            }
+        }
+        foreach ($documents as $document) {
+            $types = $held[$document['number'] . "\0" . $document['hash']] ?? null;
+            if ($types === null || ($document['invoice_type'] !== '' && !\in_array($document['invoice_type'], $types, true))) {
+                return ['number' => $document['number'], 'invoice_type' => $document['invoice_type']];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array{path: string, asked: list<string>, heads: list<array<string, mixed>>, error: ?string} $shop
+     *
      * @return array{journal_id: string, backfill_until: int, archived: list<string>}|FiscalJournalResetResult
      */
-    private function resetLocked(string $reason, \DateTimeImmutable $now): array|FiscalJournalResetResult
+    private function resetLocked(string $reason, \DateTimeImmutable $now, array $shop): array|FiscalJournalResetResult
     {
         $locations = [$this->locations->primary(), $this->locations->secondary()];
         $locks = [];
@@ -108,21 +299,13 @@ class FiscalJournalReset
                 $locks[] = $lock;
             }
 
-            $damaged = $this->damage();
-            $guard = $this->guard->check();
-            $missing = $guard['missing']['number'] ?? null;
-            if ($guard['state'] === FiscalJournalGuard::BEHIND_SHOP) {
-                return new FiscalJournalResetResult(FiscalJournalResetResult::REFUSED, sprintf(
-                    'La copia en la tienda tiene documentos que la base de datos no tiene (falta %s): con un diario nuevo se repetirían números. Restaura una copia más reciente de la base de datos (docs/diario-fiscal.md). No se ha cambiado nada.',
-                    $missing ?? '?',
-                ));
+            // Again under the locks: a flush may have written a line since.
+            $assessment = $this->assess($shop['heads']);
+            if ($assessment['refusal'] !== null) {
+                return $assessment['refusal'];
             }
-            if ($guard['state'] === FiscalJournalGuard::BEHIND_JOURNAL && $damaged === null) {
-                return new FiscalJournalResetResult(FiscalJournalResetResult::REFUSED, sprintf(
-                    'La base de datos está por detrás del diario fiscal (falta %s): recupera primero los documentos con tpv:fiscal:replay --apply o con el botón «Recuperar documentos» de Ajustes. No se ha cambiado nada.',
-                    $missing ?? '?',
-                ));
-            }
+            $damaged = $assessment['damaged'];
+            $guard = $assessment['guard'];
 
             $previous = $this->previousJournalId();
             $archived = [];
@@ -136,7 +319,7 @@ class FiscalJournalReset
                         }
                     }
                 },
-                function (string $journalId, int $until) use ($reason, $previous, $guard, $damaged, &$archived, $now): void {
+                function (string $journalId, int $until) use ($reason, $previous, $guard, $damaged, $shop, &$archived, $now): void {
                     $this->connection->insert('audit_log', [
                         'user_id' => null,
                         'terminal_id' => null,
@@ -147,6 +330,7 @@ class FiscalJournalReset
                             'previous_journal_id' => $previous,
                             'guard' => $guard['state'],
                             'damaged' => $damaged,
+                            'shop' => ['path' => $shop['path'], 'asked' => $shop['asked'], 'error' => $shop['error']],
                             'archived' => $archived,
                             'backfill_until' => $until,
                         ], \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES | \JSON_THROW_ON_ERROR),
@@ -166,8 +350,8 @@ class FiscalJournalReset
 
     /**
      * Why the journal cannot be trusted (D4), null when it is healthy: lost identity,
-     * a damaged line, removed lines, head.json disagreeing. A torn last line is
-     * repaired first, as the flush would.
+     * a damaged line, a torn last line, removed lines, head.json disagreeing. Read
+     * only: a torn last line is reported, never cut here (the archive keeps it).
      */
     private function damage(): ?string
     {
@@ -180,10 +364,9 @@ class FiscalJournalReset
         }
         foreach ([[$primary, true], [$secondary, false]] as [$location, $complete]) {
             if ($location->journalFiles() !== []) {
-                try {
-                    $tail = $location->repairTail();
-                } catch (JournalWriteException $e) {
-                    return self::shortName($location->directory()) . ': ' . $e->getMessage();
+                $tail = $location->tailFinding();
+                if ($tail === JournalLocation::TAIL_TORN) {
+                    return self::shortName($location->directory()) . ': última línea a medio escribir';
                 }
                 if (\in_array($tail, [JournalLocation::TAIL_DAMAGED, JournalLocation::TAIL_BAD_LAST, JournalLocation::TAIL_BROKEN_LAST], true)) {
                     return self::shortName($location->directory()) . ': ' . $tail;
@@ -262,6 +445,8 @@ class FiscalJournalReset
         $message = sprintf('Diario fiscal nuevo %s: %d documentos de la base de datos anotados.', $started['journal_id'], $flush->written);
         if ($flush->status !== FiscalJournalFlushResult::OK) {
             $message .= sprintf(' El resto lo anota la tarea de cada minuto (%s%s).', $flush->status, $flush->reason !== null ? ': ' . $flush->reason : '');
+        } elseif ($flush->written >= $this->backfillLinesPerRun) {
+            $message .= ' El resto lo anota la tarea de cada minuto.';
         }
         if ($started['archived'] === []) {
             $message .= ' No había archivos que archivar.';

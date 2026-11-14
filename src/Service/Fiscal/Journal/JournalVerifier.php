@@ -126,7 +126,7 @@ final class JournalVerifier
     }
 
     /** The record's hash recomputed from its fields (FiscalRecorder::append). */
-    private static function fiscalHashMatches(mixed $record): bool
+    public static function fiscalHashMatches(mixed $record): bool
     {
         if (!\is_array($record) || !\is_string($record['hash'] ?? null)) {
             return false;

@@ -23,7 +23,7 @@ use VenPosTPV\Service\Fiscal\Journal\FiscalJournalState;
  * folder can be written (sales go on, the documents wait in the database) or a
  * document cannot be journaled; 2 the database is behind the fiscal journal (a
  * restore, FiscalJournalGuard): the till cannot issue documents until they are
- * recovered; 3 the journal is damaged.
+ * recovered; 3 the journal is damaged or lost (journal_missing: nothing is journaled until tpv:fiscal:journal:reset).
  *
  * A lasting incident fails the job (its code and one line on STDERR) only on the
  * run that first detects it and once every 24 hours while it lasts; the runs in
@@ -50,7 +50,7 @@ final class FiscalJournalCommand extends Command
               0 up to date or documents pending
               1 neither journal folder can be written (sales go on, the documents wait in the database) or a document cannot be journaled
               2 the database is behind the fiscal journal (a restore): the till cannot issue documents until they are recovered (tpv:fiscal:replay)
-              3 the journal is damaged
+              3 the journal is damaged, or lost (nothing is journaled until tpv:fiscal:journal:reset)
 
             A lasting incident gives its code only on the run that first detects it and once
             every 24 hours; the runs in between exit 0.
@@ -71,6 +71,7 @@ final class FiscalJournalCommand extends Command
             FiscalJournalState::DAMAGED => sprintf('Fiscal journal damaged: %s line %s (%s).', $data['damaged']['file'] ?? '?', $data['damaged']['line'] ?? '?', $data['damaged']['reason'] ?? '?'),
             FiscalJournalState::BLOCKED => sprintf('Fiscal journal: document %s cannot be journaled: %s', $data['blocked']['number'], $data['blocked']['reason']),
             FiscalJournalState::HEAD_MISSING => 'Fiscal journal: its last document is not in the database; nothing written.',
+            FiscalJournalState::JOURNAL_MISSING => 'Fiscal journal lost: the database names a journal that backups/fiscal-journal does not hold; the till sells only once the shop confirms the database is not behind, and nothing is journaled until tpv:fiscal:journal:reset.',
             default => 'Fiscal journal: ' . $state->status(),
         };
         if ($state->status() === FiscalJournalState::PENDING || $state->status() === FiscalJournalState::LAGGING) {

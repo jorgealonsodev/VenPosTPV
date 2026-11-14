@@ -123,19 +123,41 @@ class FiscalJournalGuard
         $named = ($this->identity ??= new FiscalJournalIdentity($this->connection))->journalId();
         $relevant = $inFolders + ($named !== null ? [$named => true] : []);
         $heads = $this->shopHeads(array_keys($relevant));
-        foreach ($heads as $head) {
-            foreach ($head['series'] as $entry) {
-                $document = ['number' => $entry['number'], 'invoice_type' => '', 'hash' => $entry['hash']];
-                if (!$this->inDatabase($document)) {
-                    return ['state' => self::BEHIND_SHOP, 'missing' => ['number' => $entry['number'], 'invoice_type' => '']];
-                }
-            }
+        $missing = $this->missingFromShop($heads);
+        if ($missing !== null) {
+            return ['state' => self::BEHIND_SHOP, 'missing' => $missing];
         }
         if ($named !== null && !isset($inFolders[$named]) && !isset($heads[$named])) {
             return ['state' => self::JOURNAL_MISSING, 'missing' => null];
         }
 
         return ['state' => self::OK, 'missing' => null];
+    }
+
+    /**
+     * The first document of these shop heads (each with its `series`, as
+     * PsJournalClient::head() answers or shop-head.json stores them) that the
+     * database lacks, by number + hash; null when the database holds them all.
+     * Also used by tpv:fiscal:journal:reset on the head it asks for itself.
+     *
+     * @param iterable<array{series: iterable<mixed>}> $heads
+     *
+     * @return array{number: string, invoice_type: string}|null
+     */
+    public function missingFromShop(iterable $heads): ?array
+    {
+        foreach ($heads as $head) {
+            foreach ($head['series'] as $entry) {
+                if (!\is_array($entry) || !\is_string($entry['number'] ?? null) || $entry['number'] === '' || !\is_string($entry['hash'] ?? null) || $entry['hash'] === '') {
+                    continue;
+                }
+                if (!$this->inDatabase(['number' => $entry['number'], 'invoice_type' => '', 'hash' => $entry['hash']])) {
+                    return ['number' => $entry['number'], 'invoice_type' => ''];
+                }
+            }
+        }
+
+        return null;
     }
 
     /**

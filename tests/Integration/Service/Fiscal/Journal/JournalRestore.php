@@ -30,10 +30,8 @@ final class JournalRestore
 
     /**
      * A dump of the test database with `mysqldump` of the container, so the restore
-     * is exact and the comparisons only see what the replay did. (SqlDumper leaves
-     * out the columns whose EXTRA is DEFAULT_GENERATED on MySQL 8, i.e. every
-     * `DEFAULT CURRENT_TIMESTAMP` column: a restore of its dump brings `created_at`
-     * back as the time of the restore. Reported, not part of the replay.)
+     * is exact and the comparisons only see what the replay did (the project's own
+     * dump: dumpWithSqlDumper).
      *
      * @return string the path of the dump (the caller deletes it)
      */
@@ -59,6 +57,30 @@ final class JournalRestore
             $triggers .= SqlDumper::triggerStatement((string) $trigger['name'], (string) ($create['SQL Original Statement'] ?? ''));
         }
         file_put_contents($path, $triggers, \FILE_APPEND);
+
+        return $path;
+    }
+
+    /**
+     * A dump of the test database with the project's own SqlDumper, as the nightly
+     * backup (tpv:backup:database) writes it.
+     *
+     * @return string the path of the dump (the caller deletes it)
+     */
+    public static function dumpWithSqlDumper(Connection $connection): string
+    {
+        $path = sys_get_temp_dir() . '/venpos-journal-sqldumper-' . bin2hex(random_bytes(4)) . '.sql';
+        $handle = fopen($path, 'wb');
+        if ($handle === false) {
+            throw new \RuntimeException('Cannot write ' . $path);
+        }
+        try {
+            (new SqlDumper($connection))->dump(static function (string $part) use ($handle): void {
+                fwrite($handle, $part);
+            });
+        } finally {
+            fclose($handle);
+        }
 
         return $path;
     }

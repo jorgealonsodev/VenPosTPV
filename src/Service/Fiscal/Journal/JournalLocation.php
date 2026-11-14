@@ -33,6 +33,8 @@ final class JournalLocation
     public const TAIL_BAD_LAST = JournalVerifier::BAD_LINE;
     /** The complete last line does not follow the line before it (`prev`, `seq`): damage. */
     public const TAIL_BROKEN_LAST = JournalVerifier::CHAIN_BREAK;
+    /** A torn last line repairTail() would cut (tailFinding() only: it changes nothing). */
+    public const TAIL_TORN = 'torn';
 
     private const FILE_PATTERN = '/\Ajournal-\d{4}-\d{2}\.jsonl\z/D';
     private const LINE_FLAGS = \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES | \JSON_PRESERVE_ZERO_FRACTION | \JSON_THROW_ON_ERROR;
@@ -318,32 +320,9 @@ final class JournalLocation
      */
     public function repairTail(): string
     {
-        $tail = $this->tail(2);
-        if ($tail === []) {
-            return self::TAIL_OK;
-        }
-        $last = $tail[\count($tail) - 1];
-        $previous = $tail[\count($tail) - 2] ?? null;
-        $previousValid = $previous === null || self::selfValid($previous['line']);
-        $torn = !$last['terminated'] || $last['line'] === null;
-
-        if (!$torn) {
-            if (!$previousValid) {
-                return self::TAIL_DAMAGED;
-            }
-            if (!self::selfValid($last['line'])) {
-                return self::TAIL_BAD_LAST;
-            }
-
-            return $previous === null || self::follows($last['line'], $previous['line']) ? self::TAIL_OK : self::TAIL_BROKEN_LAST;
-        }
-        if (!$previousValid) {
-            return self::TAIL_DAMAGED;
-        }
-        $head = $this->readHead();
-        if ($head !== null && (int) ($previous['line']['seq'] ?? 0) < $head['seq']) {
-            // head.json records this line: it was complete once, so it was not torn by a write.
-            return self::TAIL_BAD_LAST;
+        [$finding, $last] = $this->inspectTail();
+        if ($finding !== self::TAIL_TORN || $last === null) {
+            return $finding;
         }
 
         // Opened first: a file that cannot be cut leaves nothing in quarantine/.
@@ -372,6 +351,52 @@ final class JournalLocation
         }
 
         return self::TAIL_REPAIRED;
+    }
+
+    /**
+     * What repairTail() would find, without changing anything: TAIL_OK, TAIL_TORN
+     * (it would cut the last line), TAIL_DAMAGED, TAIL_BAD_LAST or TAIL_BROKEN_LAST.
+     * For a check that must write nothing (tpv:fiscal:journal:reset before it decides).
+     */
+    public function tailFinding(): string
+    {
+        return $this->inspectTail()[0];
+    }
+
+    /**
+     * @return array{0: string, 1: ?array{file: string, offset: int, terminated: bool, line: array<string, mixed>|null}} the finding and, when torn, the line to cut
+     */
+    private function inspectTail(): array
+    {
+        $tail = $this->tail(2);
+        if ($tail === []) {
+            return [self::TAIL_OK, null];
+        }
+        $last = $tail[\count($tail) - 1];
+        $previous = $tail[\count($tail) - 2] ?? null;
+        $previousValid = $previous === null || self::selfValid($previous['line']);
+        $torn = !$last['terminated'] || $last['line'] === null;
+
+        if (!$torn) {
+            if (!$previousValid) {
+                return [self::TAIL_DAMAGED, null];
+            }
+            if (!self::selfValid($last['line'])) {
+                return [self::TAIL_BAD_LAST, null];
+            }
+
+            return [$previous === null || self::follows($last['line'], $previous['line']) ? self::TAIL_OK : self::TAIL_BROKEN_LAST, null];
+        }
+        if (!$previousValid) {
+            return [self::TAIL_DAMAGED, null];
+        }
+        $head = $this->readHead();
+        if ($head !== null && (int) ($previous['line']['seq'] ?? 0) < $head['seq']) {
+            // head.json records this line: it was complete once, so it was not torn by a write.
+            return [self::TAIL_BAD_LAST, null];
+        }
+
+        return [self::TAIL_TORN, $last];
     }
 
     /** Removes the journal files and the head (the secondary, once merged back). */

@@ -13,6 +13,7 @@ use VenPosTPV\Service\Fiscal\Journal\FiscalDocumentSnapshot;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalAlerts;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalIntents;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalLocations;
+use VenPosTPV\Service\Fiscal\Journal\FiscalJournalIdentity;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalReconciler;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalState;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalWriter;
@@ -513,6 +514,50 @@ final class FiscalJournalReconcilerTest extends TestCase
         $this->assertSame(0, $this->reconciler()->run(self::at('2026-11-14 18:12:00'))->exitCode, 'not every minute');
         $this->assertSame(FiscalJournalState::EXIT_GUARD, $this->reconciler()->run(self::at('2026-11-15 18:12:00'))->exitCode, 'again after 24 hours');
         $this->assertSame(5, \count($this->lines()), 'nothing is written while the database is behind');
+    }
+
+    /**
+     * Final verification gap 5: a lost journal the shop has confirmed lets the till
+     * sell, but nothing is journaled until tpv:fiscal:journal:reset: it raises the
+     * journal alert once per incident (again after a day) and fails the job then.
+     */
+    public function testALostJournalRaisesTheAlertAndFailsTheJobOncePerIncident(): void
+    {
+        $this->issue('A26000001', '2026-11-14 10:00:00');
+        (new FiscalJournalIdentity($this->connection))->store('0b4e8d0e-5d0c-4d6a-9f00-1a2b3c4d5e6f');
+
+        $first = $this->reconciler()->run(self::at('2026-11-14 18:11:00'));
+
+        $this->assertSame(FiscalJournalState::JOURNAL_MISSING, $first->status());
+        $this->assertSame(FiscalJournalState::EXIT_DAMAGED, $first->exitCode);
+        $this->assertCount(1, $this->mails);
+        [$subject, $text] = $this->mails[0];
+        $this->assertSame('VenPosTPV: el diario fiscal se ha perdido', $subject);
+        $this->assertStringContainsString('0b4e8d0e-5d0c-4d6a-9f00-1a2b3c4d5e6f', $text);
+        $this->assertStringContainsString('no se anotan', $text);
+        $this->assertStringContainsString('tpv:fiscal:journal:reset --confirm', $text);
+        $this->assertSame('journal_missing', $first->data['alert']['incident'] ?? null);
+
+        $second = $this->reconciler()->run(self::at('2026-11-14 18:12:00'));
+        $this->assertSame(FiscalJournalState::EXIT_OK, $second->exitCode, 'not every minute');
+        $this->assertCount(1, $this->mails, 'one e-mail per incident');
+        $this->assertSame('journal_missing', $second->data['alert']['incident'] ?? null, 'Ajustes keeps showing it');
+
+        $later = $this->reconciler()->run(self::at('2026-11-15 18:12:00'));
+        $this->assertSame(FiscalJournalState::EXIT_DAMAGED, $later->exitCode, 'again after 24 hours');
+        $this->assertCount(2, $this->mails);
+    }
+
+    public function testAPrimaryThatLostItsJournalIdRaisesTheAlert(): void
+    {
+        $this->fiveJournaled();
+        unlink($this->root . '/backups/fiscal-journal/journal.id');
+
+        $state = $this->reconciler()->run(self::at('2026-11-14 18:11:00'));
+
+        $this->assertSame(FiscalJournalState::JOURNAL_MISSING, $state->status());
+        $this->assertSame(FiscalJournalState::EXIT_DAMAGED, $state->exitCode);
+        $this->assertSame(['VenPosTPV: el diario fiscal se ha perdido'], array_column($this->mails, 0));
     }
 
     public function testOnlyNewLinesAreCheckedEachMinute(): void

@@ -50,7 +50,7 @@ final class FiscalJournalResetCommandTest extends TestCase
     public function testItRunsWithTheReasonAndPrintsTheOutcome(): void
     {
         $reset = $this->createMock(FiscalJournalReset::class);
-        $reset->expects($this->once())->method('run')->with('Servidor nuevo')->willReturn(
+        $reset->expects($this->once())->method('run')->with('Servidor nuevo', null, false)->willReturn(
             new FiscalJournalResetResult(FiscalJournalResetResult::DONE, 'Diario fiscal nuevo 1234: 3 documentos anotados.', '1234', 3, ['backups/fiscal-journal/archive/x'])
         );
         $tester = $this->tester($reset);
@@ -69,6 +69,27 @@ final class FiscalJournalResetCommandTest extends TestCase
 
         $this->assertSame(3, $tester->execute(['--confirm' => 'Motivo']));
         $this->assertStringContainsString('La base de datos está por detrás del diario fiscal.', self::display($tester));
+    }
+
+    public function testShopUnavailableIsPassedToTheServiceOnlyWhenGiven(): void
+    {
+        $reset = $this->createMock(FiscalJournalReset::class);
+        $reset->expects($this->once())->method('run')->with('Tienda sin el módulo 0.9.0', null, true)->willReturn(
+            new FiscalJournalResetResult(FiscalJournalResetResult::DONE, 'Diario fiscal nuevo 1234: 3 documentos anotados.', '1234', 3)
+        );
+
+        $this->assertSame(0, $this->tester($reset)->execute(['--confirm' => 'Tienda sin el módulo 0.9.0', '--shop-unavailable' => true]));
+    }
+
+    public function testTheShopUnavailableOptionWarnsThatNumbersMayRepeat(): void
+    {
+        $command = new FiscalJournalResetCommand($this->createMock(FiscalJournalReset::class));
+        $option = $command->getDefinition()->getOption('shop-unavailable');
+
+        $this->assertFalse($option->acceptValue());
+        $this->assertStringContainsString('se pueden repetir números', $option->getDescription());
+        $this->assertStringContainsString('copia anterior', $option->getDescription());
+        $this->assertStringContainsString('--shop-unavailable', $command->getHelp());
     }
 
     public function testTheHelpListsTheExitCodes(): void

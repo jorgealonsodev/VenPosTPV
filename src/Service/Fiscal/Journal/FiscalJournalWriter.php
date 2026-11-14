@@ -90,7 +90,7 @@ class FiscalJournalWriter
     public function flushAfterIssue(?int $limit = null, ?float $lockWaitSeconds = null): FiscalJournalFlushResult
     {
         $this->intents->resolveOwn($this->connection);
-        $result = $this->flush(false, $limit, $lockWaitSeconds);
+        $result = $this->flush($limit, $lockWaitSeconds);
         if ($result->status === FiscalJournalFlushResult::OK) {
             $this->intents->reset();
         }
@@ -99,11 +99,14 @@ class FiscalJournalWriter
     }
 
     /**
-     * @param bool $backfill marks the lines as documents issued before the journal existed (D11)
+     * A line is marked `backfill` (issued before the journal existed, D11) only when
+     * its fiscal_record id is at most the journal's `backfill_until`, whoever
+     * flushes: a document issued while a backfill is still running is never marked.
+     *
      * @param int|null $limit at most this many lines (null: every missing document)
      * @param float|null $lockWaitSeconds how long to wait for journal.lock (null: as long as it takes)
      */
-    public function flush(bool $backfill = false, ?int $limit = null, ?float $lockWaitSeconds = null): FiscalJournalFlushResult
+    public function flush(?int $limit = null, ?float $lockWaitSeconds = null): FiscalJournalFlushResult
     {
         $primary = $this->locations->primary();
         $secondary = $this->locations->secondary();
@@ -158,7 +161,7 @@ class FiscalJournalWriter
             $written = 0;
             if ($primaryUsable) {
                 try {
-                    return $this->intoPrimary($primary, $secondaryLocked ? $secondary : null, $backfill, $limit, $written);
+                    return $this->intoPrimary($primary, $secondaryLocked ? $secondary : null, $limit, $written);
                 } catch (JournalWriteException $e) {
                     $this->primaryFailed($e);
                 }
@@ -167,7 +170,7 @@ class FiscalJournalWriter
                 return $this->unwritable($written, 'the primary failed and the secondary cannot be written');
             }
             try {
-                return $this->intoSecondary($secondary, $primary, $journalId, $backfill, $limit, $written);
+                return $this->intoSecondary($secondary, $primary, $journalId, $limit, $written);
             } catch (JournalWriteException $e) {
                 return $this->unwritable($written, $e->getMessage());
             }
@@ -181,7 +184,7 @@ class FiscalJournalWriter
     /**
      * @throws JournalWriteException when the primary fails at any step (the caller goes on in the secondary)
      */
-    private function intoPrimary(JournalLocation $primary, ?JournalLocation $secondary, bool $backfill, ?int $limit, int &$written): FiscalJournalFlushResult
+    private function intoPrimary(JournalLocation $primary, ?JournalLocation $secondary, ?int $limit, int &$written): FiscalJournalFlushResult
     {
         $tail = $primary->repairTail();
         if ($tail === JournalLocation::TAIL_BAD_LAST || $tail === JournalLocation::TAIL_BROKEN_LAST) {
@@ -218,7 +221,7 @@ class FiscalJournalWriter
             return $this->headMissing($primary, $head);
         }
 
-        return $this->append($primary, $head, $backfill, $limit, $written, $middleDamaged);
+        return $this->append($primary, $head, $limit, $written, $middleDamaged);
     }
 
     /**
@@ -226,7 +229,7 @@ class FiscalJournalWriter
      *
      * @throws JournalWriteException when the secondary fails too
      */
-    private function intoSecondary(JournalLocation $secondary, JournalLocation $primary, string $journalId, bool $backfill, ?int $limit, int &$written): FiscalJournalFlushResult
+    private function intoSecondary(JournalLocation $secondary, JournalLocation $primary, string $journalId, ?int $limit, int &$written): FiscalJournalFlushResult
     {
         if ($secondary->journalId() === null) {
             // The secondary only buffers lines for the primary: it may take the identity.
@@ -256,7 +259,7 @@ class FiscalJournalWriter
             return $this->headMissing($secondary, $head);
         }
 
-        return $this->append($secondary, $head, $backfill, $limit, $written, false);
+        return $this->append($secondary, $head, $limit, $written, false);
     }
 
     /**
@@ -297,7 +300,7 @@ class FiscalJournalWriter
      *
      * @throws JournalWriteException
      */
-    private function append(JournalLocation $target, ?array $head, bool $backfill, ?int $limit, int &$written, bool $damaged): FiscalJournalFlushResult
+    private function append(JournalLocation $target, ?array $head, ?int $limit, int &$written, bool $damaged): FiscalJournalFlushResult
     {
         $afterId = $head['fiscal_record_id'] ?? 0;
         $backfillUntil = $this->backfillUntil();
@@ -312,7 +315,7 @@ class FiscalJournalWriter
                 );
                 foreach ($records as $record) {
                     try {
-                        $line = $this->line($record, $head, $backfill || ($backfillUntil !== null && (int) $record['id'] <= $backfillUntil), $zone);
+                        $line = $this->line($record, $head, $backfillUntil !== null && (int) $record['id'] <= $backfillUntil, $zone);
                     } catch (\Throwable $e) {
                         $reason = $e->getMessage() !== '' ? $e->getMessage() : $e::class;
                         $this->warn('blocked', 'Fiscal journal: document {number} cannot be journaled ({reason}); the flush stops at it', ['number' => (string) $record['number'], 'reason' => $reason]);

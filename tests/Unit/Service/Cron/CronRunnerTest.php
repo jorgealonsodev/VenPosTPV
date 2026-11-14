@@ -442,15 +442,22 @@ final class CronRunnerTest extends TestCase
     /**
      * fiscal-journal: while the database is behind the fiscal journal the jobs that
      * add rows whose ids the recovery needs wait (the customers sync inserts the
-     * `customer` rows the recovered sales and uploads point at); the journal itself,
-     * the uploads (they only update rows), stock, catalog and the backup keep running.
+     * `customer` rows the recovered sales and uploads point at), and so does the
+     * nightly backup: a week of blocked nights would otherwise rotate out every good
+     * dump and keep only dumps of the restored database that is behind. The journal
+     * itself, the uploads (they only update rows), stock and catalog keep running.
      */
     public function testWhileTheDatabaseIsBehindTheJournalOnlyTheJobsThatAddRowsWait(): void
     {
         $runner = $this->blockedRunner(true);
         $launched = $this->launchedBy($runner, '2026-11-15 04:00:10');
 
-        self::assertSame(['journal', 'outbox', 'stock', 'catalog', 'backup'], $launched);
+        self::assertSame(['journal', 'outbox', 'stock', 'catalog'], $launched);
+        foreach (['customers', 'backup'] as $waiting) {
+            $report = (new CronStateStore($this->connection))->job($waiting);
+            self::assertSame(CronRunner::BLOCKED_BY_FISCAL_JOURNAL, $report['last_error'] ?? null, $waiting);
+            self::assertArrayNotHasKey('last_attempt_at', $report, $waiting . ': not an attempt, no retry is spent');
+        }
         $report = (new CronStateStore($this->connection))->job('customers');
         self::assertSame(CronRunner::BLOCKED_BY_FISCAL_JOURNAL, $report['last_error'] ?? null);
         self::assertArrayNotHasKey('last_attempt_at', $report, 'not an attempt: no retry is spent');
@@ -491,7 +498,7 @@ final class CronRunnerTest extends TestCase
     {
         foreach (CronRunner::jobs() as $job) {
             $safe = \in_array($job->id, CronRunner::RUNS_WHILE_JOURNAL_BLOCKED, true);
-            self::assertSame(!\in_array($job->id, ['customers'], true), $safe, $job->id);
+            self::assertSame(!\in_array($job->id, ['customers', 'backup'], true), $safe, $job->id);
         }
     }
 

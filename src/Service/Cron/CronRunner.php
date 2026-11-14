@@ -38,12 +38,13 @@ class CronRunner
      * they keep running while the database is behind the fiscal journal:
      * - journal: completes and checks the journal, and keeps the shop copy going;
      * - outbox: only updates existing rows (outbox, order_meta, movement, customer);
-     * - stock, catalog: the product cache tables, never journaled;
-     * - backup: reads the database and writes a file.
-     * Left out: customers, which inserts `customer` rows; a sale and its upload row
-     * recovered from the journal point at their customer by local id.
+     * - stock, catalog: the product cache tables, never journaled.
+     * Left out: customers, which inserts `customer` rows (a sale and its upload row
+     * recovered from the journal point at their customer by local id); and backup:
+     * each blocked night would add a dump of the restored database, which is behind,
+     * and the rotation would end up deleting every good dump taken before.
      */
-    public const RUNS_WHILE_JOURNAL_BLOCKED = ['journal', 'outbox', 'stock', 'catalog', 'backup'];
+    public const RUNS_WHILE_JOURNAL_BLOCKED = ['journal', 'outbox', 'stock', 'catalog'];
 
     public const BLOCKED_BY_FISCAL_JOURNAL = 'Esperando: la base de datos está por detrás del diario fiscal. Se ejecutará cuando un administrador recupere los documentos (Ajustes → VERI*FACTU → Diario fiscal).';
 

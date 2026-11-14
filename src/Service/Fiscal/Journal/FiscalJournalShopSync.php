@@ -75,12 +75,7 @@ class FiscalJournalShopSync
     public function run(\DateTimeImmutable $now, ?LoggerInterface $log = null): ?array
     {
         $journalId = $this->journalInFolders();
-        try {
-            $named = $this->identity->journalId();
-        } catch (\Throwable $e) {
-            $log?->warning('Fiscal journal shop copy: the journal id setting cannot be read: {message}', ['message' => $e->getMessage()]);
-            $named = null;
-        }
+        $named = $this->namedJournal($log);
         $target = $journalId ?? $named;
         if ($target === null) {
             return null;
@@ -88,10 +83,7 @@ class FiscalJournalShopSync
         $journalSeq = $journalId !== null ? $this->journalSeq() : null;
 
         $asked = array_values(array_unique(array_filter([$journalId, $named])));
-        $answers = [];
-        foreach ($asked as $id) {
-            $answers[$id] = $this->client->head($id);
-        }
+        $answers = $this->ask($asked);
         $answer = $answers[$target];
         $heads = array_filter(array_map(static fn (array $a): ?array => $a['head'], $answers));
         if ($heads !== []) {
@@ -108,6 +100,44 @@ class FiscalJournalShopSync
         }
 
         return $this->summary($target, $answer, $journalSeq, $enqueued, $now);
+    }
+
+    /**
+     * Asks the shop now, storing nothing, for its head of the same journals run()
+     * asks for: the one in the folders and the one the database names
+     * (tpv:fiscal:journal:reset decides with the answers before it changes anything).
+     *
+     * @return array<string, array{status: string, head: ?array, error: ?string}> by journal id (empty when no journal is known)
+     */
+    public function askHeads(): array
+    {
+        return $this->ask(array_values(array_unique(array_filter([$this->journalInFolders(), $this->namedJournal(null)]))));
+    }
+
+    /**
+     * @param list<string> $journalIds
+     *
+     * @return array<string, array{status: string, head: ?array, error: ?string}>
+     */
+    private function ask(array $journalIds): array
+    {
+        $answers = [];
+        foreach ($journalIds as $id) {
+            $answers[$id] = $this->client->head($id);
+        }
+
+        return $answers;
+    }
+
+    private function namedJournal(?LoggerInterface $log): ?string
+    {
+        try {
+            return $this->identity->journalId();
+        } catch (\Throwable $e) {
+            $log?->warning('Fiscal journal shop copy: the journal id setting cannot be read: {message}', ['message' => $e->getMessage()]);
+
+            return null;
+        }
     }
 
     private function journalInFolders(): ?string

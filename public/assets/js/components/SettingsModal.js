@@ -800,7 +800,8 @@ const SettingsModal = {
                 return { tone: 'error', text: 'Falta el diario fiscal de este servidor y la tienda todavía no ha confirmado que la base de datos esté al día. No se puede vender hasta que lo confirme o se inicie un diario nuevo con tpv:fiscal:journal:reset.' };
             }
             if (state.status === 'journal_missing') {
-                return { tone: 'error', text: 'Falta el diario fiscal de este servidor (journal.id): los documentos no se anotan hasta iniciar un diario nuevo con tpv:fiscal:journal:reset.' };
+                // fiscal-journal: the shop confirmed the database is not behind, so the till sells, but nothing is journaled.
+                return { tone: 'error', text: 'Falta el diario fiscal de este servidor: se puede vender, pero los documentos no se anotan en el diario ni se copian en la tienda hasta ejecutar tpv:fiscal:journal:reset --confirm "<motivo>".' };
             }
             if (state.status === 'not_started') return { tone: 'muted', text: 'Diario fiscal sin iniciar' };
             if (state.status === 'ok') {

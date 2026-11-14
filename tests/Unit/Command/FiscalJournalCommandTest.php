@@ -98,6 +98,14 @@ final class FiscalJournalCommandTest extends TestCase
         $this->assertStringContainsString('its last document is not in the database', $tester->getErrorOutput());
     }
 
+    public function testALostJournalExitsThreeWhenReportedAndSaysNothingIsJournaledUntilTheReset(): void
+    {
+        $tester = $this->tester(self::state(FiscalJournalState::JOURNAL_MISSING, 3, ['writable' => true]));
+
+        $this->assertSame(3, $tester->execute([], ['capture_stderr_separately' => true]));
+        $this->assertStringContainsString('nothing is journaled until tpv:fiscal:journal:reset', $tester->getErrorOutput());
+    }
+
     public function testTheHelpListsEveryExitCode(): void
     {
         $application = new Application();

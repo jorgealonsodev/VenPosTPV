@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { hasCacheVersionSince } = require('./support/cacheVersion.cjs');
 
 // Ajustes → VERI*FACTU → «Diario fiscal» (fiscal-journal D9): the journal state
 // from GET /api/fiscal/journal, also summarised in Acerca de → «Estado de la instalación».
@@ -103,7 +104,7 @@ test('a database behind the journal names what is missing and that the till cann
 
 test('a lost journal has its line, and old unconfirmed documents get one line', async () => {
     const s = await rendered(state('journal_missing'));
-    assert.deepEqual({ ...s.fiscalJournalMessage(s.fiscalJournal.data) }, { tone: 'error', text: 'Falta el diario fiscal de este servidor (journal.id): los documentos no se anotan hasta iniciar un diario nuevo con tpv:fiscal:journal:reset.' });
+    assert.deepEqual({ ...s.fiscalJournalMessage(s.fiscalJournal.data) }, { tone: 'error', text: 'Falta el diario fiscal de este servidor: se puede vender, pero los documentos no se anotan en el diario ni se copian en la tienda hasta ejecutar tpv:fiscal:journal:reset --confirm "<motivo>".' });
     assert.equal(s.fiscalJournalUnconfirmed(state('ok')), '');
     assert.equal(
         s.fiscalJournalUnconfirmed(state('ok', { unconfirmed_intents: [{ number: 'A26000126', created_at: '2026-11-14T17:40:00+01:00' }] })),
@@ -278,5 +279,6 @@ test('the template shows the shop copy line in VERI*FACTU and the bumped script 
     assert.ok(verifactu.includes('data-fiscal-journal="shop"'));
     assert.ok(verifactu.includes('{{ fiscalJournalShopMessage(fiscalJournal.data).text }}'));
     const twig = fs.readFileSync(path.resolve(__dirname, '../../templates/pos.html.twig'), 'utf8');
-    assert.match(twig, /SettingsModal\.js\?v=20261114-journal-shop-v1"/);
+    assert.ok(hasCacheVersionSince(twig, 'components/SettingsModal.js', '20261114'), 'SettingsModal.js cache version');
+    assert.doesNotMatch(twig, /SettingsModal\.js\?v=20261114-journal-shop-v1"/, 'changed again for the lost-journal line: bumped');
 });

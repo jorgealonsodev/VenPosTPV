@@ -39,17 +39,38 @@ final class FiscalJournalControllerTest extends TestCase
         return $guard;
     }
 
-    public function testOnlyAnAdminSeesTheJournalState(): void
+    /**
+     * Only an admin sees the journal state; any other logged-in user gets only whether
+     * the till is blocked (the guard state), so a reloaded till shows «Caja bloqueada»
+     * at once (final verification gap 6). Without a user: nothing.
+     */
+    public function testOnlyAnAdminSeesTheJournalStateACashierOnlyTheGuardState(): void
     {
         $reconciler = $this->createMock(FiscalJournalReconciler::class);
         $reconciler->expects($this->never())->method('current');
         $reconciler->expects($this->never())->method('run');
-        $controller = new FiscalJournalController($reconciler, $this->guard(), $this->createMock(FiscalReplay::class));
+        $guard = $this->createMock(FiscalJournalGuard::class);
+        $guard->expects($this->never())->method('report');
+        $guard->method('check')->willReturn(['state' => FiscalJournalGuard::BEHIND_JOURNAL, 'missing' => ['number' => 'A26000124', 'invoice_type' => 'F2']]);
+        $controller = new FiscalJournalController($reconciler, $guard, $this->createMock(FiscalReplay::class));
 
         $response = $controller->status($this->request('cashier'));
+        $this->assertSame(200, $response->getStatusCode());
+        $this->assertSame(['data' => ['guard' => ['state' => 'behind_journal']]], json_decode((string) $response->getContent(), true), 'no document number, no journal detail');
+
+        $response = $controller->status($this->request(null));
         $this->assertSame(403, $response->getStatusCode());
         $this->assertSame(['error' => 'Acceso denegado — solo administradores'], json_decode((string) $response->getContent(), true));
-        $this->assertSame(403, $controller->status($this->request(null))->getStatusCode());
+    }
+
+    public function testAGuardThatCannotBeReadForACashierIsAnErrorNotACrash(): void
+    {
+        $guard = $this->createMock(FiscalJournalGuard::class);
+        $guard->method('check')->willThrowException(new \RuntimeException('connection refused'));
+
+        $response = (new FiscalJournalController($this->createMock(FiscalJournalReconciler::class), $guard, $this->createMock(FiscalReplay::class)))->status($this->request('cashier'));
+
+        $this->assertSame(503, $response->getStatusCode());
     }
 
     public function testAnAdminGetsTheStateWithoutItsInternalCheckpointsAndNothingRuns(): void

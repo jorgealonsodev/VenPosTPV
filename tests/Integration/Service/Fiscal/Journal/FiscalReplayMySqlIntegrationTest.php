@@ -48,6 +48,8 @@ final class FiscalReplayMySqlIntegrationTest extends TestCase
     private JournalPathFixtures $fixtures;
     private JournalHarness $journal;
     private string $dump = '';
+    /** Back up with the project's own SqlDumper (tpv:backup:database) instead of mysqldump. */
+    private bool $projectDumper = false;
     private bool $userAdded = false;
 
     protected function setUp(): void
@@ -111,7 +113,7 @@ final class FiscalReplayMySqlIntegrationTest extends TestCase
 
     private function backup(): void
     {
-        $this->dump = JournalRestore::dump($this->connection);
+        $this->dump = $this->projectDumper ? JournalRestore::dumpWithSqlDumper($this->connection) : JournalRestore::dump($this->connection);
     }
 
     private function restore(): Connection
@@ -252,6 +254,17 @@ final class FiscalReplayMySqlIntegrationTest extends TestCase
         $lines = $this->journal->lines();
         $this->assertCount(21, $lines);
         $this->assertSame($number, $lines[20]['fiscal_record']['number']);
+    }
+
+    /**
+     * The S6 scenario with the backup the TPV itself takes (SqlDumper, as
+     * tpv:backup:database), not mysqldump: what an administrator restores.
+     */
+    public function testTheS6ScenarioAlsoHoldsWithTheProjectsOwnBackup(): void
+    {
+        $this->projectDumper = true;
+
+        $this->testDocumentsIssuedAfterTheBackupAreReplayedVerbatimAndTheTillGoesOn();
     }
 
     public function testAReplayKilledInTheMiddleLeavesTheDatabaseAsItWasAndTheNextRunEndsIdentical(): void

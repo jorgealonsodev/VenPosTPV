@@ -130,8 +130,75 @@ test('the notice is on every screen and the page loads the new scripts', () => {
     assert.match(app, /app\.component\('fiscal-journal-block-notice', FiscalJournalBlockNotice\)/);
 
     const page = read('templates/pos.html.twig');
-    for (const file of ['api.js', 'app.js', 'components/FiscalJournalBlockNotice.js', 'components/IncidentsScreen.js']) {
+    for (const file of ['api.js', 'app.js', 'components/FiscalJournalBlockNotice.js', 'components/IncidentsScreen.js', 'stores/useSession.js']) {
         assert.ok(hasCacheVersionSince(page, file, '20261114'), file);
     }
+    assert.doesNotMatch(page, /api\.js\?v=20261114-journal-block-v1"/, 'api.js changed again: its cache version too');
     assert.ok(page.indexOf('components/FiscalJournalBlockNotice.js') < page.indexOf('assets/js/app.js'));
+});
+
+// Final verification gap 6: the notice lived only in page memory. A reload of a
+// blocked till shows it at once: the journal status the till asks for on load
+// (GET /api/fiscal/journal, the guard state for any logged-in user) sets it.
+test('a journal status saying the till is blocked shows the notice at once', async () => {
+    for (const state of ['behind_journal', 'behind_shop', 'journal_missing']) {
+        const { api, block } = load(() => respond(200, { data: { guard: { state } } }));
+        await api.fiscalJournalStatus();
+        assert.equal(block.state.blocked, true, state);
+    }
+    const { api, block } = load(() => respond(403, { error: 'Acceso denegado — solo administradores' }));
+    await api.fiscalJournalStatus().catch(() => {});
+    assert.equal(block.state.blocked, false, 'an older server that refuses it changes nothing');
+});
+
+function loadSession(serverSession, answer) {
+    const calls = [];
+    const context = {
+        Vue: { reactive: (v) => v, computed: (fn) => ({ get value() { return fn(); } }) },
+        window: { TPV_BASE: '', addEventListener() {}, location: {}, __SESSION__: serverSession },
+        navigator: { onLine: true },
+        localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+        document: { documentElement: { setAttribute() {} } },
+        fetch: async (url, opts) => { calls.push([opts.method, url]); return answer(url, opts); },
+        setTimeout() { return 1; }, clearTimeout() {}, setInterval() { return 1; }, clearInterval() {},
+        Promise, Error, JSON, URLSearchParams, console, Object, String, Array, Number,
+    };
+    context.globalThis = context;
+    vm.runInNewContext(
+        `${read('public/assets/js/components/FiscalJournalBlockNotice.js')}\n${read('public/assets/js/api.js')}\n${read('public/assets/js/stores/useSession.js')}\nglobalThis.__block = useFiscalJournalBlock; globalThis.__session = useSession;`,
+        context,
+        { filename: 'fiscal-journal-block-session.js' },
+    );
+    return { block: context.__block, session: context.__session, calls };
+}
+
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+test('on page load a logged-in till asks the journal status and shows the notice when blocked', async () => {
+    const { block, calls } = loadSession({ user_id: 3, role: 'cashier', terminal_id: 1 }, (url) => (url === '/api/fiscal/journal'
+        ? respond(200, { data: { guard: { state: 'behind_journal' } } })
+        : respond(200, { data: { open: false } })));
+    await settle();
+
+    assert.ok(calls.some(([method, url]) => method === 'GET' && url === '/api/fiscal/journal'), JSON.stringify(calls));
+    assert.equal(block.state.blocked, true);
+});
+
+test('a page without a logged-in user does not ask', async () => {
+    const { block, calls } = loadSession(null, () => respond(200, { data: { guard: { state: 'behind_journal' } } }));
+    await settle();
+
+    assert.ok(!calls.some(([, url]) => url === '/api/fiscal/journal'), JSON.stringify(calls));
+    assert.equal(block.state.blocked, false);
+});
+
+test('logging in asks again, so a till blocked before the login shows it', async () => {
+    const { block, session, calls } = loadSession(null, (url) => (url === '/api/fiscal/journal'
+        ? respond(200, { data: { guard: { state: 'behind_shop' } } })
+        : respond(200, { data: {} })));
+    session.login('Ana', '****');
+    await settle();
+
+    assert.ok(calls.some(([, url]) => url === '/api/fiscal/journal'));
+    assert.equal(block.state.blocked, true);
 });

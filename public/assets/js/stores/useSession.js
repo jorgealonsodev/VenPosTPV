@@ -136,6 +136,17 @@ const useSession = (function () {
             : user;
         session.screen = 'cashOpen';
         save();
+        refreshFiscalJournalBlock();
+    }
+
+    /**
+     * fiscal-journal: asks whether the till is blocked (the database behind the
+     * journal or the shop), so a reloaded page shows «Caja bloqueada» at once;
+     * ApiClient sets the notice from the answer. A failed read changes nothing.
+     */
+    function refreshFiscalJournalBlock() {
+        if (typeof ApiClient.fiscalJournalStatus !== 'function') return;
+        ApiClient.fiscalJournalStatus().catch(() => {});
     }
 
     // Only the most recent server response may set the cash UI state.
@@ -486,6 +497,7 @@ const useSession = (function () {
 
     load();
     if (session.user && !session.deviceLinked) restoreDeviceCookie();
+    if (session.user) refreshFiscalJournalBlock();
     hydrateCashSession();
 
     return {

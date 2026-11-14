@@ -7,20 +7,25 @@ namespace VenPosTPV\Tests\Unit\Service\Fiscal\Journal;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
 use PHPUnit\Framework\TestCase;
+use Symfony\Component\HttpClient\MockHttpClient;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalGuard;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalIdentity;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalLocations;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalReset;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalResetResult;
+use VenPosTPV\Service\Fiscal\Journal\FiscalJournalShopSync;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalStarter;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalStep;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalWriter;
+use VenPosTPV\Service\PrestaShop\PsJournalClient;
 
 /**
  * tpv:fiscal:journal:reset (fiscal-journal A6, decisions in the Log): a new journal
  * from the current database, the old files archived byte for byte (never deleted),
- * an audit_log record, every document backfilled; refused while the database is
- * behind a healthy journal or behind the shop. On SQLite.
+ * an audit_log record, every document backfilled; refused, writing nothing, while
+ * the database is behind a healthy journal, behind the shop (asked by the reset
+ * itself), behind what a damaged journal still shows, or while the shop cannot be
+ * asked (unless --shop-unavailable). On SQLite.
  */
 final class FiscalJournalResetTest extends TestCase
 {
@@ -31,6 +36,12 @@ final class FiscalJournalResetTest extends TestCase
     private FiscalJournalLocations $locations;
     private FiscalJournalWriter $writer;
     private FiscalJournalIdentity $identity;
+
+    /** @var array<string, array{status: string, head: ?array, error: ?string}> what the shop answers, by journal id (missing: an empty head) */
+    private array $shopAnswers = [];
+    /** @var list<string> the journals the shop was asked about */
+    private array $shopAsked = [];
+    private bool $shopConfigured = true;
 
     protected function setUp(): void
     {
@@ -52,9 +63,28 @@ final class FiscalJournalResetTest extends TestCase
         JournalLines::remove($this->root);
     }
 
-    private function reset(): FiscalJournalReset
+    private function reset(int $backfillLinesPerRun = 500): FiscalJournalReset
     {
         $starter = new FiscalJournalStarter($this->connection, $this->writer, $this->identity);
+        $client = new class($this->shopAnswers, $this->shopAsked) extends PsJournalClient {
+            public function __construct(private array &$answers, private array &$asked)
+            {
+                parent::__construct('https://tienda.tutienda.com', 'secret', new MockHttpClient());
+            }
+
+            public function head(string $journalId): array
+            {
+                $this->asked[] = $journalId;
+
+                return $this->answers[$journalId]
+                    ?? ['status' => PsJournalClient::OK, 'head' => ['journal_id' => $journalId, 'last_seq' => 0, 'contiguous_seq' => 0, 'series' => []], 'error' => null];
+            }
+
+            public function send(string $journalId, string $line): array
+            {
+                throw new \LogicException('the reset never sends');
+            }
+        };
 
         return new FiscalJournalReset(
             $this->connection,
@@ -64,7 +94,30 @@ final class FiscalJournalResetTest extends TestCase
             $this->identity,
             $this->root . '/var/fiscal-replay.lock',
             new FiscalJournalGuard($this->connection, $this->locations, null, $this->identity),
+            null,
+            $this->shopConfigured ? new FiscalJournalShopSync($this->connection, $this->locations, $client, $this->identity) : null,
+            $backfillLinesPerRun,
         );
+    }
+
+    /** The shop's head of $journalId holding document $n of the series A26 (FiscalJournalStepTest::issue numbering). */
+    private function shopHolds(string $journalId, int $n): void
+    {
+        $this->shopAnswers[$journalId] = ['status' => PsJournalClient::OK, 'head' => [
+            'journal_id' => $journalId, 'last_seq' => $n, 'contiguous_seq' => $n,
+            'series' => ['A26' => ['number' => sprintf('A26%06d', $n), 'hash' => self::hashOf($n), 'seq' => $n]],
+        ], 'error' => null];
+    }
+
+    /** The fiscal hash document $n gets from FiscalJournalStepTest::issue on top of documents 1..n-1. */
+    private static function hashOf(int $n): string
+    {
+        $previous = '';
+        for ($i = 1; $i <= $n; ++$i) {
+            $previous = \VenPosTPV\Service\Fiscal\FiscalHash::alta('B00000000', sprintf('A26%06d', $i), '14-11-2026', 'F2', '2.10', '12.10', $previous, sprintf('2026-11-14T18:%02d:00+01:00', $i % 60));
+        }
+
+        return $previous;
     }
 
     /** An install with $n documents, journaled (the provisioning step), the last $later issued after it. */
@@ -178,6 +231,7 @@ final class FiscalJournalResetTest extends TestCase
         $this->assertSame($old, $payload['previous_journal_id']);
         $this->assertSame(FiscalJournalGuard::OK, $payload['guard']);
         $this->assertSame(3, $payload['backfill_until']);
+        $this->assertSame(['path' => FiscalJournalReset::SHOP_CONFIRMED, 'asked' => [$old], 'error' => null], $payload['shop']);
         $this->assertSame(['backups/fiscal-journal/archive/' . $old . '-20261114T170509Z', 'var/fiscal-journal/archive/' . $old . '-20261114T170509Z'], $payload['archived']);
 
         $this->assertSame(FiscalJournalGuard::OK, (new FiscalJournalGuard($this->connection, $this->locations))->check()['state']);
@@ -218,14 +272,19 @@ final class FiscalJournalResetTest extends TestCase
         $this->assertNothingChanged($id, $primary, $secondary);
     }
 
-    public function testADamagedJournalCanBeResetEvenWhileTheDatabaseIsBehindIt(): void
+    /** Line $n of the primary altered so it fails its own checks (damage, never repaired). */
+    private function damageLine(int $n): string
+    {
+        $file = $this->locations->primary()->journalFiles()[0];
+        file_put_contents($file, preg_replace('/' . sprintf('A26%06d', $n) . '/', sprintf('A26%06d', 90 + $n), (string) file_get_contents($file), 1));
+
+        return $file;
+    }
+
+    public function testADamagedJournalWhoseReadableLinesAreAllInTheDatabaseCanBeReset(): void
     {
         $old = $this->journaled(4);
-        $this->restoreBefore(1);
-        $file = $this->locations->primary()->journalFiles()[0];
-        $content = (string) file_get_contents($file);
-        // Line 2 altered: not the last one, so it is damage, never repaired.
-        file_put_contents($file, preg_replace('/A26000002/', 'A26000092', $content, 1));
+        $file = $this->damageLine(2);
         $damagedBytes = hash_file('sha256', $file);
 
         $result = $this->reset()->run('Diario dañado en el disco');
@@ -234,11 +293,216 @@ final class FiscalJournalResetTest extends TestCase
         $archive = $this->root . '/backups/fiscal-journal/archive/' . $this->archives($this->root . '/backups/fiscal-journal')[0];
         $this->assertSame($damagedBytes, hash_file('sha256', $archive . '/' . basename($file)));
         $lines = array_values(iterator_to_array($this->locations->primary()->lines(), false));
-        $this->assertSame([1, 2, 3], array_column($lines, 'seq'));
+        $this->assertSame([1, 2, 3, 4], array_column($lines, 'seq'));
         $payload = json_decode((string) $this->audit()[0]['payload'], true);
         $this->assertSame($old, $payload['previous_journal_id']);
-        $this->assertSame(FiscalJournalGuard::BEHIND_JOURNAL, $payload['guard']);
         $this->assertNotNull($payload['damaged']);
+    }
+
+    /**
+     * fiscal-journal, final verification gap 3: a damaged middle line no longer lets
+     * the reset through while a valid line after it names a document the database lacks.
+     */
+    public function testADamagedMiddleLineDoesNotAllowAResetWhileALaterValidLineIsMissingFromTheDatabase(): void
+    {
+        $id = $this->journaled(4);
+        $this->restoreBefore(1);
+        $this->damageLine(2);
+        $primary = $this->files($this->root . '/backups/fiscal-journal');
+        $secondary = $this->files($this->root . '/var/fiscal-journal');
+
+        $result = $this->reset()->run('Diario dañado en el disco');
+
+        $this->assertSame(FiscalJournalResetResult::REFUSED, $result->status, $result->message);
+        $this->assertSame(3, $result->exitCode());
+        $this->assertStringContainsString('A26000004', $result->message);
+        $this->assertStringContainsString('dañado', $result->message);
+        $this->assertNothingChanged($id, $primary, $secondary);
+    }
+
+    public function testADamagedJournalWhoseHeadJsonNamesAMissingDocumentIsRefused(): void
+    {
+        $id = $this->journaled(4);
+        $this->restoreBefore(1);
+        // Line 4 damaged too: only head.json still names A26000004.
+        $this->damageLine(2);
+        $this->damageLine(4);
+        $primary = $this->files($this->root . '/backups/fiscal-journal');
+        $secondary = $this->files($this->root . '/var/fiscal-journal');
+
+        $result = $this->reset()->run('Diario dañado en el disco');
+
+        $this->assertSame(FiscalJournalResetResult::REFUSED, $result->status, $result->message);
+        $this->assertStringContainsString('A26000004', $result->message);
+        $this->assertNothingChanged($id, $primary, $secondary);
+    }
+
+    public function testAConfirmedIntentOfAMissingDocumentRefusesADamagedJournal(): void
+    {
+        $id = $this->journaled(3);
+        $this->damageLine(2);
+        $this->locations->primary()->writeIntent(self::hashOf(4), ['state' => 'confirmed', 'created_at' => '2026-11-14T18:00:00+01:00', 'fiscal_record' => ['number' => 'A26000004', 'invoice_type' => 'F2', 'hash' => self::hashOf(4)]]);
+        $primary = $this->files($this->root . '/backups/fiscal-journal');
+        $secondary = $this->files($this->root . '/var/fiscal-journal');
+
+        $result = $this->reset()->run('Diario dañado en el disco');
+
+        $this->assertSame(FiscalJournalResetResult::REFUSED, $result->status, $result->message);
+        $this->assertStringContainsString('A26000004', $result->message);
+        $this->assertNothingChanged($id, $primary, $secondary);
+    }
+
+    /** Final verification gap 6: a refusal writes nothing, not even a torn tail moved to quarantine/. */
+    public function testARefusedResetLeavesATornTailWhereItIs(): void
+    {
+        $id = $this->journaled(4);
+        $this->restoreBefore(2);
+        file_put_contents($this->locations->primary()->journalFiles()[0], '{"v":1,"seq":5,"kind":"F2"', \FILE_APPEND);
+        $primary = $this->files($this->root . '/backups/fiscal-journal');
+        $secondary = $this->files($this->root . '/var/fiscal-journal');
+
+        $result = $this->reset()->run('Quiero empezar de nuevo');
+
+        $this->assertSame(FiscalJournalResetResult::REFUSED, $result->status, $result->message);
+        $this->assertStringContainsString('A26000003', $result->message);
+        $this->assertNothingChanged($id, $primary, $secondary);
+        $this->assertDirectoryDoesNotExist($this->root . '/backups/fiscal-journal/quarantine/x');
+        $this->assertSame([], glob($this->root . '/backups/fiscal-journal/quarantine/*') ?: []);
+    }
+
+    /** Final verification decision 2: the reset asks the shop itself before anything. */
+    public function testItAsksTheShopAndRefusesWhenTheShopHoldsADocumentTheDatabaseLacks(): void
+    {
+        $id = $this->journaled(4);
+        $this->restoreBefore(1);
+        // The journal does not show it (a healthy journal behind the shop: lines lost with the restore of the folder).
+        $this->shopHolds($id, 5);
+        $primary = $this->files($this->root . '/backups/fiscal-journal');
+        $secondary = $this->files($this->root . '/var/fiscal-journal');
+
+        $result = $this->reset()->run('Quiero empezar de nuevo');
+
+        $this->assertSame([$id], $this->shopAsked);
+        $this->assertSame(FiscalJournalResetResult::REFUSED, $result->status, $result->message);
+        $this->assertSame(3, $result->exitCode());
+        $this->assertStringContainsString('A26000005', $result->message);
+        $this->assertStringContainsString('tpv:fiscal:replay', $result->message);
+        $this->assertStringContainsString('docs/diario-fiscal.md', $result->message);
+        $this->assertNothingChanged($id, $primary, $secondary);
+        $this->assertFileDoesNotExist($this->root . '/backups/fiscal-journal/shop-head.json', 'asked, not stored');
+    }
+
+    public function testALostJournalAfterAnOlderRestoreIsRefusedWhenTheShopHoldsTheLaterDocuments(): void
+    {
+        FiscalJournalStepTest::issue($this->connection, 1);
+        FiscalJournalStepTest::issue($this->connection, 2);
+        $this->identity->store(self::LOST);
+        $this->shopHolds(self::LOST, 4);
+
+        $result = $this->reset()->run('Servidor nuevo, el diario no se pudo copiar');
+
+        $this->assertSame([self::LOST], $this->shopAsked);
+        $this->assertSame(FiscalJournalResetResult::REFUSED, $result->status, $result->message);
+        $this->assertStringContainsString('A26000004', $result->message);
+        $this->assertSame(self::LOST, $this->identity->journalId());
+        $this->assertSame([], $this->audit());
+        $this->assertDirectoryDoesNotExist($this->root . '/backups/fiscal-journal', 'a refusal creates no folder');
+    }
+
+    /**
+     * @return iterable<string, array{0: ?array{status: string, head: ?array, error: ?string}}>
+     */
+    public static function shopThatCannotBeAsked(): iterable
+    {
+        yield 'down' => [['status' => PsJournalClient::ERROR, 'head' => null, 'error' => 'Connection refused']];
+        yield 'module older than 0.9.0' => [['status' => PsJournalClient::UNAVAILABLE, 'head' => null, 'error' => 'HTTP 404']];
+        yield 'an error' => [['status' => PsJournalClient::ERROR, 'head' => null, 'error' => 'HTTP 500']];
+        yield 'not configured' => [null];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('shopThatCannotBeAsked')]
+    public function testAShopThatCannotBeAskedRefusesTheResetWithoutTheOption(?array $answer): void
+    {
+        FiscalJournalStepTest::issue($this->connection, 1);
+        $this->identity->store(self::LOST);
+        if ($answer === null) {
+            $this->shopConfigured = false;
+        } else {
+            $this->shopAnswers[self::LOST] = $answer;
+        }
+
+        $result = $this->reset()->run('Servidor nuevo');
+
+        $this->assertSame(FiscalJournalResetResult::REFUSED, $result->status, $result->message);
+        $this->assertSame(3, $result->exitCode());
+        $this->assertStringContainsString('--shop-unavailable', $result->message);
+        $this->assertStringContainsString('se pueden repetir números', $result->message);
+        $this->assertSame(self::LOST, $this->identity->journalId());
+        $this->assertSame([], $this->audit());
+        $this->assertDirectoryDoesNotExist($this->root . '/backups/fiscal-journal');
+    }
+
+    public function testWithShopUnavailableTheResetGoesOnAndTheAuditRecordSaysSo(): void
+    {
+        FiscalJournalStepTest::issue($this->connection, 1);
+        $this->identity->store(self::LOST);
+        $this->shopAnswers[self::LOST] = ['status' => PsJournalClient::UNAVAILABLE, 'head' => null, 'error' => 'HTTP 404'];
+
+        $result = $this->reset()->run('Tienda sin el módulo 0.9.0', null, true);
+
+        $this->assertSame(FiscalJournalResetResult::DONE, $result->status, $result->message);
+        $payload = json_decode((string) $this->audit()[0]['payload'], true);
+        $this->assertSame(FiscalJournalReset::SHOP_UNAVAILABLE, $payload['shop']['path']);
+        $this->assertSame([self::LOST], $payload['shop']['asked']);
+        $this->assertStringContainsString('0.9.0', (string) $payload['shop']['error']);
+    }
+
+    public function testWithShopUnavailableADocumentTheShopDidAnswerStillRefuses(): void
+    {
+        $id = $this->journaled(2);
+        $this->identity->store($id);
+        $this->shopHolds($id, 3);
+
+        $result = $this->reset()->run('Motivo', null, true);
+
+        $this->assertSame(FiscalJournalResetResult::REFUSED, $result->status, $result->message);
+        $this->assertStringContainsString('A26000003', $result->message);
+    }
+
+    public function testTheBackfillOfTheResetIsBoundedAndTheMinuteJobWritesTheRest(): void
+    {
+        $this->journaled(5);
+
+        $result = $this->reset(2)->run('Motivo');
+
+        $this->assertSame(FiscalJournalResetResult::DONE, $result->status, $result->message);
+        $this->assertSame(2, $result->backfilled);
+        $this->assertStringContainsString('tarea de cada minuto', $result->message);
+        FiscalJournalStepTest::issue($this->connection, 6);
+        $this->writer->flush();
+        $lines = array_values(iterator_to_array($this->locations->primary()->lines(), false));
+        $this->assertSame([true, true, true, true, true, false], array_column($lines, 'backfill'), 'backfill_until labels them, whoever flushes');
+    }
+
+    public function testASecondResetIsToldThatAResetIsRunning(): void
+    {
+        $id = $this->journaled(1);
+        $primary = $this->files($this->root . '/backups/fiscal-journal');
+        $secondary = $this->files($this->root . '/var/fiscal-journal');
+        $lock = fopen($this->root . '/var/fiscal-journal-reset.lock', 'c');
+        $this->assertTrue(flock($lock, \LOCK_EX));
+
+        try {
+            $result = $this->reset()->run('Motivo');
+        } finally {
+            flock($lock, \LOCK_UN);
+            fclose($lock);
+        }
+
+        $this->assertSame(FiscalJournalResetResult::ERROR, $result->status);
+        $this->assertStringContainsString('tpv:fiscal:journal:reset en marcha', $result->message);
+        $this->assertStringNotContainsString('recuperación', $result->message);
+        $this->assertNothingChanged($id, $primary, $secondary);
     }
 
     public function testALostJournalCanBeReset(): void
@@ -290,6 +554,7 @@ final class FiscalJournalResetTest extends TestCase
 
         $this->assertSame(FiscalJournalResetResult::ERROR, $result->status);
         $this->assertSame(1, $result->exitCode());
+        $this->assertStringContainsString('recuperación de documentos en marcha', $result->message);
         $this->assertNothingChanged($id, $primary, $secondary);
     }
 

@@ -112,14 +112,16 @@ final class FiscalJournalStep implements ProvisioningStep
         }
 
         $this->starter->start();
-        // A bounded first part of the backfill; the every-minute job writes the rest.
-        $this->writer->flush(true, $this->backfillLinesPerRun, self::LOCK_WAIT_SECONDS);
+        // A bounded first part of the backfill; the every-minute job writes the rest. The
+        // journal's backfill_until marks them, not this flush: a sale issued meanwhile is not.
+        $this->writer->flush($this->backfillLinesPerRun, self::LOCK_WAIT_SECONDS);
     }
 
     private static function lost(string $what): string
     {
         return 'El diario fiscal se ha perdido: ' . $what . '. No se crea un diario nuevo encima. '
-            . 'Si la tienda tiene la copia, la caja se desbloquea sola; si no, empieza un diario nuevo con '
+            . 'Si la tienda tiene la copia, la caja vuelve a vender en cuanto la tienda confirma que la base de datos no va por detrás, '
+            . 'pero el diario no se anota hasta que se empiece uno nuevo con '
             . 'php bin/console tpv:fiscal:journal:reset --confirm "<motivo>" --env=prod (docs/diario-fiscal.md).';
     }
 

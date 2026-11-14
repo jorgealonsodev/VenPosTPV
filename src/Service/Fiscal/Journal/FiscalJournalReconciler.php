@@ -282,6 +282,7 @@ class FiscalJournalReconciler
         $shop = $this->shopCopy($now, $log);
         $reported = $this->alerts->report('journal_missing', $now);
         $data = $this->lostData($named, $now, $shop);
+        $data['alert'] = $this->alert($data, $now);
         $this->writeState($data, $log);
         $log->release($reported);
 
@@ -526,6 +527,14 @@ class FiscalJournalReconciler
             $subject = 'VenPosTPV: un documento no se puede anotar en el diario fiscal';
             $text = sprintf("El diario fiscal no puede anotar el documento %s: %s\n\n", $data['blocked']['number'], $data['blocked']['reason'])
                 . sprintf("Los %d documentos pendientes esperan, en orden, hasta que se resuelva. Las ventas siguen funcionando.\n", $data['pending']['count']);
+        } elseif ($data['status'] === FiscalJournalState::JOURNAL_MISSING) {
+            // Once the shop confirms the database is not behind, the till sells again (FiscalJournalGuard),
+            // but nothing is journaled nor copied to the shop: it must not go unnoticed.
+            $incident = 'journal_missing';
+            $subject = 'VenPosTPV: el diario fiscal se ha perdido';
+            $text = sprintf("El diario fiscal %s no está en backups/fiscal-journal (falta su journal.id o la carpeta entera: un servidor nuevo al que no se copió, una carpeta borrada).\n\n", (string) ($data['journal_id'] ?? '?'))
+                . "Mientras la copia en la tienda no confirme que la base de datos no va por detrás, la caja no puede vender. Cuando lo confirma se puede vender, pero los documentos no se anotan en el diario ni se copian en la tienda.\n\n"
+                . "Para volver a anotarlos, empieza un diario nuevo: php bin/console tpv:fiscal:journal:reset --confirm \"<motivo>\" --env=prod (docs/diario-fiscal.md).\n";
         } elseif ($data['status'] === FiscalJournalState::LAGGING) {
             $incident = 'lagging';
             $subject = 'VenPosTPV: el diario fiscal no se puede anotar';

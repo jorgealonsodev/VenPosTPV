@@ -13,6 +13,7 @@ use VenPosTPV\Service\Fiscal\Journal\FiscalJournalIdentity;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalLocations;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalReset;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalResetResult;
+use VenPosTPV\Service\Fiscal\Journal\FiscalJournalShopSync;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalStarter;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalStep;
 use VenPosTPV\Service\Fiscal\Journal\FiscalJournalWriter;
@@ -33,6 +34,7 @@ final class FiscalJournalResetMySqlIntegrationTest extends TestCase
     private JournalPathFixtures $fixtures;
     private JournalHarness $journal;
     private string $dump = '';
+    private string $shopStore = '';
 
     protected function setUp(): void
     {
@@ -45,6 +47,7 @@ final class FiscalJournalResetMySqlIntegrationTest extends TestCase
         $this->fixtures->install();
         $this->clean($this->connection);
         $this->journal = new JournalHarness($this->connection);
+        $this->shopStore = sys_get_temp_dir() . '/venpos-reset-shop-' . bin2hex(random_bytes(4)) . '.json';
     }
 
     protected function tearDown(): void
@@ -58,8 +61,10 @@ final class FiscalJournalResetMySqlIntegrationTest extends TestCase
             $this->connection->close();
             $this->journal->remove();
         }
-        if ($this->dump !== '' && is_file($this->dump)) {
-            unlink($this->dump);
+        foreach ([$this->dump, $this->shopStore] as $file) {
+            if ($file !== '' && is_file($file)) {
+                unlink($file);
+            }
         }
         $this->connection = null;
     }
@@ -92,7 +97,10 @@ final class FiscalJournalResetMySqlIntegrationTest extends TestCase
         $writer = new FiscalJournalWriter($connection, $locations, $this->journal->intents);
         $identity = new FiscalJournalIdentity($connection);
 
-        return new FiscalJournalReset($connection, $locations, $writer, new FiscalJournalStarter($connection, $writer, $identity), $identity, $this->journal->root . '/var/fiscal-replay.lock');
+        // The shop answers (the module's own JournalStore) and holds nothing of these journals.
+        $shop = new FiscalJournalShopSync($connection, $locations, (new FakeJournalShop($this->shopStore))->client(), $identity);
+
+        return new FiscalJournalReset($connection, $locations, $writer, new FiscalJournalStarter($connection, $writer, $identity), $identity, $this->journal->root . '/var/fiscal-replay.lock', shop: $shop);
     }
 
     /** @return array<string, string> every file below $folder (but .htaccess and journal.lock), by relative path, with its hash */

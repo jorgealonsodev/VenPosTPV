@@ -17,6 +17,9 @@ const ApiClient = (function () {
     // success of any other change means the till is no longer blocked.
     const ALLOWED_WHILE_JOURNAL_BLOCKED = ['/api/auth/', '/api/device/', '/api/fiscal/journal/replay'];
 
+    // FiscalJournalGuard states that block the till (FiscalJournalGuardCache::blocks).
+    const JOURNAL_BLOCKING_STATES = ['behind_journal', 'behind_shop', 'journal_missing'];
+
     function journalBlock() {
         return typeof useFiscalJournalBlock !== 'undefined' ? useFiscalJournalBlock : null;
     }
@@ -32,7 +35,9 @@ const ApiClient = (function () {
         if (status < 200 || status >= 300) return;
         const data = body && body.data ? body.data : null;
         if (path === '/api/fiscal/journal') {
-            if (data && data.guard && data.guard.state === 'ok') block.unlock();
+            const state = data && data.guard ? data.guard.state : null;
+            if (state === 'ok') block.unlock();
+            if (JOURNAL_BLOCKING_STATES.indexOf(state) !== -1) block.lock();
             return;
         }
         if (path === '/api/fiscal/journal/replay') {
@@ -119,6 +124,8 @@ const ApiClient = (function () {
 
     return {
         get: (path) => request(path, { method: 'GET' }),
+        /** fiscal-journal: the journal status (admins) or only the guard state (any logged-in user); sets «Caja bloqueada». */
+        fiscalJournalStatus: () => request('/api/fiscal/journal', { method: 'GET' }),
         post: (path, body) => request(path, { method: 'POST', body: JSON.stringify(body) }),
         put: (path, body) => request(path, { method: 'PUT', body: JSON.stringify(body) }),
         del: (path) => request(path, { method: 'DELETE' }),
