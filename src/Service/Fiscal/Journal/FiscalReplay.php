@@ -23,8 +23,16 @@ use VenPosTPV\Service\Fiscal\FiscalRecorder;
  *    database's chain head (`fiscal_chain.last_hash`). A head the journal does not
  *    hold is a backup older than the journal (S10, when the record before the first
  *    line is not in the database either) or a conflict.
- * 3. Preflight: every original id to insert is free or holds the same row, every
- *    terminal and user named exists; otherwise a conflict naming table and id.
+ * 3. Preflight, for every row to insert by its original id: free, it is inserted;
+ *    holding the same row, it is kept; holding the same entity in an older state
+ *    (same id and the same identity columns, IDENTITY: a refund pending at backup
+ *    time and completed after it, an exchange retried after it), it is updated to
+ *    the journal's state; holding another row, a movement, an upload or a session
+ *    (ids that are not fiscal identifiers, taken by an action the guard does not
+ *    refuse, such as a manual cash movement) goes under a fresh id and every
+ *    reference to it among the rows replayed follows (`remaps` in the result), while
+ *    any other table (fiscal_record, order_meta, sale_line, refund, invoice…) is a
+ *    conflict naming table and id. Every terminal and user named must exist.
  * 4. One transaction for the whole run, in the code's lock order (session → counter
  *    → fiscal_chain): sessions missing are inserted open (D8.2: closed again by
  *    hand), counters raised with GREATEST (never lowered, the key taken from the
@@ -40,11 +48,16 @@ use VenPosTPV\Service\Fiscal\FiscalRecorder;
  * they are, and those read when the line was written (listed in `as_of_flush`:
  * movements, transfer payment, outbox, session, exchange, refund lines). Those are
  * the latest the journal knows, so they are inserted as the latest line that holds
- * them shows; the two normalised are the ones D8 names: sessions come back open and
+ * them shows; the two normalised are the ones D8 names: sessions come back open (a
+ * session already there with the same identity is kept as it is) and
  * uploads are re-queued (the shop deduplicates sales by reference and refunds by
  * request_id), except uploads the administrator discarded. Stock, Z reports, print
  * jobs, customers and the rest of D8.4 are not restored. AUTO_INCREMENT follows the
  * inserted ids by itself (InnoDB), so the next sale gets a new id.
+ *
+ * It only runs while the guard refuses to issue (D8.1). A database that holds every
+ * journal document and more (a flush pending) has nothing to replay (AHEAD), and a
+ * torn last line the next flush repairs is refused until then.
  */
 class FiscalReplay
 {
@@ -64,6 +77,32 @@ class FiscalReplay
 
     /** counter table => its key column besides the year */
     private const COUNTERS = ['ticket_sequence' => 'letter', 'credit_note_sequence' => null, 'invoice_sequence' => 'series'];
+
+    /**
+     * The columns that never change for one entity, by table: a row already there
+     * with the same id and these is the same entity in an older state, updated to
+     * the journal's state. (Not created_at: SqlDumper backups lose it.)
+     */
+    private const IDENTITY = [
+        'refund' => ['request_id', 'order_id', 'ps_order_id'],
+        'refund_line' => ['refund_id', 'line_index', 'product_id', 'id_product_attribute'],
+        'exchange' => ['refund_id', 'order_id', 'ps_order_id', 'user_id'],
+        'transfer_payment' => ['order_id'],
+        'issued_coupon' => ['ps_cart_rule_id', 'code'],
+        'movement' => ['session_id', 'type', 'amount', 'order_id', 'concept'],
+        'outbox' => ['type', 'request_id'],
+        'session' => ['terminal_id', 'user_id', 'opened_at', 'opening_cash'],
+    ];
+
+    /** Tables whose ids are not fiscal identifiers: a row holding the id moves the journaled one to a fresh id. */
+    private const REMAPPABLE = ['movement', 'outbox', 'session'];
+
+    /** Where the rows replayed name a remapped id, by remapped table. */
+    private const REFERENCES = [
+        'session' => ['order_meta' => 'session_id', 'sale_line' => 'session_id', 'movement' => 'session_id', 'refund' => 'session_id', 'exchange' => 'voucher_session_id'],
+        'outbox' => ['outbox' => 'depends_on'],
+        'movement' => [],
+    ];
 
     /** Columns naming a terminal or a user, by table (D8.1: they must exist). */
     private const TERMINAL_COLUMNS = ['order_meta' => 'terminal_id', 'sale_line' => 'terminal_id', 'refund' => 'terminal_id', 'invoice' => 'terminal_id', 'session' => 'terminal_id'];
@@ -145,6 +184,15 @@ class FiscalReplay
                 ? new FiscalReplayResult(FiscalReplayResult::NOTHING, [], 'El diario fiscal no está iniciado: no hay nada que recuperar.')
                 : new FiscalReplayResult(FiscalReplayResult::ERROR, [], 'El diario fiscal de backups/fiscal-journal ha perdido su journal.id: no se recupera nada desde él.');
         }
+        foreach ([$primary, $secondary] as $location) {
+            $torn = $this->tornTail($location);
+            if ($torn !== null) {
+                return new FiscalReplayResult(FiscalReplayResult::ERROR, [], sprintf(
+                    'La última línea del diario fiscal (%s) quedó a medio escribir: no se recupera nada todavía. El siguiente tpv:cron (o tpv:fiscal:journal) la repara; después vuelve a ejecutar tpv:fiscal:replay.',
+                    $torn,
+                ));
+            }
+        }
         foreach ([[$primary, true], [$secondary, false]] as [$location, $complete]) {
             $damaged = JournalVerifier::verify($location, null, true, $complete)['damaged'];
             if ($damaged !== null) {
@@ -161,12 +209,23 @@ class FiscalReplay
             return new FiscalReplayResult(FiscalReplayResult::ERROR, [], sprintf('La cadena de registros fiscales de la base de datos no es válida (%s): no se recupera nada.', $chain['reason']));
         }
 
+        $blocked = $this->guard->check()['state'] !== FiscalJournalGuard::OK;
+
         $head = (string) ($this->connection->fetchOne('SELECT last_hash FROM fiscal_chain WHERE id = 1') ?: '');
         $scan = $this->scan($head);
         if ($scan['first'] === null) {
             return $this->nothing();
         }
         if (!$scan['found'] && !$scan['fromStart']) {
+            $last = $scan['last']['fiscal_record'];
+            if ($this->connection->fetchOne('SELECT 1 FROM fiscal_record WHERE id = ? AND hash = ?', [(int) $last['id'], (string) $last['hash']]) !== false) {
+                $ahead = (int) $this->connection->fetchOne('SELECT COUNT(*) FROM fiscal_record WHERE id > ?', [(int) $last['id']]);
+
+                return new FiscalReplayResult(FiscalReplayResult::AHEAD, [], sprintf(
+                    'La base de datos va por delante del diario fiscal (%d documentos aún sin anotar): no hay nada que recuperar y no se ha escrito nada. El siguiente tpv:cron (o tpv:fiscal:journal) los anota.',
+                    $ahead,
+                ));
+            }
             $record = $scan['first']['fiscal_record'];
             $before = (string) ($record['previous_hash'] ?? '');
             if ($before !== '' && $this->connection->fetchOne('SELECT 1 FROM fiscal_record WHERE hash = ? LIMIT 1', [$before]) === false) {
@@ -186,6 +245,10 @@ class FiscalReplay
         if ($lines === []) {
             return $this->nothing();
         }
+        if (!$blocked) {
+            // D8.1: only a database the guard finds behind is replayed into.
+            return new FiscalReplayResult(FiscalReplayResult::ERROR, [], 'Faltan documentos del diario fiscal en la base de datos, pero la caja no está bloqueada: no se recupera nada. Revisa el diario con tpv:fiscal:journal --verify-all.');
+        }
 
         $plan = $this->plan($lines, $head);
         $documents = array_map(static fn (array $line): array => [
@@ -196,7 +259,7 @@ class FiscalReplay
         ], $lines);
         $this->preflight($plan);
         if (!$apply) {
-            return new FiscalReplayResult(FiscalReplayResult::PENDING, $documents);
+            return new FiscalReplayResult(FiscalReplayResult::PENDING, $documents, null, $plan['remaps']);
         }
 
         $this->write($plan, $head);
@@ -211,10 +274,10 @@ class FiscalReplay
                 'Recuperados %d documentos, pero la caja sigue bloqueada: falta %s en la base de datos y el diario fiscal no lo tiene para recuperarlo.',
                 \count($documents),
                 $report['missing']['number'] ?? '?',
-            ));
+            ), $plan['remaps']);
         }
 
-        return new FiscalReplayResult(FiscalReplayResult::DONE, $documents);
+        return new FiscalReplayResult(FiscalReplayResult::DONE, $documents, null, $plan['remaps']);
     }
 
     private function nothing(): FiscalReplayResult
@@ -235,7 +298,7 @@ class FiscalReplay
      * it) and keeps the lines after the one holding $head. Only valid lines chained
      * to the previous one are read; the journal was verified just before.
      *
-     * @return array{first: ?array<string, mixed>, found: bool, fromStart: bool, lines: list<array<string, mixed>>}
+     * @return array{first: ?array<string, mixed>, last: ?array<string, mixed>, found: bool, fromStart: bool, lines: list<array<string, mixed>>}
      */
     private function scan(string $head): array
     {
@@ -274,7 +337,7 @@ class FiscalReplay
             }
         }
 
-        return ['first' => $first, 'found' => $found, 'fromStart' => $fromStart, 'lines' => $lines];
+        return ['first' => $first, 'last' => $previous, 'found' => $found, 'fromStart' => $fromStart, 'lines' => $lines];
     }
 
     /**
@@ -289,7 +352,7 @@ class FiscalReplay
     private function plan(array $lines, string $head): array
     {
         $now = (string) $this->connection->fetchOne('SELECT NOW()');
-        $plan = ['lines' => $lines, 'rows' => [], 'refs' => [], 'sessions' => [], 'counters' => [], 'refunded' => [], 'present' => [], 'skip' => []];
+        $plan = ['lines' => $lines, 'rows' => [], 'refs' => [], 'sessions' => [], 'counters' => [], 'refunded' => [], 'present' => [], 'update' => [], 'remaps' => [], 'skip' => []];
         $previousHash = $head;
         foreach ($lines as $index => $line) {
             $seq = (int) $line['seq'];
@@ -362,6 +425,7 @@ class FiscalReplay
         $conflicts = [];
         $terminals = [];
         $users = [];
+        $next = [];
         foreach ($plan['lines'] as $index => $line) {
             $record = $line['fiscal_record'];
             $terminals[(int) $record['terminal_id']] = true;
@@ -374,23 +438,38 @@ class FiscalReplay
                 }
             }
         }
-        foreach ($plan['rows'] as $table => $rows) {
-            foreach ($rows as $id => $row) {
+        // Sessions first: a remapped one moves the rows that name it.
+        foreach ($plan['sessions'] as $id => $row) {
+            $existing = $this->row('session', $id);
+            if ($existing !== null && self::sameIdentity('session', $existing, $row)) {
+                // The same session (closed or not since): kept as it is.
+                $plan['present']['session'][$id] = true;
+
+                continue;
+            }
+            if ($existing !== null) {
+                $to = $this->remap($plan, $next, 'session', $id);
+                $plan['sessions'][$id]['id'] = $to;
+            }
+            self::references('session', $row, $terminals, $users);
+        }
+        foreach (array_keys($plan['rows']) as $table) {
+            foreach (array_keys($plan['rows'][$table]) as $id) {
+                $row = $plan['rows'][$table][$id];
                 $existing = $this->row($table, $id);
                 if ($existing === null) {
                     self::references($table, $row, $terminals, $users);
                 } elseif (self::same($table, $existing, $row)) {
                     $plan['present'][$table][$id] = true;
+                } elseif (self::sameIdentity($table, $existing, $row)) {
+                    $plan['update'][$table][$id] = true;
+                } elseif (\in_array($table, self::REMAPPABLE, true)) {
+                    $to = $this->remap($plan, $next, $table, $id);
+                    $plan['rows'][$table][$id]['id'] = $to;
+                    self::references($table, $row, $terminals, $users);
                 } else {
                     $conflicts[] = sprintf('%s id %d ya existe con otro contenido', $table, $id);
                 }
-            }
-        }
-        foreach ($plan['sessions'] as $id => $row) {
-            if ($this->row('session', $id) !== null) {
-                $plan['present']['session'][$id] = true;
-            } else {
-                self::references('session', $row, $terminals, $users);
             }
         }
         foreach (['terminal' => $terminals, 'user' => $users] as $table => $ids) {
@@ -403,6 +482,33 @@ class FiscalReplay
         if ($conflicts !== []) {
             throw new FiscalReplayConflict(implode('; ', \array_slice($conflicts, 0, 10)) . (\count($conflicts) > 10 ? sprintf(' (y %d más)', \count($conflicts) - 10) : ''));
         }
+    }
+
+    /**
+     * A fresh id for a journaled row whose original id holds another row (above every
+     * id of the table and of the rows replayed), and every reference to it among the
+     * rows replayed rewritten.
+     *
+     * @param array<string, mixed> $plan
+     * @param array<string, int> $next
+     */
+    private function remap(array &$plan, array &$next, string $table, int $from): int
+    {
+        if (!isset($next[$table])) {
+            $planned = array_keys($table === 'session' ? $plan['sessions'] : ($plan['rows'][$table] ?? []));
+            $next[$table] = max([(int) $this->connection->fetchOne(sprintf('SELECT COALESCE(MAX(id), 0) FROM `%s`', $table)), ...$planned]);
+        }
+        $to = ++$next[$table];
+        foreach (self::REFERENCES[$table] as $referring => $column) {
+            foreach ($plan['rows'][$referring] ?? [] as $id => $row) {
+                if (is_numeric($row[$column] ?? null) && (int) $row[$column] === $from) {
+                    $plan['rows'][$referring][$id][$column] = $to;
+                }
+            }
+        }
+        $plan['remaps'][] = ['table' => $table, 'from' => $from, 'to' => $to];
+
+        return $to;
     }
 
     /**
@@ -426,7 +532,7 @@ class FiscalReplay
                 }
             }
             if ($plan['sessions'] !== []) {
-                $ids = array_keys($plan['sessions']);
+                $ids = array_map(static fn (array $row): int => (int) $row['id'], array_values($plan['sessions']));
                 $connection->fetchFirstColumn(sprintf('SELECT id FROM session WHERE id IN (%s) FOR UPDATE', implode(',', array_fill(0, \count($ids), '?'))), $ids);
             }
             foreach ($plan['counters'] as $counter) {
@@ -449,8 +555,8 @@ class FiscalReplay
                     continue;
                 }
                 foreach ($plan['refs'][$index] as [$table, $id]) {
-                    if (!isset($plan['present'][$table][$id]) && !isset($written[$table][$id])) {
-                        $this->insert($table, $plan['rows'][$table][$id]);
+                    if (!isset($written[$table][$id])) {
+                        $this->put($plan, $table, $id);
                         $written[$table][$id] = true;
                     }
                 }
@@ -472,10 +578,8 @@ class FiscalReplay
             foreach (self::LATER_TABLES as $table) {
                 $rows = $plan['rows'][$table] ?? [];
                 ksort($rows);
-                foreach ($rows as $id => $row) {
-                    if (!isset($plan['present'][$table][$id])) {
-                        $this->insert($table, $row);
-                    }
+                foreach (array_keys($rows) as $id) {
+                    $this->put($plan, $table, $id);
                 }
             }
 
@@ -517,6 +621,33 @@ class FiscalReplay
         }
         $this->connection->executeStatement(sprintf('INSERT IGNORE INTO %s (%s) VALUES (%s)', $counter['table'], implode(', ', $columns), implode(', ', array_fill(0, \count($values), '?'))), $values);
         $this->connection->executeStatement(sprintf('UPDATE %s SET last_number = GREATEST(last_number, ?) WHERE %s', $counter['table'], $where), [$counter['number'], ...$parameters]);
+    }
+
+    /**
+     * Writes one journaled row: kept when already there, updated to the journal's
+     * state when it is the same entity in an older state, inserted otherwise (under
+     * its fresh id when remapped).
+     *
+     * @param array<string, mixed> $plan
+     */
+    private function put(array $plan, string $table, int $id): void
+    {
+        if (isset($plan['present'][$table][$id])) {
+            return;
+        }
+        $row = $plan['rows'][$table][$id];
+        if (!isset($plan['update'][$table][$id])) {
+            $this->insert($table, $row);
+
+            return;
+        }
+        unset($row['id']);
+        $columns = array_map(static fn (string $column): string => '`' . str_replace('`', '``', $column) . '` = ?', array_keys($row));
+        try {
+            $this->connection->executeStatement(sprintf('UPDATE `%s` SET %s WHERE id = ?', $table, implode(', ', $columns)), [...array_values($row), $id]);
+        } catch (UniqueConstraintViolationException $e) {
+            throw new FiscalReplayConflict(sprintf('%s id %d choca con otra fila (%s)', $table, $id, $e->getMessage()), 0, $e);
+        }
     }
 
     /** @param array<string, mixed> $row */
@@ -590,6 +721,73 @@ class FiscalReplay
         }
 
         return true;
+    }
+
+    /**
+     * Whether a row already there with the same id is the same entity (IDENTITY).
+     *
+     * @param array<string, mixed> $existing
+     * @param array<string, mixed> $row
+     */
+    private static function sameIdentity(string $table, array $existing, array $row): bool
+    {
+        if (!isset(self::IDENTITY[$table])) {
+            return false;
+        }
+        foreach (self::IDENTITY[$table] as $column) {
+            if (!\array_key_exists($column, $existing) || !\array_key_exists($column, $row)) {
+                return false;
+            }
+            $value = $row[$column];
+            $current = $existing[$column];
+            if ($value === null || $current === null ? $value !== $current : (string) $value !== (string) $current) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * The file whose last line is a torn write the next flush cuts off (no newline,
+     * or not JSON, and not a line head.json records), null otherwise. A complete line
+     * that was cut afterwards is damage, reported by JournalVerifier instead.
+     */
+    private function tornTail(JournalLocation $location): ?string
+    {
+        $files = $location->journalFiles();
+        if ($files === []) {
+            return null;
+        }
+        $file = $files[\count($files) - 1];
+        clearstatcache(true, $file);
+        $size = (int) @filesize($file);
+        if ($size === 0) {
+            return null;
+        }
+        $length = min($size, 1 << 20);
+        $chunk = (string) @file_get_contents($file, false, null, $size - $length, $length);
+        if (str_ends_with($chunk, "\n")) {
+            $body = substr($chunk, 0, -1);
+            $start = strrpos($body, "\n");
+            if ($start === false && $length < $size) {
+                return null;
+            }
+            $last = $start === false ? $body : substr($body, $start + 1);
+            try {
+                json_decode($last, true, 512, \JSON_THROW_ON_ERROR);
+
+                return null;
+            } catch (\JsonException) {
+            }
+        }
+        $valid = $location->lastValidLine();
+        $head = $location->readHead();
+        if ($head !== null && (\is_array($valid) ? (int) $valid['seq'] : 0) < $head['seq']) {
+            return null;
+        }
+
+        return basename($file);
     }
 
     /**

@@ -117,11 +117,33 @@ final class FiscalReplayCommandTest extends TestCase
         $application->add(new FiscalReplayCommand($this->createMock(FiscalReplay::class)));
         $help = $application->find('tpv:fiscal:replay')->getHelp();
 
-        $this->assertStringContainsString('0 hecho, o nada que recuperar', $help);
+        $this->assertStringContainsString('0 hecho, nada que recuperar, o la base de datos va por delante del diario (lo anota el siguiente tpv:cron)', $help);
         $this->assertStringContainsString('1 error', $help);
         $this->assertStringContainsString('2 (sin --apply) hay documentos que recuperar', $help);
         $this->assertStringContainsString('3 la copia restaurada es anterior al diario conservado', $help);
         $this->assertStringContainsString('4 conflicto', $help);
+    }
+
+    public function testADatabaseAheadOfTheJournalExitsZeroAndSaysWhatResolvesIt(): void
+    {
+        $message = 'La base de datos va por delante del diario fiscal: no hay nada que recuperar; el siguiente tpv:cron anota los documentos que faltan.';
+        $tester = $this->tester(new FiscalReplayResult(FiscalReplayResult::AHEAD, [], $message), false);
+
+        $this->assertSame(0, $tester->execute([]));
+        $this->assertStringContainsString($message, self::display($tester));
+    }
+
+    public function testRemappedIdsAreListedInTheDryRunAndAfterApplying(): void
+    {
+        $remaps = [['table' => 'movement', 'from' => 15, 'to' => 31], ['table' => 'session', 'from' => 4, 'to' => 9]];
+        $tester = $this->tester(new FiscalReplayResult(FiscalReplayResult::PENDING, self::DOCUMENTS, null, $remaps), false);
+        $this->assertSame(2, $tester->execute([]));
+        $this->assertStringContainsString('movement id 15 → 31 (el id original lo ocupa otra fila)', self::display($tester));
+        $this->assertStringContainsString('session id 4 → 9 (el id original lo ocupa otra fila)', self::display($tester));
+
+        $tester = $this->tester(new FiscalReplayResult(FiscalReplayResult::DONE, self::DOCUMENTS, null, $remaps), true);
+        $this->assertSame(0, $tester->execute(['--apply' => true]));
+        $this->assertStringContainsString('movement id 15 → 31', self::display($tester));
     }
 
     /** The exit code of every status (D8.5). */
@@ -129,6 +151,7 @@ final class FiscalReplayCommandTest extends TestCase
     {
         $this->assertSame(0, (new FiscalReplayResult(FiscalReplayResult::DONE))->exitCode());
         $this->assertSame(0, (new FiscalReplayResult(FiscalReplayResult::NOTHING))->exitCode());
+        $this->assertSame(0, (new FiscalReplayResult(FiscalReplayResult::AHEAD))->exitCode());
         $this->assertSame(1, (new FiscalReplayResult(FiscalReplayResult::ERROR))->exitCode());
         $this->assertSame(1, (new FiscalReplayResult(FiscalReplayResult::STILL_BLOCKED))->exitCode());
         $this->assertSame(2, (new FiscalReplayResult(FiscalReplayResult::PENDING))->exitCode());

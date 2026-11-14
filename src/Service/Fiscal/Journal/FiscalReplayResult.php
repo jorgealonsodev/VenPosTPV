@@ -13,6 +13,11 @@ final class FiscalReplayResult
 {
     /** Nothing to replay: the database holds every document of the journal. */
     public const NOTHING = 'nothing';
+    /**
+     * The database holds every document of the journal and more: those are not
+     * journaled yet (a flush pending). Nothing to replay; the next tpv:cron journals them.
+     */
+    public const AHEAD = 'ahead';
     /** Dry run: these documents would be replayed. */
     public const PENDING = 'pending';
     /** Replayed, the chain verifies and the guard no longer blocks. */
@@ -29,6 +34,7 @@ final class FiscalReplayResult
     private const EXIT_CODES = [
         self::NOTHING => 0,
         self::DONE => 0,
+        self::AHEAD => 0,
         self::ERROR => 1,
         self::STILL_BLOCKED => 1,
         self::PENDING => 2,
@@ -39,11 +45,14 @@ final class FiscalReplayResult
     /**
      * @param list<array{seq: int, kind: string, number: string, generated_at: string}> $documents
      *        the documents replayed (DONE, STILL_BLOCKED) or that would be (PENDING)
+     * @param list<array{table: string, from: int, to: int}> $remaps movement, outbox and
+     *        session rows put under a fresh id because their original id holds another row
      */
     public function __construct(
         public readonly string $status,
         public readonly array $documents = [],
         public readonly ?string $message = null,
+        public readonly array $remaps = [],
     ) {
     }
 

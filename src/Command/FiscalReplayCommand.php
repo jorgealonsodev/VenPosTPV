@@ -18,7 +18,8 @@ use VenPosTPV\Service\Fiscal\Journal\FiscalReplayResult;
  * restore of an older backup, puts back the documents the journal holds and the
  * database lacks. A dry run by default; --apply writes.
  *
- * Exit codes (also in --help): 0 done, or nothing to recover; 1 error (nothing
+ * Exit codes (also in --help): 0 done, nothing to recover, or the database is only
+ * ahead of the journal (the next tpv:cron journals it); 1 error (nothing
  * written), or the till is still blocked afterwards; 2 dry run with documents to
  * recover; 3 the restored backup is older than the journal kept; 4 conflict.
  */
@@ -42,7 +43,16 @@ final class FiscalReplayCommand extends Command
 
             Sin opciones (o con --dry-run) solo lista lo que recuperaría y no escribe nada.
             Con --apply lo recupera todo en una sola transacción: si algo falla, la base de
-            datos queda como estaba. Volver a ejecutarla no cambia nada.
+            datos queda como estaba. Volver a ejecutarla no cambia nada. Solo se ejecuta
+            mientras la caja está bloqueada.
+
+            Una fila que ya estaba en la copia en un estado anterior (una devolución
+            pendiente que se completó después, un cambio reintentado después) se pone como
+            la guarda el diario. Si el id de un movimiento de caja, de una subida a la tienda
+            o de una sesión de caja lo ocupa ya otra fila (por ejemplo una entrada de caja
+            manual hecha después de restaurar), la fila del diario se guarda con un id nuevo
+            y se lista como «Reasignado». Los ids de registros fiscales, ventas,
+            devoluciones y facturas nunca cambian: si están ocupados es un conflicto.
 
             No se recuperan: cierres Z, el cierre de las sesiones de caja posteriores a la
             copia (vuelven abiertas: ciérralas de nuevo), el estado de impresión, el stock,
@@ -51,7 +61,7 @@ final class FiscalReplayCommand extends Command
             subidas a la tienda de lo recuperado vuelven a la cola.
 
             Códigos de salida:
-              0 hecho, o nada que recuperar
+              0 hecho, nada que recuperar, o la base de datos va por delante del diario (lo anota el siguiente tpv:cron)
               1 error (no se ha escrito nada), o la caja sigue bloqueada después
               2 (sin --apply) hay documentos que recuperar
               3 la copia restaurada es anterior al diario conservado: restaura una copia más reciente
@@ -80,13 +90,16 @@ final class FiscalReplayCommand extends Command
                 foreach ($documents as $document) {
                     $output->writeln(sprintf('  %d  %s  %s  %s', $document['seq'], $document['kind'], $document['number'], $document['generated_at']));
                 }
+                $this->writeRemaps($output, $result->remaps);
                 $output->writeln('No se ha escrito nada. Para recuperarlos: tpv:fiscal:replay --apply');
                 break;
             case FiscalReplayResult::DONE:
                 $output->writeln(sprintf('Recuperados %d documentos (%s … %s). La cadena fiscal es correcta. La caja puede volver a emitir documentos.', \count($documents), $documents[0]['number'] ?? '?', $documents[\count($documents) - 1]['number'] ?? '?'));
+                $this->writeRemaps($output, $result->remaps);
                 $output->writeln('No se recuperan los cierres Z ni el cierre de las sesiones de caja posteriores a la copia (vuelven abiertas: ciérralas de nuevo), el estado de impresión, el stock, los clientes nuevos, los tickets aparcados ni los movimientos de caja manuales. Las subidas a la tienda vuelven a la cola.');
                 break;
             case FiscalReplayResult::NOTHING:
+            case FiscalReplayResult::AHEAD:
                 $output->writeln($result->message ?? 'Nada que recuperar.');
                 break;
             default:
@@ -94,5 +107,13 @@ final class FiscalReplayCommand extends Command
         }
 
         return $result->exitCode();
+    }
+
+    /** @param list<array{table: string, from: int, to: int}> $remaps */
+    private function writeRemaps(OutputInterface $output, array $remaps): void
+    {
+        foreach ($remaps as $remap) {
+            $output->writeln(sprintf('  Reasignado: %s id %d → %d (el id original lo ocupa otra fila)', $remap['table'], $remap['from'], $remap['to']));
+        }
     }
 }
