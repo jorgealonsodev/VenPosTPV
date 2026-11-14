@@ -19,4 +19,19 @@ final class CronJob
         public readonly ?string $dailyAt = null,
     ) {
     }
+
+    /** The command and its options as typed, e.g. «tpv:catalog:sync --full». */
+    public function commandLine(): string
+    {
+        $parts = [$this->command];
+        foreach ($this->arguments as $name => $value) {
+            if ($value === true) {
+                $parts[] = (string) $name;
+            } elseif ($value !== false && $value !== null) {
+                $parts[] = $name . '=' . (\is_scalar($value) ? (string) $value : json_encode($value));
+            }
+        }
+
+        return implode(' ', $parts);
+    }
 }

@@ -8,6 +8,7 @@ use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\ArrayInput;
 use Symfony\Component\Console\Input\InputInterface;
+use Symfony\Component\Console\Output\ConsoleOutputInterface;
 use Symfony\Component\Console\Output\Output;
 use Symfony\Component\Console\Output\OutputInterface;
 use VenPosTPV\Service\Cron\CronJob;
@@ -37,7 +38,20 @@ final class CronCommand extends Command
 
         if ($output->isVerbose()) {
             foreach ($report->skipped() as $id) {
-                $output->writeln("Skipped {$id}: still running from an earlier run.");
+                $output->writeln("Skipped {$id}: still running from an earlier run (or another nightly job is).");
+            }
+        }
+
+        // Panels set to mail only errors send what goes to STDERR: one line per failed job.
+        if ($report->failed()) {
+            $errorOutput = $output instanceof ConsoleOutputInterface ? $output->getErrorOutput() : $output;
+            $jobs = [];
+            foreach (CronRunner::jobs() as $job) {
+                $jobs[$job->id] = $job;
+            }
+            foreach ($report->failures() as $id) {
+                $commandLine = isset($jobs[$id]) ? $jobs[$id]->commandLine() : $id;
+                $errorOutput->writeln("tpv:cron: {$id} ({$commandLine}) failed: " . ($report->errors()[$id] ?? ''), OutputInterface::OUTPUT_RAW);
             }
         }
 
@@ -46,8 +60,6 @@ final class CronCommand extends Command
 
     private function launch(CronJob $job, OutputInterface $output): CronJobOutcome
     {
-        $command = $this->getApplication()?->find($job->command)
-            ?? throw new \LogicException("The command {$job->command} is not available.");
         $jobInput = new ArrayInput($job->arguments);
         $jobInput->setInteractive(false);
         $tee = new class($output) extends Output {
@@ -66,6 +78,8 @@ final class CronCommand extends Command
         };
 
         try {
+            $command = $this->getApplication()?->find($job->command)
+                ?? throw new \LogicException("The command {$job->command} is not available.");
             $exitCode = $command->run($jobInput, $tee);
         } catch (\Throwable $e) {
             // The runner records it as the job's error; the panel's log shows it too.

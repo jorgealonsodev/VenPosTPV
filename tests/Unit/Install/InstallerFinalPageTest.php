@@ -54,4 +54,19 @@ final class InstallerFinalPageTest extends TestCase
         self::assertStringContainsString('Crear caja y usarla en este equipo', $this->source);
         self::assertStringContainsString('Agente de impresión', $this->source);
     }
+
+    public function testTheMigrationNotesWarnWhoKeepsMoreThanSevenBackups(): void
+    {
+        foreach (['despliegue-plesk.md', 'despliegue-hosting.md'] as $doc) {
+            $source = (string) file_get_contents(__DIR__ . '/../../../docs/' . $doc);
+            $start = strpos($source, '**Si tu instalación tiene las cinco tareas de antes**');
+            self::assertNotFalse($start, $doc);
+            $end = strpos($source, "\n\n", $start);
+            $note = substr($source, $start, $end === false ? null : $end - $start);
+
+            self::assertStringContainsString('tpv:backup:database --keep=N', $note, $doc);
+            self::assertStringContainsString('más de 7', $note, $doc);
+            self::assertStringNotContainsString('no se rompe nada', $note, $doc);
+        }
+    }
 }

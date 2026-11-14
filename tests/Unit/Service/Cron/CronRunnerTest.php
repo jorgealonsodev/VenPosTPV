@@ -24,14 +24,17 @@ final class CronRunnerTest extends TestCase
 
     protected function setUp(): void
     {
-        $this->connection = DriverManager::getConnection(['driver' => 'pdo_sqlite', 'memory' => true]);
-        $this->connection->executeStatement('CREATE TABLE app_setting (name VARCHAR(100) PRIMARY KEY, value TEXT)');
         $this->lockDir = sys_get_temp_dir() . '/venpos-cron-' . bin2hex(random_bytes(6));
         mkdir($this->lockDir, 0700);
+        // A file, not ':memory:': the runner closes the connection between jobs
+        // (it reconnects on next use), which would drop an in-memory database.
+        $this->connection = DriverManager::getConnection(['driver' => 'pdo_sqlite', 'path' => $this->lockDir . '/state.sqlite']);
+        $this->connection->executeStatement('CREATE TABLE app_setting (name VARCHAR(100) PRIMARY KEY, value TEXT)');
     }
 
     protected function tearDown(): void
     {
+        $this->connection->close();
         foreach (glob($this->lockDir . '/*') ?: [] as $file) {
             @unlink($file);
         }
@@ -243,6 +246,155 @@ final class CronRunnerTest extends TestCase
 
         self::assertSame(['outbox', 'stock', 'catalog', 'customers', 'backup'], $this->launchedAt('2026-11-14 12:00:10'));
         self::assertNull($this->runner()->status(self::at('2026-11-14 12:00:20'))['last_run_at']);
+    }
+
+    public function testAStateThatCannotBeSavedNeverStopsTheRun(): void
+    {
+        $launched = [];
+        $report = $this->runner()->run(function (CronJob $job) use (&$launched): CronJobOutcome {
+            $launched[] = $job->id;
+            if ($job->id === 'catalog') {
+                // From now on every state write fails (like a database that went away).
+                $this->connection->executeStatement("CREATE TRIGGER no_writes BEFORE INSERT ON app_setting BEGIN SELECT RAISE(ABORT, 'MySQL server has gone away'); END");
+
+                return new CronJobOutcome(1, 'PrestaShop API error: timeout');
+            }
+
+            return new CronJobOutcome(0, 'ok');
+        }, self::at('2026-11-14 03:00:00'));
+
+        self::assertSame(['outbox', 'stock', 'catalog', 'customers', 'backup'], $launched);
+        self::assertSame(['outbox', 'stock', 'catalog', 'customers', 'backup'], $report->launched());
+        self::assertSame(['catalog'], $report->failures());
+        self::assertSame(['catalog' => 'PrestaShop API error: timeout'], $report->errors());
+    }
+
+    public function testAConnectionLeftUnusableByAJobIsReplacedBeforeItsStateIsSaved(): void
+    {
+        $this->runner()->run(function (CronJob $job): CronJobOutcome {
+            if ($job->id === 'catalog') {
+                // This connection can no longer write (as after minutes idle on MySQL).
+                $this->connection->executeStatement('PRAGMA query_only = 1');
+
+                return new CronJobOutcome(1, 'PrestaShop API error: timeout');
+            }
+
+            return new CronJobOutcome(0, 'ok');
+        }, self::at('2026-11-14 03:00:00'));
+
+        $status = $this->runner()->status(self::at('2026-11-14 03:00:30'));
+        self::assertSame('PrestaShop API error: timeout', $this->jobStatus($status, 'catalog')['last_error'], 'the attempt is counted');
+        self::assertSame('2026-11-14T03:00:00+01:00', $this->jobStatus($status, 'backup')['last_success_at']);
+    }
+
+    public function testEveryJobStartsOnAFreshDatabaseConnection(): void
+    {
+        $connected = [];
+        $this->runner()->run(function (CronJob $job) use (&$connected): CronJobOutcome {
+            $connected[$job->id] = $this->connection->isConnected();
+
+            return new CronJobOutcome(0, 'ok');
+        }, self::at('2026-11-14 12:00:10'));
+
+        self::assertSame(['outbox' => false, 'stock' => false, 'catalog' => false, 'customers' => false, 'backup' => false], $connected);
+    }
+
+    public function testAJobsStateIsSavedBeforeItsLockIsReleased(): void
+    {
+        $lockDir = $this->lockDir;
+        $lockHeldWhileSaving = new \ArrayObject();
+        $store = new class($this->connection, $lockDir, $lockHeldWhileSaving) extends CronStateStore {
+            /** @param \ArrayObject<string, bool> $held */
+            public function __construct(Connection $connection, private readonly string $lockDir, private readonly \ArrayObject $held)
+            {
+                parent::__construct($connection);
+            }
+
+            public function saveJob(string $id, array $data): void
+            {
+                $probe = new CronLock($this->lockDir);
+                $free = $probe->acquire('cron-' . $id);
+                $probe->release('cron-' . $id);
+                $this->held[$id] = !$free;
+                parent::saveJob($id, $data);
+            }
+        };
+
+        (new CronRunner($store, new CronLock($lockDir), 'Europe/Madrid'))->run(
+            static fn (CronJob $job): CronJobOutcome => new CronJobOutcome(0, 'ok'),
+            self::at('2026-11-14 12:00:10')
+        );
+
+        self::assertSame(['outbox' => true, 'stock' => true, 'catalog' => true, 'customers' => true, 'backup' => true], $lockHeldWhileSaving->getArrayCopy());
+    }
+
+    public function testASuccessDatedInTheFutureDoesNotKeepANightlyJobFromRunning(): void
+    {
+        $this->launchedAt('2026-11-14 12:00:10');
+        $store = new CronStateStore($this->connection);
+        $store->saveJob('catalog', ['last_attempt_at' => '2027-06-01T03:00:00+02:00', 'last_success_at' => '2027-06-01T03:00:00+02:00', 'last_error' => null]);
+
+        self::assertContains('catalog', $this->launchedAt('2026-11-15 03:00:10'));
+    }
+
+    public function testAnAttemptDatedInTheFutureDoesNotPostponeTheRetry(): void
+    {
+        $this->launchedAt('2026-11-14 12:00:10');
+        $this->launchedAt('2026-11-15 03:00:10', ['catalog' => 1]);
+        $store = new CronStateStore($this->connection);
+        $state = $store->job('catalog');
+        $state['last_attempt_at'] = '2027-06-01T03:00:00+02:00';
+        $store->saveJob('catalog', $state);
+
+        self::assertContains('catalog', $this->launchedAt('2026-11-15 03:30:10'));
+    }
+
+    public function testAHeartbeatInTheFutureIsNotReportedAsRunning(): void
+    {
+        (new CronStateStore($this->connection))->recordRun(self::at('2027-06-01 03:00:00'));
+
+        self::assertFalse($this->runner()->status(self::at('2026-11-14 12:00:00'))['running']);
+    }
+
+    public function testWhileANightlyJobRunsNoOtherNightlyJobStartsButTheMinuteJobsDo(): void
+    {
+        // Another process is inside a nightly job (the full catalog takes minutes).
+        $held = fopen($this->lockDir . '/cron-nightly.lock', 'c');
+        self::assertTrue(flock($held, LOCK_EX | LOCK_NB));
+
+        try {
+            $launched = [];
+            $report = $this->runner()->run(static function (CronJob $job) use (&$launched): CronJobOutcome {
+                $launched[] = $job->id;
+
+                return new CronJobOutcome(0, 'ok');
+            }, self::at('2026-11-14 12:00:10'));
+
+            self::assertSame(['outbox', 'stock'], $launched);
+            self::assertSame(['catalog', 'customers', 'backup'], $report->skipped());
+            self::assertFalse($report->failed(), 'a skipped job is not a failure');
+        } finally {
+            flock($held, LOCK_UN);
+            fclose($held);
+        }
+
+        // Not counted as attempts: they run as soon as the nightly lock is free.
+        self::assertSame(['outbox', 'stock', 'catalog', 'customers', 'backup'], $this->launchedAt('2026-11-14 12:01:10'));
+    }
+
+    public function testTheMinuteJobsDoNotTakeTheNightlyLock(): void
+    {
+        $this->launchedAt('2026-11-14 12:00:10');
+        $nightlyFree = [];
+        $this->runner()->run(function (CronJob $job) use (&$nightlyFree): CronJobOutcome {
+            $probe = new CronLock($this->lockDir);
+            $nightlyFree[$job->id] = $probe->acquire('cron-nightly');
+            $probe->release('cron-nightly');
+
+            return new CronJobOutcome(0, 'ok');
+        }, self::at('2026-11-15 03:00:10'));
+
+        self::assertSame(['outbox' => true, 'stock' => true, 'catalog' => false], $nightlyFree);
     }
 
     /**

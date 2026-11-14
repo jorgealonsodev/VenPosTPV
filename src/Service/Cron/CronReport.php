@@ -10,13 +10,21 @@ final class CronReport
     /**
      * @param list<string> $launched
      * @param list<string> $failures
-     * @param list<string> $skipped  still running from an earlier run
+     * @param list<string> $skipped  still running from an earlier run (or another nightly job is)
+     * @param array<string, string> $errors the error text of each failed job, by id
      */
     public function __construct(
         private readonly array $launched,
         private readonly array $failures,
         private readonly array $skipped,
+        private readonly array $errors = [],
     ) {
+    }
+
+    /** @return array<string, string> */
+    public function errors(): array
+    {
+        return $this->errors;
     }
 
     /** @return list<string> */

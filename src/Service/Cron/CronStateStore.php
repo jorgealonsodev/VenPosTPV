@@ -46,6 +46,19 @@ class CronStateStore
         }
     }
 
+    /**
+     * Drops the database connection; the next query opens a new one. A job can
+     * spend minutes on HTTP with the connection idle, and MySQL may close it
+     * meanwhile ("MySQL server has gone away"), as each job used to run in its
+     * own process with its own connection. Inside a transaction it is kept.
+     */
+    public function refreshConnection(): void
+    {
+        if (!$this->connection->isTransactionActive()) {
+            $this->connection->close();
+        }
+    }
+
     public function recordRun(\DateTimeImmutable $at): void
     {
         $this->write(self::HEARTBEAT, ['at' => $at->format(\DATE_ATOM)]);

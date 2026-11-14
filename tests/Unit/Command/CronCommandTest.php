@@ -39,16 +39,22 @@ final class CronCommandTest extends TestCase
         @rmdir($this->lockDir);
     }
 
-    /** @param array<string, int> $exitCodes per command name; 0 when absent */
-    private function tester(array $exitCodes = []): CommandTester
+    /**
+     * @param array<string, int> $exitCodes per command name; 0 when absent
+     * @param list<string>       $missing   commands the application does not have
+     */
+    private function tester(array $exitCodes = [], array $missing = []): CommandTester
     {
-        $connection = DriverManager::getConnection(['driver' => 'pdo_sqlite', 'memory' => true]);
+        // A file, not ':memory:': the runner closes the connection between jobs.
+        $connection = DriverManager::getConnection(['driver' => 'pdo_sqlite', 'path' => $this->lockDir . '/state-' . bin2hex(random_bytes(4)) . '.sqlite']);
         $connection->executeStatement('CREATE TABLE app_setting (name VARCHAR(64) PRIMARY KEY, value TEXT)');
         $runner = new CronRunner(new CronStateStore($connection), new CronLock($this->lockDir), 'Europe/Madrid');
 
         $application = new Application();
         foreach (['tpv:sync:outbox', 'tpv:catalog:sync', 'tpv:customers:sync', 'tpv:backup:database'] as $name) {
-            $application->add($this->fakeCommand($name, $exitCodes[$name] ?? 0));
+            if (!\in_array($name, $missing, true)) {
+                $application->add($this->fakeCommand($name, $exitCodes[$name] ?? 0));
+            }
         }
         $application->add(new CronCommand($runner));
 
@@ -124,5 +130,43 @@ final class CronCommandTest extends TestCase
             fclose($held);
         }
         self::assertNotContains('tpv:catalog:sync --stock-only', $this->calls);
+    }
+
+    public function testEachFailedJobIsWrittenToTheErrorOutputForThePanelsErrorMail(): void
+    {
+        $tester = $this->tester(['tpv:sync:outbox' => 1, 'tpv:catalog:sync' => 1]);
+
+        $tester->execute([], ['capture_stderr_separately' => true]);
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertSame(
+            "tpv:cron: outbox (tpv:sync:outbox) failed: tpv:sync:outbox failed: shop unreachable\n"
+            . "tpv:cron: stock (tpv:catalog:sync --stock-only) failed: tpv:catalog:sync failed: shop unreachable\n"
+            . "tpv:cron: catalog (tpv:catalog:sync --full) failed: tpv:catalog:sync failed: shop unreachable\n",
+            str_replace(\PHP_EOL, "\n", $tester->getErrorOutput())
+        );
+        self::assertStringContainsString('tpv:sync:outbox failed: shop unreachable', $tester->getDisplay(), 'the command\'s own output still shows');
+    }
+
+    public function testWhenNothingFailsNothingIsWrittenToTheErrorOutput(): void
+    {
+        $tester = $this->tester();
+
+        $tester->execute([], ['capture_stderr_separately' => true]);
+
+        self::assertSame(Command::SUCCESS, $tester->getStatusCode());
+        self::assertSame('', $tester->getErrorOutput());
+    }
+
+    public function testAMissingCommandIsThatJobsFailureAndTheOthersStillRun(): void
+    {
+        $tester = $this->tester([], ['tpv:customers:sync']);
+
+        $tester->execute([], ['capture_stderr_separately' => true]);
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertSame(['tpv:sync:outbox', 'tpv:catalog:sync --stock-only', 'tpv:catalog:sync --full', 'tpv:backup:database'], $this->calls);
+        self::assertStringContainsString('tpv:cron: customers (tpv:customers:sync) failed: ', $tester->getErrorOutput());
+        self::assertStringContainsString('tpv:customers:sync', $tester->getDisplay());
     }
 }

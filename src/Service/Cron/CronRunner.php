@@ -11,7 +11,9 @@ use Symfony\Component\DependencyInjection\Attribute\Autowire;
  * Minute jobs run every time. A nightly job runs when its last success is older
  * than the latest occurrence of its hour (so a missed hour runs at the next
  * minute); after a failure it is tried again no sooner than 30 minutes later, at
- * most 3 times a night. A job still running from an earlier run is skipped.
+ * most 3 times a night. A job still running from an earlier run is skipped, and
+ * so is a nightly job while another nightly job runs. A state that cannot be
+ * saved never stops the run.
  */
 class CronRunner
 {
@@ -19,6 +21,7 @@ class CronRunner
     private const MAX_ATTEMPTS_PER_NIGHT = 3;
     private const RUNNING_WITHIN_SECONDS = 300;
     private const ERROR_MAX_LENGTH = 300;
+    private const NIGHTLY_LOCK = 'cron-nightly';
 
     private readonly \DateTimeZone $timezone;
 
@@ -50,43 +53,85 @@ class CronRunner
     public function run(callable $launch, ?\DateTimeImmutable $now = null): CronReport
     {
         $clock = fn (): \DateTimeImmutable => ($now ?? new \DateTimeImmutable())->setTimezone($this->timezone);
-        $this->store->recordRun($clock());
+        $this->save(fn () => $this->store->recordRun($clock()));
 
-        $launched = $failures = $skipped = [];
+        $launched = $failures = $skipped = $errors = [];
         foreach (self::jobs() as $job) {
             $at = $clock();
             $state = $this->store->job($job->id);
             if (!$this->isDue($job, $state, $at)) {
                 continue;
             }
-            $lockName = 'cron-' . $job->id;
+            // A nightly job also takes the nightly lock, so two nightly jobs never
+            // run at the same time (a backup taken during the catalog write).
+            $locks = $job->dailyAt !== null ? [self::NIGHTLY_LOCK, 'cron-' . $job->id] : ['cron-' . $job->id];
             try {
-                if (!$this->lock->acquire($lockName)) {
-                    $skipped[] = $job->id;
-                    continue;
-                }
+                $held = $this->acquireAll($locks);
             } catch (\Throwable $e) {
                 $launched[] = $failures[] = $job->id;
-                $this->record($job, $state, $at, $e->getMessage());
+                $errors[$job->id] = $this->record($job, $state, $at, $e->getMessage());
+                continue;
+            }
+            if (!$held) {
+                $skipped[] = $job->id;
                 continue;
             }
 
             $launched[] = $job->id;
             try {
-                $outcome = $launch($job);
-                $error = $outcome->exitCode === 0 ? null : self::lastLine($outcome->output, $outcome->exitCode);
-            } catch (\Throwable $e) {
-                $error = $e->getMessage() !== '' ? $e->getMessage() : $e::class;
+                $this->store->refreshConnection();
+                try {
+                    $outcome = $launch($job);
+                    $error = $outcome->exitCode === 0 ? null : self::lastLine($outcome->output, $outcome->exitCode);
+                } catch (\Throwable $e) {
+                    $error = $e->getMessage() !== '' ? $e->getMessage() : $e::class;
+                }
+                $recorded = $this->record($job, $state, $at, $error);
+                if ($recorded !== null) {
+                    $failures[] = $job->id;
+                    $errors[$job->id] = $recorded;
+                }
             } finally {
-                $this->lock->release($lockName);
+                // Saved before the lock is freed: another process must not start
+                // a nightly job that has just finished.
+                foreach (array_reverse($locks) as $lockName) {
+                    $this->lock->release($lockName);
+                }
             }
-            if ($error !== null) {
-                $failures[] = $job->id;
-            }
-            $this->record($job, $state, $at, $error);
         }
 
-        return new CronReport($launched, $failures, $skipped);
+        return new CronReport($launched, $failures, $skipped, $errors);
+    }
+
+    /**
+     * Takes every lock or none: false (holding nothing) when another process holds one.
+     *
+     * @param list<string> $names
+     */
+    private function acquireAll(array $names): bool
+    {
+        $acquired = [];
+        try {
+            foreach ($names as $name) {
+                if (!$this->lock->acquire($name)) {
+                    break;
+                }
+                $acquired[] = $name;
+            }
+        } catch (\Throwable $e) {
+            foreach (array_reverse($acquired) as $name) {
+                $this->lock->release($name);
+            }
+            throw $e;
+        }
+        if (\count($acquired) === \count($names)) {
+            return true;
+        }
+        foreach (array_reverse($acquired) as $name) {
+            $this->lock->release($name);
+        }
+
+        return false;
     }
 
     /**
@@ -111,7 +156,7 @@ class CronRunner
 
         return [
             'last_run_at' => $this->format($lastRun),
-            'running' => $lastRun !== null && $now->getTimestamp() - $lastRun->getTimestamp() <= self::RUNNING_WITHIN_SECONDS,
+            'running' => self::notAfter($lastRun, $now) !== null && $now->getTimestamp() - $lastRun->getTimestamp() <= self::RUNNING_WITHIN_SECONDS,
             'jobs' => $jobs,
         ];
     }
@@ -123,7 +168,8 @@ class CronRunner
             return true;
         }
         $occurrence = $this->latestOccurrence($job->dailyAt, $now);
-        $success = self::date($state['last_success_at'] ?? null);
+        // A date later than now (a clock that was ahead) counts as not set.
+        $success = self::notAfter(self::date($state['last_success_at'] ?? null), $now);
         if ($success !== null && $success >= $occurrence) {
             return false;
         }
@@ -133,7 +179,7 @@ class CronRunner
         if ((int) ($state['failed_attempts'] ?? 0) >= self::MAX_ATTEMPTS_PER_NIGHT) {
             return false;
         }
-        $attempt = self::date($state['last_attempt_at'] ?? null);
+        $attempt = self::notAfter(self::date($state['last_attempt_at'] ?? null), $now);
 
         return $attempt === null || $now->getTimestamp() - $attempt->getTimestamp() >= self::RETRY_AFTER_SECONDS;
     }
@@ -148,8 +194,12 @@ class CronRunner
         return $today > $local ? $today->modify('-1 day')->setTime($hour, $minute) : $today;
     }
 
-    /** @param array<string, mixed> $state */
-    private function record(CronJob $job, array $state, \DateTimeImmutable $at, ?string $error): void
+    /**
+     * Saves the job's result and returns its stored error (null on success).
+     *
+     * @param array<string, mixed> $state
+     */
+    private function record(CronJob $job, array $state, \DateTimeImmutable $at, ?string $error): ?string
     {
         $state['last_attempt_at'] = $at->format(\DATE_ATOM);
         if ($error === null) {
@@ -165,7 +215,26 @@ class CronRunner
                 $state['failed_attempts'] = ($sameNight ? (int) ($state['failed_attempts'] ?? 0) : 0) + 1;
             }
         }
-        $this->store->saveJob($job->id, $state);
+        $this->save(function () use ($job, $state): void {
+            $this->store->refreshConnection();
+            $this->store->saveJob($job->id, $state);
+        });
+
+        return $error === null ? null : $state['last_error'];
+    }
+
+    /** A state write that fails is lost (the stored state stays as it was); the run goes on. */
+    private function save(callable $write): void
+    {
+        try {
+            $write();
+        } catch (\Throwable) {
+        }
+    }
+
+    private static function notAfter(?\DateTimeImmutable $at, \DateTimeImmutable $now): ?\DateTimeImmutable
+    {
+        return $at !== null && $at <= $now ? $at : null;
     }
 
     private static function lastLine(string $output, int $exitCode): string
