@@ -51,7 +51,7 @@ class NumberingSettings
      */
     public function overview(int $shopId, \DateTimeImmutable $now): array
     {
-        $year = (int) $now->format('Y');
+        $year = NumberingYear::of($now);
         $rows = $this->connection->fetchAllAssociative(
             'SELECT t.id, t.name, t.ticket_letter, s.last_number
              FROM terminal t LEFT JOIN ticket_sequence s ON s.letter = t.ticket_letter AND s.year = ?
@@ -118,7 +118,7 @@ class NumberingSettings
     public function setInvoiceNext(mixed $nextNumber, mixed $reason, ?int $userId, \DateTimeImmutable $now): array
     {
         [$next, $reason] = $this->validated($nextNumber, $reason);
-        $year = (int) $now->format('Y');
+        $year = NumberingYear::of($now);
         $this->invoices->prepareYear($now);
 
         $this->apply(
@@ -149,7 +149,7 @@ class NumberingSettings
     {
         [$next, $reason] = $this->validated($nextNumber, $reason);
         $letter = $this->tickets->letterOf($terminalId);
-        $year = (int) $now->format('Y');
+        $year = NumberingYear::of($now);
         // The same row creation the sale does, outside the transaction (see prepareYear).
         $this->tickets->prepareYear($terminalId, $now);
 
@@ -180,7 +180,7 @@ class NumberingSettings
     public function setCreditNoteNext(mixed $nextNumber, mixed $reason, ?int $userId, \DateTimeImmutable $now): array
     {
         [$next, $reason] = $this->validated($nextNumber, $reason);
-        $year = (int) $now->format('Y');
+        $year = NumberingYear::of($now);
         $this->creditNotes->prepareYear($now);
 
         $this->apply(

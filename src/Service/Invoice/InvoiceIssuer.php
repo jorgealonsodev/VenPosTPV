@@ -10,6 +10,7 @@ use VenPosTPV\Service\Customer\CustomerDirectory;
 use VenPosTPV\Service\Customer\CustomerTaxData;
 use VenPosTPV\Service\Fiscal\FiscalRecorder;
 use VenPosTPV\Service\Fiscal\SpanishTaxId;
+use VenPosTPV\Service\Numbering\NumberingYear;
 use VenPosTPV\Service\Sale\VatRate;
 
 /**
@@ -174,7 +175,7 @@ class InvoiceIssuer
     /** The number the next invoice of the year takes (informative: another till may take it first). */
     private function nextNumber(\DateTimeImmutable $now): string
     {
-        $year = (int) $now->setTimezone(new \DateTimeZone($this->timeZone))->format('Y');
+        $year = NumberingYear::of($now);
         $last = (int) ($this->connection->fetchOne('SELECT last_number FROM invoice_sequence WHERE series = ? AND year = ?', [InvoiceNumberer::SERIES, $year]) ?: 0);
 
         return $last < InvoiceNumberer::MAX_NUMBER ? InvoiceNumberer::format($year, $last + 1) : '';

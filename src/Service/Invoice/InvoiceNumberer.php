@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace VenPosTPV\Service\Invoice;
 
 use Doctrine\DBAL\Connection;
+use VenPosTPV\Service\Numbering\NumberingYear;
 
 /**
  * Hands out the next full-invoice number of the shop: F + two year digits + six
@@ -33,7 +34,7 @@ class InvoiceNumberer
     {
         $this->connection->executeStatement(
             'INSERT IGNORE INTO invoice_sequence (series, year, last_number) VALUES (?, ?, 0)',
-            [self::SERIES, (int) $date->format('Y')]
+            [self::SERIES, NumberingYear::of($date)]
         );
     }
 
@@ -49,7 +50,7 @@ class InvoiceNumberer
             throw new \LogicException('Invoice numbers must be taken inside the invoice transaction');
         }
 
-        $year = (int) $date->format('Y');
+        $year = NumberingYear::of($date);
         $this->connection->executeStatement(
             'INSERT INTO invoice_sequence (series, year, last_number) VALUES (?, ?, LAST_INSERT_ID(1))
              ON DUPLICATE KEY UPDATE last_number = LAST_INSERT_ID(last_number + 1)',
