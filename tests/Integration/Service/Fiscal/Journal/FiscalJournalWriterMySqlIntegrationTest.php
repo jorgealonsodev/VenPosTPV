@@ -251,20 +251,24 @@ final class FiscalJournalWriterMySqlIntegrationTest extends TestCase
         }
     }
 
-    public function testAtNewYearTheLineStoresTheCounterYearTheNumbererUsed(): void
+    public function testTheLineStoresTheCounterYearOfItsCounterRowNotOneDerivedFromDates(): void
     {
-        // The PHP zone is UTC: the counter takes 2026 while Spain is already in 2027.
+        // The PHP zone is UTC: at 23:30 UTC on 31 December Spain is already in 2027, and
+        // the number takes Spain's year (O4), so here the counter year and the dates agree.
         date_default_timezone_set('UTC');
         $at = new \DateTimeImmutable('2026-12-31 23:30:00');
-        $this->connection->executeStatement('INSERT IGNORE INTO ticket_sequence (letter, year, last_number) VALUES (?, 2027, 0)', [JournalPathFixtures::LETTER]);
 
         $number = $this->issue(at: $at);
+        $this->assertSame(JournalPathFixtures::LETTER . '27000001', $number);
+        $this->assertSame(1, (int) $this->connection->fetchOne('SELECT last_number FROM ticket_sequence WHERE letter = ? AND year = 2027', [JournalPathFixtures::LETTER]));
+        // Fixture: the counter row now holds a year with the same two digits but unlike
+        // the year of the document's dates, so the line can only carry it by reading the row.
+        $this->connection->executeStatement('UPDATE ticket_sequence SET year = 2127 WHERE letter = ? AND year = 2027', [JournalPathFixtures::LETTER]);
         $this->journal->writer->flushAfterIssue();
 
         [$line] = $this->journal->lines();
-        $this->assertSame(JournalPathFixtures::LETTER . '26000001', $number);
         $this->assertStringContainsString('2027', (string) $line['fiscal_record']['issue_date'], 'the record is dated in Spanish time');
-        $this->assertSame(['table' => 'ticket_sequence', 'letter' => JournalPathFixtures::LETTER, 'year' => 2026, 'number' => 1], $line['counter']);
-        $this->assertSame(JournalPathFixtures::LETTER . '26', $line['series']);
+        $this->assertSame(['table' => 'ticket_sequence', 'letter' => JournalPathFixtures::LETTER, 'year' => 2127, 'number' => 1], $line['counter']);
+        $this->assertSame(JournalPathFixtures::LETTER . '27', $line['series']);
     }
 }

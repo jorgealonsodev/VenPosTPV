@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace VenPosTPV\Service\Sale;
 
 use Doctrine\DBAL\Connection;
+use VenPosTPV\Service\Numbering\NumberingYear;
 
 /**
  * Hands out the next ticket number of a terminal: letter + two year digits + six
@@ -35,7 +36,7 @@ class TicketNumberer
         $letter = $this->letterOf($terminalId);
         $this->connection->executeStatement(
             'INSERT IGNORE INTO ticket_sequence (letter, year, last_number) VALUES (?, ?, 0)',
-            [$letter, (int) $date->format('Y')]
+            [$letter, NumberingYear::of($date)]
         );
     }
 
@@ -52,7 +53,7 @@ class TicketNumberer
         }
 
         $letter = $this->letterOf($terminalId);
-        $year = (int) $date->format('Y');
+        $year = NumberingYear::of($date);
         $this->connection->executeStatement(
             'INSERT INTO ticket_sequence (letter, year, last_number) VALUES (?, ?, LAST_INSERT_ID(1))
              ON DUPLICATE KEY UPDATE last_number = LAST_INSERT_ID(last_number + 1)',

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace VenPosTPV\Service\Refund;
 
 use Doctrine\DBAL\Connection;
+use VenPosTPV\Service\Numbering\NumberingYear;
 
 /**
  * Hands out the next credit-note number of the year (R2026-000001, R2026-000002...).
@@ -29,7 +30,7 @@ class CreditNoteNumberer
     {
         $this->connection->executeStatement(
             'INSERT IGNORE INTO credit_note_sequence (year, last_number) VALUES (?, 0)',
-            [(int) $date->format('Y')]
+            [NumberingYear::of($date)]
         );
     }
 
@@ -39,7 +40,7 @@ class CreditNoteNumberer
             throw new \LogicException('Credit-note numbers must be taken inside the refund transaction');
         }
 
-        $year = (int) $date->format('Y');
+        $year = NumberingYear::of($date);
         $this->connection->executeStatement(
             'INSERT INTO credit_note_sequence (year, last_number) VALUES (?, LAST_INSERT_ID(1))
              ON DUPLICATE KEY UPDATE last_number = LAST_INSERT_ID(last_number + 1)',

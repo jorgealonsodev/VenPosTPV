@@ -347,8 +347,12 @@ final class FiscalReplayMySqlIntegrationTest extends TestCase
         date_default_timezone_set('UTC');
         try {
             $this->backup();
-            // 23:30 UTC on 31 December: the counter year is 2025 (PHP zone), the record is dated 1 January 2026 in Madrid.
+            // 23:30 UTC on 31 December is 1 January 2026 in Madrid: number and record both take 2026 (O4).
             $number = JournalIssue::ticket($this->connection, $this->journal->intents, JournalPathFixtures::TERMINAL, JournalPathFixtures::SESSION, true, new \DateTimeImmutable('2025-12-31 23:30:00', new \DateTimeZone('UTC')));
+            // Fixture: the counter row holds a year with the same two digits but unlike the
+            // year of the dates, so the line stores 2126 and only a replay that restores the
+            // line's key (not one derived from the dates or the number) gets it back.
+            $this->connection->executeStatement('UPDATE ticket_sequence SET year = 2126 WHERE letter = ? AND year = 2026', [JournalPathFixtures::LETTER]);
             $this->flush();
             $restored = $this->restore();
 
@@ -358,10 +362,11 @@ final class FiscalReplayMySqlIntegrationTest extends TestCase
         }
 
         $this->assertSame(FiscalReplayResult::DONE, $done->status, (string) $done->message);
-        $this->assertSame(JournalPathFixtures::LETTER . '25000001', $number);
+        $this->assertSame(JournalPathFixtures::LETTER . '26000001', $number);
+        $this->assertSame(2126, $this->journal->lines()[0]['counter']['year'], 'the line stores the key of its counter row');
         $this->assertSame('01-01-2026', $restored->fetchOne('SELECT issue_date FROM fiscal_record WHERE number = ?', [$number]));
         $this->assertSame(
-            [['letter' => JournalPathFixtures::LETTER, 'year' => 2025, 'last_number' => 1]],
+            [['letter' => JournalPathFixtures::LETTER, 'year' => 2126, 'last_number' => 1]],
             array_map(static fn (array $row): array => ['letter' => $row['letter'], 'year' => (int) $row['year'], 'last_number' => (int) $row['last_number']], $restored->fetchAllAssociative('SELECT * FROM ticket_sequence WHERE letter = ? ORDER BY year', [JournalPathFixtures::LETTER]))
         );
     }
