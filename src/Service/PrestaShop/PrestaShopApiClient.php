@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace VenPosTPV\Service\PrestaShop;
 
+use Symfony\Contracts\HttpClient\Exception\TransportExceptionInterface;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
 use Symfony\Contracts\HttpClient\ResponseInterface;
 use VenPosTPV\Service\PrestaShop\Exception\PsApiException;
@@ -20,6 +21,9 @@ class PrestaShopApiClient
 
     /** Request/response key for the tax-excluded price with reductions applied. */
     private const NET_PRICE_KEY = 'tpv_net';
+
+    /** A page of a paginated read is asked at most this many times (readPage). */
+    private const PAGE_READ_ATTEMPTS = 2;
 
     public function __construct(
         string $baseUrl,
@@ -155,11 +159,14 @@ class PrestaShopApiClient
     }
 
     /**
+     * Only the fields catalog_stock keeps: display=full makes each page much
+     * heavier for the shop, and the minute stock job reads every page.
+     *
      * @return array<int, array<string, mixed>>
      */
     public function getStockAvailables(): array
     {
-        return $this->paginate('/stock_availables?display=full&output_format=JSON');
+        return $this->paginate('/stock_availables?display=[id,id_product,id_product_attribute,quantity]&output_format=JSON');
     }
 
     /**
@@ -286,8 +293,7 @@ class PrestaShopApiClient
                 $limit
             );
 
-            $response = $this->request('GET', $url);
-            $data = $this->decodeResponse($response);
+            $data = $this->readPage($url);
 
             $pageResults = $data[$this->getEntityKey($endpoint)] ?? [];
 
@@ -303,6 +309,35 @@ class PrestaShopApiClient
         } while (\count($pageResults) === $limit);
 
         return $results;
+    }
+
+    /**
+     * One page of a paginated read, asked a second time when the network fails
+     * (a slow shop answering nothing within the timeout): a GET changes nothing,
+     * and one lost page would otherwise fail the whole sync. HTTP errors are not
+     * asked again.
+     *
+     * @return array<string, mixed>
+     *
+     * @throws PsApiException
+     */
+    private function readPage(string $url): array
+    {
+        for ($attempt = 1; ; ++$attempt) {
+            try {
+                try {
+                    return $this->decodeResponse($this->request('GET', $url));
+                } catch (TransportExceptionInterface $e) {
+                    // The body can time out after the headers arrived.
+                    throw PsApiException::networkError($e->getMessage(), $e);
+                }
+            } catch (PsApiException $e) {
+                $networkError = $e->getCode() === 0 && $e->getPrevious() !== null;
+                if (!$networkError || $attempt >= self::PAGE_READ_ATTEMPTS) {
+                    throw $e;
+                }
+            }
+        }
     }
 
     /**

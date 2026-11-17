@@ -414,4 +414,80 @@ final class PrestaShopApiClientTest extends TestCase
 
         $client->getTaxIncludedUnitPrice(1);
     }
+
+    public function testStockAsksTheShopOnlyForTheFieldsTheTillStores(): void
+    {
+        $urls = [];
+        $http = new MockHttpClient(function (string $method, string $url) use (&$urls): MockResponse {
+            $urls[] = urldecode($url);
+
+            return $this->createJsonResponse(['stock_availables' => [['id' => 7, 'id_product' => 1, 'id_product_attribute' => 0, 'quantity' => 3]]]);
+        });
+
+        $stock = (new PrestaShopApiClient('http://localhost/prestashop/api', 'K', $http))->getStockAvailables();
+
+        $this->assertSame([['id' => 7, 'id_product' => 1, 'id_product_attribute' => 0, 'quantity' => 3]], $stock);
+        $this->assertCount(1, $urls);
+        $this->assertStringContainsString('/api/stock_availables?display=[id,id_product,id_product_attribute,quantity]&', $urls[0]);
+        $this->assertStringNotContainsString('display=full', $urls[0]);
+    }
+
+    public function testAPageThatTimesOutOnceIsAskedAgainAndTheReadCarriesOn(): void
+    {
+        $urls = [];
+        $responses = [
+            $this->createJsonResponse(['stock_availables' => array_map(static fn (int $i): array => ['id' => $i, 'quantity' => 1], range(1, 100))]),
+            new MockResponse('', ['error' => 'Idle timeout reached']),
+            $this->createJsonResponse(['stock_availables' => [['id' => 101, 'quantity' => 1]]]),
+        ];
+        $http = new MockHttpClient(function (string $method, string $url) use (&$urls, &$responses): MockResponse {
+            $urls[] = $url;
+
+            return array_shift($responses);
+        });
+
+        $stock = (new PrestaShopApiClient('http://localhost/prestashop/api', 'K', $http))->getStockAvailables();
+
+        $this->assertCount(101, $stock);
+        $this->assertSame(101, $stock[100]['id']);
+        $this->assertCount(3, $urls);
+        $this->assertStringEndsWith('&limit=100,100', $urls[1]);
+        $this->assertSame($urls[1], $urls[2], 'the same page is asked again');
+    }
+
+    public function testAPageThatTimesOutTwiceFailsTheReadAsANetworkError(): void
+    {
+        $calls = 0;
+        $http = new MockHttpClient(function () use (&$calls): MockResponse {
+            ++$calls;
+
+            return new MockResponse('', ['error' => 'Idle timeout reached']);
+        });
+
+        try {
+            (new PrestaShopApiClient('http://localhost/prestashop/api', 'K', $http))->getStockAvailables();
+            $this->fail('Expected a network error');
+        } catch (PsApiException $e) {
+            $this->assertStringContainsString('PrestaShop API network error: Idle timeout reached', $e->getMessage());
+        }
+        $this->assertSame(2, $calls);
+    }
+
+    public function testAnHttpErrorOfAPageIsNotAskedAgain(): void
+    {
+        $calls = 0;
+        $http = new MockHttpClient(function () use (&$calls): MockResponse {
+            ++$calls;
+
+            return $this->createJsonResponse(['error' => 'Internal error'], 500);
+        });
+
+        try {
+            (new PrestaShopApiClient('http://localhost/prestashop/api', 'K', $http))->getProducts();
+            $this->fail('Expected an HTTP error');
+        } catch (PsApiException $e) {
+            $this->assertSame(500, $e->getCode());
+        }
+        $this->assertSame(1, $calls);
+    }
 }
