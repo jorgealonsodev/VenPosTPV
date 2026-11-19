@@ -561,7 +561,8 @@ final class EscPosTicketBuilderTest extends TestCase
     {
         // sha1 of the bytes built before "Pedido web" existed (HEAD e868074).
         self::assertSame('fa4af74b27a71be4d891fd22ccca15fdf83c07a5', sha1(self::withOldCashierLine(self::withoutPrintArea($this->createBuilder()->build($this->localSale())))));
-        self::assertSame('0e1c9ffe288876ade23487e4f07824b11ab5e3e1', sha1(self::withOldCashierLine(self::withoutPrintArea($this->createBuilder()->build($this->localSale(), true)))));
+        // The gift ticket since it is titled «TICKET REGALO» and carries no QR (GiftTicketTest).
+        self::assertSame('8475e60490f498bd02c97126671ff3318ed93454', sha1(self::withOldCashierLine(self::withoutPrintArea($this->createBuilder()->build($this->localSale(), true)))));
         self::assertStringNotContainsString('Pedido web', $this->createBuilder()->build($this->localSale('')));
     }
 

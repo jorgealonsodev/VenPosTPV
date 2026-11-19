@@ -76,7 +76,7 @@ test('the template shows the line with print, PDF, email and WhatsApp of the cou
     assert.match(modal.template, /v-if="leftoverEmailEnabled" @click="leftoverEmailOpen = !leftoverEmailOpen"[^>]*>Email<\/button>/);
     assert.match(modal.template, /@click="leftoverWhatsappOpen = !leftoverWhatsappOpen"[^>]*>WhatsApp<\/button>/);
     assert.match(modal.template, /<whatsapp-share v-if="leftoverWhatsappOpen" kind="coupon" :doc-id="leftoverVoucher\.id" :initial-phone="ticketPhone" \/>/);
-    assert.match(modal.template, /<button v-if="leftoverVoucher && printerType !== 'pdf' && printerType !== 'none' && printerType !== 'agent'" @click="finish"/);
+    assert.match(modal.template, /<button v-if="\(leftoverVoucher \|\| giftHold\) && printerType !== 'pdf' && printerType !== 'none' && printerType !== 'agent'" @click="finish"/);
 });
 
 test('the slip actions use the issued coupon of the rest', async () => {

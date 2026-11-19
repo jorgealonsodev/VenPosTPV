@@ -98,7 +98,8 @@ final class TicketPdfGeneratorTest extends TestCase
 
             exec('pdfimages -list ' . escapeshellarg($pdfPath), $pdfImages, $exitCode);
             self::assertSame(0, $exitCode, implode("\n", $pdfImages));
-            self::assertGreaterThanOrEqual(3, $this->embeddedImageCount($pdfImages), 'logo, QR and Code128 are embedded');
+            // A gift ticket carries no QR (the VERI*FACTU one encodes the amount).
+            self::assertSame(2, $this->embeddedImageCount($pdfImages), 'logo and Code128 are embedded, no QR');
             self::assertSame($assetsBefore, $this->temporaryAssetPaths());
         } finally {
             if (is_file($pdfPath)) {

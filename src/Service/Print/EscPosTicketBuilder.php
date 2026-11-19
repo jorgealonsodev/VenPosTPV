@@ -76,7 +76,8 @@ class EscPosTicketBuilder
 
         // Header
         $printer->setJustification(Printer::JUSTIFY_CENTER);
-        if ($ticketData->fiscalQrUrl !== null) {
+        // A gift ticket carries no QR: the VERI*FACTU one encodes the amount.
+        if ($ticketData->fiscalQrUrl !== null && !$giftMode) {
             // VERI*FACTU: the tax QR comes first on the ticket, 30-40 mm, error
             // correction M (6 dots per module: about 34 mm for this URL at 203 dpi).
             $printer->text(FiscalQr::TITLE . "\n");
@@ -106,6 +107,10 @@ class EscPosTicketBuilder
         if ($creditNote !== null) {
             $printer->selectPrintMode(Printer::MODE_DOUBLE_HEIGHT | Printer::MODE_EMPHASIZED);
             $printer->text('ABONO ' . $creditNote->number . "\n");
+            $printer->selectPrintMode();
+        } elseif ($giftMode) {
+            $printer->selectPrintMode(Printer::MODE_DOUBLE_HEIGHT | Printer::MODE_EMPHASIZED);
+            $printer->text("TICKET REGALO\n");
             $printer->selectPrintMode();
         }
         $printer->text($ticketData->date->format('d/m/Y H:i') . "\n");
@@ -247,7 +252,7 @@ class EscPosTicketBuilder
             $printer->text("\n");
         }
 
-        if ($ticketData->showsQr()) {
+        if ($ticketData->showsQr() && !$giftMode) {
             $printer->qrCode($ticketData->verificationUrl, Printer::QR_ECLEVEL_M, 6);
             $printer->text("\n");
         }

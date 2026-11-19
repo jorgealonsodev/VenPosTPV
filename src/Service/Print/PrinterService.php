@@ -159,7 +159,7 @@ class PrinterService
 
         if ($config->usesAgent()) {
             // T10: the reprint goes out on the till that asks for it.
-            $jobId = $this->enqueue($terminalId, 'ticket', $this->escPosBuilder->build($ticketData, $giftMode), 'reprint', (string) $orderId);
+            $jobId = $this->enqueue($terminalId, 'ticket', $this->escPosBuilder->build($ticketData, $giftMode), $giftMode ? 'gift' : 'reprint', (string) $orderId);
 
             return ['printed' => false, 'print_status' => 'queued', 'print_job_id' => $jobId];
         }
