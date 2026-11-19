@@ -22,6 +22,14 @@ Entre el subtotal y el IVA van los totales de los descuentos, solo los que hay:
 
 Se imprimen con cualquier forma de pago. Las ventas anteriores a este cambio no guardaron si el descuento del ticket era en porcentaje, así que al reimprimirlas sale «Dto. ticket» solo con el importe. Un ticket sin descuentos no cambia. El ticket regalo no lleva importes. En la impresora térmica, «artículos» sale sin tilde: su juego de caracteres no la tiene.
 
+## Ticket regalo
+
+Cada vez que se saca un ticket se puede sacar también el ticket regalo: el botón «Ticket regalo» aparece al terminar el cobro (junto a «Descargar ticket PDF» si la caja no tiene impresora), junto a «Reimprimir» en la pantalla de venta y en el detalle de una venta. El ticket normal sale igual que siempre; el regalo es aparte.
+
+El ticket regalo lleva el título «TICKET REGALO», la tienda, la fecha, la referencia, los artículos con su cantidad («Cant: 2») y el código de barras, para que la tienda pueda escanearlo en un cambio. No lleva precios, descuentos, totales, forma de pago ni ningún QR (el QR tributario de VERI*FACTU lleva el importe). Si la caja no tiene impresora, o la impresora falla, se abre el PDF del ticket regalo.
+
+Si se pide el ticket regalo, la pantalla de cobro ya no se cierra sola: espera a «Terminar» o «Nueva venta».
+
 ## Quién atendió
 
 «Le ha atendido …» va al final del ticket: después del código de barras y del QR (y de «Sustituido por la factura …», si se canjeó), justo antes del pie (el pie del ticket de la caja o, si no tiene, «Gracias por su compra»).

@@ -69,6 +69,8 @@
     {% endif %}
     {% if ticket.creditNote %}
         <div class="center bold large">ABONO {{ ticket.creditNote.number }}</div>
+    {% elseif giftMode %}
+        <div class="center bold large">TICKET REGALO</div>
     {% endif %}
     <div class="center">{{ ticket.date|date('d/m/Y H:i') }}</div>
     {% if ticket.creditNote %}

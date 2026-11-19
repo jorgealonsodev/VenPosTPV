@@ -30,6 +30,10 @@ const PaymentModal = {
         const ticketPhone = Vue.ref('');
         const whatsappOpen = Vue.ref(false);
         const emailStatus = Vue.ref('');
+        // «Ticket regalo»: once asked for, the done screen waits for the cashier.
+        const giftHold = Vue.ref(false);
+        const giftStatus = Vue.ref('');
+        const giftBusy = Vue.ref(false);
         const emailSending = Vue.ref(false);
         const voucherCode = Vue.ref('');
         const voucherPreview = Vue.ref(null);
@@ -142,7 +146,7 @@ const PaymentModal = {
         }
 
         function closeWhenPrinted() {
-            if (completeEmitted) return;
+            if (completeEmitted || giftHold.value) return;
             if (agentSettled()) {
                 setTimeout(finish, 2000);
                 return;
@@ -371,8 +375,9 @@ const PaymentModal = {
                         completedSale = doneSale;
                         return;
                     }
+                    completedSale = doneSale;
                     setTimeout(() => {
-                        emit('complete', doneSale);
+                        if (!giftHold.value) finish();
                     }, 2000);
                 } else {
                     throw new Error('Respuesta inesperada del servidor');
@@ -486,6 +491,34 @@ const PaymentModal = {
             });
         }
 
+        async function printGiftTicket() {
+            const saleId = lastSaleId.value;
+            const orderId = lastOrderId.value;
+            if ((!saleId && !orderId) || giftBusy.value) return;
+            giftHold.value = true;
+            const pt = printerType.value;
+            if (pt === 'pdf' || pt === 'none') {
+                ApiClient.ticketGiftPdf(saleId, orderId);
+                return;
+            }
+            giftBusy.value = true;
+            giftStatus.value = '';
+            try {
+                const response = await ApiClient.ticketGift(saleId, orderId);
+                const data = (response && response.data) || {};
+                if (data.fallback === 'pdf') {
+                    ApiClient.ticketGiftPdf(saleId, orderId);
+                    giftStatus.value = 'No se pudo imprimir: se abre el PDF del ticket regalo.';
+                } else {
+                    giftStatus.value = data.print_status === 'queued' ? 'Ticket regalo enviado a la impresora de la caja.' : 'Ticket regalo impreso.';
+                }
+            } catch (err) {
+                giftStatus.value = 'No se pudo imprimir el ticket regalo: ' + (err.message || 'Error');
+            } finally {
+                giftBusy.value = false;
+            }
+        }
+
         function downloadTicket() {
             if (lastSaleId.value) {
                 ApiClient.ticketSalePdf(lastSaleId.value);
@@ -571,7 +604,7 @@ const PaymentModal = {
             cashInput.value = props.total.toFixed(2).replace('.', ',');
         }
 
-        return { voucherTenders, method, cashInput, card1, card2, step, errorMsg, errorRetry, lastOrderId, lastSaleId, methods, cashParsed, change, cardParsed, card2Parsed, dataphoneMode, printerType, voucherCode, voucherPreview, voucherBusy, voucherError, voucherTender, voucherCashInput, voucherPayable, voucherDiscount, voucherGross, voucherBalance, voucherCashParsed, voucherChange, voucherReconciliationRequired, couponOffline, chargeWithoutCoupon, completedTotal, completedChange, doneTotal, doneChange, isSubmitting, canConfirm, handleConfirm, retryCheckout, returnToSelection, appendNum, exacto, downloadTicket, emailEnabled, ticketEmail, ticketPhone, whatsappOpen, emailStatus, emailSending, sendTicketEmail, applyVoucher, invalidateVoucher, hasFreeItem, freeItemCouponMessage: FREE_ITEM_COUPON_MESSAGE, keypadKeys, quickAmounts, eur, drawerWarning, finish, onBackdrop, leftoverVoucher, leftoverPrintable, leftoverEmailEnabled, leftoverEmailOpen, leftoverEmail, leftoverWhatsappOpen, leftoverBusy, leftoverStatus, printLeftover, openLeftoverPdf, sendLeftoverEmail };
+        return { giftHold, giftStatus, giftBusy, printGiftTicket, voucherTenders, method, cashInput, card1, card2, step, errorMsg, errorRetry, lastOrderId, lastSaleId, methods, cashParsed, change, cardParsed, card2Parsed, dataphoneMode, printerType, voucherCode, voucherPreview, voucherBusy, voucherError, voucherTender, voucherCashInput, voucherPayable, voucherDiscount, voucherGross, voucherBalance, voucherCashParsed, voucherChange, voucherReconciliationRequired, couponOffline, chargeWithoutCoupon, completedTotal, completedChange, doneTotal, doneChange, isSubmitting, canConfirm, handleConfirm, retryCheckout, returnToSelection, appendNum, exacto, downloadTicket, emailEnabled, ticketEmail, ticketPhone, whatsappOpen, emailStatus, emailSending, sendTicketEmail, applyVoucher, invalidateVoucher, hasFreeItem, freeItemCouponMessage: FREE_ITEM_COUPON_MESSAGE, keypadKeys, quickAmounts, eur, drawerWarning, finish, onBackdrop, leftoverVoucher, leftoverPrintable, leftoverEmailEnabled, leftoverEmailOpen, leftoverEmail, leftoverWhatsappOpen, leftoverBusy, leftoverStatus, printLeftover, openLeftoverPdf, sendLeftoverEmail };
     },
     template: `
         <div class="modal-backdrop">
@@ -605,18 +638,26 @@ const PaymentModal = {
                 </div>
                 <template v-if="printerType === 'agent'">
                     <print-status-notice placement="payment" />
-                    <button @click="finish" class="tpv-btn tpv-btn-primary print-btn-lg" style="margin-top:4px;">Nueva venta</button>
                 </template>
                 <div v-else-if="printerType === 'escpos' || printerType === 'system'" style="color:var(--text3); font-size:13px;">
                     Ticket enviado a impresora
                 </div>
-                <button v-if="leftoverVoucher && printerType !== 'pdf' && printerType !== 'none' && printerType !== 'agent'" @click="finish" class="tpv-btn tpv-btn-primary" style="margin-top:4px;">Terminar</button>
+                <!-- The gift ticket (no prices), next to the sale ticket -->
+                <button v-if="(lastSaleId || lastOrderId) && printerType !== 'pdf' && printerType !== 'none'" @click="printGiftTicket" :disabled="giftBusy" class="tpv-btn pay-gift-ticket" style="display:flex; align-items:center; justify-content:center; gap:6px;">
+                    <icon name="receipt" :size="18" /> {{ giftBusy ? 'Imprimiendo…' : 'Ticket regalo' }}
+                </button>
+                <div v-if="giftStatus" style="font-size:12px; color:var(--text2);">{{ giftStatus }}</div>
+                <button v-if="printerType === 'agent'" @click="finish" class="tpv-btn tpv-btn-primary print-btn-lg" style="margin-top:4px;">Nueva venta</button>
+                <button v-if="(leftoverVoucher || giftHold) && printerType !== 'pdf' && printerType !== 'none' && printerType !== 'agent'" @click="finish" class="tpv-btn tpv-btn-primary" style="margin-top:4px;">Terminar</button>
                 <!-- No printer: the cashier chooses how the customer gets the ticket -->
                 <div v-if="printerType === 'pdf' || printerType === 'none'"
                     style="display:flex; flex-direction:column; gap:6px; margin-top:6px; width:100%; max-width:340px;">
                     <div style="color:var(--text3); font-size:13px; text-align:center;">¿Cómo quieres el ticket?</div>
                     <button v-if="lastSaleId || lastOrderId" @click="downloadTicket" class="tpv-btn" style="display:flex; align-items:center; justify-content:center; gap:6px;">
                         <icon name="print" :size="18" /> Descargar ticket PDF
+                    </button>
+                    <button v-if="lastSaleId || lastOrderId" @click="printGiftTicket" class="tpv-btn pay-gift-ticket" style="display:flex; align-items:center; justify-content:center; gap:6px;">
+                        <icon name="receipt" :size="18" /> Descargar ticket regalo PDF
                     </button>
                     <div v-if="lastSaleId && emailEnabled" style="display:flex; gap:6px;">
                         <input v-model="ticketEmail" type="email" placeholder="email del cliente" aria-label="Email del cliente"

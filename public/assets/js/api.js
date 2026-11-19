@@ -195,6 +195,13 @@ const ApiClient = (function () {
             window.open(BASE_URL + '/api/ticket/sale/' + encodeURIComponent(orderId) + '/pdf', '_blank');
         },
         ticketReprintSale: (orderId) => request('/api/ticket/reprint', { method: 'POST', body: JSON.stringify({ order_id: orderId }) }),
+        // The gift ticket (same lines, no prices) of a sale: by its local order_id, else
+        // by the PrestaShop order. Printed on the till's printer; the PDF when it has none.
+        ticketGift: (saleId, psOrderId) => request('/api/ticket/reprint', { method: 'POST', body: JSON.stringify(saleId ? { order_id: saleId, gift_mode: true } : { ps_order_id: psOrderId, gift_mode: true }) }),
+        ticketGiftPdf: (saleId, psOrderId) => {
+            const path = saleId ? '/api/ticket/sale/' + encodeURIComponent(saleId) : '/api/ticket/' + encodeURIComponent(psOrderId);
+            window.open(BASE_URL + path + '/pdf?gift_mode=1', '_blank');
+        },
         ticketVerify: (token) => request('/api/ticket/verify?token=' + encodeURIComponent(token)),
         // A TPV sale goes by refund.order_id (also before it is uploaded); ps_order_id
         // names an online order. Never queued offline: a replayed POST would be a second refund.

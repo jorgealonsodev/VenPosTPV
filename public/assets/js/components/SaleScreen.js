@@ -164,6 +164,28 @@ const SaleScreen = {
             }
         }
 
+        // «Ticket regalo»: the same sale without prices, on the till's printer or as PDF.
+        async function handleGiftTicket() {
+            const order = lastCompletedOrder.value || {};
+            const saleId = order.order_id || null;
+            const psOrderId = order.ps_order_id || null;
+            if (!saleId && !psOrderId) return;
+            try {
+                const result = await ApiClient.ticketGift(saleId, psOrderId);
+                const data = (result && result.data) || {};
+                if (data.fallback === 'pdf') {
+                    ApiClient.ticketGiftPdf(saleId, psOrderId);
+                    notify('No hay impresora: se abre el PDF del ticket regalo', 'var(--blue)');
+                } else if (data.print_status === 'queued') {
+                    notify('Imprimiendo ticket regalo…', 'var(--blue)');
+                } else {
+                    notify('Ticket regalo impreso', 'var(--green)');
+                }
+            } catch (err) {
+                notify('Error al imprimir el ticket regalo: ' + (err.message || 'Error'), 'var(--red)');
+            }
+        }
+
         function handlePark() {
             if (!cart.lines.length) return;
             parkNote.value = '';
@@ -349,7 +371,7 @@ const SaleScreen = {
             toggleTheme,
             setSearch, setCategory, loadMore, setOnlyInStock, setSearchInCategory,
             addProduct, remove, updateQty,
-            shareOrder, handlePaymentComplete, handlePark, confirmParkTicket, handleVoid, confirmVoid, cancelVoid, handleReprint,
+            shareOrder, handlePaymentComplete, handlePark, confirmParkTicket, handleVoid, confirmVoid, cancelVoid, handleReprint, handleGiftTicket,
             handleDiscount, handleCustomer,
             showFreeItem, freeItemSettings, freeItemAllowed,
             handleCashClose, handleCashCloseDone, handleCashCloseBack, handleDiscardParkedOnClose,
@@ -456,6 +478,10 @@ const SaleScreen = {
                     <button v-if="lastCompletedOrder" @click="handleReprint"
                         style="min-height:44px; display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;">
                         <icon name="receipt" :size="13" /> Reimprimir
+                    </button>
+                    <button v-if="lastCompletedOrder" @click="handleGiftTicket"
+                        style="min-height:44px; display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;">
+                        <icon name="receipt" :size="13" /> Ticket regalo
                     </button>
                     <button @click="showLabels = true" title="Imprimir etiquetas de precio"
                         style="min-height:44px; display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; font-size:12px;">

@@ -27,7 +27,8 @@ class TicketPdfGenerator
         // Images are embedded as data: URIs, never written to disk: the web server
         // user may not be allowed to write in the project, and then the QR, the
         // barcode and the logo silently disappeared from the PDF.
-        $qrPath = $ticketData->showsQr() ? $this->qrDataUri($ticketData->verificationUrl) : '';
+        // A gift ticket carries no QR: the VERI*FACTU one encodes the amount.
+        $qrPath = $ticketData->showsQr() && !$giftMode ? $this->qrDataUri($ticketData->verificationUrl) : '';
 
         // Code128 of the sale reference (sale and gift tickets only, not credit notes)
         $barcodePath = $ticketData->creditNote === null && $ticketData->showsBarcode() ? $this->barcodeDataUri($ticketData->reference) : '';
@@ -38,7 +39,7 @@ class TicketPdfGenerator
         }
 
         // VERI*FACTU: the tax QR (error correction M) at the top of the ticket.
-        $fiscalQrPath = $ticketData->fiscalQrUrl !== null ? $this->qrDataUri($ticketData->fiscalQrUrl, true) : '';
+        $fiscalQrPath = $ticketData->fiscalQrUrl !== null && !$giftMode ? $this->qrDataUri($ticketData->fiscalQrUrl, true) : '';
 
         // Ajustes → Cajas: the till's margins (mm to CSS px) and logo width. Unset ones
         // are left out so the template keeps its 8 px margins and full-width logo.

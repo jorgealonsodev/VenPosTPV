@@ -43,6 +43,28 @@ const OrderDetailView = {
             }
         }
 
+        // «Ticket regalo»: the same sale without prices, on the till's printer or as PDF.
+        async function giftTicket() {
+            const order = props.order || {};
+            const saleId = order.order_id || null;
+            const psOrderId = order.ps_order_id || null;
+            if (!saleId && !psOrderId) return;
+            try {
+                const result = await ApiClient.ticketGift(saleId, psOrderId);
+                const data = (result && result.data) || {};
+                if (data.fallback === 'pdf') {
+                    ApiClient.ticketGiftPdf(saleId, psOrderId);
+                    emit('notify', 'No hay impresora: se abre el PDF del ticket regalo', 'var(--blue)');
+                } else if (data.print_status === 'queued') {
+                    emit('notify', 'Imprimiendo ticket regalo…', 'var(--blue)');
+                } else {
+                    emit('notify', 'Ticket regalo impreso', 'var(--green)');
+                }
+            } catch (err) {
+                emit('notify', 'Error al imprimir el ticket regalo: ' + (err.message || 'Error'), 'var(--red)');
+            }
+        }
+
         function pdf() {
             const order = props.order || {};
             if (order.order_id) {
@@ -209,7 +231,7 @@ const OrderDetailView = {
         // Opened from «Reimprimir» on the sale screen without a printer: show the choice at once.
         if (props.startWithChoice) openPdfChoice('ticket');
 
-        return { paymentLabel: (code) => VenPosPaymentMethods.label(code), invoice, showInvoice, canInvoice, loadInvoice, onInvoiceIssued, pdfDoc, pdfConsent, totalQty, title, canPrint, reprint, pdf, pdfChoice, pdfEmailEnabled, pdfEmail, pdfEmailStatus, pdfEmailSending, openPdfChoice, downloadPdf, sendPdfEmail, pdfCustomers, searchPdfCustomers, pickPdfCustomer, pdfWhatsappEnabled, pdfWhatsapp, pdfPhone, onWhatsappShared };
+        return { paymentLabel: (code) => VenPosPaymentMethods.label(code), invoice, showInvoice, canInvoice, loadInvoice, onInvoiceIssued, pdfDoc, pdfConsent, totalQty, title, canPrint, reprint, giftTicket, pdf, pdfChoice, pdfEmailEnabled, pdfEmail, pdfEmailStatus, pdfEmailSending, openPdfChoice, downloadPdf, sendPdfEmail, pdfCustomers, searchPdfCustomers, pickPdfCustomer, pdfWhatsappEnabled, pdfWhatsapp, pdfPhone, onWhatsappShared };
     },
     template: `
         <div style="display:flex; flex-direction:column; height:100%; overflow:hidden;">
@@ -270,6 +292,9 @@ const OrderDetailView = {
                 <div v-if="canPrint" style="display:flex; gap:8px; margin-top:8px;">
                     <button class="tpv-btn" style="flex:1;" @click="reprint"><icon name="receipt" :size="16" /> Reimprimir</button>
                     <button class="tpv-btn" style="flex:1;" @click="openPdfChoice"><icon name="receipt" :size="16" /> PDF</button>
+                </div>
+                <div v-if="canPrint" style="display:flex; gap:8px; margin-top:8px;">
+                    <button class="tpv-btn order-gift-ticket" style="flex:1;" @click="giftTicket"><icon name="receipt" :size="16" /> Ticket regalo</button>
                 </div>
                 <div v-if="order.order_id" class="order-share-actions" style="display:flex; gap:8px; margin-top:8px;">
                     <button class="tpv-btn" style="flex:1;" @click="openPdfChoice('ticket', 'email')"><icon name="mail" :size="16" /> Enviar por email</button>
